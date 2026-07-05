@@ -1,0 +1,15 @@
+allowBuilds:
+  esbuild: true
+  sharp: true
+  workerd: true
+
+# Release cooldown: a newly published package version is not installed until it
+# has been public for one day (minutes), limiting exposure to hijacked releases.
+minimumReleaseAge: 1440
+
+# Patched floors for transitive advisories (see pnpm audit --prod). vinext pins
+# image-size 2.0.2 exactly; the override stays within its 2.x API.
+overrides:
+  image-size: 2.0.4
+  fast-uri: 3.1.8
+  source-map-js: 1.2.2
