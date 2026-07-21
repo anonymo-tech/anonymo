@@ -1,0 +1,61 @@
+.engraved-icon {
+  display: block;
+  flex: none;
+  object-fit: contain;
+  user-select: none;
+  pointer-events: none;
+}
+.conclave-site .card-number > .engraved-icon {
+  width: 59px;
+  height: 59px;
+  margin: -15px -6px -13px 0;
+}
+.conclave-site .privacy-rows > a > .engraved-icon {
+  width: 49px;
+  height: 49px;
+}
+.conclave-site .workflow-notes .engraved-icon {
+  width: 62px;
+  height: 62px;
+  margin: 0;
+  grid-row: span 2;
+}
+.conclave-site .workflow-notes > div {
+  grid-template-columns: 76px 1fr;
+  align-content: start;
+}
+.conclave-site .guard-art.halftone-art {
+  background: var(--scarlet);
+}
+.conclave-site .guard-art.halftone-art::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: url("/media/print-grain.svg");
+  opacity: 0.12;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+.conclave-site .guard-art.halftone-art img {
+  mix-blend-mode: normal;
+  object-fit: contain;
+  padding: 38px 18px 60px;
+}
+.conclave-site .receipt-top .engraved-icon {
+  width: 54px;
+  height: 54px;
+  margin: -14px 0;
+}
+@media (max-width: 520px) {
+  .conclave-site .card-number > .engraved-icon {
+    width: 54px;
+    height: 54px;
+  }
+  .conclave-site .workflow-notes .engraved-icon {
+    width: 48px;
+    height: 48px;
+  }
+  .conclave-site .workflow-notes > div {
+    grid-template-columns: 60px 1fr;
+  }
+}
