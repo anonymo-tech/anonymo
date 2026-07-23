@@ -1,0 +1,82 @@
+.model-banner {
+  position: relative;
+  overflow: hidden;
+  padding: 26px 0;
+  border-block: 1px solid #171713;
+  background: #ee281c;
+  color: #171713;
+}
+.model-banner-track {
+  display: flex;
+  width: max-content;
+  animation: model-banner-scroll 42s linear infinite;
+  animation-play-state: paused;
+}
+.model-banner[data-running="true"] .model-banner-track { animation-play-state: running; }
+.model-banner:hover .model-banner-track { animation-play-state: paused; }
+.model-banner-set {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.model-banner-item {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex: none;
+  padding-left: 30px;
+}
+.model-banner-logo {
+  position: relative;
+  display: block;
+  flex: none;
+  width: 62px;
+  height: 62px;
+  filter: var(--provider-outline);
+}
+.model-banner-definitions { position: absolute; pointer-events: none; }
+/* Outline the original silhouette, including its internal cutouts. */
+.model-banner-logo::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  display: block;
+  background: #ee281c;
+  mask: var(--provider-logo) center / contain no-repeat;
+  -webkit-mask: var(--provider-logo) center / contain no-repeat;
+}
+.model-banner-meta .model-banner-logo { width: 83px; }
+.model-banner-deepseek .model-banner-logo { width: 74px; }
+.model-banner-solana .model-banner-logo { width: 64px; }
+.model-banner-name {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font: 500 30px/1 "Conclave Geist", Arial, sans-serif;
+  letter-spacing: -1.2px;
+}
+.model-banner-name small {
+  font: 400 11px/1.2 "Conclave Geist", Arial, sans-serif;
+  letter-spacing: 0;
+}
+.model-banner-divider { margin-inline: 20px 4px; font-size: 14px; }
+@keyframes model-banner-scroll { to { transform: translateX(-50%); } }
+@media (max-width: 600px) {
+  .model-banner { padding-block: 21px; }
+  .model-banner-item { gap: 13px; padding-left: 23px; }
+  .model-banner-logo { width: 48px; height: 48px; }
+  .model-banner-meta .model-banner-logo { width: 65px; }
+  .model-banner-deepseek .model-banner-logo { width: 58px; }
+  .model-banner-solana .model-banner-logo { width: 50px; }
+  .model-banner-name { font-size: 25px; letter-spacing: -0.8px; }
+  .model-banner-divider { margin-inline: 14px 3px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .model-banner .model-banner-track { animation: none; width: 100%; }
+  .model-banner-set { width: 100%; min-width: 0; flex-wrap: wrap; justify-content: center; row-gap: 20px; }
+  .model-banner-set[aria-hidden="true"] { display: none; }
+}

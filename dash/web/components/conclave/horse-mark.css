@@ -1,0 +1,38 @@
+.horse-mark {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: var(--horse-mark-size, 40px);
+  height: var(--horse-mark-size, 40px);
+  background-color: currentColor;
+  -webkit-mask-image: url("/brand/conclave-horse-black.png");
+  mask-image: url("/brand/conclave-horse-black.png");
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  mask-mode: alpha;
+  pointer-events: none;
+}
+
+.conclave-brand > .brand-horse {
+  --horse-mark-size: 43px;
+  margin-block: -4px;
+  color: inherit;
+}
+
+@media (max-width: 1100px) {
+  .conclave-brand > .brand-horse {
+    --horse-mark-size: 38px;
+  }
+}
+
+@media (max-width: 520px) {
+  .conclave-brand > .brand-horse {
+    --horse-mark-size: 33px;
+  }
+  .nav-scrolled .conclave-brand > .brand-horse {
+    --horse-mark-size: 31px;
+  }
+}
