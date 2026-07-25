@@ -1,0 +1,972 @@
+.field-guide {
+  --field-red: #d52b1c;
+  --field-cream: #eee7d7;
+  --field-ink: #201d18;
+  background: var(--field-cream);
+  color: var(--field-ink);
+  min-height: 100vh;
+  font-family: Arial, Helvetica, sans-serif;
+  color-scheme: light;
+}
+.field-guide * {
+  box-sizing: border-box;
+}
+.field-guide a {
+  color: inherit;
+  text-decoration: none;
+}
+.field-guide button,
+.field-guide input {
+  font: inherit;
+}
+.field-guide button {
+  cursor: pointer;
+}
+.field-guide button:focus-visible,
+.field-guide a:focus-visible,
+.field-guide input:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 5px;
+}
+.field-nav {
+  height: 87px;
+  padding: 0 4.2%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #201d182a;
+}
+.field-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font:
+    38px/1 "Instrument Serif",
+    Georgia,
+    serif;
+  letter-spacing: -0.05em;
+}
+.field-brand > .field-brand-horse {
+  --horse-mark-size: 43px;
+  margin-block: -3px;
+}
+.field-brand > .field-brand-name {
+  font: inherit;
+  letter-spacing: inherit;
+}
+.field-brand > sup {
+  align-self: flex-start;
+  margin: 5px 0 0 -4px;
+  font: 8px/1 Arial, Helvetica, sans-serif;
+  letter-spacing: 0;
+}
+.field-nav > div {
+  display: flex;
+  gap: 35px;
+  align-items: center;
+}
+.field-nav > div a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font:
+    10px "JetBrains Mono",
+    monospace;
+  text-transform: uppercase;
+}
+.field-nav > div a:hover {
+  color: var(--field-red);
+}
+.field-hero {
+  padding: 27px 4.2% 0;
+}
+.field-hero-line,
+.field-banner-bottom {
+  display: flex;
+  justify-content: space-between;
+  font:
+    9px "JetBrains Mono",
+    monospace;
+  letter-spacing: 0.05em;
+}
+.field-hero-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 46px 0 36px;
+}
+.field-hero h1 {
+  margin: 0;
+  font:
+    clamp(65px, 9vw, 140px)/0.95 "Instrument Serif",
+    Georgia,
+    serif;
+  letter-spacing: -0.045em;
+}
+.field-hero h1 em {
+  font-weight: 400;
+}
+.field-hero-copy p {
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 8px 4% 0 20px;
+}
+.field-banner {
+  position: relative;
+  background: #cb2717;
+  overflow: hidden;
+  border: 1px solid var(--field-ink);
+  padding: 8px;
+}
+.field-banner:before {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border: 1px solid #eee7d778;
+  pointer-events: none;
+  z-index: 1;
+}
+.field-banner img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 350px;
+  object-fit: cover;
+  object-position: center 53%;
+  filter: saturate(0.8);
+  transition: transform 1.3s;
+}
+.field-banner:hover img {
+  transform: scale(1.018);
+}
+.field-banner-bottom {
+  position: absolute;
+  left: 28px;
+  right: 23px;
+  bottom: 22px;
+  color: var(--field-cream);
+  align-items: center;
+  text-shadow: 0 1px 4px #000;
+}
+.field-banner-bottom a {
+  width: 38px;
+  height: 38px;
+  border: 1px solid #eee7d78a;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  transition: background 0.2s;
+}
+.field-banner-bottom a:hover {
+  background: var(--field-cream);
+  color: var(--field-red);
+}
+.field-content {
+  display: grid;
+  grid-template-columns: 270px minmax(0, 1fr);
+  gap: clamp(35px, 7vw, 110px);
+  padding: 72px 7% 100px 4.2%;
+  max-width: 1550px;
+  margin: auto;
+  scroll-margin-top: 25px;
+}
+.field-sidebar {
+  align-self: start;
+  position: sticky;
+  top: 30px;
+}
+.field-search {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border-bottom: 1px solid #201d1880;
+  padding: 0 0 14px;
+}
+.field-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  font-size: 12px;
+}
+.field-search button {
+  padding: 3px;
+  background: transparent;
+  border: 0;
+}
+.field-micro {
+  font:
+    9px/1.6 "JetBrains Mono",
+    monospace;
+  letter-spacing: 0.04em;
+}
+.field-index-label {
+  display: block;
+  opacity: 0.6;
+  margin: 24px 0 16px;
+}
+.field-sidebar nav {
+  display: grid;
+  gap: 3px;
+}
+.field-sidebar nav button {
+  border: 0;
+  background: transparent;
+  color: var(--field-ink);
+  padding: 14px 10px 14px 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+.field-sidebar nav button > span {
+  font:
+    9px "JetBrains Mono",
+    monospace;
+  opacity: 0.55;
+}
+.field-sidebar nav button > svg {
+  margin-left: auto;
+  opacity: 0;
+}
+.field-sidebar nav button.is-active {
+  background: var(--field-red);
+  color: var(--field-cream);
+  padding-left: 13px;
+}
+.field-sidebar nav button:hover:not(.is-active) {
+  padding-left: 8px;
+  color: var(--field-red);
+}
+.field-sidebar nav button.is-active > svg {
+  opacity: 1;
+}
+.field-no-results {
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 5px 10px 20px 0;
+}
+.field-margin-note {
+  margin-top: 52px;
+  padding: 35px 25px 28px;
+  border-top: 1px solid #201d1840;
+  border-bottom: 1px solid #201d1840;
+  text-align: center;
+  position: relative;
+}
+.field-margin-note:before,
+.field-margin-note:after {
+  content: "✧";
+  position: absolute;
+  left: -4px;
+  font-size: 14px;
+  top: -10px;
+  background: var(--field-cream);
+}
+.field-margin-note:after {
+  left: auto;
+  right: -4px;
+}
+.field-margin-note > span:first-child {
+  font-size: 30px;
+  color: var(--field-red);
+}
+.field-margin-note p {
+  font:
+    26px/1.12 "Instrument Serif",
+    Georgia,
+    serif;
+  margin: 15px 0 20px;
+}
+.field-margin-note .field-micro {
+  font-size: 7px;
+  opacity: 0.6;
+}
+.field-article {
+  scroll-margin-top: 30px;
+  animation: field-reveal 0.45s both;
+}
+.field-article-kicker {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0 22px;
+  border-bottom: 1px solid #201d1840;
+  color: var(--field-red);
+}
+.field-article h2 {
+  font:
+    clamp(46px, 5vw, 74px)/0.98 "Instrument Serif",
+    Georgia,
+    serif;
+  letter-spacing: -0.035em;
+  margin: 29px 0 24px;
+  max-width: 620px;
+}
+.field-introduction {
+  font-size: 16px;
+  line-height: 1.65;
+  max-width: 670px;
+  margin: 0;
+  color: #4b453b;
+}
+.field-facts {
+  margin: 38px 0 43px;
+  display: grid;
+  gap: 26px;
+}
+.field-facts > div {
+  display: flex;
+  gap: 19px;
+}
+.field-fact-number {
+  font:
+    9px "JetBrains Mono",
+    monospace;
+  padding-top: 5px;
+  opacity: 0.55;
+}
+.field-facts h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 7px;
+}
+.field-facts p {
+  font-size: 13px;
+  line-height: 1.65;
+  margin: 0;
+  max-width: 640px;
+  color: #62594e;
+}
+.field-interactive {
+  padding: clamp(18px, 3vw, 36px);
+  background: #e4dbc7;
+  border: 1px solid #201d1880;
+  box-shadow:
+    inset 0 0 0 5px var(--field-cream),
+    inset 0 0 0 6px #201d1840;
+  position: relative;
+}
+.field-interactive:after {
+  content: "✦";
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  color: var(--field-red);
+  font-size: 11px;
+}
+.field-interactive-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  margin-bottom: 27px;
+}
+.field-tag {
+  font:
+    7px "JetBrains Mono",
+    monospace;
+  letter-spacing: 0.03em;
+  border: 1px solid #201d1840;
+  border-radius: 20px;
+  padding: 5px 9px;
+  white-space: nowrap;
+}
+.field-route-tabs {
+  display: flex;
+  margin: 0 0 20px;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.field-route-tabs button,
+.field-scenario-tabs button {
+  border: 1px solid #201d1855;
+  background: transparent;
+  color: var(--field-ink);
+  padding: 9px 12px;
+  font:
+    9px "JetBrains Mono",
+    monospace;
+  transition: background 0.2s;
+}
+.field-route-tabs button.is-selected,
+.field-scenario-tabs button.is-selected {
+  background: var(--field-ink);
+  color: var(--field-cream);
+}
+.field-route-card {
+  border: 1px solid #eee7d775;
+  background: var(--field-red);
+  color: var(--field-cream);
+  padding: 27px;
+  min-height: 340px;
+  position: relative;
+}
+.field-route-card:before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border: 1px solid #eee7d760;
+  pointer-events: none;
+}
+.field-route-heading {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font:
+    32px "Instrument Serif",
+    Georgia,
+    serif;
+  margin-bottom: 18px;
+}
+.field-route-star {
+  margin-left: auto;
+  font-size: 22px;
+}
+.field-route-level {
+  display: inline-block;
+  font:
+    8px "JetBrains Mono",
+    monospace;
+  border: 1px solid #eee7d780;
+  padding: 6px 9px;
+  margin-bottom: 15px;
+}
+.field-route-card dl {
+  margin: 0;
+}
+.field-route-card dl > div {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 10px;
+  padding: 11px 0;
+  border-bottom: 1px solid #eee7d72e;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.field-route-card dt {
+  opacity: 0.65;
+}
+.field-route-card dd {
+  margin: 0;
+}
+.field-route-note {
+  font-size: 10px;
+  line-height: 1.65;
+  opacity: 0.75;
+  margin: 18px 0 0;
+}
+.field-contract-toggle {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid #201d1835;
+  padding: 20px 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px !important;
+  width: 100%;
+  text-align: left;
+}
+.field-contract-toggle > svg:last-child {
+  margin-left: auto;
+  transition: transform 0.2s;
+}
+.field-contract-toggle .is-rotated {
+  transform: rotate(180deg);
+}
+.field-code {
+  padding: 20px;
+  background: var(--field-ink);
+  color: var(--field-cream);
+  font:
+    10px/1.8 "JetBrains Mono",
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.field-tool-title {
+  font:
+    clamp(32px, 3.5vw, 48px)/0.98 "Instrument Serif",
+    Georgia,
+    serif;
+  margin: 0 0 18px;
+  letter-spacing: -0.025em;
+}
+.field-tool-copy {
+  font-size: 12px;
+  line-height: 1.7;
+  max-width: 460px;
+  color: #655b4d;
+}
+.field-scenario-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 25px 0 12px;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.field-prompt-preview {
+  padding: 22px;
+  border: 1px solid #201d1840;
+  background: #eee7d787;
+  margin-bottom: 14px;
+}
+.field-prompt-preview > span {
+  opacity: 0.55;
+  display: block;
+  margin-bottom: 14px;
+}
+.field-prompt-preview code {
+  font:
+    12px/1.7 "JetBrains Mono",
+    monospace;
+  overflow-wrap: anywhere;
+}
+.field-primary-button {
+  width: 100%;
+  background: var(--field-red);
+  color: var(--field-cream);
+  border: 1px solid var(--field-red);
+  padding: 15px 20px;
+  font-size: 11px !important;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: background 0.2s;
+}
+.field-primary-button:hover {
+  background: #b7271a;
+}
+.field-guard-result {
+  min-height: 99px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 10px;
+  padding: 22px 0 0;
+}
+.field-guard-result.is-checked {
+  animation: field-reveal 0.3s;
+}
+.field-result-icon {
+  flex: 0 0 35px;
+  width: 35px;
+  height: 35px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid #201d1860;
+}
+.field-guard-result strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+.field-result-copy {
+  display: block;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #62594e;
+  margin: 6px 0 0;
+}
+.field-guard-result code {
+  display: block;
+  font-size: 10px;
+  margin-top: 10px;
+}
+.field-cost-label {
+  display: block;
+  font-size: 11px;
+  margin: 25px 0 10px;
+}
+.field-billing input {
+  border: 1px solid #201d1855;
+  background: var(--field-cream);
+  padding: 14px;
+  font:
+    20px "JetBrains Mono",
+    monospace;
+  width: 100%;
+  margin-bottom: 16px;
+}
+.field-calculation {
+  margin: 27px 0 0;
+}
+.field-calculation > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 13px 0;
+  font-size: 12px;
+  border-bottom: 1px solid #201d1840;
+}
+.field-calculation dd {
+  margin: 0;
+  font-family: "JetBrains Mono", monospace;
+}
+.field-calculation > div:last-child {
+  font-size: 17px;
+  color: var(--field-red);
+  border-bottom: 0;
+  padding-top: 20px;
+}
+.field-calculation small {
+  font-size: 9px;
+}
+.field-outcomes {
+  display: grid;
+  gap: 7px;
+}
+.field-outcomes button {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-align: left;
+  border: 1px solid #201d1840;
+  padding: 18px;
+  background: transparent;
+  font:
+    11px "JetBrains Mono",
+    monospace;
+}
+.field-outcomes button > span {
+  font-size: 8px;
+  opacity: 0.55;
+}
+.field-outcomes button > svg {
+  margin-left: auto;
+}
+.field-outcomes button.is-selected {
+  background: var(--field-red);
+  border-color: var(--field-red);
+  color: var(--field-cream);
+}
+.field-outcome-detail {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  min-height: 110px;
+}
+.field-outcome-detail > span:first-child {
+  font-size: 36px;
+  color: var(--field-red);
+}
+.field-outcome-copy {
+  font-size: 13px;
+  line-height: 1.65;
+  margin: 22px 0 10px;
+}
+.field-status-list {
+  margin-top: 30px;
+}
+.field-status-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  align-items: center;
+  border-top: 1px solid #201d1840;
+  padding: 18px 0;
+  font-size: 11px;
+}
+.field-status-list > div > span:last-child {
+  font:
+    7px "JetBrains Mono",
+    monospace;
+  color: var(--field-red);
+  text-align: right;
+}
+.field-text-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  margin-top: 26px;
+}
+.field-article-footer {
+  border-top: 1px solid #201d1840;
+  margin-top: 42px;
+  padding-top: 22px;
+}
+.field-article-footer > span {
+  opacity: 0.55;
+}
+.field-article-footer > button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  background: transparent;
+  border: 0;
+  padding: 12px 0;
+  font:
+    30px "Instrument Serif",
+    Georgia,
+    serif;
+  text-align: left;
+}
+.field-closing {
+  background: var(--field-red);
+  color: var(--field-cream);
+  text-align: center;
+  padding: 70px 20px 65px;
+  position: relative;
+  border-block: 1px solid var(--field-ink);
+}
+.field-closing:before {
+  content: "";
+  position: absolute;
+  inset: 12px;
+  border: 1px solid #eee7d752;
+  pointer-events: none;
+}
+.field-closing h2 {
+  font:
+    clamp(54px, 7vw, 100px)/0.95 "Instrument Serif",
+    Georgia,
+    serif;
+  letter-spacing: -0.035em;
+  margin: 32px 0;
+}
+.field-closing > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 35px;
+  background: var(--field-cream);
+  color: var(--field-red);
+  padding: 17px 20px;
+  font-size: 12px;
+}
+.field-closing p {
+  font-size: 9px;
+  opacity: 0.7;
+  margin: 17px 0 0;
+}
+.field-footer {
+  padding: 28px 4.2%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  font:
+    8px "JetBrains Mono",
+    monospace;
+}
+.field-footer a {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+@keyframes field-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (min-width: 1500px) {
+  .field-hero {
+    max-width: 1550px;
+    margin: auto;
+  }
+}
+@media (max-width: 1000px) {
+  .field-content {
+    grid-template-columns: 215px minmax(0, 1fr);
+    gap: 35px;
+    padding-right: 4.2%;
+  }
+  .field-sidebar nav button {
+    font-size: 11px;
+  }
+  .field-route-card {
+    padding: 22px;
+  }
+  .field-route-card dl > div {
+    grid-template-columns: 105px 1fr;
+  }
+  .field-hero-copy p {
+    font-size: 11px;
+    margin-right: 1%;
+  }
+  .field-route-heading {
+    font-size: 27px;
+  }
+}
+@media (max-width: 720px) {
+  .field-nav {
+    height: 73px;
+  }
+  .field-brand {
+    font-size: 32px;
+    gap: 6px;
+  }
+  .field-brand > .field-brand-horse {
+    --horse-mark-size: 35px;
+  }
+  .field-nav > div {
+    gap: 16px;
+  }
+  .field-nav > div a {
+    font-size: 8px;
+  }
+  .field-hero-line {
+    font-size: 7px;
+  }
+  .field-hero-copy {
+    display: block;
+    padding: 35px 0 24px;
+  }
+  .field-hero-copy p {
+    font-size: 11px;
+    margin: 19px 0 0;
+  }
+  .field-hero-copy p br {
+    display: none;
+  }
+  .field-hero-copy p br:after {
+    content: " ";
+  }
+  .field-hero h1 {
+    font-size: 16vw;
+  }
+  .field-banner {
+    padding: 5px;
+  }
+  .field-banner img {
+    min-height: 170px;
+  }
+  .field-banner-bottom {
+    left: 18px;
+    right: 16px;
+    bottom: 14px;
+    font-size: 6px;
+  }
+  .field-banner-bottom a {
+    width: 30px;
+    height: 30px;
+  }
+  .field-content {
+    display: block;
+    padding: 34px 5% 50px;
+  }
+  .field-sidebar {
+    position: static;
+  }
+  .field-sidebar nav {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px 10px;
+    margin-bottom: 34px;
+  }
+  .field-sidebar nav button {
+    padding: 12px 8px;
+    font-size: 10px;
+    gap: 8px;
+  }
+  .field-sidebar nav button > svg {
+    display: none;
+  }
+  .field-sidebar nav button.is-active {
+    padding-left: 8px;
+  }
+  .field-index-label {
+    margin: 20px 0 10px;
+  }
+  .field-margin-note {
+    display: none;
+  }
+  .field-article h2 {
+    font-size: 49px;
+  }
+  .field-introduction {
+    font-size: 14px;
+  }
+  .field-article-kicker {
+    padding-bottom: 17px;
+  }
+  .field-article-kicker .field-micro {
+    font-size: 8px;
+  }
+  .field-facts {
+    gap: 24px;
+    margin: 30px 0;
+  }
+  .field-facts p {
+    font-size: 12px;
+  }
+  .field-interactive {
+    padding: 23px 18px;
+  }
+  .field-interactive-top {
+    gap: 8px;
+  }
+  .field-interactive-top .field-micro {
+    font-size: 8px;
+  }
+  .field-tag {
+    font-size: 6px;
+    padding: 5px 6px;
+  }
+  .field-route-tabs button,
+  .field-scenario-tabs button {
+    font-size: 8px;
+    padding: 9px;
+  }
+  .field-route-card {
+    padding: 20px 17px;
+  }
+  .field-route-heading {
+    font-size: 25px;
+    gap: 8px;
+  }
+  .field-route-card dl > div {
+    grid-template-columns: 90px 1fr;
+    font-size: 9px;
+  }
+  .field-route-note {
+    font-size: 9px;
+  }
+  .field-tool-title {
+    font-size: 38px;
+  }
+  .field-calculation > div:last-child {
+    font-size: 14px;
+  }
+  .field-status-list > div {
+    font-size: 10px;
+  }
+  .field-status-list > div > span:last-child {
+    font-size: 6px;
+    max-width: 82px;
+  }
+  .field-closing {
+    padding: 58px 22px;
+  }
+  .field-footer {
+    flex-wrap: wrap;
+    font-size: 7px;
+    gap: 20px;
+  }
+  .field-footer > span {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .field-guide *,
+  .field-guide *:before,
+  .field-guide *:after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
