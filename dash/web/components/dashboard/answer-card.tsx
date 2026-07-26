@@ -1,0 +1,324 @@
+'use client';
+
+import Image from 'next/image';
+import { useRef } from 'react';
+import { MotionIcon } from './motion-icon';
+import { MODELS } from './data';
+import type { Answer } from './canvas-state';
+import { formatAccountUsd6 } from '../../lib/client/account-records';
+import { CANCEL_DRAIN_TIMEOUT } from '../../lib/client/workspace';
+import '../../app/dashboard/answer-card.css';
+
+const providerAssets: Record<string, string> = {
+  claude: 'claude',
+  gemini: 'gemini',
+  gpt: 'openai',
+  deepseek: 'deepseek',
+  qwen: 'qwen',
+  llama: 'meta',
+  runway: 'runway',
+  veo: 'gemini',
+  sora: 'openai',
+  kling: 'kling',
+};
+/** Provider marks; models without a bundled mark use their monogram, never a third-party logo. */
+export function ProviderIcon({ id, size = 28 }: { id: string; size?: number }) {
+  const monogram = providerAssets[id]
+    ? null
+    : MODELS.find((model) => model.id === id)?.monogram;
+  if (monogram)
+    return (
+      <span
+        aria-hidden="true"
+        className="cw-provider-icon cw-provider-monogram"
+        style={{
+          width: size,
+          height: size,
+          fontSize: Math.max(9, Math.round(size * 0.56)),
+        }}
+      >
+        {monogram}
+      </span>
+    );
+  if (!providerAssets[id])
+    return (
+      <span
+        aria-hidden="true"
+        style={{
+          width: size,
+          height: size,
+          display: 'inline-grid',
+          placeItems: 'center',
+          flexShrink: 0,
+        }}
+      >
+        ◇
+      </span>
+    );
+  return (
+    <Image
+      className="cw-provider-icon"
+      src={`/brand/providers/${providerAssets[id] || 'openai'}.svg`}
+      width={size}
+      height={size}
+      alt=""
+      draggable={false}
+    />
+  );
+}
+
+export type AnswerActions = {
+  selected: string[];
+  /** Omitted when Brief selection is hidden. */
+  onSelect?: (id: string) => void;
+  onCopy: (answer: Answer) => void;
+  onBranch: (answer: Answer) => void;
+  /** Omitted when route inspection is hidden. */
+  onRoute?: (id: string) => void;
+  onCancel?: (answer: Answer) => void;
+  onVote?: (answer: Answer) => void;
+  onReveal?: (answer: Answer) => void;
+  onLoadFull?: (answer: Answer) => void;
+};
+
+export function AnswerCard({
+  answer,
+  actions,
+  variant = 'canvas',
+  peers,
+}: {
+  answer: Answer;
+  actions: AnswerActions;
+  variant?: 'canvas' | 'chat';
+  /** Answers in this turn; a stop applies to every answer still running. */
+  peers?: number;
+}) {
+  const model = MODELS.find((item) => item.id === answer.modelId);
+  const modelName =
+    answer.live?.modelName || answer.live?.label || model?.name || 'Model';
+  const liveState = answer.live?.state;
+  const active = liveState === 'queued' || liveState === 'running';
+  const stopping = active && answer.live?.cancelRequested === true;
+  const drainTimedOut =
+    liveState === 'reconciliation_pending' &&
+    answer.live?.errorCode === CANCEL_DRAIN_TIMEOUT;
+  const amount = answer.live?.billing.actualUsd6;
+  const cost =
+    amount !== null && amount !== undefined
+      ? `$${formatAccountUsd6(amount)}`
+      : null;
+  const selected = actions.selected.includes(answer.id);
+  const isChat = variant === 'chat';
+  const menu = useRef<HTMLDetailsElement>(null);
+  const menuIconSize = isChat ? 18 : 20;
+  const { onSelect, onRoute } = actions;
+  const selectControl = onSelect && (
+    <button
+      data-icon-trigger
+      className={`cw-answer-control cw-answer-select${selected ? ' is-selected' : ''}`}
+      onClick={() => onSelect(answer.id)}
+      aria-pressed={selected}
+      aria-label={`${selected ? 'Deselect' : 'Select'} ${modelName} answer`}
+      title={selected ? 'Remove from selection' : 'Select for a Brief'}
+    >
+      <MotionIcon name="select" size={18} active={selected} />
+      {isChat && <span>{selected ? 'Selected' : 'Select'}</span>}
+    </button>
+  );
+  const copyControl = (
+    <button
+      data-icon-trigger
+      className="cw-answer-control"
+      onClick={() => actions.onCopy(answer)}
+      aria-label={`Copy ${modelName} answer`}
+      title="Copy answer"
+    >
+      <MotionIcon name="copy" size={18} />
+      {isChat && <span>Copy</span>}
+    </button>
+  );
+  function performMenuAction(action: () => void) {
+    if (isChat && menu.current) {
+      menu.current.open = false;
+      menu.current.querySelector('summary')?.focus();
+    }
+    action();
+  }
+  return (
+    <article
+      className={`cw-answer cw-node-drag${selected ? ' is-selected' : ''}${isChat ? ' is-chat-answer' : ''}`}
+      aria-label={`${modelName} ${answer.live ? 'answer' : 'sample answer'}`}
+      aria-busy={active}
+    >
+      {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Overflowing answers must be keyboard-scrollable. */}
+      <div
+        className="cw-answer-body nodrag nowheel"
+        tabIndex={isChat ? undefined : 0}
+      >
+        {answer.heading && <h2>{answer.heading}</h2>}
+        {answer.paragraphs.map((paragraph, index) => (
+          <p key={index}>
+            {answer.heading === 'No live model result.' &&
+            paragraph ===
+              'Use a prepared example to explore the comparison, or keep this question in your room for later.'
+              ? 'Use a prepared example to explore the comparison, or keep this question in your project for later.'
+              : paragraph}
+          </p>
+        ))}
+        {answer.live?.outputTruncated && (
+          <button
+            className="ct-button"
+            type="button"
+            onClick={() => actions.onLoadFull?.(answer)}
+          >
+            Load full answer ({answer.live.outputLength?.toLocaleString()}{' '}
+            characters)
+          </button>
+        )}
+      </div>
+      <footer className="cw-answer-footer">
+        {!isChat && (
+          <span className="cw-answer-attribution">
+            <ProviderIcon id={answer.modelId} size={18} />
+            <span>{modelName}</span>
+          </span>
+        )}
+        <div className="cw-answer-controls nodrag nowheel">
+          {isChat ? (
+            <>
+              {copyControl}
+              {selectControl}
+            </>
+          ) : (
+            <>
+              {selectControl}
+              {copyControl}
+            </>
+          )}
+          {answer.live && (
+            <small
+              title={
+                drainTimedOut
+                  ? 'Stopped. The provider did not confirm usage in time, so the final cost is being reconciled. Reserved funds remain held until then.'
+                  : liveState === 'reconciliation_pending'
+                    ? 'The final cost is being reconciled. Reserved funds remain held.'
+                    : stopping
+                      ? 'Stopping. Usage already dispatched is being measured for an exact charge.'
+                      : undefined
+              }
+            >
+              {answer.live.billing.maximumUsd6 === null
+                ? 'Cost after reveal'
+                : drainTimedOut
+                  ? 'Stopped · Cost pending'
+                  : liveState === 'reconciliation_pending'
+                    ? 'Cost pending'
+                    : liveState === 'succeeded'
+                      ? (cost ?? 'Cost pending')
+                      : stopping
+                        ? 'Stopping…'
+                        : liveState === 'running'
+                          ? 'Generating…'
+                          : liveState === 'queued'
+                            ? 'Queued'
+                            : liveState === 'cancelled'
+                              ? cost
+                                ? `Stopped · ${cost}`
+                                : 'Stopped'
+                              : 'Failed'}
+            </small>
+          )}
+          <details ref={menu} className="cw-answer-menu">
+            <summary
+              data-icon-trigger
+              aria-label={`More actions for ${modelName} answer`}
+              title="More actions"
+            >
+              <MotionIcon name="more" size={18} />
+            </summary>
+            <div className="cw-menu cw-answer-menu-content">
+              {answer.live && active && !stopping && actions.onCancel && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    performMenuAction(() => actions.onCancel?.(answer))
+                  }
+                >
+                  {peers === undefined
+                    ? 'Stop this request'
+                    : peers > 1
+                      ? 'Stop all models'
+                      : 'Stop'}
+                </button>
+              )}
+              {answer.modelId === 'blind' && actions.onVote && (
+                <button
+                  type="button"
+                  disabled={liveState !== 'succeeded'}
+                  onClick={() =>
+                    performMenuAction(() => actions.onVote?.(answer))
+                  }
+                >
+                  Prefer this answer &amp; reveal
+                </button>
+              )}
+              {answer.modelId === 'blind' && actions.onReveal && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    performMenuAction(() => actions.onReveal?.(answer))
+                  }
+                >
+                  Reveal model names
+                </button>
+              )}
+
+              {onSelect && (
+                <button
+                  data-icon-trigger
+                  onClick={() => performMenuAction(() => onSelect(answer.id))}
+                  aria-pressed={selected}
+                >
+                  <MotionIcon
+                    name="select"
+                    size={menuIconSize}
+                    active={selected}
+                  />
+                  {selected ? 'Remove from selection' : 'Select for a Brief'}
+                </button>
+              )}
+              <button
+                data-icon-trigger
+                onClick={() => performMenuAction(() => actions.onCopy(answer))}
+              >
+                <MotionIcon name="copy" size={menuIconSize} />
+                Copy answer
+              </button>
+              <button
+                data-icon-trigger
+                onClick={() =>
+                  performMenuAction(() => actions.onBranch(answer))
+                }
+              >
+                <MotionIcon name="branch" size={menuIconSize} />
+                Follow up
+              </button>
+              {onRoute && (
+                <button
+                  data-icon-trigger
+                  disabled={answer.modelId === 'blind'}
+                  onClick={() =>
+                    performMenuAction(() => onRoute(answer.modelId))
+                  }
+                >
+                  <MotionIcon name="route" size={menuIconSize} />
+                  Inspect route
+                </button>
+              )}
+            </div>
+          </details>
+        </div>
+      </footer>
+    </article>
+  );
+}
