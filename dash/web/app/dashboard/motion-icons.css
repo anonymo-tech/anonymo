@@ -1,0 +1,30 @@
+.mi-icon {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 auto;
+  vertical-align: middle;
+  width: var(--mi-size);
+  height: var(--mi-size);
+  pointer-events: none;
+  filter: drop-shadow(0.3px 0.6px 0.3px #17171326);
+}
+.mi-icon * {
+  pointer-events: none;
+}
+.mi-3d-canvas,
+.mi-fallback {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.mi-3d-canvas {
+  visibility: hidden;
+}
+.mi-icon[data-renderer='webgl'] > .mi-3d-canvas {
+  visibility: visible;
+}
+.mi-icon[data-renderer='webgl'] > .mi-fallback {
+  display: none;
+}
