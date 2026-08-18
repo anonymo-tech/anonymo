@@ -81,3 +81,424 @@ export const keys = pgTable(
   },
   (t) => [uniqueIndex("keys_chain_uq").on(t.chainKeyHash), index("keys_account_idx").on(t.accountId)],
 );
+
+export const byokKeys = pgTable(
+  "byok_keys",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    keyEnc: text("key_enc").notNull(),
+    label: text("label").notNull(),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("byok_account_provider_uq").on(t.accountId, t.providerId)],
+);
+
+export const ledger = pgTable(
+  "ledger",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    keyHash: text("key_hash"),
+    amount: money("amount").notNull(),
+    kind: text("kind").notNull(), // deposit | credit | usage | refund | paywith | change | adjustment | withdrawal_lock | withdrawal
+    ref: text("ref").notNull(),
+    generationId: text("generation_id"),
+    description: text("description").notNull().default(""),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("ledger_ref_uq").on(t.ref), index("ledger_account_idx").on(t.accountId, t.createdAt)],
+);
+
+export const holds = pgTable(
+  "holds",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    keyHash: text("key_hash"),
+    amount: money("amount").notNull(),
+    status: text("status").notNull().default("held"), // held | settled | released
+    kind: text("kind").notNull().default("usage"),
+    result: jsonb("result"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    expiresAt: ts("expires_at").notNull(),
+  },
+  (t) => [index("holds_account_status_idx").on(t.accountId, t.status), index("holds_expiry_idx").on(t.status, t.expiresAt)],
+);
+
+export const providers = pgTable("providers", {
+  id: text("id").primaryKey(), // slug, e.g. "deepinfra"
+  name: text("name").notNull(),
+  baseUrl: text("base_url").notNull(),
+  apiKeyEnc: text("api_key_enc"),
+  kind: text("kind").notNull().default("openai"), // openai | tee
+  headers: jsonb("headers"),
+  dataPolicy: jsonb("data_policy").notNull().default({}), // { training, retains_prompts, retention_days, zdr, moderated }
+  datacenter: text("datacenter").array(),
+  attested: boolean("attested").notNull().default(false),
+  attestationUrl: text("attestation_url"),
+  attestationHash: text("attestation_hash"),
+  attestedAt: ts("attested_at"),
+  teeKind: text("tee_kind"), // tdx | snp | nvidia-cc | tinfoil | dev
+  bondUsdg: bigint("bond_usdg", { mode: "bigint" }).notNull().default(sql`0`),
+  anmoStake: bigint("anmo_stake", { mode: "bigint" }).notNull().default(sql`0`),
+  operator: text("operator"),
+  payoutMode: text("payout_mode").notNull().default("invoice"), // invoice | usdg
+  payoutAddress: text("payout_address"),
+  status: text("status").notNull().default("applied"), // applied | shadow | live | suspended | delisted
+  shadowUntil: ts("shadow_until"),
+  timeoutMs: integer("timeout_ms"),
+  staticModels: jsonb("static_models"), // provider-spec model list for APIs whose /models lacks pricing
+  contact: text("contact"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+export const models = pgTable("models", {
+  id: text("id").primaryKey(), // author/slug
+  author: text("author").notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  ctx: integer("ctx").notNull().default(8192),
+  maxOut: integer("max_out"),
+  arch: jsonb("arch").notNull().default({}), // { modality, input_modalities, output_modalities, tokenizer, instruct_type }
+  hfRepo: text("hf_repo"),
+  creator: text("creator"),
+  royaltyBps: integer("royalty_bps").notNull().default(0),
+  createdUnix: integer("created_unix").notNull(),
+  hidden: boolean("hidden").notNull().default(false),
+});
+
+export const offers = pgTable(
+  "offers",
+  {
+    modelId: text("model_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    providerModelId: text("provider_model_id").notNull(),
+    pricePrompt: money("price_prompt").notNull(), // pico per token
+    priceCompletion: money("price_completion").notNull(),
+    priceRequest: money("price_request").notNull().default(sql`0`),
+    priceImage: money("price_image").notNull().default(sql`0`),
+    priceWebSearch: money("price_web_search").notNull().default(sql`0`),
+    priceReasoning: money("price_reasoning").notNull().default(sql`0`),
+    priceCacheRead: money("price_cache_read"),
+    priceCacheWrite: money("price_cache_write"),
+    quant: text("quant").notNull().default("unknown"),
+    ctx: integer("ctx"),
+    maxOut: integer("max_out"),
+    supportedParameters: text("supported_parameters").array().notNull().default([]),
+    features: jsonb("features").notNull().default({}),
+    isModerated: boolean("is_moderated").notNull().default(false),
+    status: text("status").notNull().default("live"), // live | shadow | disabled
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.modelId, t.providerId] }), index("offers_provider_idx").on(t.providerId)],
+);
+
+export const health = pgTable(
+  "health",
+  {
+    modelId: text("model_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    ts: ts("ts").notNull().defaultNow(),
+    ok: boolean("ok").notNull(),
+    latencyMs: integer("latency_ms"),
+    tps: real("tps"),
+    empty200: boolean("empty200").notNull().default(false),
+    statusCode: integer("status_code"),
+    errorKind: text("error_kind"),
+    source: text("source").notNull().default("traffic"), // traffic | probe
+    caller: text("caller"), // truncated hash of the calling account (never the account itself)
+  },
+  (t) => [index("health_mp_ts_idx").on(t.modelId, t.providerId, t.ts)],
+);
+
+export const canaries = pgTable(
+  "canaries",
+  {
+    modelId: text("model_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    ts: ts("ts").notNull().defaultNow(),
+    quantMatch: boolean("quant_match"),
+    quantGuess: text("quant_guess"),
+    distance: real("distance"),
+    quality: real("quality"),
+    detail: jsonb("detail"),
+  },
+  (t) => [index("canaries_mp_ts_idx").on(t.modelId, t.providerId, t.ts)],
+);
+
+export const canaryReferences = pgTable(
+  "canary_references",
+  {
+    modelId: text("model_id").notNull(),
+    quant: text("quant").notNull(), // bf16 | fp8 | int4 ...
+    fingerprint: jsonb("fingerprint").notNull(),
+    source: text("source").notNull(),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.modelId, t.quant] })],
+);
+
+export const apps = pgTable("apps", {
+  id: text("id").primaryKey(), // sha256(origin)
+  url: text("url"),
+  title: text("title"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+});
+
+export const generations = pgTable(
+  "generations",
+  {
+    id: text("id").primaryKey(),
+    ts: ts("ts").notNull().defaultNow(),
+    keyHash: text("key_hash"),
+    accountId: text("account_id"),
+    modelId: text("model_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    tokensIn: integer("tokens_in").notNull().default(0),
+    tokensOut: integer("tokens_out").notNull().default(0),
+    reasoningTokens: integer("reasoning_tokens").notNull().default(0),
+    cachedTokens: integer("cached_tokens").notNull().default(0),
+    cacheWriteTokens: integer("cache_write_tokens").notNull().default(0),
+    cost: money("cost").notNull().default(sql`0`), // total charged to caller
+    upstreamCost: money("upstream_cost").notNull().default(sql`0`),
+    royalty: money("royalty").notNull().default(sql`0`),
+    margin: money("margin").notNull().default(sql`0`),
+    cacheDiscount: money("cache_discount").notNull().default(sql`0`),
+    mode: text("mode").notNull(), // prepaid | per_call | paywith | byok | cache
+    latencyMs: integer("latency_ms"),
+    generationTimeMs: integer("generation_time_ms"),
+    finishReason: text("finish_reason"),
+    nativeFinishReason: text("native_finish_reason"),
+    streamed: boolean("streamed").notNull().default(false),
+    cancelled: boolean("cancelled").notNull().default(false),
+    quant: text("quant"),
+    dataRegion: text("data_region"),
+    isByok: boolean("is_byok").notNull().default(false),
+    private: boolean("private").notNull().default(false),
+    attestationHash: text("attestation_hash"),
+    receiptId: text("receipt_id"),
+    receiptSig: text("receipt_sig"),
+    receiptKeyId: text("receipt_key_id"),
+    receipt: jsonb("receipt"), // signed payload (hashes only, never content)
+    receiptLeaf: text("receipt_leaf"),
+    anchorIndex: integer("anchor_index"),
+    leafIndex: integer("leaf_index"),
+    paidWith: jsonb("paid_with"),
+    paymentTx: text("payment_tx"),
+    appId: text("app_id"),
+    attempts: jsonb("attempts"),
+    requestSha256: text("request_sha256"),
+    responseSha256: text("response_sha256"),
+    settledPeriod: text("settled_period"),
+  },
+  (t) => [
+    index("gen_ts_idx").on(t.ts),
+    index("gen_key_ts_idx").on(t.keyHash, t.ts),
+    index("gen_provider_ts_idx").on(t.providerId, t.ts),
+    index("gen_anchor_idx").on(t.anchorIndex),
+  ],
+);
+
+export const receiptKeys = pgTable("receipt_keys", {
+  id: text("id").primaryKey(), // 16 hex chars (bytes8)
+  publicKey: text("public_key").notNull(), // raw 32-byte hex
+  privateKeyEnc: text("private_key_enc"),
+  validFrom: ts("valid_from").notNull(),
+  retiredAt: ts("retired_at"),
+  onchainTx: text("onchain_tx"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+});
+
+export const anchors = pgTable("anchors", {
+  index: integer("index").primaryKey(),
+  root: text("root").notNull(),
+  fromTs: ts("from_ts").notNull(),
+  toTs: ts("to_ts").notNull(),
+  count: integer("count").notNull(),
+  txHash: text("tx_hash"),
+  status: text("status").notNull().default("pending"), // pending | submitted | confirmed | local
+  createdAt: ts("created_at").notNull().defaultNow(),
+});
+
+export const spentRoots = pgTable("spent_roots", {
+  epoch: integer("epoch").primaryKey(),
+  root: text("root").notNull(),
+  asOf: ts("as_of").notNull(),
+  totalSpentUsdg: bigint("total_spent_usdg", { mode: "bigint" }).notNull(),
+  leaves: jsonb("leaves").notNull(), // [[chainKeyHash, cumulativeSpentUsdg]] in tree order
+  txHash: text("tx_hash"),
+  status: text("status").notNull().default("pending"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+});
+
+export const chainEvents = pgTable(
+  "chain_events",
+  {
+    txHash: text("tx_hash").notNull(),
+    logIndex: integer("log_index").notNull(),
+    contract: text("contract").notNull(),
+    event: text("event").notNull(),
+    blockNumber: bigint("block_number", { mode: "bigint" }).notNull(),
+    args: jsonb("args").notNull(),
+    processed: boolean("processed").notNull().default(false),
+    processedAt: ts("processed_at"),
+    error: text("error"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.txHash, t.logIndex] }), index("chain_events_unprocessed").on(t.processed, t.event)],
+);
+
+export const chainCursor = pgTable("chain_cursor", {
+  id: text("id").primaryKey(),
+  block: bigint("block", { mode: "bigint" }).notNull(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+export const quotes = pgTable(
+  "quotes",
+  {
+    nonce: text("nonce").primaryKey(), // bytes32 hex
+    priceUsdg: bigint("price_usdg", { mode: "bigint" }).notNull(),
+    pricePico: money("price_pico").notNull(),
+    requestSha256: text("request_sha256").notNull(),
+    modelId: text("model_id").notNull(),
+    expiresAt: ts("expires_at").notNull(),
+    status: text("status").notNull().default("open"), // open | paid | used | expired
+    payer: text("payer"),
+    txHash: text("tx_hash"),
+    accountId: text("account_id"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("quotes_tx_idx").on(t.txHash)], // one tx may pay several quotes (4337 bundles)
+);
+
+export const paywithSessions = pgTable("paywith_sessions", {
+  keyHash: text("key_hash").primaryKey(), // chain key hash
+  wallet: text("wallet").notNull(),
+  token: text("token").notNull(),
+  symbol: text("symbol").notNull(),
+  capRawDay: bigint("cap_raw_day", { mode: "bigint" }).notNull(),
+  spentRawToday: bigint("spent_raw_today", { mode: "bigint" }).notNull().default(sql`0`),
+  dayStart: ts("day_start"),
+  active: boolean("active").notNull().default(true),
+  openedTx: text("opened_tx"),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+export const paywithDebts = pgTable(
+  "paywith_debts",
+  {
+    id: text("id").primaryKey(),
+    chainKeyHash: text("chain_key_hash").notNull(),
+    accountId: text("account_id").notNull(),
+    generationId: text("generation_id").notNull(),
+    token: text("token").notNull(),
+    amount: money("amount").notNull(),
+    rawEstimate: bigint("raw_estimate", { mode: "bigint" }),
+    fairPrice18: text("fair_price18"),
+    swapId: text("swap_id"),
+    rawAllocated: bigint("raw_allocated", { mode: "bigint" }),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("paywith_debts_open_idx").on(t.chainKeyHash, t.swapId)],
+);
+
+export const paywithSwaps = pgTable("paywith_swaps", {
+  id: text("id").primaryKey(),
+  keyHash: text("key_hash").notNull(),
+  token: text("token").notNull(),
+  rawSpent: bigint("raw_spent", { mode: "bigint" }),
+  fairPrice: text("fair_price"),
+  usdgOut: bigint("usdg_out", { mode: "bigint" }).notNull(),
+  tx: text("tx"),
+  status: text("status").notNull().default("pending"), // pending | submitted | confirmed | failed
+  error: text("error"),
+  ts: ts("ts").notNull().defaultNow(),
+  allocations: jsonb("allocations"),
+});
+
+export const settlements = pgTable(
+  "settlements",
+  {
+    providerId: text("provider_id").notNull(),
+    period: text("period").notNull(), // ISO hour, e.g. 2026-09-26T13
+    tokens: bigint("tokens", { mode: "bigint" }).notNull(),
+    requests: integer("requests").notNull().default(0),
+    upstream: money("upstream").notNull(),
+    fee: money("fee").notNull(),
+    usdgOwed: bigint("usdg_owed", { mode: "bigint" }).notNull(),
+    payoutId: text("payout_id"),
+    paidTx: text("paid_tx"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.providerId, t.period] })],
+);
+
+export const payouts = pgTable("payouts", {
+  id: text("id").primaryKey(),
+  providerId: text("provider_id").notNull(),
+  usdg: bigint("usdg", { mode: "bigint" }).notNull(),
+  to: text("to"),
+  status: text("status").notNull().default("pending"), // pending | submitted | paid | invoice
+  tx: text("tx"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+});
+
+export const slashes = pgTable("slashes", {
+  id: text("id").primaryKey(),
+  providerId: text("provider_id").notNull(),
+  modelId: text("model_id"),
+  kind: text("kind").notNull(), // empty200 | quant_fraud | uptime | param_drop
+  amountUsdg: bigint("amount_usdg", { mode: "bigint" }).notNull(),
+  delist: boolean("delist").notNull().default(false),
+  evidenceRoot: text("evidence_root").notNull(),
+  evidence: jsonb("evidence").notNull(),
+  status: text("status").notNull().default("proposed"), // proposed | disputed | cancelled | executed | auto_refunded
+  proposedAt: ts("proposed_at").notNull().defaultNow(),
+  executableAt: ts("executable_at").notNull(),
+  executedAt: ts("executed_at"),
+  disputeHash: text("dispute_hash"),
+  disputedAt: ts("disputed_at"),
+  onchainId: text("onchain_id"),
+  txHash: text("tx_hash"),
+  refunded: money("refunded").notNull().default(sql`0`),
+});
+
+export const royalties = pgTable(
+  "royalties",
+  {
+    modelId: text("model_id").notNull(),
+    period: text("period").notNull(),
+    amount: money("amount").notNull(),
+    usdg: bigint("usdg", { mode: "bigint" }).notNull(),
+    creator: text("creator"),
+    streamTx: text("stream_tx"),
+    claimed: boolean("claimed").notNull().default(false),
+  },
+  (t) => [primaryKey({ columns: [t.modelId, t.period] })],
+);
+
+export const attestations = pgTable(
+  "attestations",
+  {
+    id: serial("id").primaryKey(),
+    providerId: text("provider_id").notNull(),
+    ts: ts("ts").notNull().defaultNow(),
+    ok: boolean("ok").notNull(),
+    teeKind: text("tee_kind"),
+    reportHash: text("report_hash"),
+    nonce: text("nonce"),
+    measurements: jsonb("measurements"),
+    detail: jsonb("detail"),
+  },
+  (t) => [index("attestations_provider_ts").on(t.providerId, t.ts)],
+);
+
+export const kv = pgTable("kv", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
