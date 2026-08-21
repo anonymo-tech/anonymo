@@ -93,3 +93,286 @@ abstract contract StakingBase is Test {
         return staking.executeBuyback(usdgIn, minOut);
     }
 }
+
+contract AnmoStakingTest is StakingBase {
+    bytes32 internal constant PID = keccak256("provider-a");
+    bytes32 internal constant PID2 = keccak256("provider-b");
+
+    // =============================================================================================
+    // Constructor / admin
+    // =============================================================================================
+
+    function test_constructor() public view {
+        assertEq(address(staking.anmo()), address(anmo));
+        assertEq(address(staking.usdg()), address(usdg));
+        assertEq(staking.owner(), owner);
+        assertEq(staking.keeper(), keeper);
+        assertEq(staking.opsWallet(), ops);
+        assertEq(address(staking.adapter()), address(adapter));
+        assertEq(staking.maxDailyBuyback(), 10_000e6);
+        assertEq(staking.COOLDOWN(), 7 days);
+        assertEq(staking.totalStaked(), 0);
+        assertEq(staking.buybackBalance(), 0);
+    }
+
+    function test_constructor_emits() public {
+        vm.expectEmit(true, true, true, true);
+        emit IAnmoStaking.KeeperSet(keeper);
+        vm.expectEmit(true, true, true, true);
+        emit AnmoStaking.OpsWalletSet(ops);
+        vm.expectEmit(true, true, true, true);
+        emit AnmoStaking.AdapterSet(address(adapter));
+        vm.expectEmit(true, true, true, true);
+        emit AnmoStaking.MaxDailyBuybackSet(10_000e6);
+        new AnmoStaking(IERC20(address(anmo)), IERC20(address(usdg)), owner, keeper, ops, adapter);
+    }
+
+    function test_constructor_revertsZeros() public {
+        IERC20 a = IERC20(address(anmo));
+        IERC20 u = IERC20(address(usdg));
+        vm.expectRevert(AnmoStaking.ZeroAddress.selector);
+        new AnmoStaking(IERC20(address(0)), u, owner, keeper, ops, adapter);
+        vm.expectRevert(AnmoStaking.ZeroAddress.selector);
+        new AnmoStaking(a, IERC20(address(0)), owner, keeper, ops, adapter);
+        vm.expectRevert(AnmoStaking.ZeroAddress.selector);
+        new AnmoStaking(a, u, owner, address(0), ops, adapter);
+        vm.expectRevert(AnmoStaking.ZeroAddress.selector);
+        new AnmoStaking(a, u, owner, keeper, address(0), adapter);
+        vm.expectRevert(AnmoStaking.ZeroAddress.selector);
+        new AnmoStaking(a, u, owner, keeper, ops, IBuybackAdapter(address(0)));
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableInvalidOwner.selector, address(0)));
+        new AnmoStaking(a, u, address(0), keeper, ops, adapter);
+    }
+
+    function test_setKeeper() public {
+        address k2 = makeAddr("k2");
+        vm.expectEmit(true, true, true, true, address(staking));
+        emit IAnmoStaking.KeeperSet(k2);
+        vm.prank(owner);
+        staking.setKeeper(k2);
+        assertEq(staking.keeper(), k2);
+        _notify(100e6);
+        vm.prank(keeper);
+        vm.expectRevert(IAnmoStaking.NotKeeper.selector);
+        staking.executeBuyback(1e6, 1);
+    }
+
+    function test_setOpsWallet() public {
+        address o2 = makeAddr("o2");
+        vm.expectEmit(true, true, true, true, address(staking));
+        emit AnmoStaking.OpsWalletSet(o2);
+        vm.prank(owner);
+        staking.setOpsWallet(o2);
+        _notify(10e6);
+        assertEq(usdg.balanceOf(o2), 5e6);
+        assertEq(usdg.balanceOf(ops), 0);
+    }
+
+    function test_setAdapter() public {
+        MockBuybackAdapter a2 = new MockBuybackAdapter(1e12, 1);
+        vm.prank(treasury);
+        assertTrue(anmo.transfer(address(a2), 1_000_000e18));
+        vm.expectEmit(true, true, true, true, address(staking));
+        emit AnmoStaking.AdapterSet(address(a2));
+        vm.prank(owner);
+        staking.setAdapter(a2);
+        _notify(2e6);
+        vm.prank(keeper);
+        uint256 out = staking.executeBuyback(1e6, 1e18);
+        assertEq(out, 1e18);
+        assertEq(usdg.balanceOf(address(a2)), 1e6);
+    }
+
+    function test_setMaxDailyBuyback() public {
+        vm.expectEmit(true, true, true, true, address(staking));
+        emit AnmoStaking.MaxDailyBuybackSet(0);
+        vm.prank(owner);
+        staking.setMaxDailyBuyback(0);
+        _notify(10e6);
+        vm.prank(keeper);
+        vm.expectRevert(IAnmoStaking.BuybackTooLarge.selector);
+        staking.executeBuyback(1, 1);
+        assertEq(staking.buybackRemainingToday(), 0);
+    }
+
+    function test_setters_onlyOwner() public {
+        vm.startPrank(keeper);
+        bytes memory err = abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, keeper);
+        vm.expectRevert(err);
+        staking.setKeeper(keeper);
+        vm.expectRevert(err);
+        staking.setOpsWallet(keeper);
+        vm.expectRevert(err);
+        staking.setAdapter(adapter);
+        vm.expectRevert(err);
+        staking.setMaxDailyBuyback(1);
+        vm.stopPrank();
+    }
+
+    function test_setters_revertZero() public {
+        vm.startPrank(owner);
+        vm.expectRevert(AnmoStaking.ZeroAddress.selector);
+        staking.setKeeper(address(0));
+        vm.expectRevert(AnmoStaking.ZeroAddress.selector);
+        staking.setOpsWallet(address(0));
+        vm.expectRevert(AnmoStaking.ZeroAddress.selector);
+        staking.setAdapter(IBuybackAdapter(address(0)));
+        vm.stopPrank();
+    }
+
+    // =============================================================================================
+    // stake
+    // =============================================================================================
+
+    function test_stake() public {
+        vm.expectEmit(true, true, true, true, address(staking));
+        emit IAnmoStaking.Staked(alice, 100e18, bytes32(0));
+        _stake(alice, 100e18, bytes32(0));
+        assertEq(staking.stakedOf(alice), 100e18);
+        assertEq(staking.totalStaked(), 100e18);
+        assertEq(anmo.balanceOf(address(staking)), 100e18);
+        assertEq(anmo.balanceOf(alice), 10_000_000e18 - 100e18);
+        assertEq(staking.providerOf(alice), bytes32(0));
+    }
+
+    function test_stake_revertsZero() public {
+        vm.prank(alice);
+        vm.expectRevert(IAnmoStaking.InvalidAmount.selector);
+        staking.stake(0, bytes32(0));
+    }
+
+    function test_stake_revertsWithoutAllowance() public {
+        address dave = makeAddr("dave");
+        vm.prank(treasury);
+        assertTrue(anmo.transfer(dave, 1e18));
+        vm.prank(dave);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(staking), 0, 1e18)
+        );
+        staking.stake(1e18, bytes32(0));
+    }
+
+    function test_stake_providerAttribution() public {
+        vm.expectEmit(true, true, true, true, address(staking));
+        emit IAnmoStaking.Staked(alice, 10e18, PID);
+        _stake(alice, 10e18, PID);
+        assertEq(staking.providerOf(alice), PID);
+        assertEq(staking.providerStake(PID), 10e18);
+
+        // zero id keeps the existing attribution
+        vm.expectEmit(true, true, true, true, address(staking));
+        emit IAnmoStaking.Staked(alice, 5e18, PID);
+        _stake(alice, 5e18, bytes32(0));
+        assertEq(staking.providerStake(PID), 15e18);
+
+        // same id ok
+        _stake(alice, 1e18, PID);
+        assertEq(staking.providerStake(PID), 16e18);
+
+        // different id reverts
+        vm.prank(alice);
+        vm.expectRevert(AnmoStaking.ProviderMismatch.selector);
+        staking.stake(1e18, PID2);
+
+        _stake(bob, 4e18, PID);
+        assertEq(staking.providerStake(PID), 20e18);
+        assertEq(staking.providerStake(PID2), 0);
+    }
+
+    function test_stake_existingStakeAttributedOnFirstProvider() public {
+        _stake(alice, 10e18, bytes32(0));
+        assertEq(staking.providerStake(PID), 0);
+        _stake(alice, 1e18, PID);
+        assertEq(staking.providerStake(PID), 11e18);
+    }
+
+    function test_stake_providerStakeTracksUnstakeRequests() public {
+        _stake(alice, 10e18, PID);
+        vm.prank(alice);
+        staking.requestUnstake(4e18);
+        assertEq(staking.providerStake(PID), 6e18);
+        vm.prank(alice);
+        staking.requestUnstake(6e18);
+        assertEq(staking.providerStake(PID), 0);
+        // attribution is permanent even at zero stake
+        vm.prank(alice);
+        vm.expectRevert(AnmoStaking.ProviderMismatch.selector);
+        staking.stake(1e18, PID2);
+    }
+
+    // =============================================================================================
+    // requestUnstake / unstake
+    // =============================================================================================
+
+    function test_requestUnstake() public {
+        _stake(alice, 10e18, bytes32(0));
+        vm.expectEmit(true, true, true, true, address(staking));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        emit IAnmoStaking.UnstakeRequested(alice, 4e18, uint64(T0 + 7 days));
+        vm.prank(alice);
+        staking.requestUnstake(4e18);
+        assertEq(staking.stakedOf(alice), 6e18);
+        assertEq(staking.totalStaked(), 6e18);
+        assertEq(staking.totalCooldown(), 4e18);
+        (uint256 amt, uint64 at) = staking.pendingUnstake(alice);
+        assertEq(amt, 4e18);
+        assertEq(at, T0 + 7 days);
+        assertEq(anmo.balanceOf(address(staking)), 10e18);
+    }
+
+    function test_requestUnstake_reverts() public {
+        vm.prank(alice);
+        vm.expectRevert(IAnmoStaking.InvalidAmount.selector);
+        staking.requestUnstake(1);
+        _stake(alice, 10e18, bytes32(0));
+        vm.startPrank(alice);
+        vm.expectRevert(IAnmoStaking.InvalidAmount.selector);
+        staking.requestUnstake(0);
+        vm.expectRevert(IAnmoStaking.InvalidAmount.selector);
+        staking.requestUnstake(10e18 + 1);
+        vm.stopPrank();
+    }
+
+    function test_requestUnstake_accumulatesAndResetsCooldown() public {
+        _stake(alice, 10e18, bytes32(0));
+        vm.prank(alice);
+        staking.requestUnstake(4e18);
+        vm.warp(T0 + 3 days);
+        vm.prank(alice);
+        staking.requestUnstake(1e18);
+        (uint256 amt, uint64 at) = staking.pendingUnstake(alice);
+        assertEq(amt, 5e18);
+        assertEq(at, T0 + 3 days + 7 days);
+        vm.warp(T0 + 7 days);
+        vm.prank(alice);
+        vm.expectRevert(IAnmoStaking.CooldownActive.selector);
+        staking.unstake();
+    }
+
+    function test_unstake() public {
+        _stake(alice, 10e18, bytes32(0));
+        vm.prank(alice);
+        staking.requestUnstake(10e18);
+
+        vm.warp(T0 + 7 days - 1);
+        vm.prank(alice);
+        vm.expectRevert(IAnmoStaking.CooldownActive.selector);
+        staking.unstake();
+
+        vm.warp(T0 + 7 days);
+        uint256 before = anmo.balanceOf(alice);
+        vm.expectEmit(true, true, true, true, address(staking));
+        emit IAnmoStaking.Unstaked(alice, 10e18);
+        vm.prank(alice);
+        staking.unstake();
+        assertEq(anmo.balanceOf(alice), before + 10e18);
+        assertEq(staking.totalCooldown(), 0);
+        (uint256 amt,) = staking.pendingUnstake(alice);
+        assertEq(amt, 0);
+        assertEq(anmo.balanceOf(address(staking)), 0);
+
+        vm.prank(alice);
+        vm.expectRevert(IAnmoStaking.InvalidAmount.selector);
+        staking.unstake();
+    }
+}
