@@ -394,4 +394,319 @@ contract CreditsTest is CreditsBase {
         credits.postSpentRoot(keccak256("r2"), uint64(block.timestamp - 1), 0);
         vm.stopPrank();
     }
+
+    function test_postSpentRoot_revertsFuture() public {
+        vm.prank(settlement);
+        vm.expectRevert(Credits.RootInFuture.selector);
+        credits.postSpentRoot(keccak256("r"), uint64(block.timestamp + 1), 0);
+    }
+
+    function test_postSpentRoot_revertsSpentDecreased() public {
+        vm.startPrank(settlement);
+        credits.postSpentRoot(keccak256("r"), uint64(block.timestamp - 1), 10);
+        vm.expectRevert(Credits.SpentDecreased.selector);
+        credits.postSpentRoot(keccak256("r2"), uint64(block.timestamp), 9);
+        // equal is fine
+        credits.postSpentRoot(keccak256("r2"), uint64(block.timestamp), 10);
+        vm.stopPrank();
+    }
+
+    function testFuzz_postSpentRoot_sequence(uint64[5] memory gaps, uint96[5] memory adds) public {
+        uint64 t = uint64(block.timestamp);
+        uint256 total;
+        for (uint256 i; i < 5; ++i) {
+            t += uint64(bound(gaps[i], 1, 30 days));
+            total += adds[i];
+            vm.warp(t);
+            vm.prank(settlement);
+            credits.postSpentRoot(bytes32(i + 1), t, total);
+        }
+        assertEq(credits.latestEpoch(), 5);
+        (bytes32 r, uint64 asOf, uint256 tot) = credits.spentRoot(5);
+        assertEq(r, bytes32(uint256(5)));
+        assertEq(asOf, t);
+        assertEq(tot, total);
+    }
+
+    function test_spentRoot_unknownEpochIsZero() public view {
+        (bytes32 r, uint64 asOf, uint256 tot) = credits.spentRoot(42);
+        assertEq(r, bytes32(0));
+        assertEq(asOf, 0);
+        assertEq(tot, 0);
+    }
+
+    // =============================================================================================
+    // requestWithdrawal
+    // =============================================================================================
+
+    function test_request_storesPendingAndIncrementsNonce() public {
+        _deposit(keyHash, 100e6);
+        bytes memory sig = _signRequest(keyPk, 40e6, recipient, block.timestamp + 1);
+        vm.expectEmit(true, true, true, true, address(credits));
+        emit ICredits.WithdrawalRequested(keyHash, recipient, 40e6, uint64(block.timestamp));
+        vm.prank(relayer); // anyone can relay
+        credits.requestWithdrawal(keyAddr, 40e6, recipient, block.timestamp + 1, sig);
+        (uint256 amt, address to, uint64 at) = credits.pendingWithdrawal(keyHash);
+        assertEq(amt, 40e6);
+        assertEq(to, recipient);
+        assertEq(at, block.timestamp);
+        assertEq(credits.nonces(keyHash), 1);
+    }
+
+    function test_request_deadlineEqualNowOk() public {
+        _request(1e6);
+        (uint256 amt,,) = credits.pendingWithdrawal(keyHash);
+        assertEq(amt, 1e6);
+    }
+
+    function test_request_allowedWithoutDeposit() public {
+        _request(1e6); // bounded at finalization, not at request
+        (uint256 amt,,) = credits.pendingWithdrawal(keyHash);
+        assertEq(amt, 1e6);
+    }
+
+    function test_request_revertsZeroAmount() public {
+        bytes memory sig = _signRequest(keyPk, 0, recipient, block.timestamp);
+        vm.expectRevert(ICredits.InvalidAmount.selector);
+        credits.requestWithdrawal(keyAddr, 0, recipient, block.timestamp, sig);
+    }
+
+    function test_request_revertsZeroTo() public {
+        bytes memory sig = _signRequest(keyPk, 1e6, address(0), block.timestamp);
+        vm.expectRevert(Credits.ZeroAddress.selector);
+        credits.requestWithdrawal(keyAddr, 1e6, address(0), block.timestamp, sig);
+    }
+
+    function test_request_revertsExpired() public {
+        uint256 dl = block.timestamp - 1;
+        bytes memory sig = _signRequest(keyPk, 1e6, recipient, dl);
+        vm.expectRevert(ICredits.Expired.selector);
+        credits.requestWithdrawal(keyAddr, 1e6, recipient, dl, sig);
+    }
+
+    function test_request_revertsWrongSigner() public {
+        bytes memory sig = _sign(0xBAD, _digest(keyHash, 1e6, recipient, 0, block.timestamp));
+        vm.expectRevert(ICredits.BadSignature.selector);
+        credits.requestWithdrawal(keyAddr, 1e6, recipient, block.timestamp, sig);
+    }
+
+    function test_request_revertsTamperedAmount() public {
+        bytes memory sig = _signRequest(keyPk, 1e6, recipient, block.timestamp);
+        vm.expectRevert(ICredits.BadSignature.selector);
+        credits.requestWithdrawal(keyAddr, 2e6, recipient, block.timestamp, sig);
+    }
+
+    function test_request_revertsTamperedTo() public {
+        bytes memory sig = _signRequest(keyPk, 1e6, recipient, block.timestamp);
+        vm.expectRevert(ICredits.BadSignature.selector);
+        credits.requestWithdrawal(keyAddr, 1e6, relayer, block.timestamp, sig);
+    }
+
+    function test_request_revertsTamperedDeadline() public {
+        bytes memory sig = _signRequest(keyPk, 1e6, recipient, block.timestamp);
+        vm.expectRevert(ICredits.BadSignature.selector);
+        credits.requestWithdrawal(keyAddr, 1e6, recipient, block.timestamp + 1, sig);
+    }
+
+    function test_request_revertsWrongNonce() public {
+        bytes memory sig = _sign(keyPk, _digest(keyHash, 1e6, recipient, 1, block.timestamp));
+        vm.expectRevert(ICredits.BadSignature.selector);
+        credits.requestWithdrawal(keyAddr, 1e6, recipient, block.timestamp, sig);
+    }
+
+    function test_request_revertsWrongChain() public {
+        bytes32 structHash = keccak256(abi.encode(TYPEHASH, keyHash, 1e6, recipient, 0, block.timestamp));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _domainSeparator(1, address(credits)), structHash));
+        bytes memory sig = _sign(keyPk, digest);
+        vm.expectRevert(ICredits.BadSignature.selector);
+        credits.requestWithdrawal(keyAddr, 1e6, recipient, block.timestamp, sig);
+    }
+
+    function test_request_revertsMalformedSignature() public {
+        vm.expectRevert(ICredits.BadSignature.selector);
+        credits.requestWithdrawal(keyAddr, 1e6, recipient, block.timestamp, hex"1234");
+    }
+
+    function test_request_revertsZeroKeyAddress() public {
+        bytes memory sig = _signRequest(keyPk, 1e6, recipient, block.timestamp);
+        vm.expectRevert(ICredits.BadSignature.selector);
+        credits.requestWithdrawal(address(0), 1e6, recipient, block.timestamp, sig);
+    }
+
+    function test_request_revertsWhenPending() public {
+        _request(1e6);
+        bytes memory sig = _signRequest(keyPk, 2e6, recipient, block.timestamp);
+        vm.expectRevert(ICredits.WithdrawalPending.selector);
+        credits.requestWithdrawal(keyAddr, 2e6, recipient, block.timestamp, sig);
+    }
+
+    function test_request_signatureReplayFailsAfterFinalize() public {
+        _deposit(keyHash, 10e6);
+        bytes memory sig = _signRequest(keyPk, 1e6, recipient, block.timestamp);
+        credits.requestWithdrawal(keyAddr, 1e6, recipient, block.timestamp, sig);
+        _postSingle(keyHash, 0, 0);
+        credits.finalizeWithdrawal(keyHash, 0, _empty());
+        vm.expectRevert(ICredits.BadSignature.selector);
+        credits.requestWithdrawal(keyAddr, 1e6, recipient, block.timestamp, sig);
+    }
+
+    function test_request_erc1271Wallet() public {
+        uint256 ownerPk = 0x5AFE;
+        MockERC1271Wallet wallet = new MockERC1271Wallet(vm.addr(ownerPk));
+        bytes32 kh = keccak256(abi.encodePacked(address(wallet)));
+        bytes memory sig = _sign(ownerPk, _digest(kh, 3e6, recipient, 0, block.timestamp));
+        credits.requestWithdrawal(address(wallet), 3e6, recipient, block.timestamp, sig);
+        (uint256 amt,,) = credits.pendingWithdrawal(kh);
+        assertEq(amt, 3e6);
+        assertEq(credits.nonces(kh), 1);
+    }
+
+    function test_request_erc1271WalletBadSig() public {
+        MockERC1271Wallet wallet = new MockERC1271Wallet(vm.addr(0x5AFE));
+        bytes32 kh = keccak256(abi.encodePacked(address(wallet)));
+        bytes memory sig = _sign(0xBAD, _digest(kh, 3e6, recipient, 0, block.timestamp));
+        vm.expectRevert(ICredits.BadSignature.selector);
+        credits.requestWithdrawal(address(wallet), 3e6, recipient, block.timestamp, sig);
+    }
+
+    function testFuzz_request_anyKey(uint256 pk, uint256 amount, address to) public {
+        pk = bound(pk, 1, 115792089237316195423570985008687907852837564279074904382605163141518161494336);
+        amount = bound(amount, 1, type(uint128).max);
+        vm.assume(to != address(0));
+        address ka = vm.addr(pk);
+        bytes32 kh = keccak256(abi.encodePacked(ka));
+        bytes memory sig = _signRequest(pk, amount, to, block.timestamp);
+        credits.requestWithdrawal(ka, amount, to, block.timestamp, sig);
+        (uint256 amt, address t,) = credits.pendingWithdrawal(kh);
+        assertEq(amt, amount);
+        assertEq(t, to);
+    }
+
+    // =============================================================================================
+    // cancelWithdrawal
+    // =============================================================================================
+
+    function _signCancel(uint256 pk, uint256 deadline) internal view returns (bytes memory) {
+        return _signRequest(pk, 0, address(0), deadline);
+    }
+
+    function test_cancel_clearsPending() public {
+        _request(5e6);
+        bytes memory sig = _signCancel(keyPk, block.timestamp);
+        vm.expectEmit(true, true, true, true, address(credits));
+        emit ICredits.WithdrawalCancelled(keyHash);
+        vm.prank(relayer);
+        credits.cancelWithdrawal(keyAddr, block.timestamp, sig);
+        (uint256 amt, address to, uint64 at) = credits.pendingWithdrawal(keyHash);
+        assertEq(amt, 0);
+        assertEq(to, address(0));
+        assertEq(at, 0);
+        assertEq(credits.nonces(keyHash), 2);
+    }
+
+    function test_cancel_revertsNoPending() public {
+        bytes memory sig = _signCancel(keyPk, block.timestamp);
+        vm.expectRevert(ICredits.NoPendingWithdrawal.selector);
+        credits.cancelWithdrawal(keyAddr, block.timestamp, sig);
+    }
+
+    function test_cancel_revertsExpired() public {
+        _request(5e6);
+        bytes memory sig = _signCancel(keyPk, block.timestamp - 1);
+        vm.expectRevert(ICredits.Expired.selector);
+        credits.cancelWithdrawal(keyAddr, block.timestamp - 1, sig);
+    }
+
+    function test_cancel_revertsWrongSigner() public {
+        _request(5e6);
+        bytes memory sig = _sign(0xBAD, _digest(keyHash, 0, address(0), 1, block.timestamp));
+        vm.expectRevert(ICredits.BadSignature.selector);
+        credits.cancelWithdrawal(keyAddr, block.timestamp, sig);
+    }
+
+    function test_cancel_rejectsRequestSignature() public {
+        // a signature over a non-zero request can't be used to cancel
+        bytes memory reqSig = _signRequest(keyPk, 5e6, recipient, block.timestamp);
+        credits.requestWithdrawal(keyAddr, 5e6, recipient, block.timestamp, reqSig);
+        bytes memory otherReq = _signRequest(keyPk, 5e6, recipient, block.timestamp);
+        vm.expectRevert(ICredits.BadSignature.selector);
+        credits.cancelWithdrawal(keyAddr, block.timestamp, otherReq);
+    }
+
+    function test_cancel_thenRequestAgain_andOldCancelNotReplayable() public {
+        _request(5e6);
+        bytes memory cancelSig = _signCancel(keyPk, block.timestamp);
+        credits.cancelWithdrawal(keyAddr, block.timestamp, cancelSig);
+        _request(6e6);
+        vm.expectRevert(ICredits.BadSignature.selector);
+        credits.cancelWithdrawal(keyAddr, block.timestamp, cancelSig);
+        (uint256 amt,,) = credits.pendingWithdrawal(keyHash);
+        assertEq(amt, 6e6);
+    }
+
+    function test_cancel_erc1271Wallet() public {
+        uint256 ownerPk = 0x5AFE;
+        MockERC1271Wallet wallet = new MockERC1271Wallet(vm.addr(ownerPk));
+        bytes32 kh = keccak256(abi.encodePacked(address(wallet)));
+        credits.requestWithdrawal(
+            address(wallet), 3e6, recipient, block.timestamp, _sign(ownerPk, _digest(kh, 3e6, recipient, 0, block.timestamp))
+        );
+        credits.cancelWithdrawal(
+            address(wallet), block.timestamp, _sign(ownerPk, _digest(kh, 0, address(0), 1, block.timestamp))
+        );
+        (uint256 amt,,) = credits.pendingWithdrawal(kh);
+        assertEq(amt, 0);
+    }
+
+    // =============================================================================================
+    // finalizeWithdrawal
+    // =============================================================================================
+
+    function test_finalize_revertsNoPending() public {
+        vm.expectRevert(ICredits.NoPendingWithdrawal.selector);
+        credits.finalizeWithdrawal(keyHash, 0, _empty());
+    }
+
+    function test_finalize_revertsRootTooOld_noRoot() public {
+        _deposit(keyHash, 100e6);
+        _request(10e6);
+        vm.expectRevert(ICredits.RootTooOld.selector);
+        credits.finalizeWithdrawal(keyHash, 0, _empty());
+    }
+
+    function test_finalize_revertsRootTooOld_olderRoot() public {
+        _deposit(keyHash, 100e6);
+        _postSingle(keyHash, 0, 0);
+        vm.warp(block.timestamp + 1);
+        _request(10e6);
+        vm.expectRevert(ICredits.RootTooOld.selector);
+        credits.finalizeWithdrawal(keyHash, 0, _empty());
+    }
+
+    function test_finalize_rootAtRequestTimestampOk() public {
+        _deposit(keyHash, 100e6);
+        _request(10e6);
+        _postSingle(keyHash, 0, 0);
+        credits.finalizeWithdrawal(keyHash, 0, _empty());
+        assertEq(usdg.balanceOf(recipient), 10e6);
+    }
+
+    function test_finalize_paysRequested() public {
+        _deposit(keyHash, 100e6);
+        _request(50e6);
+        vm.warp(block.timestamp + 1 hours);
+        _postSingle(keyHash, 30e6, 30e6);
+
+        vm.expectEmit(true, true, true, true, address(credits));
+        emit ICredits.Withdrawn(keyHash, recipient, 50e6);
+        vm.prank(relayer); // anyone may finalize; funds go to `to`
+        credits.finalizeWithdrawal(keyHash, 30e6, _empty());
+
+        assertEq(usdg.balanceOf(recipient), 50e6);
+        assertEq(usdg.balanceOf(relayer), 0);
+        assertEq(credits.withdrawn(keyHash), 50e6);
+        assertEq(usdg.balanceOf(address(credits)), 50e6);
+        (uint256 amt,,) = credits.pendingWithdrawal(keyHash);
+        assertEq(amt, 0);
+    }
 }
