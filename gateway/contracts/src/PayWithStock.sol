@@ -115,4 +115,255 @@ contract PayWithStock is IPayWithStock, Ownable2Step, ReentrancyGuardTransient {
             TokenConfig({enabled: enabled, primaryAdapter: primaryAdapter, fallbackAdapter: fallbackAdapter});
         emit TokenRegistered(token, primaryAdapter, fallbackAdapter, enabled);
     }
+
+    /// @notice Set the router allowed to call payCall.
+    function setRouter(address router_) external onlyOwner {
+        if (router_ == address(0)) revert ZeroAddress();
+        router = router_;
+        emit RouterSet(router_);
+    }
+
+    /// @notice Set the fair-value oracle.
+    function setOracle(IStockOracle oracle_) external onlyOwner {
+        if (address(oracle_) == address(0)) revert ZeroAddress();
+        oracle = oracle_;
+        emit OracleSet(address(oracle_));
+    }
+
+    /// @notice Set the slippage cap for payCall (<= HARD_MAX_SLIP_BPS).
+    function setMaxSlip(uint16 maxSlipBps_) external onlyOwner {
+        if (maxSlipBps_ > HARD_MAX_SLIP_BPS) revert SlippageTooHigh();
+        maxSlipCapBps = maxSlipBps_;
+        emit MaxSlipSet(maxSlipBps_);
+    }
+
+    /// @notice Recover tokens held by this contract (it never holds wallet funds between transactions).
+    function rescue(IERC20 token, address to, uint256 amount) external onlyOwner {
+        if (to == address(0)) revert ZeroAddress();
+        token.safeTransfer(to, amount);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Sessions
+    // ---------------------------------------------------------------------------------------------
+
+    /// @inheritdoc IPayWithStock
+    /// @dev msg.sender becomes the session wallet and must separately `approve` this contract for `token`.
+    /// An active session can only be replaced by its own wallet. If the same wallet re-opens with the same token
+    /// on the same UTC day, today's spend is preserved (closing/re-opening cannot reset the daily cap).
+    function openSession(bytes32 keyHash, address token, uint256 capRawPerDay) external {
+        _openSession(keyHash, token, capRawPerDay);
+    }
+
+    /// @notice openSession plus an EIP-2612 permit granting this contract `permitValue` of `token` (Stock Tokens
+    /// support permit). The permit is best-effort (try/catch) so a front-run permit cannot grief the call; the
+    /// resulting allowance is what payCall relies on.
+    function openSessionWithPermit(
+        bytes32 keyHash,
+        address token,
+        uint256 capRawPerDay,
+        uint256 permitValue,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external {
+        try IERC20Permit(token).permit(msg.sender, address(this), permitValue, deadline, v, r, s) {} catch {}
+        _openSession(keyHash, token, capRawPerDay);
+    }
+
+    function _openSession(bytes32 keyHash, address token, uint256 capRawPerDay) internal {
+        if (!tokens[token].enabled) revert TokenNotEnabled();
+        if (capRawPerDay == 0) revert InvalidAmount();
+        Session storage s = sessions[keyHash];
+        if (s.active && s.wallet != msg.sender) revert NotSessionWallet();
+
+        uint64 today = _today();
+        bool keepSpend = s.wallet == msg.sender && s.token == token && s.dayStart == today;
+        s.wallet = msg.sender;
+        s.token = token;
+        s.capRawPerDay = capRawPerDay;
+        if (!keepSpend) {
+            s.spentRawToday = 0;
+            s.dayStart = today;
+        }
+        s.active = true;
+        emit SessionOpened(keyHash, msg.sender, token, capRawPerDay);
+    }
+
+    /// @inheritdoc IPayWithStock
+    function closeSession(bytes32 keyHash) external {
+        Session storage s = sessions[keyHash];
+        if (!s.active) revert NoSession();
+        if (s.wallet != msg.sender) revert NotSessionWallet();
+        s.active = false;
+        emit SessionClosed(keyHash, msg.sender);
+    }
+
+    /// @notice Router can deactivate a session (e.g. one squatting a keyHash with a wallet the key's owner did not
+    /// link off-chain). Moves no funds; the wallet can re-open it.
+    function forceCloseSession(bytes32 keyHash) external onlyRouter {
+        Session storage s = sessions[keyHash];
+        if (!s.active) revert NoSession();
+        s.active = false;
+        emit SessionClosed(keyHash, s.wallet);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Payment
+    // ---------------------------------------------------------------------------------------------
+
+    /// @inheritdoc IPayWithStock
+    function payCall(bytes32 keyHash, uint256 usdgOwed, uint16 maxSlipBps)
+        external
+        onlyRouter
+        nonReentrant
+        returns (uint256 rawSpent)
+    {
+        if (usdgOwed == 0) revert InvalidAmount();
+        if (maxSlipBps > maxSlipCapBps) revert SlippageTooHigh();
+        Session storage s = sessions[keyHash];
+        if (!s.active) revert NoSession();
+        address token = s.token;
+        if (!tokens[token].enabled) revert TokenNotEnabled();
+
+        (uint256 maxIn, uint256 price18) = _maxIn(token, usdgOwed, maxSlipBps);
+        // reserve the worst case against the daily cap (CEI); trimmed to the actual spend below
+        uint256 spentBefore = _reserveCap(s, maxIn);
+
+        IERC20(token).safeTransferFrom(s.wallet, address(this), maxIn);
+        rawSpent = _swapWithFallback(keyHash, token, usdgOwed, maxIn);
+
+        s.spentRawToday = spentBefore + rawSpent;
+        if (maxIn > rawSpent) IERC20(token).safeTransfer(s.wallet, maxIn - rawSpent);
+
+        usdg.forceApprove(address(credits), usdgOwed);
+        credits.credit(keyHash, usdgOwed);
+
+        emit PaidWithStock(keyHash, token, rawSpent, price18, usdgOwed);
+    }
+
+    /// @notice One swap attempt. External only so it can be wrapped in try/catch; callable only by this contract.
+    /// @dev Sends `maxIn` to `adapter`, which must deliver >= `usdgOwed` USDG here and refund unused tokens here.
+    /// Reverting (adapter failure, under-delivery, over-refund) rolls back the transfer to the adapter.
+    /// @return rawSpent Tokens actually consumed (balance delta, <= maxIn).
+    function attemptSwap(address adapter, address token, uint256 usdgOwed, uint256 maxIn)
+        external
+        returns (uint256 rawSpent)
+    {
+        if (msg.sender != address(this)) revert NotSelf();
+        IERC20 t = IERC20(token);
+        uint256 tokBefore = t.balanceOf(address(this));
+        uint256 usdgBefore = usdg.balanceOf(address(this));
+
+        t.safeTransfer(adapter, maxIn);
+        ISwapAdapter(adapter)
+            .swapExactOut(token, address(usdg), usdgOwed, maxIn, address(this), address(this));
+
+        uint256 tokAfter = t.balanceOf(address(this));
+        if (tokAfter > tokBefore) revert SwapFailed(); // adapter returned more than it was given
+        rawSpent = tokBefore - tokAfter;
+        if (rawSpent > maxIn) revert SwapFailed();
+        if (usdg.balanceOf(address(this)) < usdgBefore + usdgOwed) revert InsufficientUsdgOut();
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Views
+    // ---------------------------------------------------------------------------------------------
+
+    /// @inheritdoc IPayWithStock
+    /// @dev rawNeeded = ceil(usdgOwed * 10^dec * 1e18 / (fairPrice18 * 1e6)).
+    function quoteRaw(address token, uint256 usdgOwed)
+        external
+        view
+        returns (uint256 rawNeeded, uint256 fairPrice18)
+    {
+        bool ok;
+        (fairPrice18, ok) = oracle.fairPrice(token);
+        if (!ok || fairPrice18 == 0) revert OracleNotOk();
+        uint8 dec = IERC20Metadata(token).decimals();
+        if (dec > MAX_TOKEN_DECIMALS) revert InvalidToken();
+        rawNeeded = _rawFor(usdgOwed, dec, fairPrice18);
+    }
+
+    /// @notice Worst-case raw amount payCall would pull (and check against the cap) for `usdgOwed` at `slipBps`.
+    function quoteMaxIn(address token, uint256 usdgOwed, uint16 slipBps)
+        external
+        view
+        returns (uint256 maxIn, uint256 rawNeeded, uint256 fairPrice18)
+    {
+        bool ok;
+        (fairPrice18, ok) = oracle.fairPrice(token);
+        if (!ok || fairPrice18 == 0) revert OracleNotOk();
+        uint8 dec = IERC20Metadata(token).decimals();
+        if (dec > MAX_TOKEN_DECIMALS) revert InvalidToken();
+        rawNeeded = _rawFor(usdgOwed, dec, fairPrice18);
+        maxIn = Math.mulDiv(rawNeeded, BPS + slipBps, BPS, Math.Rounding.Ceil);
+    }
+
+    /// @notice Raw token units the session can still spend today (accounts for the UTC day rollover).
+    function remainingToday(bytes32 keyHash) external view returns (uint256) {
+        Session storage s = sessions[keyHash];
+        if (!s.active) return 0;
+        uint256 spent = s.dayStart < _today() ? 0 : s.spentRawToday;
+        return spent >= s.capRawPerDay ? 0 : s.capRawPerDay - spent;
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Internals
+    // ---------------------------------------------------------------------------------------------
+
+    function _swapWithFallback(bytes32 keyHash, address token, uint256 usdgOwed, uint256 maxIn)
+        internal
+        returns (uint256)
+    {
+        TokenConfig memory cfg = tokens[token];
+        try this.attemptSwap(cfg.primaryAdapter, token, usdgOwed, maxIn) returns (uint256 spent) {
+            return spent;
+        } catch (bytes memory reason) {
+            emit SwapAttemptFailed(keyHash, cfg.primaryAdapter, reason);
+        }
+        if (cfg.fallbackAdapter != address(0)) {
+            try this.attemptSwap(cfg.fallbackAdapter, token, usdgOwed, maxIn) returns (uint256 spent) {
+                return spent;
+            } catch (bytes memory reason) {
+                emit SwapAttemptFailed(keyHash, cfg.fallbackAdapter, reason);
+            }
+        }
+        revert SwapFailed();
+    }
+
+    /// @dev Fair-value quote plus slippage: maxIn = ceil(rawNeeded * (10000 + slipBps) / 10000).
+    function _maxIn(address token, uint256 usdgOwed, uint16 slipBps)
+        internal
+        view
+        returns (uint256 maxIn, uint256 price18)
+    {
+        bool ok;
+        (price18, ok) = oracle.fairPrice(token);
+        if (!ok || price18 == 0) revert OracleNotOk();
+        uint256 rawNeeded = _rawFor(usdgOwed, IERC20Metadata(token).decimals(), price18);
+        maxIn = Math.mulDiv(rawNeeded, BPS + slipBps, BPS, Math.Rounding.Ceil);
+    }
+
+    /// @dev Roll the UTC day window, check `spent + maxIn <= cap`, reserve maxIn. Returns spend before this call.
+    function _reserveCap(Session storage s, uint256 maxIn) internal returns (uint256 spentBefore) {
+        uint64 today = _today();
+        if (s.dayStart < today) {
+            s.dayStart = today;
+            s.spentRawToday = 0;
+        }
+        spentBefore = s.spentRawToday;
+        if (spentBefore + maxIn > s.capRawPerDay) revert CapExceeded();
+        s.spentRawToday = spentBefore + maxIn;
+    }
+
+    /// @dev ceil(usdgOwed * 10^dec * 1e18 / (price18 * 10^6)) == ceil(usdgOwed * 10^(dec + 12) / price18).
+    function _rawFor(uint256 usdgOwed, uint8 dec, uint256 price18) internal pure returns (uint256) {
+        return Math.mulDiv(usdgOwed, 10 ** (uint256(dec) + 18 - USDG_DECIMALS), price18, Math.Rounding.Ceil);
+    }
+
+    function _today() internal view returns (uint64) {
+        return uint64(block.timestamp - (block.timestamp % 1 days));
+    }
 }
