@@ -562,4 +562,183 @@ contract PayWithStockTest is Test {
         assertEq(s.dayStart, nextDay);
         assertEq(s.spentRawToday, spent);
     }
+
+    /// @dev Model-based: random payments at random times never let a day's recorded spend exceed the cap,
+    /// and recorded spend always equals the sum of actual spends in the current UTC day.
+    function testFuzz_capAndRollover(uint256 seed) public {
+        uint256 modelDay = _today();
+        uint256 modelSpent = 0;
+        for (uint256 i; i < 12; ++i) {
+            seed = uint256(keccak256(abi.encode(seed, i)));
+            uint256 dt = seed % 20 hours;
+            uint256 owed = 1e6 + (seed >> 64) % 800e6; // $1 .. $801
+            uint16 slip = uint16((seed >> 128) % 301);
+            vm.warp(block.timestamp + dt);
+            feed.setAnswer(180e8);
+
+            uint256 today = _today();
+            if (today > modelDay) {
+                modelDay = today;
+                modelSpent = 0;
+            }
+            (uint256 maxIn,) = _maxIn(owed, slip);
+            vm.prank(router);
+            if (modelSpent + maxIn > CAP) {
+                vm.expectRevert(IPayWithStock.CapExceeded.selector);
+                pws.payCall(KEY, owed, slip);
+            } else {
+                modelSpent += pws.payCall(KEY, owed, slip);
+            }
+            IPayWithStock.Session memory s = _session(KEY);
+            if (s.dayStart == modelDay) assertEq(s.spentRawToday, modelSpent);
+            assertLe(modelSpent, CAP);
+        }
+        _assertNoLeftovers();
+    }
+
+    // ------------------------------------------------------------------ fallback
+
+    function test_fallbackAfterPrimaryReverts() public {
+        primary.setMode(MockSwapAdapter.Mode.Revert);
+        uint256 walletBefore = nvda.balanceOf(wallet);
+        vm.expectEmit(true, true, false, true);
+        emit PayWithStock.SwapAttemptFailed(
+            KEY, address(primary), abi.encodeWithSelector(MockSwapAdapter.MockSwapFailed.selector)
+        );
+        uint256 spent = _pay(3e6, 100);
+
+        assertEq(fallbackAdapter.calls(), 1);
+        assertEq(walletBefore - nvda.balanceOf(wallet), spent);
+        assertEq(nvda.balanceOf(address(primary)), 0, "failed attempt rolled back");
+        assertEq(nvda.balanceOf(address(fallbackAdapter)), 0);
+        assertEq(credits.credited(KEY), 3e6);
+        _assertNoLeftovers();
+    }
+
+    function test_fallbackAfterPrimaryUnderDelivers() public {
+        primary.setMode(MockSwapAdapter.Mode.ShortPay);
+        vm.expectEmit(true, true, false, true);
+        emit PayWithStock.SwapAttemptFailed(
+            KEY, address(primary), abi.encodeWithSelector(PayWithStock.InsufficientUsdgOut.selector)
+        );
+        _pay(3e6, 100);
+        assertEq(fallbackAdapter.calls(), 1);
+        assertEq(usdg.balanceOf(address(primary)), 0, "short-paid USDG rolled back");
+        _assertNoLeftovers();
+    }
+
+    function test_fallbackAfterPrimaryExceedsSlippage() public {
+        primary.setPrice(PRICE18 * 90 / 100); // pool 10% below fair: needs more than maxIn at 1%
+        uint256 spent = _pay(3e6, 100);
+        assertEq(fallbackAdapter.calls(), 1);
+        (, uint256 raw) = _maxIn(3e6, 100);
+        assertEq(spent, raw);
+        _assertNoLeftovers();
+    }
+
+    function test_bothAdaptersFail() public {
+        primary.setMode(MockSwapAdapter.Mode.Revert);
+        fallbackAdapter.setMode(MockSwapAdapter.Mode.Revert);
+        uint256 walletBefore = nvda.balanceOf(wallet);
+        vm.prank(router);
+        vm.expectRevert(IPayWithStock.SwapFailed.selector);
+        pws.payCall(KEY, 3e6, 100);
+        assertEq(nvda.balanceOf(wallet), walletBefore);
+        assertEq(_session(KEY).spentRawToday, 0);
+    }
+
+    function test_noFallbackConfigured() public {
+        vm.prank(owner);
+        pws.registerToken(address(nvda), address(primary), address(0), true);
+        primary.setMode(MockSwapAdapter.Mode.Revert);
+        vm.prank(router);
+        vm.expectRevert(IPayWithStock.SwapFailed.selector);
+        pws.payCall(KEY, 3e6, 100);
+        assertEq(fallbackAdapter.calls(), 0);
+    }
+
+    function test_adapterKeepingRefundIsChargedByBalanceDelta() public {
+        primary.setMode(MockSwapAdapter.Mode.NoRefund);
+        (uint256 maxIn,) = _maxIn(3e6, 200);
+        uint256 walletBefore = nvda.balanceOf(wallet);
+        uint256 spent = _pay(3e6, 200);
+        assertEq(spent, maxIn, "whole maxIn consumed");
+        assertEq(walletBefore - nvda.balanceOf(wallet), maxIn);
+        assertEq(_session(KEY).spentRawToday, maxIn);
+        _assertNoLeftovers();
+    }
+
+    function test_adapterReturnValueIsNotTrusted() public {
+        primary.setMode(MockSwapAdapter.Mode.LieAboutAmount);
+        (, uint256 raw) = _maxIn(3e6, 200);
+        uint256 spent = _pay(3e6, 200);
+        assertEq(spent, raw);
+        assertEq(_session(KEY).spentRawToday, raw);
+    }
+
+    function test_attemptSwapIsSelfOnly() public {
+        vm.expectRevert(PayWithStock.NotSelf.selector);
+        pws.attemptSwap(address(primary), address(nvda), 1e6, 1e18);
+    }
+
+    function test_adapterCannotCallAttemptSwap() public {
+        SneakyAdapter sneaky = new SneakyAdapter();
+        vm.prank(owner);
+        pws.registerToken(address(nvda), address(sneaky), address(fallbackAdapter), true);
+        vm.expectEmit(true, true, false, true);
+        emit PayWithStock.SwapAttemptFailed(
+            KEY, address(sneaky), abi.encodeWithSelector(PayWithStock.NotSelf.selector)
+        );
+        _pay(1e6, 100);
+        assertEq(fallbackAdapter.calls(), 1);
+        _assertNoLeftovers();
+    }
+
+    function test_reentrancyIntoPayCallBlocked() public {
+        ReentrantAdapter evil = new ReentrantAdapter();
+        evil.arm(pws, KEY);
+        vm.startPrank(owner);
+        pws.registerToken(address(nvda), address(evil), address(fallbackAdapter), true);
+        pws.setRouter(address(evil));
+        vm.stopPrank();
+
+        vm.expectEmit(true, true, false, true);
+        emit PayWithStock.SwapAttemptFailed(
+            KEY,
+            address(evil),
+            abi.encodeWithSelector(ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector)
+        );
+        evil.start(1e6);
+        assertEq(fallbackAdapter.calls(), 1);
+        assertEq(credits.credited(KEY), 1e6);
+        _assertNoLeftovers();
+    }
+
+    // ------------------------------------------------------------------ refund correctness (fuzz)
+
+    function testFuzz_refundCorrectness(uint256 owed, uint16 slip, uint256 priceBps, bool usePrimaryFail)
+        public
+    {
+        owed = bound(owed, 1, 1_500e6);
+        slip = uint16(bound(slip, 0, 300));
+        // adapter price between (fair / (1 + slip)) and 1.5 x fair => always fillable within maxIn
+        priceBps = bound(priceBps, 10_000, 15_000);
+        uint256 adapterPrice = Math.mulDiv(PRICE18, priceBps, 10_000 + slip, Math.Rounding.Ceil);
+        MockSwapAdapter used = usePrimaryFail ? fallbackAdapter : primary;
+        used.setPrice(adapterPrice);
+        if (usePrimaryFail) primary.setMode(MockSwapAdapter.Mode.Revert);
+
+        (uint256 maxIn,) = _maxIn(owed, slip);
+        uint256 expected = used.quoteIn(address(nvda), address(usdg), owed);
+        vm.assume(expected <= maxIn); // rounding at the edge
+        uint256 walletBefore = nvda.balanceOf(wallet);
+
+        uint256 spent = _pay(owed, slip);
+        assertEq(spent, expected);
+        assertEq(walletBefore - nvda.balanceOf(wallet), spent, "wallet refunded maxIn - spent");
+        assertEq(nvda.balanceOf(address(0xdEaD)), spent, "adapter received exactly spent");
+        assertEq(_session(KEY).spentRawToday, spent);
+        assertEq(credits.credited(KEY), owed);
+        _assertNoLeftovers();
+    }
 }
