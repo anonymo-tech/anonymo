@@ -280,4 +280,199 @@ contract PayWithStockTest is Test {
         pws.openSession(KEY, address(nvda), 0);
         vm.stopPrank();
     }
+
+    function test_openSessionCannotHijackActive() public {
+        vm.prank(other);
+        vm.expectRevert(IPayWithStock.NotSessionWallet.selector);
+        pws.openSession(KEY, address(nvda), 1);
+    }
+
+    function test_openSessionTakeoverAfterClose() public {
+        vm.prank(wallet);
+        pws.closeSession(KEY);
+        vm.prank(other);
+        pws.openSession(KEY, address(nvda), 5);
+        IPayWithStock.Session memory s = _session(KEY);
+        assertEq(s.wallet, other);
+        assertEq(s.capRawPerDay, 5);
+        assertEq(s.spentRawToday, 0);
+    }
+
+    function test_reopenSameDayKeepsSpend() public {
+        uint256 spent = _pay(10e6, 100);
+        vm.startPrank(wallet);
+        pws.closeSession(KEY);
+        pws.openSession(KEY, address(nvda), CAP * 2); // raise own cap
+        vm.stopPrank();
+        assertEq(_session(KEY).spentRawToday, spent);
+        assertEq(_session(KEY).capRawPerDay, CAP * 2);
+    }
+
+    function test_reopenOtherTokenResetsSpend() public {
+        _pay(10e6, 100);
+        MockStockToken tsla = new MockStockToken("TSLA", "TSLAx", 8);
+        vm.prank(owner);
+        pws.registerToken(address(tsla), address(primary), address(0), true);
+        vm.prank(wallet);
+        pws.openSession(KEY, address(tsla), 1e8);
+        assertEq(_session(KEY).spentRawToday, 0);
+        assertEq(_session(KEY).token, address(tsla));
+    }
+
+    function test_closeSession() public {
+        vm.prank(other);
+        vm.expectRevert(IPayWithStock.NotSessionWallet.selector);
+        pws.closeSession(KEY);
+
+        vm.expectEmit(true, true, false, false);
+        emit IPayWithStock.SessionClosed(KEY, wallet);
+        vm.prank(wallet);
+        pws.closeSession(KEY);
+        assertFalse(_session(KEY).active);
+        assertEq(pws.remainingToday(KEY), 0);
+
+        vm.prank(wallet);
+        vm.expectRevert(IPayWithStock.NoSession.selector);
+        pws.closeSession(KEY);
+
+        vm.prank(router);
+        vm.expectRevert(IPayWithStock.NoSession.selector);
+        pws.payCall(KEY, 1e6, 100);
+    }
+
+    function test_forceCloseSession() public {
+        vm.prank(other);
+        vm.expectRevert(IPayWithStock.NotRouter.selector);
+        pws.forceCloseSession(KEY);
+
+        vm.expectEmit(true, true, false, false);
+        emit IPayWithStock.SessionClosed(KEY, wallet);
+        vm.prank(router);
+        pws.forceCloseSession(KEY);
+        assertFalse(_session(KEY).active);
+    }
+
+    // ------------------------------------------------------------------ quoteRaw
+
+    function test_quoteRawExample() public view {
+        (uint256 raw, uint256 price) = pws.quoteRaw(address(nvda), 1e6); // $1 of NVDA at $180
+        assertEq(price, PRICE18);
+        assertEq(raw, 5_555_555_555_555_556); // ceil(1e18 / 180)
+    }
+
+    function test_quoteRawRevertsWhenOracleNotOk() public {
+        vm.warp(block.timestamp + 2 hours);
+        vm.expectRevert(IPayWithStock.OracleNotOk.selector);
+        pws.quoteRaw(address(nvda), 1e6);
+    }
+
+    function testFuzz_quoteRawMath(uint256 decSeed, uint256 answer, uint256 mult, uint256 usdgOwed) public {
+        uint8[3] memory decs = [uint8(6), uint8(8), uint8(18)];
+        uint8 dec = decs[decSeed % 3];
+        answer = bound(answer, 1e2, 1e14); // $0.000001 .. $1,000,000 (8-dec feed)
+        mult = bound(mult, 0.01e18, 100e18);
+        usdgOwed = bound(usdgOwed, 1, 1e12); // up to $1M
+
+        MockStockToken t = new MockStockToken("T", "T", dec);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        MockAggregator f = new MockAggregator(8, int256(answer), "T/USD"); // answer bounded to 1e14
+        t.setUiMultiplier(mult);
+        vm.prank(owner);
+        oracle.setFeed(address(t), f, 1 hours, true);
+
+        (uint256 raw, uint256 price) = pws.quoteRaw(address(t), usdgOwed);
+        (uint256 oraclePrice,) = oracle.fairPrice(address(t));
+        assertEq(price, oraclePrice);
+        assertEq(price, answer * 1e10 * mult / 1e18);
+
+        // raw is the ceiling of usdgOwed * 10^dec * 1e18 / (price * 1e6)
+        uint256 need = usdgOwed * 10 ** dec * 1e18;
+        assertGe(raw * price * 1e6, need, "raw too small");
+        assertLt((raw - 1) * price * 1e6, need, "raw not minimal");
+    }
+
+    // ------------------------------------------------------------------ payCall: happy path
+
+    function test_payCallHappyPath() public {
+        uint256 owed = 5e6;
+        uint16 slip = 100;
+        (uint256 maxIn, uint256 raw) = _maxIn(owed, slip);
+        uint256 walletBefore = nvda.balanceOf(wallet);
+
+        vm.expectEmit(true, true, false, true);
+        emit IPayWithStock.PaidWithStock(KEY, address(nvda), raw, PRICE18, owed);
+        uint256 spent = _pay(owed, slip);
+
+        assertEq(spent, raw, "adapter at fair price spends exactly rawNeeded");
+        assertLt(spent, maxIn);
+        assertEq(walletBefore - nvda.balanceOf(wallet), spent, "wallet charged rawSpent only");
+        assertEq(credits.credited(KEY), owed);
+        assertEq(usdg.balanceOf(address(credits)), owed);
+        assertEq(_session(KEY).spentRawToday, spent, "actual spend recorded");
+        assertEq(nvda.balanceOf(address(primary)), 0, "adapter keeps nothing");
+        assertEq(fallbackAdapter.calls(), 0);
+        _assertNoLeftovers();
+    }
+
+    function test_payCallOnlyRouter() public {
+        vm.prank(other);
+        vm.expectRevert(IPayWithStock.NotRouter.selector);
+        pws.payCall(KEY, 1e6, 100);
+    }
+
+    function test_payCallZeroAmount() public {
+        vm.prank(router);
+        vm.expectRevert(IPayWithStock.InvalidAmount.selector);
+        pws.payCall(KEY, 0, 100);
+    }
+
+    function test_payCallNoSession() public {
+        vm.prank(router);
+        vm.expectRevert(IPayWithStock.NoSession.selector);
+        pws.payCall(keccak256("nope"), 1e6, 100);
+    }
+
+    function test_payCallTokenDisabled() public {
+        vm.prank(owner);
+        pws.registerToken(address(nvda), address(primary), address(0), false);
+        vm.prank(router);
+        vm.expectRevert(IPayWithStock.TokenNotEnabled.selector);
+        pws.payCall(KEY, 1e6, 100);
+    }
+
+    function test_payCallOracleNotOk() public {
+        vm.prank(owner);
+        oracle.pause(address(nvda));
+        vm.prank(router);
+        vm.expectRevert(IPayWithStock.OracleNotOk.selector);
+        pws.payCall(KEY, 1e6, 100);
+    }
+
+    function test_payCallOracleStale() public {
+        vm.warp(block.timestamp + 1 hours + 1);
+        vm.prank(router);
+        vm.expectRevert(IPayWithStock.OracleNotOk.selector);
+        pws.payCall(KEY, 1e6, 100);
+    }
+
+    function test_payCallWithoutAllowanceReverts() public {
+        vm.prank(wallet);
+        nvda.approve(address(pws), 0);
+        (uint256 maxIn,) = _maxIn(1e6, 100);
+        vm.prank(router);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(pws), 0, maxIn)
+        );
+        pws.payCall(KEY, 1e6, 100);
+    }
+
+    function test_payCallCreditsRevertIsAtomic() public {
+        credits.setShouldRevert(true);
+        uint256 walletBefore = nvda.balanceOf(wallet);
+        vm.prank(router);
+        vm.expectRevert(MockCredits.MockCreditsReverted.selector);
+        pws.payCall(KEY, 1e6, 100);
+        assertEq(nvda.balanceOf(wallet), walletBefore);
+        assertEq(_session(KEY).spentRawToday, 0);
+    }
 }
