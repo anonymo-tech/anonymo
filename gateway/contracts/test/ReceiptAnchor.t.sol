@@ -86,4 +86,275 @@ contract ReceiptAnchorTest is Test {
         vm.stopPrank();
         assertEq(ra.anchorCount(), 2);
     }
+
+    function test_anchor_pointWindowOk() public {
+        vm.prank(anchorer);
+        ra.anchor(keccak256("r0"), T0, T0, 0);
+        vm.prank(anchorer);
+        ra.anchor(keccak256("r1"), T0, T0, 0); // starts exactly where the previous ended
+        assertEq(ra.anchorCount(), 2);
+    }
+
+    function test_anchor_revertsNotAnchorer() public {
+        vm.prank(owner);
+        vm.expectRevert(IReceiptAnchor.NotAnchorer.selector);
+        ra.anchor(keccak256("r"), T0 - 1, T0, 1);
+        vm.prank(rando);
+        vm.expectRevert(IReceiptAnchor.NotAnchorer.selector);
+        ra.anchor(keccak256("r"), T0 - 1, T0, 1);
+    }
+
+    function test_anchor_revertsEmptyRoot() public {
+        vm.prank(anchorer);
+        vm.expectRevert(IReceiptAnchor.EmptyRoot.selector);
+        ra.anchor(bytes32(0), T0 - 1, T0, 1);
+    }
+
+    function test_anchor_revertsFromAfterTo() public {
+        vm.prank(anchorer);
+        vm.expectRevert(ReceiptAnchor.InvalidWindow.selector);
+        ra.anchor(keccak256("r"), T0, T0 - 1, 1);
+    }
+
+    function test_anchor_revertsFutureWindow() public {
+        vm.prank(anchorer);
+        vm.expectRevert(ReceiptAnchor.InvalidWindow.selector);
+        ra.anchor(keccak256("r"), T0, T0 + 1, 1);
+    }
+
+    function test_anchor_revertsOverlap() public {
+        vm.prank(anchorer);
+        ra.anchor(keccak256("r0"), T0 - 3600, T0 - 100, 1);
+        vm.prank(anchorer);
+        vm.expectRevert(IReceiptAnchor.OutOfOrder.selector);
+        ra.anchor(keccak256("r1"), T0 - 101, T0, 1);
+    }
+
+    function test_anchor_revertsBackwards() public {
+        vm.prank(anchorer);
+        ra.anchor(keccak256("r0"), T0 - 100, T0, 1);
+        vm.prank(anchorer);
+        vm.expectRevert(IReceiptAnchor.OutOfOrder.selector);
+        ra.anchor(keccak256("r1"), T0 - 3600, T0 - 3000, 1);
+    }
+
+    function testFuzz_anchor_sequence(uint32[6] memory lens, uint32[6] memory gaps) public {
+        uint64 t = T0;
+        vm.warp(T0 + 400 days);
+        for (uint256 i; i < 6; ++i) {
+            // forge-lint: disable-next-line(unsafe-typecast)
+            uint64 fromTs = t + uint64(bound(gaps[i], 0, 1 days));
+            // forge-lint: disable-next-line(unsafe-typecast)
+            uint64 toTs = fromTs + uint64(bound(lens[i], 0, 1 days));
+            vm.prank(anchorer);
+            // forge-lint: disable-next-line(unsafe-typecast)
+            uint256 idx = ra.anchor(bytes32(i + 1), fromTs, toTs, uint32(i));
+            assertEq(idx, i);
+            t = toTs;
+        }
+        assertEq(ra.anchorCount(), 6);
+    }
+
+    // --- verify --------------------------------------------------------------------------------
+
+    function test_verify_allLeaves() public {
+        bytes32[] memory leaves = _leaves(13, 1);
+        vm.prank(anchorer);
+        uint256 idx = ra.anchor(Merkle.getRoot(leaves), T0 - 3600, T0, 13);
+        for (uint256 i; i < leaves.length; ++i) {
+            assertTrue(ra.verify(leaves[i], Merkle.getProof(leaves, i), idx));
+        }
+    }
+
+    function test_verify_falseForWrongIndex() public {
+        bytes32[] memory a = _leaves(4, 1);
+        bytes32[] memory b = _leaves(4, 2);
+        vm.startPrank(anchorer);
+        ra.anchor(Merkle.getRoot(a), T0 - 7200, T0 - 3600, 4);
+        ra.anchor(Merkle.getRoot(b), T0 - 3600, T0, 4);
+        vm.stopPrank();
+        assertTrue(ra.verify(a[2], Merkle.getProof(a, 2), 0));
+        assertFalse(ra.verify(a[2], Merkle.getProof(a, 2), 1));
+        assertTrue(ra.verify(b[3], Merkle.getProof(b, 3), 1));
+    }
+
+    function test_verify_falseForUnknownIndex_neverReverts() public {
+        bytes32[] memory a = _leaves(4, 1);
+        assertFalse(ra.verify(a[0], Merkle.getProof(a, 0), 0));
+        vm.prank(anchorer);
+        ra.anchor(Merkle.getRoot(a), T0 - 1, T0, 4);
+        assertFalse(ra.verify(a[0], Merkle.getProof(a, 0), 1));
+        assertFalse(ra.verify(a[0], Merkle.getProof(a, 0), type(uint256).max));
+    }
+
+    function test_verify_falseForTamperedLeafOrProof() public {
+        bytes32[] memory a = _leaves(8, 1);
+        vm.prank(anchorer);
+        ra.anchor(Merkle.getRoot(a), T0 - 1, T0, 8);
+        bytes32[] memory proof = Merkle.getProof(a, 5);
+        assertFalse(ra.verify(keccak256("forged"), proof, 0));
+        proof[0] = bytes32(uint256(proof[0]) ^ 1);
+        assertFalse(ra.verify(a[5], proof, 0));
+        assertFalse(ra.verify(a[5], new bytes32[](0), 0));
+    }
+
+    function test_verify_singleLeafTree() public {
+        bytes32[] memory a = _leaves(1, 7);
+        vm.prank(anchorer);
+        ra.anchor(Merkle.getRoot(a), T0 - 1, T0, 1);
+        assertTrue(ra.verify(a[0], new bytes32[](0), 0));
+    }
+
+    function testFuzz_verify(uint8 n, uint256 salt, uint256 pick) public {
+        n = uint8(bound(n, 1, 64));
+        pick = bound(pick, 0, n - 1);
+        bytes32[] memory a = _leaves(n, salt);
+        vm.prank(anchorer);
+        ra.anchor(Merkle.getRoot(a), T0 - 1, T0, n);
+        bytes32[] memory proof = Merkle.getProof(a, pick);
+        assertTrue(ra.verify(a[pick], proof, 0));
+        assertFalse(ra.verify(keccak256(abi.encode(salt, "x")), proof, 0));
+    }
+
+    function test_anchors_unknownIndexReturnsZeros() public view {
+        (bytes32 root, uint64 fromTs, uint64 toTs, uint32 count) = ra.anchors(5);
+        assertEq(root, bytes32(0));
+        assertEq(fromTs, 0);
+        assertEq(toTs, 0);
+        assertEq(count, 0);
+    }
+
+    // --- signing keys --------------------------------------------------------------------------
+
+    function test_registerSigningKey_byAnchorer() public {
+        vm.expectEmit(true, true, true, true, address(ra));
+        emit IReceiptAnchor.SigningKeyRegistered(KW1, keccak256("pk1"), T0 + 10);
+        vm.prank(anchorer);
+        ra.registerSigningKey(KW1, keccak256("pk1"), T0 + 10);
+        (bytes32 pk, uint64 validFrom, uint64 revokedAt) = ra.signingKeys(KW1);
+        assertEq(pk, keccak256("pk1"));
+        assertEq(validFrom, T0 + 10);
+        assertEq(revokedAt, 0);
+    }
+
+    function test_registerSigningKey_byOwner() public {
+        vm.prank(owner);
+        ra.registerSigningKey(K1, keccak256("pk1"), 0);
+        (bytes32 pk,,) = ra.signingKeys(K1);
+        assertEq(pk, keccak256("pk1"));
+    }
+
+    function test_registerSigningKey_revertsUnauthorized() public {
+        vm.prank(rando);
+        vm.expectRevert(IReceiptAnchor.NotAnchorer.selector);
+        ra.registerSigningKey(K1, keccak256("pk1"), 0);
+    }
+
+    function test_registerSigningKey_revertsZeroId() public {
+        vm.prank(anchorer);
+        vm.expectRevert(ReceiptAnchor.InvalidKey.selector);
+        ra.registerSigningKey(bytes8(0), keccak256("pk1"), 0);
+    }
+
+    function test_registerSigningKey_revertsZeroPubkey() public {
+        vm.prank(anchorer);
+        vm.expectRevert(ReceiptAnchor.InvalidKey.selector);
+        ra.registerSigningKey(K1, bytes32(0), 0);
+    }
+
+    function test_registerSigningKey_revertsExisting() public {
+        vm.prank(anchorer);
+        ra.registerSigningKey(K1, keccak256("pk1"), 0);
+        vm.prank(owner);
+        vm.expectRevert(ReceiptAnchor.KeyExists.selector);
+        ra.registerSigningKey(K1, keccak256("pk2"), 0);
+    }
+
+    function test_revokeSigningKey_byAnchorerAndOwner() public {
+        vm.startPrank(anchorer);
+        ra.registerSigningKey(K1, keccak256("pk1"), 0);
+        ra.registerSigningKey(K2, keccak256("pk2"), 0);
+        vm.stopPrank();
+
+        vm.warp(T0 + 7 days);
+        vm.expectEmit(true, true, true, true, address(ra));
+        emit IReceiptAnchor.SigningKeyRevoked(K1, T0 + 7 days);
+        vm.prank(anchorer);
+        ra.revokeSigningKey(K1);
+        (, , uint64 revokedAt) = ra.signingKeys(K1);
+        assertEq(revokedAt, T0 + 7 days);
+
+        vm.prank(owner);
+        ra.revokeSigningKey(K2);
+        (, , revokedAt) = ra.signingKeys(K2);
+        assertEq(revokedAt, T0 + 7 days);
+    }
+
+    function test_revokeSigningKey_revertsUnknown() public {
+        vm.prank(anchorer);
+        vm.expectRevert(IReceiptAnchor.UnknownKey.selector);
+        ra.revokeSigningKey(KNOPE);
+    }
+
+    function test_revokeSigningKey_revertsAlreadyRevoked() public {
+        vm.startPrank(anchorer);
+        ra.registerSigningKey(K1, keccak256("pk1"), 0);
+        ra.revokeSigningKey(K1);
+        vm.warp(T0 + 1);
+        vm.expectRevert(ReceiptAnchor.AlreadyRevoked.selector);
+        ra.revokeSigningKey(K1);
+        vm.stopPrank();
+        (, , uint64 revokedAt) = ra.signingKeys(K1);
+        assertEq(revokedAt, T0);
+    }
+
+    function test_revokeSigningKey_revertsUnauthorized() public {
+        vm.prank(anchorer);
+        ra.registerSigningKey(K1, keccak256("pk1"), 0);
+        vm.prank(rando);
+        vm.expectRevert(IReceiptAnchor.NotAnchorer.selector);
+        ra.revokeSigningKey(K1);
+    }
+
+    function test_revokedKeyCannotBeReRegistered() public {
+        vm.startPrank(anchorer);
+        ra.registerSigningKey(K1, keccak256("pk1"), 0);
+        ra.revokeSigningKey(K1);
+        vm.expectRevert(ReceiptAnchor.KeyExists.selector);
+        ra.registerSigningKey(K1, keccak256("pk9"), 0);
+        vm.stopPrank();
+    }
+
+    // --- admin ---------------------------------------------------------------------------------
+
+    function test_setAnchorer() public {
+        address a2 = makeAddr("a2");
+        vm.expectEmit(true, true, true, true, address(ra));
+        emit IReceiptAnchor.AnchorerSet(a2);
+        vm.prank(owner);
+        ra.setAnchorer(a2);
+        assertEq(ra.anchorer(), a2);
+
+        vm.prank(anchorer);
+        vm.expectRevert(IReceiptAnchor.NotAnchorer.selector);
+        ra.anchor(keccak256("r"), T0 - 1, T0, 1);
+        vm.prank(anchorer);
+        vm.expectRevert(IReceiptAnchor.NotAnchorer.selector);
+        ra.registerSigningKey(K1, keccak256("pk1"), 0);
+
+        vm.prank(a2);
+        ra.anchor(keccak256("r"), T0 - 1, T0, 1);
+    }
+
+    function test_setAnchorer_onlyOwner() public {
+        vm.prank(anchorer);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, anchorer));
+        ra.setAnchorer(anchorer);
+    }
+
+    function test_setAnchorer_revertsZero() public {
+        vm.prank(owner);
+        vm.expectRevert(ReceiptAnchor.ZeroAddress.selector);
+        ra.setAnchorer(address(0));
+    }
 }
