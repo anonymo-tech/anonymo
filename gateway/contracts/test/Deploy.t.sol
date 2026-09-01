@@ -87,4 +87,250 @@ contract DeployLocalTest is Test {
         assertEq(address(AnmoPaymaster(payable(d.paymaster)).entryPoint()), d.entryPoint);
         assertEq(AnmoPaymaster(payable(d.paymaster)).getDeposit(), 10 ether);
     }
+
+    function test_adapterCallers() public view {
+        UniswapV4Adapter v4 = UniswapV4Adapter(payable(d.uniswapV4Adapter));
+        assertTrue(v4.isCaller(d.payWithStock));
+        assertTrue(v4.isCaller(d.anmoStaking));
+        assertFalse(v4.isCaller(deployer));
+        assertEq(address(v4.poolManager()), d.poolManager);
+    }
+
+    function test_tokenRegisteredAndOracleOk() public view {
+        (bool enabled, address primary, address fallbackAdapter) =
+            PayWithStock(d.payWithStock).tokens(d.mockNvda);
+        assertTrue(enabled);
+        assertEq(primary, d.mockSwapAdapter);
+        assertEq(fallbackAdapter, address(0));
+        (uint256 price, bool ok) = ChainlinkStockOracle(d.stockOracle).fairPrice(d.mockNvda);
+        assertTrue(ok);
+        assertEq(price, 225e18);
+        ChainlinkStockOracle.FeedConfig memory c = ChainlinkStockOracle(d.stockOracle).configOf(d.mockNvda);
+        assertEq(c.maxStaleness, 302_400);
+        assertFalse(c.applyMultiplier);
+        assertEq(script.stockCount(), 1);
+    }
+
+    function test_balancesFunded() public view {
+        assertEq(IERC20(d.usdg).balanceOf(d.mockSwapAdapter), 10_000_000e6);
+        assertEq(IERC20(d.anmoToken).balanceOf(d.buybackAdapter), 10_000_000e18);
+        address[3] memory funded = [
+            0x14dC79964da2C08b23698B3D3cc7Ca32193d9955, // anvil #7
+            0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f, // anvil #8
+            0xa0Ee7A142d267C1f36714E4a8F75612F20a79720 // anvil #9
+        ];
+        for (uint256 i; i < 3; ++i) {
+            assertEq(IERC20(d.usdg).balanceOf(funded[i]), 1_000_000e6);
+            assertEq(IERC20(d.mockNvda).balanceOf(funded[i]), 1_000e18);
+        }
+    }
+
+    /// @dev The local stack is usable end-to-end: session -> router payCall -> Credits balance.
+    function test_localPayWithStockEndToEnd() public {
+        address wallet = 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955; // anvil #7
+        bytes32 keyHash = keccak256(abi.encodePacked(makeAddr("apiKeyAddress")));
+        vm.startPrank(wallet);
+        IERC20(d.mockNvda).approve(d.payWithStock, type(uint256).max);
+        PayWithStock(d.payWithStock).openSession(keyHash, d.mockNvda, 10e18);
+        vm.stopPrank();
+
+        vm.prank(r.router);
+        uint256 spent = PayWithStock(d.payWithStock).payCall(keyHash, 5e6, 100);
+        assertEq(spent, uint256(5e18) / 225 + 1); // ceil(5 / 225 NVDA)
+        assertEq(Credits(d.credits).deposited(keyHash), 5e6);
+        assertEq(IERC20(d.usdg).balanceOf(d.credits), 5e6);
+    }
+
+    function test_localArtifact() public {
+        Deploy s2 = new Deploy();
+        Deploy.Params memory p = s2.localParams();
+        p.outPath = "deployments/test-local-artifact.json";
+        s2.deployLocal(p, s2.localRoles());
+        Deploy.Deployed memory d2 = s2.deployed();
+
+        string memory json = vm.readFile(p.outPath);
+        vm.removeFile(p.outPath);
+        assertEq(vm.parseJsonString(json, ".schema"), "anonymo.deployments/v1");
+        assertEq(vm.parseJsonString(json, ".mode"), "local");
+        assertEq(vm.parseJsonUint(json, ".chainId"), block.chainid);
+        assertEq(vm.parseJsonAddress(json, ".owner"), deployer);
+        assertEq(vm.parseJsonAddress(json, ".pendingOwner"), address(0));
+        assertEq(vm.parseJsonAddress(json, ".contracts.credits"), d2.credits);
+        assertEq(vm.parseJsonAddress(json, ".contracts.payWithStock"), d2.payWithStock);
+        assertEq(vm.parseJsonAddress(json, ".contracts.paymaster"), d2.paymaster);
+        assertEq(vm.parseJsonAddress(json, ".contracts.entryPoint"), d2.entryPoint);
+        assertEq(vm.parseJsonAddress(json, ".contracts.usdg"), d2.usdg);
+        assertEq(vm.parseJsonAddress(json, ".roles.router"), r.router);
+        assertEq(vm.parseJsonAddress(json, ".roles.adapterCallers[1]"), d2.anmoStaking);
+        assertEq(vm.parseJsonAddress(json, ".roles.creditors[0]"), d2.payWithStock);
+        assertEq(vm.parseJsonString(json, ".stockTokens[0].symbol"), "NVDA");
+        assertEq(vm.parseJsonAddress(json, ".stockTokens[0].address"), d2.mockNvda);
+        assertEq(vm.parseJsonUint(json, ".stockTokens[0].decimals"), 18);
+        assertEq(vm.parseJsonAddress(json, ".mocks.nvdaFeed"), d2.mockNvdaFeed);
+        assertEq(vm.parseJsonAddress(json, ".mocks.swapAdapter"), d2.mockSwapAdapter);
+        assertEq(vm.parseJsonString(json, ".params.paymasterDeposit"), "10000000000000000000");
+    }
+}
+
+/// @notice Production-mode deployment against a Robinhood Chain fork (skipped unless RHC_RPC_URL is set), including
+/// the Safe -> timelock acceptOwnership batch replayed from the written JSON.
+contract DeployProductionForkTest is Test {
+    Deploy script;
+    Deploy.Deployed d;
+    Deploy.Roles r;
+    address deployer;
+    string constant OUT = "deployments/test-fork-prod.json";
+    string constant BATCH = "deployments/test-fork-prod-accept.json";
+
+    function setUp() public {
+        string memory rpc = vm.envOr("RHC_RPC_URL", string(""));
+        if (bytes(rpc).length == 0) {
+            vm.skip(true);
+            return;
+        }
+        vm.createSelectFork(rpc);
+        script = new Deploy();
+
+        Deploy.Params memory p;
+        p.deployerKey = uint256(keccak256("anonymo.fork.deployer"));
+        p.configPath = "../config/rhc-mainnet.json";
+        // artifacts are written by test_fork_productionWiringAndTimelockHandover only (tests run in parallel)
+        p.paymasterDailyCap = 0.01 ether;
+        p.paymasterDeposit = 0.05 ether;
+        p.paymasterStake = 0.05 ether;
+        p.paymasterUnstakeDelay = 1 days;
+        p.wethUsdgFee = 100;
+        deployer = vm.addr(p.deployerKey);
+        vm.deal(deployer, 1 ether);
+
+        Deploy.Roles memory roles;
+        roles.ownerSafe = makeAddr("ownerSafe");
+        roles.slasher = makeAddr("slasherSafe");
+        roles.router = makeAddr("router");
+        roles.settlement = makeAddr("settlement");
+        roles.anchorer = makeAddr("anchorer");
+        roles.registrar = roles.router;
+        roles.keeper = makeAddr("keeper");
+        roles.opsWallet = makeAddr("ops");
+        roles.paymasterSigner = makeAddr("pmSigner");
+        roles.refundPool = makeAddr("refundPool");
+        roles.callPayTreasury = makeAddr("treasury");
+        roles.guardian = roles.ownerSafe;
+        roles.anmoRecipients = [makeAddr("a0"), makeAddr("a1"), makeAddr("a2"), makeAddr("a3")];
+
+        script.deployProduction(p, roles);
+        d = script.deployed();
+        r = script.roles();
+    }
+
+    function test_fork_productionWiringAndTimelockHandover() public {
+        // --- wiring
+        assertTrue(Credits(d.credits).isCreditor(d.payWithStock));
+        assertEq(ProviderBond(d.providerBond).slasher(), r.slasher);
+        assertEq(address(AnmoStaking(d.anmoStaking).adapter()), d.uniswapV4Adapter);
+        assertTrue(UniswapV4Adapter(payable(d.uniswapV4Adapter)).isCaller(d.payWithStock));
+        assertTrue(UniswapV4Adapter(payable(d.uniswapV4Adapter)).isCaller(d.anmoStaking));
+        assertTrue(UniswapV3Adapter(d.uniswapV3Adapter).isCaller(d.payWithStock));
+        assertTrue(UniswapV3Adapter(d.uniswapV3Adapter).isCaller(d.anmoStaking));
+        assertEq(AnmoPaymaster(payable(d.paymaster)).verifyingSigner(), r.paymasterSigner);
+        assertEq(AnmoPaymaster(payable(d.paymaster)).getDeposit(), 0.05 ether);
+        assertEq(IERC20(d.anmoToken).balanceOf(r.anmoRecipients[0]), 800_000_000e18);
+
+        uint256 n = script.stockCount();
+        assertEq(n, 13);
+        for (uint256 i; i < n; ++i) {
+            Deploy.StockEntry memory e = script.stock(i);
+            (bool enabled, address primary, address fb) = PayWithStock(d.payWithStock).tokens(e.token);
+            assertTrue(enabled);
+            assertEq(primary, d.uniswapV3Adapter);
+            assertEq(fb, address(0));
+            (bytes memory path,) = UniswapV3Adapter(d.uniswapV3Adapter).getPath(e.token, d.usdg);
+            assertEq(path, e.v3Path);
+            assertFalse(ChainlinkStockOracle(d.stockOracle).configOf(e.token).applyMultiplier);
+            (uint256 price, bool ok) = ChainlinkStockOracle(d.stockOracle).fairPrice(e.token);
+            if (ok) emit log_named_decimal_uint(e.symbol, price, 18);
+            else emit log_named_string("oracle not ok", e.symbol);
+            if (keccak256(bytes(e.symbol)) == keccak256("COIN")) assertEq(path.length, 20 + 23 * 2); // via WETH
+        }
+        (, bool nvdaOk) =
+            ChainlinkStockOracle(d.stockOracle).fairPrice(0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC);
+        assertTrue(nvdaOk);
+
+        // --- timelock configuration
+        TimelockController tl = TimelockController(payable(d.timelock));
+        assertEq(tl.getMinDelay(), 1 days);
+        assertTrue(tl.hasRole(tl.PROPOSER_ROLE(), r.ownerSafe));
+        assertTrue(tl.hasRole(tl.EXECUTOR_ROLE(), r.ownerSafe));
+        assertTrue(tl.hasRole(tl.CANCELLER_ROLE(), r.ownerSafe));
+        assertFalse(tl.hasRole(tl.DEFAULT_ADMIN_ROLE(), deployer));
+        assertFalse(tl.hasRole(tl.PROPOSER_ROLE(), deployer));
+
+        // --- pending ownership
+        address[] memory owned = script.ownedContracts();
+        assertEq(owned.length, 11);
+        for (uint256 i; i < owned.length; ++i) {
+            assertEq(Ownable2Step(owned[i]).owner(), deployer);
+            assertEq(Ownable2Step(owned[i]).pendingOwner(), d.timelock);
+        }
+
+        // --- replay the Safe batch JSON: schedule, wait 24h, execute
+        script.writeArtifacts(OUT, BATCH);
+        string memory batch = vm.readFile(BATCH);
+        string memory execFile = vm.readFile(script.executeBatchPath());
+        assertEq(vm.parseJsonString(batch, ".chainId"), "4663");
+        assertEq(vm.parseJsonAddress(batch, ".meta.createdFromSafeAddress"), r.ownerSafe);
+        address to = vm.parseJsonAddress(batch, ".transactions[0].to");
+        assertEq(to, d.timelock);
+        bytes memory scheduleData = vm.parseJsonBytes(batch, ".transactions[0].data");
+        bytes memory executeData = vm.parseJsonBytes(batch, ".anonymo.executeTransactions[0].data");
+        assertEq(executeData, vm.parseJsonBytes(execFile, ".transactions[0].data"));
+        bytes32 opId = vm.parseJsonBytes32(batch, ".anonymo.operationId");
+
+        vm.prank(r.ownerSafe);
+        (bool ok,) = to.call(scheduleData);
+        assertTrue(ok, "schedule");
+        assertTrue(tl.isOperationPending(opId));
+
+        vm.prank(r.ownerSafe);
+        (ok,) = to.call(executeData);
+        assertFalse(ok, "cannot execute before the delay");
+
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(r.ownerSafe);
+        (ok,) = to.call(executeData);
+        assertTrue(ok, "execute");
+        assertTrue(tl.isOperationDone(opId));
+        for (uint256 i; i < owned.length; ++i) {
+            assertEq(Ownable2Step(owned[i]).owner(), d.timelock, "timelock owns");
+        }
+
+        // --- deployments JSON
+        string memory json = vm.readFile(OUT);
+        assertEq(vm.parseJsonString(json, ".mode"), "production");
+        assertEq(vm.parseJsonAddress(json, ".pendingOwner"), d.timelock);
+        assertEq(vm.parseJsonAddress(json, ".contracts.timelock"), d.timelock);
+        assertEq(vm.parseJsonAddress(json, ".roles.ownerSafe"), r.ownerSafe);
+        assertEq(vm.parseJsonAddress(json, ".stockTokens[12].primaryAdapter"), d.uniswapV3Adapter);
+        assertEq(vm.parseJsonUint(json, ".params.timelockMinDelay"), 1 days);
+
+        vm.removeFile(OUT);
+        vm.removeFile(BATCH);
+        vm.removeFile(script.executeBatchPath());
+    }
+
+    /// @dev The freshly deployed production stack pays for a call with real NVDA through the real V3 pool.
+    function test_fork_productionPayWithStockNvda() public {
+        address nvda = 0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC;
+        address wallet = makeAddr("nvdaHolder");
+        deal(nvda, wallet, 1e18);
+        bytes32 keyHash = keccak256(abi.encodePacked(makeAddr("forkKey")));
+        vm.startPrank(wallet);
+        IERC20(nvda).approve(d.payWithStock, type(uint256).max);
+        PayWithStock(d.payWithStock).openSession(keyHash, nvda, 1e18);
+        vm.stopPrank();
+        vm.prank(r.router);
+        uint256 spent = PayWithStock(d.payWithStock).payCall(keyHash, 1e6, 300);
+        assertGt(spent, 0);
+        assertEq(Credits(d.credits).deposited(keyHash), 1e6);
+    }
 }

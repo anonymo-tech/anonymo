@@ -516,4 +516,304 @@ contract Deploy is Script {
         address[] memory rec = vm.envOr("ANMO_RECIPIENTS", ",", none);
         if (rec.length == 4) r.anmoRecipients = [rec[0], rec[1], rec[2], rec[3]];
     }
+
+    function _requireRoles(Roles memory r, bool prod) internal pure {
+        require(
+            r.slasher != address(0) && r.router != address(0) && r.settlement != address(0)
+                && r.anchorer != address(0) && r.registrar != address(0) && r.keeper != address(0)
+                && r.opsWallet != address(0) && r.paymasterSigner != address(0) && r.refundPool != address(0)
+                && r.callPayTreasury != address(0) && r.guardian != address(0),
+            "Deploy: missing role address"
+        );
+        if (prod) require(r.ownerSafe != address(0), "Deploy: OWNER_SAFE required");
+    }
+
+    // =============================================================================================
+    // Output
+    // =============================================================================================
+
+    /// @dev Schema "anonymo.deployments/v1":
+    /// { schema, chainId, mode, blockNumber, timestamp, deployer, owner, pendingOwner,
+    ///   contracts: { usdg, anmoToken, credits, callPay, receiptAnchor, royalty, providerBond, anmoStaking,
+    ///                payWithStock, stockOracle, uniswapV4Adapter, uniswapV3Adapter, paymaster, entryPoint,
+    ///                poolManager, swapRouter02, timelock, buybackAdapter },
+    ///   roles: { ownerSafe, slasher, router, settlement, anchorer, registrar, keeper, opsWallet, paymasterSigner,
+    ///            refundPool, callPayTreasury, guardian, anmoRecipients[4], creditors[], adapterCallers[] },
+    ///   params: { timelockMinDelay, maxStaleness, applyUiMultiplier, payWithStockMaxSlipBps,
+    ///             paymasterDailyCap, paymasterDeposit, paymasterStake },
+    ///   stockTokens: [ { symbol, address, decimals, feed, primaryAdapter, fallbackAdapter, v3Path } ],
+    ///   mocks: { nvda, nvdaFeed, swapAdapter, buybackAdapter } | null }
+    /// Addresses are checksummed strings (0x0 when not deployed in this mode); wei amounts are decimal strings.
+    function _writeDeployments() internal {
+        if (bytes(_p.outPath).length == 0) return; // tests may skip artifacts
+        bool prod = !_p.mock;
+        string[] memory f = new string[](14);
+        f[0] = _kvS("schema", "anonymo.deployments/v1");
+        f[1] = _kvU("chainId", block.chainid);
+        f[2] = _kvS("mode", prod ? "production" : "local");
+        f[3] = _kvU("blockNumber", _d.blockNumber);
+        f[4] = _kvU("timestamp", _d.timestamp);
+        f[5] = _kvA("deployer", _d.deployer);
+        f[6] = _kvA("owner", _d.deployer);
+        f[7] = _kvA("pendingOwner", prod ? _d.timelock : address(0));
+        f[8] = _kv("contracts", _contractsJson());
+        f[9] = _kv("roles", _rolesJson());
+        f[10] = _kv("params", _paramsJson());
+        f[11] = _kv("stockTokens", _stocksJson());
+        f[12] = _kv("mocks", prod ? "null" : _mocksJson());
+        f[13] = _kvS("generator", "contracts/script/Deploy.s.sol");
+        vm.writeFile(_p.outPath, _obj(f));
+    }
+
+    function _contractsJson() internal view returns (string memory) {
+        Deployed memory d = _d;
+        string[] memory f = new string[](18);
+        f[0] = _kvA("usdg", d.usdg);
+        f[1] = _kvA("anmoToken", d.anmoToken);
+        f[2] = _kvA("credits", d.credits);
+        f[3] = _kvA("callPay", d.callPay);
+        f[4] = _kvA("receiptAnchor", d.receiptAnchor);
+        f[5] = _kvA("royalty", d.royalty);
+        f[6] = _kvA("providerBond", d.providerBond);
+        f[7] = _kvA("anmoStaking", d.anmoStaking);
+        f[8] = _kvA("payWithStock", d.payWithStock);
+        f[9] = _kvA("stockOracle", d.stockOracle);
+        f[10] = _kvA("uniswapV4Adapter", d.uniswapV4Adapter);
+        f[11] = _kvA("uniswapV3Adapter", d.uniswapV3Adapter);
+        f[12] = _kvA("paymaster", d.paymaster);
+        f[13] = _kvA("entryPoint", d.entryPoint);
+        f[14] = _kvA("poolManager", d.poolManager);
+        f[15] = _kvA("swapRouter02", d.swapRouter02);
+        f[16] = _kvA("timelock", d.timelock);
+        f[17] = _kvA("buybackAdapter", d.buybackAdapter);
+        return _obj(f);
+    }
+
+    function _rolesJson() internal view returns (string memory) {
+        Roles memory r = _r;
+        address[] memory callers = new address[](2);
+        callers[0] = _d.payWithStock;
+        callers[1] = _d.anmoStaking;
+        address[] memory creditors = new address[](1);
+        creditors[0] = _d.payWithStock;
+        address[] memory rec = new address[](4);
+        for (uint256 i; i < 4; ++i) {
+            rec[i] = r.anmoRecipients[i];
+        }
+        string[] memory f = new string[](15);
+        f[0] = _kvA("ownerSafe", r.ownerSafe);
+        f[1] = _kvA("slasher", r.slasher);
+        f[2] = _kvA("router", r.router);
+        f[3] = _kvA("settlement", r.settlement);
+        f[4] = _kvA("anchorer", r.anchorer);
+        f[5] = _kvA("registrar", r.registrar);
+        f[6] = _kvA("keeper", r.keeper);
+        f[7] = _kvA("opsWallet", r.opsWallet);
+        f[8] = _kvA("paymasterSigner", r.paymasterSigner);
+        f[9] = _kvA("refundPool", r.refundPool);
+        f[10] = _kvA("callPayTreasury", r.callPayTreasury);
+        f[11] = _kvA("guardian", r.guardian);
+        f[12] = _kv("anmoRecipients", _addrArray(rec));
+        f[13] = _kv("creditors", _addrArray(creditors));
+        f[14] = _kv("adapterCallers", _addrArray(callers));
+        return _obj(f);
+    }
+
+    function _paramsJson() internal view returns (string memory) {
+        string[] memory f = new string[](7);
+        f[0] = _kvU("timelockMinDelay", _p.mock ? 0 : TIMELOCK_DELAY);
+        f[1] = _kvU("maxStaleness", MAX_STALENESS);
+        f[2] = _kv("applyUiMultiplier", "false");
+        f[3] = _kvU("payWithStockMaxSlipBps", PayWithStock(_d.payWithStock).maxSlipCapBps());
+        f[4] = _kvS("paymasterDailyCap", vm.toString(_p.paymasterDailyCap));
+        f[5] = _kvS("paymasterDeposit", vm.toString(_p.paymasterDeposit));
+        f[6] = _kvS("paymasterStake", vm.toString(_p.paymasterStake));
+        return _obj(f);
+    }
+
+    function _stocksJson() internal view returns (string memory out) {
+        out = "[";
+        for (uint256 i; i < _stocks.length; ++i) {
+            StockEntry memory e = _stocks[i];
+            string[] memory f = new string[](7);
+            f[0] = _kvS("symbol", e.symbol);
+            f[1] = _kvA("address", e.token);
+            f[2] = _kvU("decimals", e.decimals);
+            f[3] = _kvA("feed", e.feed);
+            f[4] = _kvA("primaryAdapter", e.primaryAdapter);
+            f[5] = _kvA("fallbackAdapter", e.fallbackAdapter);
+            f[6] = _kvS("v3Path", vm.toString(e.v3Path));
+            out = string.concat(out, i == 0 ? "" : ",", _obj(f));
+        }
+        out = string.concat(out, "]");
+    }
+
+    function _mocksJson() internal view returns (string memory) {
+        string[] memory f = new string[](4);
+        f[0] = _kvA("nvda", _d.mockNvda);
+        f[1] = _kvA("nvdaFeed", _d.mockNvdaFeed);
+        f[2] = _kvA("swapAdapter", _d.mockSwapAdapter);
+        f[3] = _kvA("buybackAdapter", _d.buybackAdapter);
+        return _obj(f);
+    }
+
+    /// @dev Safe Transaction Builder batch for OWNER_SAFE. `transactions` = step 1, timelock.scheduleBatch(
+    /// acceptOwnership on every contract). Step 2, after TIMELOCK_DELAY, is `anonymo.executeTransactions`
+    /// (timelock.executeBatch with the same arguments), also written standalone to
+    /// <chainid>-accept-ownership-execute.json so it can be imported directly.
+    function _writeSafeBatch() internal {
+        if (bytes(_p.safeBatchPath).length == 0) return;
+        (string memory scheduleTx, string memory executeTx) = _acceptTxs();
+        string[] memory f = new string[](6);
+        f[0] = _kvS("version", "1.0");
+        f[1] = _kvS("chainId", vm.toString(block.chainid));
+        f[2] = _kvU("createdAt", block.timestamp * 1000);
+        f[3] = _kv("meta", _safeMeta("Anonymo: timelock accepts ownership (step 1/2: schedule)"));
+        f[4] = _kv("transactions", string.concat("[", scheduleTx, "]"));
+        f[5] = _kv("anonymo", _acceptInfo(executeTx));
+        vm.writeFile(_p.safeBatchPath, _obj(f));
+
+        string[] memory g = new string[](5);
+        g[0] = f[0];
+        g[1] = f[1];
+        g[2] = f[2];
+        g[3] = _kv("meta", _safeMeta("Anonymo: timelock accepts ownership (step 2/2: execute)"));
+        g[4] = _kv("transactions", string.concat("[", executeTx, "]"));
+        vm.writeFile(_executePath(_p.safeBatchPath), _obj(g));
+    }
+
+    function _safeMeta(string memory name) internal view returns (string memory) {
+        string[] memory f = new string[](5);
+        f[0] = _kvS("name", name);
+        f[1] = _kvS(
+            "description",
+            string.concat(
+                "OWNER_SAFE proposes/executes on the TimelockController: acceptOwnership() on ",
+                vm.toString(_ownedContracts().length),
+                " contracts; execute no earlier than ",
+                vm.toString(TIMELOCK_DELAY),
+                "s after scheduling."
+            )
+        );
+        f[2] = _kvS("txBuilderVersion", "1.16.5");
+        f[3] = _kvA("createdFromSafeAddress", _r.ownerSafe);
+        f[4] = _kvS("createdFromOwnerAddress", "");
+        return _obj(f);
+    }
+
+    function _acceptTxs() internal view returns (string memory scheduleTx, string memory executeTx) {
+        (address[] memory targets, uint256[] memory values, bytes[] memory payloads, bytes32 salt) =
+            acceptBatch();
+        scheduleTx = _safeTx(
+            _d.timelock,
+            abi.encodeCall(
+                TimelockController.scheduleBatch,
+                (targets, values, payloads, bytes32(0), salt, TIMELOCK_DELAY)
+            )
+        );
+        executeTx = _safeTx(
+            _d.timelock,
+            abi.encodeCall(TimelockController.executeBatch, (targets, values, payloads, bytes32(0), salt))
+        );
+    }
+
+    function _acceptInfo(string memory executeTx) internal view returns (string memory) {
+        (address[] memory targets, uint256[] memory values, bytes[] memory payloads, bytes32 salt) =
+            acceptBatch();
+        bytes32 opId = TimelockController(payable(_d.timelock))
+            .hashOperationBatch(targets, values, payloads, bytes32(0), salt);
+        string[] memory f = new string[](8);
+        f[0] = _kvA("timelock", _d.timelock);
+        f[1] = _kvU("minDelay", TIMELOCK_DELAY);
+        f[2] = _kvS("predecessor", vm.toString(bytes32(0)));
+        f[3] = _kvS("salt", vm.toString(salt));
+        f[4] = _kvS("operationId", vm.toString(opId));
+        f[5] = _kv("targets", _addrArray(targets));
+        f[6] = _kvS("call", "acceptOwnership()");
+        f[7] = _kv("executeTransactions", string.concat("[", executeTx, "]"));
+        return _obj(f);
+    }
+
+    function _executePath(string memory batchPath) internal pure returns (string memory) {
+        bytes memory b = bytes(batchPath);
+        bytes memory stem = new bytes(b.length - 5); // strip ".json"
+        for (uint256 i; i < stem.length; ++i) {
+            stem[i] = b[i];
+        }
+        return string.concat(string(stem), "-execute.json");
+    }
+
+    /// @notice (Re)write the artifacts to the given paths (used by tests; `run()` writes them automatically).
+    function writeArtifacts(string memory outPath, string memory safeBatchPath) external {
+        _p.outPath = outPath;
+        _p.safeBatchPath = safeBatchPath;
+        _writeDeployments();
+        if (!_p.mock) _writeSafeBatch();
+    }
+
+    function executeBatchPath() external view returns (string memory) {
+        return _executePath(_p.safeBatchPath);
+    }
+
+    function _safeTx(address to, bytes memory data) internal pure returns (string memory) {
+        string[] memory f = new string[](5);
+        f[0] = _kvA("to", to);
+        f[1] = _kvS("value", "0");
+        f[2] = _kvS("data", vm.toString(data));
+        f[3] = _kv("contractMethod", "null");
+        f[4] = _kv("contractInputsValues", "null");
+        return _obj(f);
+    }
+
+    // =============================================================================================
+    // Helpers
+    // =============================================================================================
+
+    function _anvil(uint32 i) internal pure returns (address) {
+        return vm.addr(vm.deriveKey(ANVIL_MNEMONIC, i));
+    }
+
+    function _idx(uint256 i) internal pure returns (string memory) {
+        return string.concat(".stockTokens[", vm.toString(i), "]");
+    }
+
+    function _eq(string memory a, string memory b) internal pure returns (bool) {
+        return keccak256(bytes(a)) == keccak256(bytes(b));
+    }
+
+    function _q(string memory s) internal pure returns (string memory) {
+        return string.concat('"', s, '"');
+    }
+
+    function _kv(string memory k, string memory rawJson) internal pure returns (string memory) {
+        return string.concat(_q(k), ":", rawJson);
+    }
+
+    function _obj(string[] memory fields) internal pure returns (string memory out) {
+        out = "{";
+        for (uint256 i; i < fields.length; ++i) {
+            out = string.concat(out, i == 0 ? "" : ",", fields[i]);
+        }
+        out = string.concat(out, "}");
+    }
+
+    function _kvS(string memory k, string memory v) internal pure returns (string memory) {
+        return string.concat(_q(k), ":", _q(v));
+    }
+
+    function _kvA(string memory k, address v) internal pure returns (string memory) {
+        return _kvS(k, vm.toString(v));
+    }
+
+    function _kvU(string memory k, uint256 v) internal pure returns (string memory) {
+        return string.concat(_q(k), ":", vm.toString(v));
+    }
+
+    function _addrArray(address[] memory a) internal pure returns (string memory out) {
+        out = "[";
+        for (uint256 i; i < a.length; ++i) {
+            out = string.concat(out, i == 0 ? "" : ",", _q(vm.toString(a[i])));
+        }
+        out = string.concat(out, "]");
+    }
 }
