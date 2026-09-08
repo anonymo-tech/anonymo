@@ -470,3 +470,170 @@ async function finalize(
     },
   };
 }
+
+function streamResponse(p: Common & { run: () => ReturnType<typeof route>; abort: AbortController }): Response {
+  const { ctx, kind } = p;
+  const enc = new TextEncoder();
+  const created = Math.floor(Date.now() / 1000);
+  let closed = false;
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (s: string) => {
+        if (!closed) controller.enqueue(enc.encode(s));
+      };
+      const event = (obj: unknown) => send(`data: ${JSON.stringify(obj)}\n\n`);
+      send(": ANONYMO PROCESSING\n\n");
+      const keepalive = setInterval(() => send(": ANONYMO PROCESSING\n\n"), 5_000);
+      let result: Awaited<ReturnType<typeof route>> | null = null;
+      try {
+        result = await p.run();
+      } catch (e) {
+        clearInterval(keepalive);
+        await release(ctx.db, p.holdId);
+        if (!p.abort.signal.aborted) event({ error: { code: 502, message: (e as Error).message, type: "router_error" } });
+        send("data: [DONE]\n\n");
+        closed = true;
+        controller.close();
+        return;
+      }
+      clearInterval(keepalive);
+      if (!result.ok) {
+        await release(ctx.db, p.holdId);
+        const err = allFailed(result.attempts, result.last);
+        event(err.toJSON());
+        send("data: [DONE]\n\n");
+        closed = true;
+        controller.close();
+        return;
+      }
+      const r = result as Extract<RouteSuccess, { kind: "stream" }>;
+      const base = chunkBase(p.holdId, created, r.model, r.candidate.provider.name, kind);
+      let text = "";
+      let reasoningText = ""; // billed when usage never arrives (e.g. the client cancels mid-stream)
+      let toolText = "";
+      let finish: string | null = null;
+      let nativeFinish: string | null = null;
+      let providerUsage: any = null;
+      let cancelled = false;
+      let midError: string | null = null;
+      const emit = (ev: any) => {
+        if (ev?.usage) providerUsage = ev.usage;
+        const choices = Array.isArray(ev?.choices) ? ev.choices : [];
+        for (const ch of choices) {
+          const d = ch?.delta ?? {};
+          if (typeof d.content === "string") text += d.content;
+          if (typeof ch?.text === "string") text += ch.text;
+          if (typeof d.reasoning === "string") reasoningText += d.reasoning;
+          if (typeof d.reasoning_content === "string") reasoningText += d.reasoning_content;
+          if (Array.isArray(d.tool_calls)) for (const tc of d.tool_calls) toolText += String(tc?.function?.arguments ?? "") + String(tc?.function?.name ?? "");
+          if (ch?.finish_reason) {
+            finish = ch.finish_reason;
+            nativeFinish = ch.native_finish_reason ?? ch.finish_reason;
+          }
+        }
+        if (!choices.length && ev?.usage) return; // usage-only chunk: we send our own at the end
+        const { usage: _u, id: _i, model: _m, created: _c, object: _o, ...rest } = ev ?? {};
+        event({ ...base, ...rest, choices });
+      };
+      try {
+        for (const ev of r.buffered) emit(ev);
+        for await (const ev of r.rest) {
+          if (ev?.error) {
+            midError = String(ev.error?.message ?? "provider error");
+            event({ ...base, error: { code: 502, message: midError, type: "provider_error" }, choices: [{ index: 0, delta: { content: "" }, finish_reason: "error" }] });
+            break;
+          }
+          emit(ev);
+        }
+      } catch (e) {
+        if (p.abort.signal.aborted) cancelled = true;
+        else {
+          midError = (e as Error).message;
+          event({ ...base, error: { code: 502, message: "Provider stream was interrupted.", type: "provider_interrupted" }, choices: [{ index: 0, delta: { content: "" }, finish_reason: "error" }] });
+        }
+      }
+      try {
+        const reasoningEst = Math.ceil(reasoningText.length / 4);
+        const usage = readUsage(providerUsage, { prompt: p.promptTokens, completion: Math.ceil((text.length + toolText.length) / 4) + reasoningEst });
+        if (!providerUsage) usage.reasoning = reasoningEst;
+        const fin = await finalize({ ...p, r, usage, responseText: text, finishReason: finish ?? (cancelled ? "cancelled" : midError ? "error" : null), nativeFinish, generationMs: Date.now() - p.t0, cancelled });
+        event({ ...base, choices: [], usage: fin.usageJson, receipt: fin.receiptJson, ...(fin.extras(0) ?? {}) });
+      } catch (e) {
+        log.error("stream finalize failed", { error: (e as Error).message, hold: p.holdId });
+        await release(ctx.db, p.holdId).catch(() => undefined);
+      }
+      send("data: [DONE]\n\n");
+      closed = true;
+      try {
+        controller.close();
+      } catch {
+        /* client gone */
+      }
+    },
+    cancel() {
+      closed = true;
+      p.abort.abort(new DOMException("client disconnected", "AbortError"));
+    },
+  });
+  return new Response(body, {
+    status: 200,
+    headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive", "x-generation-id": p.holdId, "x-accel-buffering": "no" },
+  });
+}
+
+async function cachedResponse(ctx: Ctx, c: Context, p: { body: Record<string, unknown>; hit: { response: any; upstream: bigint; similarity: number }; billing: Billing; model: ModelRow; t0: number; bodySha: string }) {
+  const id = genId();
+  const payload = {
+    v: 1,
+    id,
+    issued: new Date().toISOString(),
+    router: ctx.cfg.publicUrl,
+    model: p.model.id,
+    provider: "cache",
+    tokens: { prompt: 0, completion: 0, reasoning: 0, cached: 0, estimated: false },
+    cost: "0",
+    cost_details: { upstream: "0", royalty: "0", margin: "0" },
+    paid_with: null,
+    latency_ms: Date.now() - p.t0,
+    mode: "cache",
+    cache: { similarity: Number(p.hit.similarity.toFixed(4)), original: p.hit.response?.id ?? null },
+    payer: p.billing.key?.chainKeyHash ?? (p.billing.mode === "per_call" ? p.billing.payer : null),
+    request_sha256: p.bodySha,
+    response_sha256: sha256((p.hit.response?.choices ?? []).map((ch: any) => ch?.message?.content ?? "").join("")),
+  };
+  const signed = ctx.signer.sign(payload);
+  const leaf = receiptLeaf(signed.bytes, signed.sigBytes);
+  await ctx.db.insert(generations).values({
+    id,
+    keyHash: p.billing.key?.keyHash ?? null,
+    accountId: p.billing.accountId,
+    modelId: p.model.id,
+    providerId: "cache",
+    mode: "cache",
+    cost: 0n,
+    cacheDiscount: p.hit.upstream,
+    latencyMs: Date.now() - p.t0,
+    generationTimeMs: Date.now() - p.t0,
+    receiptId: id,
+    receiptSig: signed.sig,
+    receiptKeyId: signed.keyId,
+    receipt: payload,
+    receiptLeaf: leaf,
+    requestSha256: p.bodySha,
+    responseSha256: payload.response_sha256,
+    finishReason: p.hit.response?.choices?.[0]?.finish_reason ?? null,
+  });
+  return c.json(
+    {
+      ...p.hit.response,
+      id,
+      cached: true,
+      usage: { ...(p.hit.response?.usage ?? {}), cost: 0, cost_details: { upstream_inference_cost: 0, royalty: 0, margin: 0, cache_savings: picoToUsd(p.hit.upstream) } },
+      receipt: { id, sig: signed.sig, key_id: signed.keyId, alg: "Ed25519", payload, leaf },
+    },
+    200,
+    { "x-generation-id": id, "x-anonymo-cache": "hit" },
+  );
+}
+
+export { canonical };
