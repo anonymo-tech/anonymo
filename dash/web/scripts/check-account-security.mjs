@@ -183,3 +183,361 @@ void test('security wallet proof binds exact action account origin and bytes', (
     }),
   );
 });
+
+void test('ordinary wallet sign-in binds its one-use proof to the initiating browser', async () => {
+  const w = wallet(),
+    first = jar(),
+    second = jar();
+  const options = await request(first, 'auth/challenge', {
+    address: w.address,
+  });
+  assert.equal(options.status, 201);
+  assert.equal(Object.hasOwn(options.body.challenge, 'browserHash'), false);
+  const payload = proof(w, options.body.challenge);
+  assert.equal((await request(second, 'auth/verify', payload)).status, 401);
+  await request(second, 'auth/challenge', { address: w.address });
+  assert.equal((await request(second, 'auth/verify', payload)).status, 401);
+  assert.equal((await request(first, 'auth/verify', payload)).status, 200);
+  assert.equal((await request(first, 'auth/verify', payload)).status, 401);
+});
+
+void test('account security lists only owned active identities and opaque session identifiers', async () => {
+  const owner = await login(),
+    other = await login();
+  const state = await details(owner.client);
+  assert.equal(state.identities.length, 1);
+  assert.equal(state.identities[0].subject, owner.wallet.address);
+  assert.equal(state.sessions.length, 1);
+  assert.equal(state.sessions[0].current, true);
+  assert.deepEqual(Object.keys(state.sessions[0]).sort(), [
+    'createdAt',
+    'current',
+    'expiresAt',
+    'id',
+  ]);
+  assert.equal(
+    (
+      await request(owner.client, 'auth/security', undefined, {
+        'x-conclave-account-id': other.client.accountId,
+      })
+    ).status,
+    401,
+  );
+  assert.equal(
+    (
+      await request(owner.client, 'auth/security', undefined, {
+        'x-conclave-account-id': '',
+      })
+    ).status,
+    401,
+  );
+});
+
+void test('one session alone cannot add or remove a sign-in method', async () => {
+  const owner = await login(),
+    state = await details(owner.client),
+    target = wallet();
+  const unknown = 'a'.repeat(43);
+  assert.notEqual(
+    (
+      await request(owner.client, 'auth/security/wallet/link/options', {
+        address: target.address,
+        grantToken: unknown,
+      })
+    ).status,
+    201,
+  );
+  assert.notEqual(
+    (
+      await request(
+        owner.client,
+        `auth/security/identities/${state.identities[0].id}/remove`,
+        { grantToken: unknown },
+      )
+    ).status,
+    200,
+  );
+  assert.equal((await details(owner.client)).identities.length, 1);
+});
+
+void test('linking requires both proofs consumes the challenge and revokes other sessions', async () => {
+  const owner = await login(),
+    second = await login(owner.wallet);
+  const { target, payload, grantToken } = await link(owner);
+  const state = await details(owner.client);
+  assert.equal(state.identities.length, 2);
+  assert.ok(state.identities.some((x) => x.subject === target.address));
+  assert.equal((await request(second.client, 'auth/session')).status, 401);
+  assert.equal(
+    (await request(owner.client, 'auth/security/wallet/link/verify', payload))
+      .status,
+    401,
+  );
+  assert.notEqual(
+    (
+      await request(owner.client, 'auth/security/wallet/link/options', {
+        address: wallet().address,
+        grantToken,
+      })
+    ).status,
+    201,
+  );
+});
+
+void test('grant cannot authorize another action or target wallet', async () => {
+  const owner = await login(),
+    target = wallet();
+  const grantToken = await authorize(owner.client, owner.wallet, {
+    kind: 'add-passkey',
+    target: null,
+  });
+  assert.notEqual(
+    (
+      await request(owner.client, 'auth/security/wallet/link/options', {
+        address: target.address,
+        grantToken,
+      })
+    ).status,
+    201,
+  );
+  assert.notEqual(
+    (
+      await request(owner.client, 'auth/security/sessions/revoke', {
+        target: 'others',
+        grantToken,
+      })
+    ).status,
+    200,
+  );
+  assert.equal((await details(owner.client)).identities.length, 1);
+});
+
+void test('wallet reauthentication is bound to the requesting browser', async () => {
+  const owner = await login(),
+    state = await details(owner.client);
+  const options = await request(owner.client, 'auth/security/wallet/options', {
+    identityId: state.identities[0].id,
+    action: { kind: 'add-passkey', target: null },
+  });
+  assert.equal(options.status, 201);
+  const copied = {
+    accountId: owner.client.accountId,
+    cookies: new Map(
+      [...owner.client.cookies].filter(([key]) => key.includes('session')),
+    ),
+  };
+  assert.equal(
+    (
+      await request(copied, 'auth/security/wallet/verify', {
+        challengeId: options.body.challenge.id,
+        proof: proof(owner.wallet, options.body.challenge),
+      })
+    ).status,
+    401,
+  );
+  assert.equal(
+    (
+      await request(owner.client, 'auth/security/wallet/verify', {
+        challengeId: options.body.challenge.id,
+        proof: proof(owner.wallet, options.body.challenge),
+      })
+    ).status,
+    200,
+  );
+});
+
+void test('revoked sessions cannot finish an earlier authorization', async () => {
+  const owner = await login(),
+    state = await details(owner.client);
+  const options = await request(owner.client, 'auth/security/wallet/options', {
+    identityId: state.identities[0].id,
+    action: { kind: 'add-passkey', target: null },
+  });
+  await pool.query('UPDATE sessions SET revoked_at=now() WHERE account_id=$1', [
+    owner.client.accountId,
+  ]);
+  assert.equal(
+    (
+      await request(owner.client, 'auth/security/wallet/verify', {
+        challengeId: options.body.challenge.id,
+        proof: proof(owner.wallet, options.body.challenge),
+      })
+    ).status,
+    401,
+  );
+});
+
+void test('the last identity and self-authorized removal are refused', async () => {
+  const owner = await login();
+  let state = await details(owner.client);
+  const first = state.identities[0];
+  assert.notEqual(
+    (
+      await request(owner.client, 'auth/security/wallet/options', {
+        identityId: first.id,
+        action: { kind: 'remove-identity', target: first.id },
+      })
+    ).status,
+    201,
+  );
+  await link(owner);
+  state = await details(owner.client);
+  assert.notEqual(
+    (
+      await request(owner.client, 'auth/security/wallet/options', {
+        identityId: first.id,
+        action: { kind: 'remove-identity', target: first.id },
+      })
+    ).status,
+    201,
+  );
+  assert.equal(state.identities.length, 2);
+});
+
+void test('removal retains the proven remaining identity and tombstones wallet login', async () => {
+  const owner = await login(),
+    { target } = await link(owner),
+    otherSession = await login(owner.wallet);
+  const state = await details(owner.client),
+    original = state.identities.find((x) => x.subject === owner.wallet.address);
+  const grantToken = await authorize(owner.client, target, {
+    kind: 'remove-identity',
+    target: original.id,
+  });
+  assert.equal(
+    (
+      await request(
+        owner.client,
+        `auth/security/identities/${original.id}/remove`,
+        { grantToken },
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await request(otherSession.client, 'auth/session')).status,
+    401,
+  );
+  const remaining = await details(owner.client);
+  assert.equal(remaining.identities.length, 1);
+  assert.equal(remaining.identities[0].subject, target.address);
+  const fresh = jar(),
+    options = await request(fresh, 'auth/challenge', {
+      address: owner.wallet.address,
+    });
+  assert.equal(
+    (
+      await request(
+        fresh,
+        'auth/verify',
+        proof(owner.wallet, options.body.challenge),
+      )
+    ).status,
+    401,
+  );
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT count(*) FROM identities WHERE kind='solana' AND subject=$1",
+        [owner.wallet.address],
+      )
+    ).rows[0].count,
+    '1',
+  );
+});
+
+void test('revoked authorization identity invalidates outstanding grants', async () => {
+  const owner = await login(),
+    { target } = await link(owner);
+  const state = await details(owner.client),
+    second = state.identities.find((x) => x.subject === target.address);
+  const grantToken = await authorize(owner.client, target, {
+    kind: 'revoke-sessions',
+    target: 'others',
+  });
+  await pool.query('UPDATE identities SET revoked_at=now() WHERE id=$1', [
+    second.id,
+  ]);
+  assert.notEqual(
+    (
+      await request(owner.client, 'auth/security/sessions/revoke', {
+        target: 'others',
+        grantToken,
+      })
+    ).status,
+    200,
+  );
+});
+
+void test('session revocation is scoped and can explicitly end the current session', async () => {
+  const owner = await login(),
+    other = await login(owner.wallet),
+    unrelated = await login();
+  let grantToken = await authorize(owner.client, owner.wallet, {
+    kind: 'revoke-sessions',
+    target: 'others',
+  });
+  let result = await request(owner.client, 'auth/security/sessions/revoke', {
+    target: 'others',
+    grantToken,
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.signedOut, false);
+  assert.equal(result.body.revoked, 1);
+  assert.equal((await request(other.client, 'auth/session')).status, 401);
+  assert.equal((await request(unrelated.client, 'auth/session')).status, 200);
+  const state = await details(owner.client),
+    current = state.sessions.find((x) => x.current);
+  grantToken = await authorize(owner.client, owner.wallet, {
+    kind: 'revoke-sessions',
+    target: current.id,
+  });
+  result = await request(owner.client, 'auth/security/sessions/revoke', {
+    target: current.id,
+    grantToken,
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.signedOut, true);
+  assert.equal((await request(owner.client, 'auth/session')).status, 401);
+});
+
+void test('a wallet belonging to another account cannot be merged through linking', async () => {
+  const owner = await login(),
+    other = await login(),
+    state = await details(owner.client);
+  const result = await request(owner.client, 'auth/security/wallet/options', {
+    identityId: state.identities[0].id,
+    action: { kind: 'link-wallet', target: other.wallet.address },
+  });
+  assert.equal(result.status, 409);
+  assert.equal((await details(owner.client)).identities.length, 1);
+  assert.equal((await details(other.client)).identities.length, 1);
+});
+
+void test('concurrent removals retain one proven sign-in method', async () => {
+  const owner = await login(),
+    { target } = await link(owner);
+  const state = await details(owner.client);
+  const first = state.identities.find(
+    (x) => x.subject === owner.wallet.address,
+  );
+  const second = state.identities.find((x) => x.subject === target.address);
+  const firstGrant = await authorize(owner.client, target, {
+    kind: 'remove-identity',
+    target: first.id,
+  });
+  const secondGrant = await authorize(owner.client, owner.wallet, {
+    kind: 'remove-identity',
+    target: second.id,
+  });
+  const results = await Promise.all([
+    request(owner.client, `auth/security/identities/${first.id}/remove`, {
+      grantToken: firstGrant,
+    }),
+    request(owner.client, `auth/security/identities/${second.id}/remove`, {
+      grantToken: secondGrant,
+    }),
+  ]);
+  assert.equal(results.filter((result) => result.status === 200).length, 1);
+  assert.equal((await details(owner.client)).identities.length, 1);
+});
