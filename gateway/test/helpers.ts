@@ -131,3 +131,115 @@ export class FakeChain extends ChainService {
     return tx;
   }
 }
+
+export const MODELS = {
+  llama: { id: "llama-3.3-70b", slug: "meta-llama/llama-3.3-70b-instruct", prompt: "0.0000001", completion: "0.00000032" },
+  llamaPricey: { id: "llama-3.3-70b", slug: "meta-llama/llama-3.3-70b-instruct", prompt: "0.0000004", completion: "0.0000008" },
+  qwen: { id: "qwen3-32b", slug: "qwen/qwen3-32b", prompt: "0.0000002", completion: "0.0000006" },
+  embed: { id: "embed-small", slug: "acme/embed-small", prompt: "0.00000002", completion: "0", output: ["embeddings"] },
+};
+
+export type Harness = Awaited<ReturnType<typeof startRouter>>;
+
+/** With TEST_PG_URL set, every harness gets its own fresh database on a real Postgres server. */
+async function freshDatabase(): Promise<{ url: string; drop: () => Promise<void> }> {
+  const base = process.env.TEST_PG_URL;
+  if (!base) return { url: "pglite://memory", drop: async () => {} };
+  const postgres = (await import("postgres")).default;
+  const name = "ar_test_" + Math.random().toString(36).slice(2, 10);
+  const admin = postgres(base, { max: 1, onnotice: () => {} });
+  await admin.unsafe(`CREATE DATABASE ${name}`);
+  await admin.end();
+  const u = new URL(base);
+  u.pathname = "/" + name;
+  return {
+    url: u.toString(),
+    drop: async () => {
+      const a = postgres(base, { max: 1, onnotice: () => {} });
+      await a.unsafe(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+      await a.end();
+    },
+  };
+}
+
+export async function startRouter(opts: { providers?: (MockConfig & { id: string; live?: boolean; attested?: boolean; policy?: Record<string, unknown> })[]; env?: Record<string, string>; fakeChain?: boolean; rand?: () => number } = {}) {
+  const mocks = (opts.providers ?? [
+    { id: "alpha", name: "Alpha", models: [MODELS.llama, MODELS.qwen, MODELS.embed] },
+    { id: "beta", name: "Beta", models: [MODELS.llamaPricey] },
+  ]).map((p) => ({ spec: p, server: serveMockProvider(p) }));
+  const database = await freshDatabase();
+  const env: Record<string, string> = {
+    ANONYMO_ENV: "test",
+    DATABASE_URL: database.url,
+    ...(process.env.TEST_REDIS_URL ? { REDIS_URL: process.env.TEST_REDIS_URL } : {}),
+    PAYMENT_WAIT_MS: "500",
+    WORKERS: "false",
+    HEALTH_PROBES: "false",
+    CANARIES: "false",
+    APP_SECRET: "test-secret-test-secret-test-secret-1234",
+    ADMIN_TOKEN: ADMIN,
+    LOG_LEVEL: "error",
+    PAYWITH_TOKENS: JSON.stringify([{ symbol: "NVDA", address: NVDA, decimals: 18 }]),
+    ALLOW_DEV_ATTESTATION: "true",
+    NEW_KEYS_PER_HOUR: "100000",
+    UNAUTH_RPM: "100000",
+    ...opts.env,
+  };
+  const chain = opts.fakeChain === false ? undefined : new FakeChain(env);
+  const { app, ctx, close } = await createApp({ env, chain, rand: opts.rand, startJobs: false });
+  for (const { spec, server } of mocks) {
+    await ctx.db.insert(providers).values({
+      id: spec.id,
+      name: spec.name,
+      baseUrl: server.url,
+      apiKeyEnc: encrypt(ctx.cfg.appSecret, `upstream-key-${spec.id}`),
+      status: spec.live === false ? "applied" : "live",
+      dataPolicy: spec.policy ?? { training: false, retains_prompts: false, zdr: true },
+      teeKind: spec.tee ?? null,
+      attestationUrl: spec.tee ? server.url + "/attestation" : null,
+    });
+  }
+  await runRegistry(ctx);
+  const request = (path: string, init: RequestInit & { json?: unknown } = {}) => {
+    const headers = new Headers(init.headers);
+    if (init.json !== undefined) headers.set("content-type", "application/json");
+    return app.request(path, { ...init, headers, body: init.json !== undefined ? JSON.stringify(init.json) : init.body });
+  };
+  const newKey = async () => {
+    const r = await request("/api/v1/keys", { method: "POST", json: { name: "test" } });
+    const j = (await r.json()) as { key: string; data: { hash: string; chain_key_hash: string } };
+    return { secret: j.key, hash: j.data.hash, chainKeyHash: j.data.chain_key_hash, auth: { authorization: `Bearer ${j.key}` } };
+  };
+  const fundedKey = async (usdg = 10n) => {
+    const k = await newKey();
+    await (chain as FakeChain).deposit(ctx, k.chainKeyHash, usdg * 1_000_000n);
+    return k;
+  };
+  return {
+    app,
+    ctx,
+    chain: chain as FakeChain,
+    mocks: Object.fromEntries(mocks.map((m) => [m.spec.id, m.server])),
+    request,
+    newKey,
+    fundedKey,
+    close: async () => {
+      await close();
+      for (const m of mocks) m.server.stop();
+      await database.drop();
+    },
+  };
+}
+
+export async function sse(res: Response) {
+  const text = await res.text();
+  const events = text
+    .split("\n\n")
+    .map((b) => b.trim())
+    .filter((b) => b.startsWith("data:"))
+    .map((b) => b.slice(5).trim());
+  return { raw: text, done: events.includes("[DONE]"), events: events.filter((e) => e !== "[DONE]").map((e) => JSON.parse(e)) };
+}
+
+export const providerIdHash = (id: string) => keccak256(toBytes(id));
+export { encodePacked, eq };
