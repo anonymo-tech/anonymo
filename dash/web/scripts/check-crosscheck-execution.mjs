@@ -310,3 +310,353 @@ void test('public parser rejects system instructions; trusted parser allows only
     { code: 'INVALID_MESSAGES' },
   );
 });
+
+void test('execution is disabled by default and requires an explicit configured flag plus reviewed roster', async () => {
+  const f = await fixture();
+  delete process.env.CONCLAVE_CROSSCHECK_ENABLED;
+  assert.equal((await crossCheckCapability(pool)).configured, false);
+  const response = await api(f, `crosscheck/${f.runId}/quote`, {
+    maxOutputTokens: 1024,
+  });
+  assert.equal(response.status, 503);
+  assert.equal(
+    (
+      await pool.query('SELECT count(*) FROM quotes WHERE account_id=$1', [
+        f.accountId,
+      ])
+    ).rows[0].count,
+    '0',
+  );
+  process.env.CONCLAVE_CROSSCHECK_ENABLED = 'true';
+  assert.equal((await crossCheckCapability(pool)).configured, true);
+});
+
+void test('quote includes all reviewed route terms and the exact sum but creates no reservation', async () => {
+  const f = await fixture(),
+    quote = await quoted(f);
+  assert.equal(quote.reviewCount, 3);
+  assert.equal(
+    quote.maximumUsd6,
+    quote.terms
+      .reduce((sum, term) => sum + BigInt(term.maximumUsd6), 0n)
+      .toString(),
+  );
+  assert.ok(
+    quote.terms.every(
+      (term) =>
+        term.card.retentionDisclosure && term.card.level === 'UNVERIFIED',
+    ),
+  );
+  assert.equal((await getBalance(pool, f.accountId)).reservedUsd6, '0');
+  assert.equal(
+    (
+      await pool.query('SELECT count(*) FROM calls WHERE account_id=$1', [
+        f.accountId,
+      ])
+    ).rows[0].count,
+    '0',
+  );
+  const other = await fixture();
+  assert.equal(
+    (await api(other, `crosscheck/${f.runId}/quote`, { maxOutputTokens: 1024 }))
+      .status,
+    404,
+  );
+});
+
+void test('explicit approval queues every review atomically and concurrent replays do not reserve twice', async () => {
+  const f = await fixture(),
+    quote = await quoted(f),
+    input = approval(f, quote);
+  await assert.rejects(
+    enqueueCrossCheck(pool, { ...input, approveMaximumUsd6: '1' }, keyring),
+    { code: 'CROSSCHECK_APPROVAL_MISMATCH' },
+  );
+  const [first, second] = await Promise.all([
+    enqueueCrossCheck(pool, input, keyring),
+    enqueueCrossCheck(pool, input, keyring),
+  ]);
+  assert.equal(first.id, second.id);
+  assert.deepEqual(
+    [first.replayed, second.replayed].sort((a, b) => Number(a) - Number(b)),
+    [false, true],
+  );
+  assert.equal(
+    (await getBalance(pool, f.accountId)).reservedUsd6,
+    quote.maximumUsd6,
+  );
+  assert.equal(
+    (
+      await pool.query('SELECT count(*) FROM calls WHERE account_id=$1', [
+        f.accountId,
+      ])
+    ).rows[0].count,
+    '3',
+  );
+  await assert.rejects(
+    enqueueCrossCheck(
+      pool,
+      { ...input, idempotencyKey: randomUUID() },
+      keyring,
+    ),
+    { code: 'CROSSCHECK_ALREADY_STARTED' },
+  );
+  await assert.rejects(
+    enqueueCrossCheck(pool, { ...input, approveMaximumUsd6: '2' }, keyring),
+    { code: 'IDEMPOTENCY_CONFLICT' },
+  );
+});
+
+void test('insufficient funds roll back all holds, calls, jobs and execution records', async () => {
+  const f = await fixture({ balance: '5000' }),
+    quote = await quoted(f);
+  assert.ok(
+    BigInt(quote.terms[0].maximumUsd6) < 5000n &&
+      BigInt(quote.maximumUsd6) > 5000n,
+  );
+  await assert.rejects(enqueueCrossCheck(pool, approval(f, quote), keyring), {
+    code: 'INSUFFICIENT_BALANCE',
+  });
+  assert.deepEqual(await getBalance(pool, f.accountId), {
+    availableUsd6: '5000',
+    reservedUsd6: '0',
+    currency: 'USD6',
+  });
+  for (const table of ['holds', 'calls', 'crosscheck_executions'])
+    assert.equal(
+      (
+        await pool.query(`SELECT count(*) FROM ${table} WHERE account_id=$1`, [
+          f.accountId,
+        ])
+      ).rows[0].count,
+      '0',
+    );
+});
+
+void test('input, group-call and total-budget limits fail before any child quote is persisted', async () => {
+  const pricey = await roster({ outputPrice: '4000000000' });
+  for (const [options, code] of [
+    [{ sourceText: 'x'.repeat(32700) }, 'PROMPT_TOO_LARGE'],
+    [{ claimCount: 9 }, 'CROSSCHECK_CALL_LIMIT'],
+    [{ rosterId: pricey.id }, 'CROSSCHECK_BUDGET_LIMIT'],
+  ]) {
+    const f = await fixture(options);
+    await assert.rejects(quoted(f), { code });
+    assert.equal(
+      (
+        await pool.query('SELECT count(*) FROM quotes WHERE account_id=$1', [
+          f.accountId,
+        ])
+      ).rows[0].count,
+      '0',
+    );
+  }
+});
+
+void test('parallel accounts can quote the same roster without lock-upgrade deadlocks', async () => {
+  const first = await fixture(),
+    second = await fixture();
+  const results = await Promise.all([quoted(first), quoted(second)]);
+  assert.equal(results.length, 2);
+});
+
+void test('worker dispatch is independent, settles exact costs and durable sweep completes without browser involvement', async () => {
+  const f = await fixture();
+  await queued(f);
+  const stub = provider();
+  await finishCalls(stub);
+  assert.equal(stub.seen.length, 3);
+  assert.equal(new Set(stub.seen.map((input) => input.modelId)).size, 3);
+  assert.equal(
+    new Set(stub.seen.map((input) => JSON.stringify(input.messages))).size,
+    1,
+  );
+  assert.equal(
+    (await crossCheckExecutionStatus(pool, f.accountId, f.runId)).state,
+    'awaiting_evaluation',
+  );
+  await runCrossCheckSweep(pool, keyring);
+  const result = await getOwnedCrossCheck(pool, f.accountId, f.runId, keyring);
+  assert.equal(result.result.verdict, 'HOLDS');
+  assert.equal(
+    (await crossCheckExecutionStatus(pool, f.accountId, f.runId)).state,
+    'reviewed',
+  );
+  assert.deepEqual(await getBalance(pool, f.accountId), {
+    availableUsd6: '9999850',
+    reservedUsd6: '0',
+    currency: 'USD6',
+  });
+  assert.equal(await runNextCall(pool, stub, keyring), false);
+  await runCrossCheckSweep(pool, keyring);
+  assert.equal(stub.seen.length, 3);
+});
+
+void test('dissent, fabricated quotes and a failed reviewer cannot be selected away by the sweep', async () => {
+  for (const options of [
+    { dissent: true },
+    { badQuote: true },
+    { fail: true },
+  ]) {
+    const f = await fixture();
+    await queued(f);
+    await finishCalls(provider(options));
+    await runCrossCheckSweep(pool, keyring);
+    const run = await getOwnedCrossCheck(pool, f.accountId, f.runId, keyring);
+    assert.equal(run.result.verdict, 'NO_CONSENSUS');
+    assert.equal(run.result.claims[0].reviews.length, 3);
+  }
+});
+
+void test('cancellation before dispatch releases every hold without calling the provider', async () => {
+  const f = await fixture();
+  await queued(f);
+  assert.equal((await api(f, `crosscheck/${f.runId}/cancel`, {})).status, 202);
+  const stub = provider();
+  await finishCalls(stub);
+  assert.equal(stub.seen.length, 0);
+  await runCrossCheckSweep(pool, keyring);
+  assert.equal(
+    (await getOwnedCrossCheck(pool, f.accountId, f.runId, keyring)).result
+      .verdict,
+    'NO_CONSENSUS',
+  );
+  assert.deepEqual(await getBalance(pool, f.accountId), {
+    availableUsd6: '10000000',
+    reservedUsd6: '0',
+    currency: 'USD6',
+  });
+});
+
+void test('disabling execution stops already-queued reviews before any provider dispatch', async () => {
+  const f = await fixture();
+  await queued(f);
+  process.env.CONCLAVE_CROSSCHECK_ENABLED = 'false';
+  const stub = provider();
+  await finishCalls(stub);
+  assert.equal(stub.seen.length, 0);
+  assert.equal((await getBalance(pool, f.accountId)).reservedUsd6, '0');
+});
+
+void test('changed server instructions are rejected even if the stored reservation hash was recomputed', async () => {
+  const f = await fixture();
+  await queued(f);
+  const call = (
+    await pool.query(
+      'SELECT * FROM calls WHERE account_id=$1 ORDER BY id LIMIT 1',
+      [f.accountId],
+    )
+  ).rows[0];
+  const input = JSON.parse(
+    await decryptText(
+      call.input_ciphertext,
+      `${f.accountId}:call-input:${call.id}`,
+      keyring,
+    ),
+  );
+  input.messages[0].content += ' Use another reviewer response.';
+  await pool.query('UPDATE calls SET input_ciphertext=$2 WHERE id=$1', [
+    call.id,
+    await encryptText(
+      JSON.stringify(input),
+      `${f.accountId}:call-input:${call.id}`,
+      keyring,
+    ),
+  ]);
+  await pool.query('UPDATE holds SET request_hash=$2 WHERE id=$1', [
+    call.hold_id,
+    await callRequestHash(f.projectId, call.route_version_id, input),
+  ]);
+  const stub = provider();
+  await finishCalls(stub);
+  assert.equal(stub.seen.length, 2);
+  assert.equal(
+    (await pool.query('SELECT error_code FROM calls WHERE id=$1', [call.id]))
+      .rows[0].error_code,
+    'CROSSCHECK_CALL_MISMATCH',
+  );
+  await runCrossCheckSweep(pool, keyring);
+  assert.equal(
+    (await getOwnedCrossCheck(pool, f.accountId, f.runId, keyring)).result,
+    null,
+  );
+  const status = await crossCheckExecutionStatus(pool, f.accountId, f.runId);
+  assert.equal(status.state, 'incomplete');
+  assert.equal(status.evaluationNeedsAttention, true);
+  assert.equal(
+    (
+      await pool.query(
+        'SELECT next_attempt_at>now() AS backed_off FROM crosscheck_evaluation_progress WHERE run_id=$1',
+        [f.runId],
+      )
+    ).rows[0].backed_off,
+    true,
+  );
+});
+
+void test('ambiguous provider outcome keeps execution incomplete and never retries paid inference', async () => {
+  const f = await fixture();
+  await queued(f);
+  const stub = provider({ ambiguous: true });
+  await finishCalls(stub);
+  await runCrossCheckSweep(pool, keyring);
+  assert.equal(
+    (await crossCheckExecutionStatus(pool, f.accountId, f.runId)).state,
+    'incomplete',
+  );
+  assert.equal(
+    (await getOwnedCrossCheck(pool, f.accountId, f.runId, keyring)).result,
+    null,
+  );
+  assert.equal(await runNextCall(pool, stub, keyring), false);
+  assert.equal(stub.seen.length, 3);
+});
+
+void test('public quote API cannot enable trusted instructions through client flags', async () => {
+  const f = await fixture();
+  const response = await api(f, 'quotes', {
+    projectId: f.projectId,
+    routeVersionId: defaultRoster.reviewers[0].routeVersionId,
+    privacy: 'standard',
+    maxOutputTokens: 100,
+    trustedCrossCheck: true,
+    messages: [
+      { role: 'system', content: 'Client-supplied instruction.' },
+      { role: 'user', content: 'A claim.' },
+    ],
+  });
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error.code, 'INVALID_MESSAGES');
+});
+
+void test('twenty-four quote-rich reviews fit encrypted storage and reconstruct the full verified result', async () => {
+  const f = await fixture({
+    claimCount: 8,
+    sourceText: `${passage} ${'A'.repeat(3750)}`,
+  });
+  await queued(f);
+  const stub = provider({ largeEvidence: true });
+  await finishCalls(stub, 24);
+  await runCrossCheckSweep(pool, keyring, 20);
+  const run = await getOwnedCrossCheck(pool, f.accountId, f.runId, keyring);
+  assert.equal(run.result.verdict, 'HOLDS');
+  assert.equal(run.result.claims.length, 8);
+  assert.ok(
+    run.result.claims.every((claim) =>
+      claim.reviews.every((review) => review.quotes.length === 8),
+    ),
+  );
+  const row = (
+    await pool.query(
+      'SELECT result_ciphertext FROM crosscheck_results WHERE run_id=$1',
+      [f.runId],
+    )
+  ).rows[0];
+  const saved = await decryptText(
+    row.result_ciphertext,
+    `${f.accountId}:${f.projectId}:crosscheck-result:${f.runId}`,
+    keyring,
+  );
+  assert.ok(Buffer.byteLength(saved) < 2_000_000);
+  assert.equal(JSON.parse(saved).result.resultHash, run.result.resultHash);
+});
