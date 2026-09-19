@@ -352,3 +352,482 @@ void test('source creation and preparation are authenticated, origin checked, en
     '0',
   );
 });
+
+void test('source and run IDs cannot cross owners, projects, archived projects or disabled accounts', async () => {
+  const f = await fixture(),
+    other = await owner();
+  for (const path of [
+    `crosscheck/sources/${f.source.id}`,
+    `crosscheck/${f.run.id}`,
+    `crosscheck?projectId=${f.projectId}`,
+  ])
+    assert.equal((await api(other, path)).status, 404);
+  await assert.rejects(
+    prepareOwnedCrossCheck(
+      pool,
+      { ...f.input, accountId: other.accountId, projectId: other.projectId },
+      keyring,
+    ),
+    { code: 'CROSSCHECK_SOURCE_NOT_FOUND' },
+  );
+  const secondProject = randomUUID();
+  await pool.query(
+    "INSERT INTO projects(id,account_id,title) VALUES($1,$2,'Second project')",
+    [secondProject, f.accountId],
+  );
+  await assert.rejects(
+    prepareOwnedCrossCheck(
+      pool,
+      { ...f.input, projectId: secondProject },
+      keyring,
+    ),
+    { code: 'CROSSCHECK_SOURCE_NOT_FOUND' },
+  );
+  await pool.query('UPDATE projects SET archived_at=now() WHERE id=$1', [
+    f.projectId,
+  ]);
+  assert.equal((await api(f, `crosscheck/${f.run.id}`)).status, 404);
+  assert.equal((await api(f, `crosscheck/sources/${f.source.id}`)).status, 404);
+  await pool.query('UPDATE accounts SET disabled_at=now() WHERE id=$1', [
+    other.accountId,
+  ]);
+  assert.equal((await api(other, 'crosscheck/rosters')).status, 401);
+});
+
+void test('clients cannot upload reviewer output, set result state or administer rosters', async () => {
+  const f = await fixture();
+  for (const path of [
+    `crosscheck/${f.run.id}/reviews`,
+    `crosscheck/${f.run.id}/complete`,
+    'crosscheck/rosters',
+  ])
+    assert.equal(
+      (
+        await api(f, path, {
+          method: 'POST',
+          body: { result: 'HOLDS', reviews: [] },
+        })
+      ).status,
+      404,
+    );
+  const { accountId: _accountId, ...body } = f.input;
+  for (const added of [
+    { reviewers: [] },
+    { result: 'HOLDS' },
+    { status: 'reviewed' },
+  ])
+    assert.equal(
+      (
+        await api(f, 'crosscheck', {
+          method: 'POST',
+          body: { ...body, ...added },
+        })
+      ).status,
+      400,
+    );
+  assert.equal(
+    (await getOwnedCrossCheck(pool, f.accountId, f.run.id, keyring)).result,
+    null,
+  );
+});
+
+void test('server-approved rosters exclude duplicate families, unreviewed, expired, disabled and unmixed entries', async () => {
+  for (const options of [
+    { families: ['family-a', 'family-a', 'family-c'] },
+    { reviewed: false },
+    { enabled: false },
+    { expiresAt: new Date(Date.now() - 1000) },
+    { distributions: ['proprietary', 'proprietary', 'proprietary'] },
+  ]) {
+    const invalid = await seedRoster(options),
+      user = await owner();
+    const source = await saveProvidedSource(
+      pool,
+      { ...user, title: 'Source', text: sourceText },
+      keyring,
+    );
+    await assert.rejects(
+      prepareOwnedCrossCheck(
+        pool,
+        {
+          ...user,
+          rosterId: invalid.id,
+          sourceIds: [source.id],
+          claims: [{ id: 'claim', text: quote }],
+        },
+        keyring,
+      ),
+      { code: 'CROSSCHECK_ROSTER_UNAVAILABLE' },
+    );
+    assert.ok(
+      !(await listReviewerRosters(pool)).some(
+        (roster) => roster.id === invalid.id,
+      ),
+    );
+  }
+});
+
+void test('disabled route blocks planning and the worker dispatch seam immediately', async () => {
+  const configured = await seedRoster(),
+    f = await fixture({ rosterId: configured.id });
+  await pool.query('UPDATE route_versions SET enabled=false WHERE id=$1', [
+    configured.reviewers[0].routeVersionId,
+  ]);
+  await assert.rejects(prepareOwnedCrossCheck(pool, f.input, keyring), {
+    code: 'CROSSCHECK_ROSTER_UNAVAILABLE',
+  });
+  await assert.rejects(
+    plannedReviewCalls(pool, f.accountId, f.run.id, keyring),
+    { code: 'CROSSCHECK_ROSTER_UNAVAILABLE' },
+  );
+});
+
+void test('source byte limits, claim counts, unknown fields and source URI schemes are bounded', async () => {
+  const f = await fixture();
+  for (const body of [
+    { projectId: f.projectId, title: 'Large', text: 'é'.repeat(32769) },
+    {
+      projectId: f.projectId,
+      title: 'Unsupported',
+      text: sourceText,
+      uri: 'file:///private/source',
+    },
+    {
+      projectId: f.projectId,
+      title: 'Unsupported',
+      text: sourceText,
+      visibility: 'public',
+    },
+  ])
+    assert.equal(
+      (await api(f, 'crosscheck/sources', { method: 'POST', body })).status,
+      400,
+    );
+  const { accountId: _accountId, ...body } = f.input;
+  assert.equal(
+    (
+      await api(f, 'crosscheck', {
+        method: 'POST',
+        body: {
+          ...body,
+          claims: Array.from({ length: 25 }, (_, id) => ({
+            id: `c${id}`,
+            text: quote,
+          })),
+        },
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await api(f, 'crosscheck', {
+        method: 'POST',
+        body: { ...body, sourceIds: Array(9).fill(f.source.id) },
+      })
+    ).status,
+    400,
+  );
+});
+
+void test('preparation deduplicates concurrent identical requests without marking them reviewed', async () => {
+  const f = await fixture();
+  const results = await Promise.all(
+    Array.from({ length: 4 }, () =>
+      prepareOwnedCrossCheck(pool, f.input, keyring),
+    ),
+  );
+  assert.ok(
+    results.every(
+      (result) =>
+        result.reused &&
+        !result.cacheHit &&
+        result.crosscheck.id === f.run.id &&
+        result.crosscheck.status === 'prepared',
+    ),
+  );
+  assert.equal(
+    (
+      await pool.query(
+        'SELECT count(*) FROM crosscheck_runs WHERE account_id=$1',
+        [f.accountId],
+      )
+    ).rows[0].count,
+    '1',
+  );
+});
+
+void test('prepared review messages are identical per claim, omit peer answers, and remain worker-only', async () => {
+  const f = await fixture();
+  const requests = await plannedReviewCalls(
+    pool,
+    f.accountId,
+    f.run.id,
+    keyring,
+  );
+  assert.equal(requests.length, 3);
+  assert.ok(
+    requests.every(
+      (request) =>
+        JSON.stringify(request.messages) ===
+        JSON.stringify(requests[0].messages),
+    ),
+  );
+  assert.match(requests[0].messages[0].content, /untrusted data/);
+  assert.ok(!JSON.stringify(requests).includes(f.accountId));
+  assert.equal((await api(f, `crosscheck/${f.run.id}/requests`)).status, 404);
+});
+
+void test('worker completion accepts only exact independent persisted calls and creates encrypted verifiable results', async () => {
+  const f = await fixture(),
+    calls = await persistedCalls(f);
+  const result = await complete(f, calls);
+  assert.equal(result.status, 'reviewed');
+  assert.equal(result.result.verdict, 'HOLDS');
+  assert.equal(result.cacheUsable, true);
+  assert.equal(
+    (await complete(f, calls)).result.resultHash,
+    result.result.resultHash,
+  );
+  assert.equal(
+    (
+      await pool.query(
+        'SELECT count(*) FROM crosscheck_review_calls WHERE run_id=$1',
+        [f.run.id],
+      )
+    ).rows[0].count,
+    '3',
+  );
+  const stored = (
+    await pool.query(
+      'SELECT result_ciphertext FROM crosscheck_results WHERE run_id=$1',
+      [f.run.id],
+    )
+  ).rows[0];
+  assert.ok(!stored.result_ciphertext.includes(quote));
+  const read = await api(f, `crosscheck/${f.run.id}`);
+  assert.equal(
+    (await read.json()).crosscheck.result.resultHash,
+    result.result.resultHash,
+  );
+  const cached = await prepareOwnedCrossCheck(pool, f.input, keyring);
+  assert.equal(cached.cacheHit, true);
+  assert.equal(cached.crosscheck.id, f.run.id);
+});
+
+void test('fabricated quotes and one dissent remain NO_CONSENSUS after persistence and reload', async () => {
+  for (const alteration of ['quote', 'dissent', 'failed', 'oversized']) {
+    const f = await fixture();
+    const calls = await persistedCalls(f, {
+      failed: alteration === 'failed',
+      content: (index) =>
+        index === 0 && alteration === 'oversized'
+          ? 'x'.repeat(32769)
+          : review(
+              f.source,
+              index === 0 && alteration === 'dissent'
+                ? 'contradicted'
+                : 'supported',
+              index === 0 && alteration === 'quote'
+                ? 'Invented source text.'
+                : quote,
+            ),
+    });
+    const result = await complete(f, calls);
+    assert.equal(result.result.verdict, 'NO_CONSENSUS');
+    assert.equal(
+      (await getOwnedCrossCheck(pool, f.accountId, f.run.id, keyring)).result
+        .verdict,
+      'NO_CONSENSUS',
+    );
+  }
+});
+
+void test('mismatched owner, route, instructions, pending state, missing or duplicate calls fail atomically', async () => {
+  for (const alteration of [
+    'owner',
+    'route',
+    'instructions',
+    'pending',
+    'missing',
+    'duplicate',
+  ]) {
+    const f = await fixture();
+    let calls = await persistedCalls(f, {
+      owner: alteration === 'owner' ? await owner() : undefined,
+      wrongRoute: alteration === 'route',
+      alterInput: alteration === 'instructions',
+      pending: alteration === 'pending',
+    });
+    if (alteration === 'missing') calls = calls.slice(1);
+    if (alteration === 'duplicate') calls = [calls[0], calls[0], calls[2]];
+    await assert.rejects(complete(f, calls), (error) =>
+      ['CROSSCHECK_CALL_MISMATCH', 'CROSSCHECK_CALL_PENDING'].includes(
+        error.code,
+      ),
+    );
+    assert.equal(
+      (
+        await pool.query(
+          'SELECT count(*) FROM crosscheck_results WHERE run_id=$1',
+          [f.run.id],
+        )
+      ).rows[0].count,
+      '0',
+    );
+    assert.equal(
+      (
+        await pool.query(
+          'SELECT count(*) FROM crosscheck_review_calls WHERE run_id=$1',
+          [f.run.id],
+        )
+      ).rows[0].count,
+      '0',
+    );
+  }
+});
+
+void test('cache expires exactly at twenty-four hours and new claims or snapshots cannot reuse results', async () => {
+  const f = await fixture(),
+    calls = await persistedCalls(f);
+  await complete(f, calls);
+  const expires = f.run.plan.cache.expiresAtMs;
+  assert.equal(
+    (
+      await getOwnedCrossCheck(
+        pool,
+        f.accountId,
+        f.run.id,
+        keyring,
+        expires - 1,
+      )
+    ).cacheUsable,
+    true,
+  );
+  assert.equal(
+    (await getOwnedCrossCheck(pool, f.accountId, f.run.id, keyring, expires))
+      .cacheUsable,
+    false,
+  );
+  const expired = await prepareOwnedCrossCheck(pool, f.input, keyring, expires);
+  assert.equal(expired.cacheHit, false);
+  assert.notEqual(expired.crosscheck.id, f.run.id);
+  const edited = await prepareOwnedCrossCheck(
+    pool,
+    {
+      ...f.input,
+      claims: [{ id: 'opening', text: 'The archive closes at 17:00.' }],
+    },
+    keyring,
+  );
+  assert.equal(edited.cacheHit, false);
+  const newSource = await saveProvidedSource(
+    pool,
+    { ...f, title: 'Updated source', text: 'The archive now opens at 10:00.' },
+    keyring,
+  );
+  assert.equal(
+    (
+      await prepareOwnedCrossCheck(
+        pool,
+        { ...f.input, sourceIds: [newSource.id] },
+        keyring,
+      )
+    ).cacheHit,
+    false,
+  );
+});
+
+void test('copied encrypted source data cannot be decrypted under another snapshot identity', async () => {
+  const f = await fixture(),
+    copiedId = randomUUID();
+  await pool.query(
+    `INSERT INTO crosscheck_sources(id,account_id,project_id,snapshot_hash,snapshot_ciphertext,source_bytes,captured_at)
+    SELECT $1,account_id,project_id,snapshot_hash,snapshot_ciphertext,source_bytes,captured_at FROM crosscheck_sources WHERE id=$2`,
+    [copiedId, f.source.id],
+  );
+  await assert.rejects(
+    getProvidedSource(pool, f.accountId, copiedId, keyring),
+    { code: 'CROSSCHECK_CONTENT_UNAVAILABLE' },
+  );
+  const wrongKeys = {
+    active: 'test',
+    keys: { test: randomBytes(32).toString('base64') },
+  };
+  await assert.rejects(
+    getOwnedCrossCheck(pool, f.accountId, f.run.id, wrongKeys),
+    { code: 'CROSSCHECK_CONTENT_UNAVAILABLE' },
+  );
+});
+
+void test('database guards prevent source/run/result/roster rewriting and cross-owner inserts', async () => {
+  const f = await fixture(),
+    other = await owner(),
+    calls = await persistedCalls(f);
+  await complete(f, calls);
+  for (const statement of [
+    ['UPDATE crosscheck_sources SET source_bytes=1 WHERE id=$1', f.source.id],
+    ['DELETE FROM crosscheck_runs WHERE id=$1', f.run.id],
+    [
+      'UPDATE crosscheck_results SET finished_at=now() WHERE run_id=$1',
+      f.run.id,
+    ],
+    [
+      "UPDATE crosscheck_rosters SET label='Changed' WHERE id=$1",
+      defaultRoster.id,
+    ],
+  ])
+    await assert.rejects(pool.query(statement[0], [statement[1]]), {
+      code: '23514',
+    });
+  await assert.rejects(
+    pool.query(
+      `INSERT INTO crosscheck_sources(id,account_id,project_id,snapshot_hash,snapshot_ciphertext,source_bytes,captured_at)
+    SELECT $1,$2,project_id,snapshot_hash,snapshot_ciphertext,source_bytes,captured_at FROM crosscheck_sources WHERE id=$3`,
+      [randomUUID(), other.accountId, f.source.id],
+    ),
+    { code: '23514' },
+  );
+});
+
+void test('project snapshot quota is serialized and rejects further storage', async () => {
+  const f = await fixture();
+  await pool.query(
+    `INSERT INTO crosscheck_sources(id,account_id,project_id,snapshot_hash,snapshot_ciphertext,source_bytes,captured_at)
+    SELECT gen_random_uuid(),s.account_id,s.project_id,s.snapshot_hash,s.snapshot_ciphertext,s.source_bytes,s.captured_at
+    FROM crosscheck_sources s CROSS JOIN generate_series(1,$2) WHERE s.id=$1`,
+    [f.source.id, CROSSCHECK_STORAGE_LIMITS.sourcesPerProject - 1],
+  );
+  await assert.rejects(
+    saveProvidedSource(
+      pool,
+      { ...f, title: 'Too many', text: sourceText },
+      keyring,
+    ),
+    { code: 'CROSSCHECK_STORAGE_LIMIT' },
+  );
+});
+
+void test('prepare rate limits are durable and list pagination stays owned', async () => {
+  const f = await fixture();
+  const { accountId: _accountId, ...body } = f.input;
+  for (let count = 0; count < 10; count++)
+    assert.equal(
+      (await api(f, 'crosscheck', { method: 'POST', body })).status,
+      200,
+    );
+  assert.equal(
+    (await api(f, 'crosscheck', { method: 'POST', body })).status,
+    429,
+  );
+  const listing = await api(f, `crosscheck?projectId=${f.projectId}`);
+  assert.equal(listing.status, 200);
+  assert.equal((await listing.json()).crosschecks[0].id, f.run.id);
+  const sourceListing = await api(
+    f,
+    `crosscheck/sources?projectId=${f.projectId}`,
+  );
+  const listed = (await sourceListing.json()).sources[0];
+  assert.equal(listed.id, f.source.id);
+  assert.equal(listed.text, undefined);
+});
