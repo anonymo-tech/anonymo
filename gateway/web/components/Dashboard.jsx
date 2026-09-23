@@ -224,3 +224,394 @@ function KeyDialog({ existing, onSave, onClose, live }) {
     </Modal>
   );
 }
+
+function SessionDialog({ onSave, onClose, existing, live, tokens = [], paywith = {} }) {
+  const symbols = live ? tokens.map((t) => t.symbol) : ["NVDA", "TSLA"];
+  const [token, setToken] = useState(existing?.token || symbols[0] || "NVDA");
+  const [cap, setCap] = useState(String(existing?.cap ?? 0.01));
+  const [error, setError] = useState("");
+  const [step, setStep] = useState("");
+  return (
+    <Modal title={existing ? "Edit session cap" : live ? "Open a Stock Token session" : "Open a sample session"} onClose={onClose}>
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const n = Number(cap);
+          if (!Number.isFinite(n) || n <= 0 || n > 1000) {
+            setError("Set a daily cap greater than 0 and up to 1,000 token units.");
+            return;
+          }
+          if (live && !symbols.length) return setError("No Stock Tokens are registered on this router.");
+          setError("");
+          try {
+            await onSave({ token, cap: n, cap_text: cap }, setStep);
+          } catch (err) {
+            setError(err?.message || String(err));
+            setStep("");
+          }
+        }}
+      >
+        {error && (
+          <div className="error" role="alert">
+            {error}
+          </div>
+        )}
+        {step && (
+          <div className="success" role="status">
+            {step}
+          </div>
+        )}
+        <Field label={live ? "Stock Token" : "Sample Stock Token"} id="session-token">
+          <select id="session-token" disabled={!!existing || !!step} value={token} onChange={(e) => setToken(e.target.value)}>
+            {symbols.map((s) => (
+              <option key={s}>{s}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Daily cap / token units" id="session-cap">
+          <input id="session-cap" type="number" min="0.0000000001" max="1000" step="any" value={cap} onChange={(e) => setCap(e.target.value)} required disabled={!!step} />
+        </Field>
+        <div className="note">
+          {live
+            ? `Your wallet approves the token and opens a capped session for this key (two transactions). Calls accrue in USDG; at $${paywith.threshold_usd ?? 1} (or after ${paywith.max_age_hours ?? 24}h) the router swaps exactly what is owed at the Chainlink fair value, never more than your daily cap. Close it any time.`
+            : "No wallet is connected. Sample conversion values are NVDA = 100 USDG and TSLA = 200 USDG, purely for testing. No swap or transfer occurs."}
+        </div>
+        <Button type="submit" disabled={!!step}>
+          {step ? "Working…" : existing ? "Save cap" : live ? "Connect wallet and open" : "Open sample session"}
+        </Button>
+      </form>
+    </Modal>
+  );
+}
+
+function SecretDialog({ secret, deposit, onClose, title = "Your new API key" }) {
+  return (
+    <Modal title={title} onClose={onClose}>
+      <p>Copy this key now. It is shown once; the router stores only its hash.</p>
+      <Code label="API key">{secret}</Code>
+      {deposit?.key_hash && (
+        <dl className="detail-list">
+          <div>
+            <dt>Deposit to</dt>
+            <dd className="mono">{deposit.key_hash}</dd>
+          </div>
+          <div>
+            <dt>Credits contract</dt>
+            <dd className="mono">{deposit.credits_contract || "Not configured on this router"}</dd>
+          </div>
+        </dl>
+      )}
+      <div className="button-row modal-actions">
+        <Button onClick={onClose}>I saved it</Button>
+      </div>
+    </Modal>
+  );
+}
+
+function DepositDialog({ onClose, apiKey, credits, status, onDone }) {
+  const [amount, setAmount] = useState("10");
+  const [step, setStep] = useState("");
+  const [error, setError] = useState("");
+  const deposit = credits?.deposit || {};
+  return (
+    <Modal title="Deposit USDG" onClose={onClose}>
+      <p>Add USDG to this key’s balance on {chainOf(status).name}. Prepaid calls carry a 0% router fee.</p>
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
+      {step && (
+        <div className="success" role="status">
+          {step}
+        </div>
+      )}
+      <Field label="Amount / USDG" id="deposit-amount">
+        <input id="deposit-amount" type="number" min="0.000001" step="any" value={amount} onChange={(e) => setAmount(e.target.value)} disabled={!!step} />
+      </Field>
+      <dl className="detail-list">
+        <div>
+          <dt>Key hash</dt>
+          <dd className="mono">{deposit.key_hash}</dd>
+        </div>
+        <div>
+          <dt>Credits contract</dt>
+          <dd className="mono">{deposit.credits_contract || "Not configured on this router"}</dd>
+        </div>
+        <div>
+          <dt>Token</dt>
+          <dd className="mono">{deposit.token}</dd>
+        </div>
+      </dl>
+      <div className="button-row modal-actions">
+        <Button
+          disabled={!!step || !deposit.credits_contract}
+          onClick={async () => {
+            setError("");
+            try {
+              if (!/^\d+(\.\d{1,6})?$/.test(amount) || Number(amount) <= 0) throw new Error("Enter a USDG amount with up to 6 decimals.");
+              const from = await connect();
+              await ensureChain(chainOf(status));
+              const tx = (await api("/api/v1/credits/deposit-tx", { key: apiKey, method: "POST", body: { amount } })).data;
+              await sendTransactions(from, tx.transactions, setStep);
+              setStep("Deposited. Waiting for the router to index it…");
+              await onDone(Number(amount));
+            } catch (e) {
+              setError(e?.message || String(e));
+              setStep("");
+            }
+          }}
+        >
+          {hasWallet() ? "Deposit with wallet" : "Connect a wallet"}
+        </Button>
+        <CopyButton text={deposit.key_hash || ""} label="Copy key hash" />
+      </div>
+      <p className="help-text">No wallet here? Approve USDG to the Credits contract and call deposit(keyHash, amount) from any wallet.</p>
+      {status?.dev_faucet && (
+        <>
+          <div className="note">Local test chain: add mock USDG to this key without a wallet. It has no value and exists only on this machine’s chain.</div>
+          <div className="button-row modal-actions">
+            <Button
+              secondary
+              disabled={!!step}
+              onClick={async () => {
+                setError("");
+                try {
+                  if (!/^\d+(\.\d{1,6})?$/.test(amount) || Number(amount) <= 0 || Number(amount) > 1000) throw new Error("Enter up to 1000 test USDG.");
+                  setStep("Minting and depositing test USDG…");
+                  await api("/api/v1/dev/faucet", { key: apiKey, method: "POST", body: { amount } });
+                  await onDone(Number(amount), "test");
+                } catch (e) {
+                  setError(e?.message || String(e));
+                  setStep("");
+                }
+              }}
+            >
+              Add {/^\d+(\.\d{1,6})?$/.test(amount) ? amount : "10"} test USDG
+            </Button>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+function WithdrawDialog({ onClose, apiKey, credits, status, onDone }) {
+  const rootEvery = cadence(status?.settlement?.spent_root_interval_ms);
+  const [amount, setAmount] = useState("");
+  const [to, setTo] = useState("");
+  const [step, setStep] = useState("");
+  const [busy, setBusy] = useState(false); // a wallet or API step is in flight (step also holds success messages)
+  const [error, setError] = useState("");
+  const [proof, setProof] = useState(null);
+  // Pending state is read from the Credits contract, so reloading after each step reflects the chain.
+  const loadProof = () =>
+    api("/api/v1/credits/withdrawal-proof", { key: apiKey })
+      .then((r) => setProof(r.data))
+      .catch(() => setProof(null));
+  useEffect(() => {
+    loadProof();
+  }, [apiKey]);
+  const pending = proof?.pending;
+  async function send(txs) {
+    const from = await connect();
+    await ensureChain(chainOf(status));
+    if (!to) setTo(from);
+    return { from, hashes: await sendTransactions(from, txs, setStep) };
+  }
+  return (
+    <Modal title="Withdraw USDG" onClose={onClose}>
+      <p>Your balance is self-custodial. A withdrawal is requested with this key’s signature, then finalized with a proof from the next spent root (posted {rootEvery}).</p>
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
+      {step && (
+        <div className="success" role="status">
+          {step}
+        </div>
+      )}
+      {pending ? (
+        <>
+          <div className="note">
+            Pending request: {money(fromRaw(pending.amount_usdg_units, 6), 6)} USDG to {shortAddress(pending.to)} (requested {new Date(pending.requested_at).toLocaleString("en-GB")}). Finalize once a spent root newer than the request is posted.
+          </div>
+          <div className="button-row modal-actions">
+            <Button
+              disabled={busy || !proof?.transactions?.length || new Date(proof.as_of) < new Date(pending.requested_at)}
+              onClick={async () => {
+                setError("");
+                setBusy(true);
+                try {
+                  await send(proof.transactions);
+                  await Promise.all([onDone(), loadProof()]);
+                  setStep("Withdrawal finalized. USDG has been sent.");
+                } catch (e) {
+                  setError(e?.message || String(e));
+                  setStep("");
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Finalize withdrawal
+            </Button>
+            <Button
+              secondary
+              disabled={busy}
+              onClick={async () => {
+                setError("");
+                setBusy(true);
+                try {
+                  const req = (await api("/api/v1/credits/withdraw-cancel", { key: apiKey, method: "POST" })).data;
+                  await send(req.transactions);
+                  await loadProof();
+                  setStep("Withdrawal cancelled. The locked amount returns to your balance within a few seconds.");
+                  await onDone();
+                  setTimeout(() => onDone(), 6000);
+                } catch (e) {
+                  setError(e?.message || String(e));
+                  setStep("");
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Cancel request
+            </Button>
+          </div>
+          {proof && new Date(proof.as_of) < new Date(pending.requested_at) && <p className="help-text">The latest spent root ({new Date(proof.as_of).toLocaleString("en-GB")}) predates the request. Try again after the next root (posted {rootEvery}).</p>}
+        </>
+      ) : (
+        <>
+          <Field label="Amount / USDG" id="withdraw-amount">
+            <input id="withdraw-amount" type="number" min="0.000001" step="any" value={amount} onChange={(e) => setAmount(e.target.value)} disabled={busy} placeholder={money(credits?.available ?? 0, 2)} />
+          </Field>
+          <Field label="Send to (defaults to your connected wallet)" id="withdraw-to">
+            <input id="withdraw-to" value={to} onChange={(e) => setTo(e.target.value.trim())} placeholder="0x…" disabled={busy} />
+          </Field>
+          <div className="button-row modal-actions">
+            <Button
+              disabled={busy}
+              onClick={async () => {
+                setError("");
+                setBusy(true);
+                try {
+                  if (!/^\d+(\.\d{1,6})?$/.test(amount) || Number(amount) <= 0) throw new Error("Enter a USDG amount with up to 6 decimals.");
+                  const from = await connect();
+                  const dest = to || from;
+                  if (!/^0x[0-9a-fA-F]{40}$/.test(dest)) throw new Error("Enter a valid destination address.");
+                  const req = (await api("/api/v1/credits/withdraw-request", { key: apiKey, method: "POST", body: { amount, to: dest } })).data;
+                  await ensureChain(chainOf(status));
+                  await sendTransactions(from, req.transactions, setStep);
+                  await Promise.all([onDone(), loadProof()]);
+                  setStep(`Withdrawal requested. The amount is locked now; finalize after the next spent root (posted ${rootEvery}).`);
+                  setTimeout(() => onDone(), 6000); // the lock shows in the balance once the router indexes it
+                } catch (e) {
+                  setError(e?.message || String(e));
+                  setStep("");
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Request withdrawal
+            </Button>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+function SignIn({ onKey, onDemo, onSecret }) {
+  const [value, setValue] = useState("");
+  const [remember, setRemember] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState("");
+  async function run(label, fn) {
+    setError("");
+    setBusy(label);
+    try {
+      await fn();
+    } catch (e) {
+      setError(e?.message || String(e));
+    } finally {
+      setBusy("");
+    }
+  }
+  return (
+    <section className="signin-panel" aria-labelledby="signin-title">
+      <div className="signin-copy">
+        <span className="eyebrow">Live workspace</span>
+        <h2 id="signin-title">Connect your workspace</h2>
+        <p>Anonymo keys are self-custodial: create a key, deposit USDG to it and start calling. No account, email or password.</p>
+        <button className="text-button" onClick={onDemo}>
+          Explore the sample workspace instead →
+        </button>
+        <div className="scan-rule" aria-hidden="true" />
+      </div>
+      <div className="signin-form">
+        {error && (
+          <div className="error" role="alert">
+            {error}
+          </div>
+        )}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!validKey(value)) return setError("That is not an Anonymo key (sk-ar-v1- followed by 64 hex characters).");
+            run("key", () => onKey(value.trim(), remember));
+          }}
+        >
+          <Field label="API key" id="signin-key">
+            <input id="signin-key" type="password" autoComplete="off" value={value} onChange={(e) => setValue(e.target.value)} placeholder="sk-ar-v1-…" />
+          </Field>
+          <label className="check-label">
+            <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Remember on this device
+          </label>
+          <div className="button-row">
+            <Button type="submit" disabled={!!busy}>
+              {busy === "key" ? "Connecting…" : "Connect key"}
+            </Button>
+            <Button
+              type="button"
+              secondary
+              disabled={!!busy}
+              onClick={() =>
+                run("new", async () => {
+                  const r = await api("/api/v1/keys", { method: "POST", body: { name: "Workspace key" } });
+                  onSecret(r.key, r.deposit);
+                  await onKey(r.key, remember);
+                })
+              }
+            >
+              {busy === "new" ? "Creating…" : "Create a new key"}
+            </Button>
+            {hasWallet() && (
+              <Button
+                type="button"
+                secondary
+                disabled={!!busy}
+                onClick={() =>
+                  run("wallet", async () => {
+                    const address = await connect();
+                    const timestamp = Math.floor(Date.now() / 1000);
+                    const signature = await personalSign(address, `anonymo:wallet-key:${timestamp}`);
+                    const r = await api("/api/v1/auth/wallet", { method: "POST", body: { address, timestamp, signature, name: "Wallet key" } });
+                    onSecret(r.key, null, "Your wallet’s API key");
+                    await onKey(r.key, remember);
+                  })
+                }
+              >
+                {busy === "wallet" ? "Waiting for signature…" : "Sign in with wallet"}
+              </Button>
+            )}
+          </div>
+        </form>
+        <p className="help-text">Keys stay in this browser (this session only, unless you choose to remember them). Prompts are never stored.</p>
+      </div>
+    </section>
+  );
+}
