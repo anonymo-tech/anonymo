@@ -1,0 +1,222 @@
+rule_files:
+  - alerts.yml
+evaluation_interval: 30s
+tests:
+  - name: healthy
+    interval: 30s
+    input_series:
+      - series: up{job="anonymo",instance="router:8787"}
+        values: 1x8
+      - series: anonymo_ready{job="anonymo",instance="router:8787"}
+        values: 1x8
+      - series: anonymo_readiness_check{job="anonymo",instance="router:8787",check="settlement"}
+        values: 1x8
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: AnonymoUnavailable
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoUnavailable
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: AnonymoNotReady
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoNotReady
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: AnonymoDependencyFailed
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoDependencyFailed
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: AnonymoeadinessMetricsMissing
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoeadinessMetricsMissing
+        exp_alerts: []
+  - name: failed scrape
+    interval: 30s
+    input_series:
+      - series: up{job="anonymo",instance="router:8787"}
+        values: "0x8"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: AnonymoUnavailable
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: anonymo
+              instance: router:8787
+              severity: critical
+            exp_annotations:
+              summary: Anonymo readiness metrics cannot be reached
+      - eval_time: 1m
+        alertname: AnonymoNotReady
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoNotReady
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: AnonymoDependencyFailed
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoDependencyFailed
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: AnonymoeadinessMetricsMissing
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoeadinessMetricsMissing
+        exp_alerts: []
+  - name: missing target
+    interval: 30s
+    input_series: []
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: AnonymoUnavailable
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: anonymo
+              severity: critical
+            exp_annotations:
+              summary: Anonymo readiness metrics cannot be reached
+      - eval_time: 1m
+        alertname: AnonymoNotReady
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoNotReady
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: AnonymoDependencyFailed
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoDependencyFailed
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: AnonymoeadinessMetricsMissing
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoeadinessMetricsMissing
+        exp_alerts: []
+  - name: not ready
+    interval: 30s
+    input_series:
+      - series: up{job="anonymo",instance="router:8787"}
+        values: 1x8
+      - series: anonymo_ready{job="anonymo",instance="router:8787"}
+        values: "0x8"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: AnonymoUnavailable
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoUnavailable
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: AnonymoNotReady
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoNotReady
+        exp_alerts:
+          - exp_labels:
+              job: anonymo
+              instance: router:8787
+              severity: critical
+            exp_annotations:
+              summary: Anonymo cannot safely accept traffic
+      - eval_time: 1m
+        alertname: AnonymoDependencyFailed
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoDependencyFailed
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: AnonymoeadinessMetricsMissing
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoeadinessMetricsMissing
+        exp_alerts: []
+  - name: missing readiness payload
+    interval: 30s
+    input_series:
+      - series: up{job="anonymo",instance="router:8787"}
+        values: 1x8
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: AnonymoUnavailable
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoUnavailable
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: AnonymoNotReady
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoNotReady
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: AnonymoDependencyFailed
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoDependencyFailed
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: AnonymoeadinessMetricsMissing
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoeadinessMetricsMissing
+        exp_alerts:
+          - exp_labels:
+              job: anonymo
+              instance: router:8787
+              severity: critical
+            exp_annotations:
+              summary: Anonymo scrape succeeded without readiness evidence
+  - name: failed worker
+    interval: 30s
+    input_series:
+      - series: up{job="anonymo",instance="router:8787"}
+        values: 1x8
+      - series: anonymo_ready{job="anonymo",instance="router:8787"}
+        values: 1x8
+      - series: anonymo_readiness_check{job="anonymo",instance="router:8787",check="settlement"}
+        values: "0x8"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: AnonymoUnavailable
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoUnavailable
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: AnonymoNotReady
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoNotReady
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: AnonymoDependencyFailed
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoDependencyFailed
+        exp_alerts:
+          - exp_labels:
+              job: anonymo
+              instance: router:8787
+              check: settlement
+              severity: critical
+            exp_annotations:
+              summary: Anonymo dependency or worker readiness failed
+      - eval_time: 1m
+        alertname: AnonymoeadinessMetricsMissing
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoeadinessMetricsMissing
+        exp_alerts: []

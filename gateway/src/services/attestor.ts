@@ -1,5 +1,5 @@
 import { and, eq, isNotNull, inArray } from "drizzle-orm";
-import { boundedJson } from "../providers/network.ts";
+import { boundedJson, providerFetch } from "../providers/network.ts";
 import { randomBytes } from "node:crypto";
 import type { Ctx } from "../context.ts";
 import { attestations, kv, providers } from "../db/schema.ts";
@@ -45,21 +45,22 @@ async function verifyQuote(ctx: Ctx, quoteHex: string) {
   if (!ctx.cfg.attestation.tdxVerifierUrl) return { ok: false, reason: "no DCAP verifier configured (TDX_VERIFIER_URL)" };
   const res = await fetch(ctx.cfg.attestation.tdxVerifierUrl, {
     method: "POST",
+    redirect: "error",
     headers: { "content-type": "application/json", ...(ctx.cfg.attestation.tdxVerifierKey ? { authorization: `Bearer ${ctx.cfg.attestation.tdxVerifierKey}` } : {}) },
     body: JSON.stringify({ quote: quoteHex.replace(/^0x/, "") }),
     signal: AbortSignal.timeout(20_000),
   });
   if (!res.ok) return { ok: false, reason: `verifier HTTP ${res.status}` };
-  const j = (await res.json()) as { verified?: boolean; status?: string; tcb_status?: string };
+  const j = (await boundedJson(res)) as { verified?: boolean; status?: string; tcb_status?: string };
   const status = j.tcb_status ?? j.status;
   const ok = j.verified === true || status === "UpToDate" || status === "SWHardeningNeeded";
   return { ok, reason: ok ? undefined : `quote not verified (${status ?? "unknown"})`, status };
 }
 
 async function verifyNvidia(ctx: Ctx, payload: string) {
-  const res = await fetch(ctx.cfg.attestation.nrasUrl, { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: payload, signal: AbortSignal.timeout(30_000) });
+  const res = await fetch(ctx.cfg.attestation.nrasUrl, { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: payload, redirect: "error", signal: AbortSignal.timeout(30_000) });
   if (!res.ok) return { ok: false, reason: `NRAS HTTP ${res.status}` };
-  const j = (await res.json()) as unknown;
+  const j = (await boundedJson(res)) as unknown;
   // NRAS returns [["JWT", "<overall token>"], {...per-GPU tokens}]; read the overall claim.
   const tokens = JSON.stringify(j).match(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g) ?? [];
   for (const t of tokens) {
@@ -85,7 +86,7 @@ export async function attestProvider(ctx: Ctx, p: typeof providers.$inferSelect)
     return { provider: p.id, ok: false, reason };
   };
   try {
-    const res = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(20_000) });
+    const res = await providerFetch(url, { redirect: "error", signal: AbortSignal.timeout(20_000) }, { production: ctx.cfg.production, allowDevelopmentMockLoopback: !ctx.cfg.production });
     if (!res.ok) return fail(`attestation endpoint HTTP ${res.status}`);
     report = (await boundedJson(res)) as Record<string, any>;
   } catch (e) {
