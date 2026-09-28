@@ -20,6 +20,5 @@
     "node": ">=22"
   },
   "packageManager": "pnpm@11.19.0",
-  "type": "module",
-  "license": "PolyForm-Noncommercial-1.0.0"
+  "type": "module"
 }

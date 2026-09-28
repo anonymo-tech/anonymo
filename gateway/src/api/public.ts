@@ -8,7 +8,6 @@ import { ApiError, fail } from "../lib/errors.ts";
 import { picoToUsd, usdToPico } from "../lib/money.ts";
 import { providerApplication, submitProviderApplication } from "../providers/application.ts";
 import { readiness } from "../services/readiness.ts";
-import { readinessMetrics } from "../services/readiness-metrics.ts";
 import { readJson } from "./common.ts";
 import { requireKey } from "./auth.ts";
 import { verifyReceipt, anchorProof } from "./generation.ts";
@@ -221,7 +220,7 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
         paywith: { tokens: ctx.cfg.paywith.tokens.map((t) => t.symbol), configured: !!ctx.cfg.chain.payWithStock },
         per_call: { configured: !!ctx.cfg.chain.callPay, max_usd: ctx.cfg.fees.perCallMaxUsd },
         telemetry: ctx.telemetry.enabled,
-        jobs: ctx.jobs.status().map((job) => ({ ...job, last_error: job.last_error ? "Job failed" : null })),
+        jobs: ctx.jobs.status(),
         catalog: { models: ctx.catalog.models.size, providers: ctx.catalog.providers.size },
       },
     }),
@@ -229,11 +228,6 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
   app.get("/ready", async (c) => {
     const result = await readiness(ctx);
     return c.json(result, result.ok ? 200 : 503);
-  });
-  app.get("/ready/metrics", async (c) => {
-    c.header("Cache-Control", "no-store");
-    c.header("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
-    return c.body(readinessMetrics(await readiness(ctx)));
   });
   app.get("/health", (c) => c.json({ ok: true }));
 }

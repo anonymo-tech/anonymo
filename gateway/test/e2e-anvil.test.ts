@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 import { createPublicClient, createWalletClient, decodeFunctionData, http, parseUnits, type Hex, keccak256, toBytes } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { resolve } from "node:path";
-import { readFileSync, mkdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { createApp } from "../src/app.ts";
 import { runRegistry } from "../src/services/registry.ts";
 import { pollChain } from "../src/chain/indexer.ts";
@@ -59,9 +59,8 @@ describe.skipIf(!RUN)("E2E on anvil with the real contracts", () => {
   };
 
   beforeAll(async () => {
-    const forge = process.env.FOUNDRY_BIN ? `${process.env.FOUNDRY_BIN}/forge` : Bun.which("forge") ?? `${process.env.HOME}/.foundry/bin/forge`;
-    const anvilBin = process.env.FOUNDRY_BIN ? `${process.env.FOUNDRY_BIN}/anvil` : Bun.which("anvil") ?? `${process.env.HOME}/.foundry/bin/anvil`;
-    anvil = Bun.spawn([anvilBin, "--port", "8547", "--chain-id", "4663", "--silent"], { stdout: "ignore", stderr: "ignore" });
+    const forge = `${process.env.HOME}/.foundry/bin`;
+    anvil = Bun.spawn([`${forge}/anvil`, "--port", "8547", "--chain-id", "4663", "--silent"], { stdout: "ignore", stderr: "ignore" });
     for (let i = 0; i < 50; i++) {
       try {
         await pub.getBlockNumber();
@@ -70,8 +69,7 @@ describe.skipIf(!RUN)("E2E on anvil with the real contracts", () => {
         await Bun.sleep(100);
       }
     }
-    mkdirSync(resolve(ROOT, "contracts/deployments"), { recursive: true });
-    await $`${forge} script script/Deploy.s.sol --rpc-url ${RPC} --broadcast --slow --private-key ${PK.deployer}`.cwd(resolve(ROOT, "contracts")).env({ ...process.env, MOCK: "1", DEPLOYER_PRIVATE_KEY: PK.deployer, DEPLOYMENTS_PATH: "deployments/4663-e2e.json" }).quiet();
+    await $`${forge}/forge script script/Deploy.s.sol --rpc-url ${RPC} --broadcast --slow --private-key ${PK.deployer}`.cwd(resolve(ROOT, "contracts")).env({ ...process.env, MOCK: "1", DEPLOYER_PRIVATE_KEY: PK.deployer, DEPLOYMENTS_PATH: "deployments/4663-e2e.json" }).quiet();
     const outFile = resolve(ROOT, "contracts/deployments/4663-e2e.json");
     dep = JSON.parse(readFileSync(outFile, "utf8"));
     const C = dep.contracts;
@@ -152,8 +150,6 @@ describe.skipIf(!RUN)("E2E on anvil with the real contracts", () => {
     const j = await (await req("/api/v1/chat/completions", { method: "POST", headers: k.auth, json: { model: LLAMA, messages: [{ role: "user", content: "anchor me" }] } })).json();
     const rot = await runKeyRotation(app.ctx);
     expect(rot.published).toBeGreaterThan(0);
-    await Bun.sleep(1100); // allow the receipt's second to close before anchoring
-    await pub.request({ method: "evm_mine" as never, params: [] as never });
     const a = await runAnchor(app.ctx);
     expect(a.status).toBe("confirmed");
     const g = (await (await req(`/api/v1/generation?id=${j.id}`, { headers: k.auth })).json()).data;
@@ -249,11 +245,6 @@ describe.skipIf(!RUN)("E2E on anvil with the real contracts", () => {
     await pub.request({ method: "evm_increaseTime" as never, params: [5] as never });
     await pub.request({ method: "evm_mine" as never, params: [] as never });
     await Bun.sleep(1100);
-    const candidate = await postSpentRoot(app.ctx);
-    expect(candidate.posted).toBe(false);
-    if (!("approval" in candidate) || !candidate.approval) throw new Error("missing independent approval request");
-    const approvalHash = await wallet(PK.deployer).sendTransaction({ to: candidate.approval.to, data: candidate.approval.data });
-    expect((await pub.waitForTransactionReceipt({ hash: approvalHash })).status).toBe("success");
     const root = await postSpentRoot(app.ctx);
     expect(root.posted).toBe(true);
     const proof = (await (await req("/api/v1/credits/withdrawal-proof", { headers: k.auth })).json()).data;
@@ -307,17 +298,5 @@ describe.skipIf(!RUN)("E2E on anvil with the real contracts", () => {
     expect(prop.chain.submitted).toBe(true);
     const pending = (await pub.readContract({ address: C.providerBond, abi: ProviderBondAbi, functionName: "pendingSlashes", args: [keccak256(toBytes("alpha"))] })) as bigint;
     expect(pending).toBe(1n);
-    const id = BigInt(prop.chain.slashId);
-    expect((await app.ctx.chain.executeSlash(id)).submitted).toBe(false);
-    await send(PK.deployer, C.providerBond, ProviderBondAbi, "approveSlash", [id, "0x" + "00".repeat(32)]);
-    const dispute = keccak256(toBytes("operator counter-evidence"));
-    await send(operator, C.providerBond, ProviderBondAbi, "disputeSlash", [id, dispute]);
-    expect((await app.ctx.chain.executeSlash(id)).submitted).toBe(false);
-    await send(PK.deployer, C.providerBond, ProviderBondAbi, "approveSlash", [id, dispute]);
-    await pub.request({ method: "evm_increaseTime" as never, params: [72 * 3600 + 1] as never });
-    await pub.request({ method: "evm_mine" as never, params: [] as never });
-    expect((await app.ctx.chain.executeSlash(id)).submitted).toBe(true);
-    expect(await pub.readContract({ address: C.providerBond, abi: ProviderBondAbi, functionName: "pendingSlashes", args: [keccak256(toBytes("alpha"))] })).toBe(0n);
-    expect(await app.ctx.chain.custodyControlsReady()).toBe(true);
   }, 60_000);
 });

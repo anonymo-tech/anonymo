@@ -95,6 +95,7 @@ export class ChainService {
     const contracts = Object.fromEntries((Object.keys(CONTRACT_ABIS) as ContractName[]).map((n) => [n, this.address(n) ?? null]));
     return {
       chain_id: this.cfg.chain.id,
+      rpc: this.cfg.chain.rpcUrl.replace(/\/\/([^/@]+)@/, "//***@"),
       public_rpc: this.cfg.chain.publicRpcUrl,
       explorer: this.cfg.chain.explorerUrl,
       usdg: this.cfg.chain.usdg,
@@ -240,10 +241,6 @@ export class ChainService {
 
   // ---- Receipts -------------------------------------------------------------------------
 
-  async blockTimestamp(): Promise<number> {
-    return Number((await this.client.getBlock({ blockTag: "latest" })).timestamp);
-  }
-
   async anchor(root: Hex, fromTs: number, toTs: number, count: number) {
     const a = this.require("receiptAnchor");
     const { hash, receipt } = await this.send("anchorer", a, ReceiptAnchorAbi as unknown as Abi, "anchor", [root, BigInt(fromTs), BigInt(toTs), count]);
@@ -303,27 +300,8 @@ export class ChainService {
   async latestSpentRoot() {
     const credits = this.require("credits");
     const epoch = (await this.client.readContract({ address: credits, abi: CreditsAbi, functionName: "latestEpoch" })) as bigint;
-    const [root, asOf, totalSpent] = (await this.client.readContract({ address: credits, abi: CreditsAbi, functionName: "spentRoot", args: [epoch] })) as [Hex, bigint, bigint];
-    return { epoch, root, asOf: Number(asOf), totalSpent };
-  }
-
-  async custodyControlsReady() {
-    const versions = await Promise.all([
-      this.client.readContract({ address: this.require("credits"), abi: CreditsAbi, functionName: "CONTROL_VERSION" }),
-      this.client.readContract({ address: this.require("providerBond"), abi: ProviderBondAbi, functionName: "CONTROL_VERSION" }),
-    ]);
-    return versions.every((v) => v === 2n);
-  }
-
-  async isSpentRootApproved(root: Hex, asOf: number, totalSpent: bigint) {
-    // A legacy deployment without this view fails closed; no fallback to unreviewed settlement.
-    return await this.client.readContract({ address: this.require("credits"), abi: CreditsAbi,
-      functionName: "isRootApproved", args: [root, BigInt(asOf), totalSpent] }) as boolean;
-  }
-
-  spentRootApproval(epoch: number, root: Hex, asOf: number, totalSpent: bigint) {
-    return { to: this.require("credits"), value: "0", data: encodeFunctionData({ abi: CreditsAbi,
-      functionName: "approveSpentRoot", args: [BigInt(epoch), root, BigInt(asOf), totalSpent] }) };
+    const [root, asOf] = (await this.client.readContract({ address: credits, abi: CreditsAbi, functionName: "spentRoot", args: [epoch] })) as [Hex, bigint, bigint];
+    return { epoch, root, asOf: Number(asOf) };
   }
 
   async postSpentRoot(root: Hex, asOf: number, totalSpent: bigint) {
@@ -397,11 +375,6 @@ export class ChainService {
 
   async executeSlash(slashId: bigint) {
     const b = this.require("providerBond");
-    const [approved, generation] = await Promise.all([
-      this.client.readContract({ address: b, abi: ProviderBondAbi, functionName: "slashApproval", args: [slashId] }),
-      this.client.readContract({ address: b, abi: ProviderBondAbi, functionName: "approvalGeneration" }),
-    ]);
-    if (approved !== generation) return { submitted: false as const, reason: "awaiting independent slash approval" };
     if (!this.wallets.has("slasher"))
       return { submitted: false as const, safeTx: { to: b, value: "0", data: encodeFunctionData({ abi: ProviderBondAbi, functionName: "executeSlash", args: [slashId] }) } };
     const { hash } = await this.send("slasher", b, ProviderBondAbi as unknown as Abi, "executeSlash", [slashId]);

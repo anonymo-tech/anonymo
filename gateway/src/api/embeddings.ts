@@ -63,7 +63,6 @@ export function embeddingsRoutes(app: Hono, ctx: Ctx) {
           signal: c.req.raw.signal ?? new AbortController().signal,
           timeoutMs: ctx.cfg.routing.providerTimeoutMs,
           firstTokenTimeoutMs: ctx.cfg.routing.firstTokenTimeoutMs,
-          production: ctx.cfg.production,
         });
         const empty = res.ok && res.kind === "json" && !(Array.isArray(res.json?.data) && res.json.data.length);
         if (!res.ok || empty) {

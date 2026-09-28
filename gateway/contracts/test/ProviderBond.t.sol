@@ -9,7 +9,7 @@ import {ProviderBond} from "../src/ProviderBond.sol";
 import {IProviderBond} from "../src/interfaces/IProviderBond.sol";
 import {MockUSDG} from "../src/mocks/MockUSDG.sol";
 
-abstract contract ProviderBondBase is Test {
+contract ProviderBondTest is Test {
     uint256 internal constant MIN = 10_000e6;
     uint64 internal constant T0 = 1_750_000_000;
 
@@ -51,14 +51,7 @@ abstract contract ProviderBondBase is Test {
         id = pb.proposeSlash(PID, IProviderBond.Kind.QuantFraud, amt, EVIDENCE, delist);
     }
 
-    function _approveSlash(uint256 id) internal {
-        (,,, bytes32 dispute,,,,) = pb.slashes(id);
-        vm.prank(owner);
-        pb.approveSlash(id, dispute);
-    }
-
     function _execute(uint256 id) internal {
-        if (pb.slashApproval(id) != pb.approvalGeneration()) _approveSlash(id);
         vm.prank(slasher);
         pb.executeSlash(id);
     }
@@ -66,9 +59,7 @@ abstract contract ProviderBondBase is Test {
     function _status(uint256 id) internal view returns (ProviderBond.Status s) {
         (,,,,,,, s) = pb.slashes(id);
     }
-}
 
-contract ProviderBondTest is ProviderBondBase {
     // --- constructor ---------------------------------------------------------------------------
 
     function test_constants() public view {
@@ -507,7 +498,7 @@ contract ProviderBondTest is ProviderBondBase {
 
     // --- disputeSlash --------------------------------------------------------------------------
 
-    function test_disputeSlash_requiresIndependentReview() public {
+    function test_disputeSlash_recordsButDoesNotBlock() public {
         _bond(PID, op, MIN);
         uint256 id = _propose(1_000e6, false);
         vm.expectEmit(true, true, true, true, address(pb));
@@ -517,9 +508,6 @@ contract ProviderBondTest is ProviderBondBase {
         (,,, bytes32 dispute,,,,) = pb.slashes(id);
         assertEq(dispute, keccak256("counter-evidence"));
         vm.warp(T0 + 72 hours);
-        vm.prank(slasher);
-        vm.expectRevert(ProviderBond.ApprovalRequired.selector);
-        pb.executeSlash(id);
         _execute(id);
         assertEq(pb.bondOf(PID), 9_000e6);
     }
@@ -595,7 +583,6 @@ contract ProviderBondTest is ProviderBondBase {
         pb.executeSlash(id);
 
         vm.warp(T0 + 72 hours);
-        _approveSlash(id);
         vm.expectEmit(true, true, true, true, address(pb));
         emit IProviderBond.SlashExecuted(id, PID, 3_000e6, false);
         _execute(id);
@@ -627,7 +614,6 @@ contract ProviderBondTest is ProviderBondBase {
         uint256 id1 = _propose(1_000e6, true);
         uint256 id2 = _propose(1_000e6, true);
         vm.warp(T0 + 72 hours);
-        _approveSlash(id1);
         vm.expectEmit(true, true, true, true, address(pb));
         emit IProviderBond.Delisted(PID);
         vm.expectEmit(true, true, true, true, address(pb));
@@ -636,7 +622,6 @@ contract ProviderBondTest is ProviderBondBase {
         assertTrue(pb.isDelisted(PID));
 
         // second delisting slash does not re-emit Delisted
-        _approveSlash(id2);
         vm.recordLogs();
         _execute(id2);
         assertEq(vm.getRecordedLogs().length, 2); // ERC20 Transfer + SlashExecuted
@@ -649,7 +634,6 @@ contract ProviderBondTest is ProviderBondBase {
         uint256 id2 = _propose(7_000e6, false);
         vm.warp(T0 + 72 hours);
         _execute(id1);
-        _approveSlash(id2);
         vm.expectEmit(true, true, true, true, address(pb));
         emit IProviderBond.SlashExecuted(id2, PID, 3_000e6, false);
         _execute(id2);
@@ -664,7 +648,6 @@ contract ProviderBondTest is ProviderBondBase {
         uint256 id2 = _propose(MIN, false);
         vm.warp(T0 + 72 hours);
         _execute(id1);
-        _approveSlash(id2);
         vm.expectEmit(true, true, true, true, address(pb));
         emit IProviderBond.SlashExecuted(id2, PID, 0, false);
         _execute(id2);
@@ -729,9 +712,7 @@ contract ProviderBondTest is ProviderBondBase {
 
     // --- fuzz: conservation --------------------------------------------------------------------
 
-    function testFuzz_slashThenWithdraw_conserves(uint256 bondAmt, uint256 s1, uint256 s2, bool cancel2)
-        public
-    {
+    function testFuzz_slashThenWithdraw_conserves(uint256 bondAmt, uint256 s1, uint256 s2, bool cancel2) public {
         bondAmt = bound(bondAmt, MIN, 5_000_000e6);
         s1 = bound(s1, 1, bondAmt);
         s2 = bound(s2, 1, bondAmt);

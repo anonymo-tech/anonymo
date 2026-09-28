@@ -1,5 +1,4 @@
 import { openProviderHeaders } from "./headers.ts";
-import { providerFetch } from "./network.ts";
 import type { Candidate } from "../catalog/catalog.ts";
 import { decrypt } from "../lib/util.ts";
 
@@ -149,7 +148,6 @@ export async function callUpstream(opts: {
   signal: AbortSignal;
   timeoutMs: number;
   firstTokenTimeoutMs: number;
-  production: boolean;
 }): Promise<UpstreamResult> {
   const { candidate: c } = opts;
   const customHeaders = openProviderHeaders(opts.appSecret ?? "", c.provider.headers);
@@ -181,13 +179,13 @@ export async function callUpstream(opts: {
     ? setTimeout(() => ctl.abort(new DOMException("first token timeout", "TimeoutError")), opts.firstTokenTimeoutMs)
     : undefined;
   try {
-    res = await providerFetch(c.provider.baseUrl.replace(/\/$/, "") + opts.path, {
+    res = await fetch(c.provider.baseUrl.replace(/\/$/, "") + opts.path, {
       method: "POST",
       redirect: "error",
       headers,
       body: JSON.stringify(opts.body),
       signal: ctl.signal,
-    }, { production: opts.production, allowDevelopmentMockLoopback: !opts.production });
+    });
   } catch (e) {
     clearTimeout(firstTimer);
     if (opts.signal.aborted) {

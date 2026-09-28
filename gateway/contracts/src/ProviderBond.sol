@@ -10,7 +10,7 @@ import {IProviderBond} from "./interfaces/IProviderBond.sol";
 
 /// @title ProviderBond
 /// @notice Providers post a USDG bond (min 10,000 USDG). The slasher multisig proposes slashes with
-/// an evidence merkle root; after a 72h dispute window and independent owner approval it executes them. Slashed USDG
+/// an evidence merkle root; after a 72h dispute window it executes (or cancels) them. Slashed USDG
 /// goes to the refund pool. Withdrawals take 14 days, stay slashable while waiting and are blocked
 /// while any slash is pending.
 /// @dev Routing eligibility should use activeBondOf() (bond minus the amount queued for withdrawal).
@@ -72,15 +72,6 @@ contract ProviderBond is IProviderBond, Ownable2Step, ReentrancyGuardTransient {
 
     event WithdrawCancelled(bytes32 indexed providerId);
 
-    uint256 public constant CONTROL_VERSION = 2;
-    uint256 public approvalGeneration = 1;
-    mapping(uint256 slashId => uint256 generation) public slashApproval;
-    error IndependentOwnerRequired();
-    error ApprovalRequired();
-    error InvalidDispute();
-    event SlashApproved(uint256 indexed slashId, bytes32 disputeHash);
-    event SlashApprovalsRevoked();
-
     error ZeroAddress();
     error InvalidAmount();
     error InvalidProvider();
@@ -103,7 +94,6 @@ contract ProviderBond is IProviderBond, Ownable2Step, ReentrancyGuardTransient {
         if (address(usdg_) == address(0) || slasher_ == address(0) || refundPool_ == address(0)) {
             revert ZeroAddress();
         }
-        if (owner_ == slasher_) revert IndependentOwnerRequired();
         usdg = usdg_;
         slasher = slasher_;
         refundPool = refundPool_;
@@ -202,19 +192,16 @@ contract ProviderBond is IProviderBond, Ownable2Step, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc IProviderBond
-    /// @dev A non-empty, one-time dispute invalidates any prior approval. Only independent owner review can restore it.
+    /// @dev Records the dispute only; it does not block execution. The slasher decides.
     function disputeSlash(uint256 slashId, bytes32 disputeHash) external {
         Slash storage s = _pendingSlash(slashId);
         if (msg.sender != _providers[s.providerId].operator) revert NotOperator();
-        if (disputeHash == bytes32(0) || s.disputeHash != bytes32(0)) revert InvalidDispute();
-        delete slashApproval[slashId];
         s.disputeHash = disputeHash;
         emit SlashDisputed(slashId, disputeHash);
     }
 
     /// @inheritdoc IProviderBond
-    function cancelSlash(uint256 slashId) external {
-        if (msg.sender != slasher && msg.sender != owner()) revert NotSlasher();
+    function cancelSlash(uint256 slashId) external onlySlasher {
         Slash storage s = _pendingSlash(slashId);
         s.status = Status.Cancelled;
         --_providers[s.providerId].pendingSlashes;
@@ -226,8 +213,6 @@ contract ProviderBond is IProviderBond, Ownable2Step, ReentrancyGuardTransient {
     function executeSlash(uint256 slashId) external onlySlasher nonReentrant {
         Slash storage s = _pendingSlash(slashId);
         if (block.timestamp < s.executableAt) revert NotReady();
-        if (slashApproval[slashId] != approvalGeneration) revert ApprovalRequired();
-        delete slashApproval[slashId];
         bytes32 providerId = s.providerId;
         Provider storage p = _providers[providerId];
         uint256 amount = s.amount < p.bond ? s.amount : p.bond;
@@ -248,36 +233,10 @@ contract ProviderBond is IProviderBond, Ownable2Step, ReentrancyGuardTransient {
     // Admin
     // ---------------------------------------------------------------------------------------------
 
-    /// @notice Approve the immutable proposal and the exact current dispute evidence after review.
-    /// Never grant this authority to the worker or a Safe it controls.
-    function approveSlash(uint256 slashId, bytes32 expectedDisputeHash) external onlyOwner {
-        Slash storage s = _pendingSlash(slashId);
-        if (s.disputeHash != expectedDisputeHash) revert InvalidDispute();
-        slashApproval[slashId] = approvalGeneration;
-        emit SlashApproved(slashId, expectedDisputeHash);
-    }
-
-    function revokeSlashApprovals() external onlyOwner {
-        _revokeSlashApprovals();
-    }
-
-    function _revokeSlashApprovals() private {
-        ++approvalGeneration;
-        emit SlashApprovalsRevoked();
-    }
-
-    function _transferOwnership(address newOwner) internal override {
-        if (newOwner == address(0) || newOwner == slasher) revert IndependentOwnerRequired();
-        super._transferOwnership(newOwner);
-        if (slasher != address(0)) _revokeSlashApprovals();
-    }
-
-    /// @notice Set the slasher multisig and revoke outstanding approvals.
+    /// @notice Set the slasher multisig.
     function setSlasher(address slasher_) external onlyOwner {
         if (slasher_ == address(0)) revert ZeroAddress();
-        if (slasher_ == owner() || slasher_ == pendingOwner()) revert IndependentOwnerRequired();
         slasher = slasher_;
-        _revokeSlashApprovals();
         emit SlasherSet(slasher_);
     }
 
@@ -285,7 +244,6 @@ contract ProviderBond is IProviderBond, Ownable2Step, ReentrancyGuardTransient {
     function setRefundPool(address refundPool_) external onlyOwner {
         if (refundPool_ == address(0)) revert ZeroAddress();
         refundPool = refundPool_;
-        _revokeSlashApprovals();
         emit RefundPoolSet(refundPool_);
     }
 
