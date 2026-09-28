@@ -152,6 +152,8 @@ describe.skipIf(!RUN)("E2E on anvil with the real contracts", () => {
     const j = await (await req("/api/v1/chat/completions", { method: "POST", headers: k.auth, json: { model: LLAMA, messages: [{ role: "user", content: "anchor me" }] } })).json();
     const rot = await runKeyRotation(app.ctx);
     expect(rot.published).toBeGreaterThan(0);
+    await Bun.sleep(1100); // allow the receipt's second to close before anchoring
+    await pub.request({ method: "evm_mine" as never, params: [] as never });
     const a = await runAnchor(app.ctx);
     expect(a.status).toBe("confirmed");
     const g = (await (await req(`/api/v1/generation?id=${j.id}`, { headers: k.auth })).json()).data;
@@ -247,6 +249,11 @@ describe.skipIf(!RUN)("E2E on anvil with the real contracts", () => {
     await pub.request({ method: "evm_increaseTime" as never, params: [5] as never });
     await pub.request({ method: "evm_mine" as never, params: [] as never });
     await Bun.sleep(1100);
+    const candidate = await postSpentRoot(app.ctx);
+    expect(candidate.posted).toBe(false);
+    if (!("approval" in candidate) || !candidate.approval) throw new Error("missing independent approval request");
+    const approvalHash = await wallet(PK.deployer).sendTransaction({ to: candidate.approval.to, data: candidate.approval.data });
+    expect((await pub.waitForTransactionReceipt({ hash: approvalHash })).status).toBe("success");
     const root = await postSpentRoot(app.ctx);
     expect(root.posted).toBe(true);
     const proof = (await (await req("/api/v1/credits/withdrawal-proof", { headers: k.auth })).json()).data;
@@ -300,5 +307,17 @@ describe.skipIf(!RUN)("E2E on anvil with the real contracts", () => {
     expect(prop.chain.submitted).toBe(true);
     const pending = (await pub.readContract({ address: C.providerBond, abi: ProviderBondAbi, functionName: "pendingSlashes", args: [keccak256(toBytes("alpha"))] })) as bigint;
     expect(pending).toBe(1n);
+    const id = BigInt(prop.chain.slashId);
+    expect((await app.ctx.chain.executeSlash(id)).submitted).toBe(false);
+    await send(PK.deployer, C.providerBond, ProviderBondAbi, "approveSlash", [id, "0x" + "00".repeat(32)]);
+    const dispute = keccak256(toBytes("operator counter-evidence"));
+    await send(operator, C.providerBond, ProviderBondAbi, "disputeSlash", [id, dispute]);
+    expect((await app.ctx.chain.executeSlash(id)).submitted).toBe(false);
+    await send(PK.deployer, C.providerBond, ProviderBondAbi, "approveSlash", [id, dispute]);
+    await pub.request({ method: "evm_increaseTime" as never, params: [72 * 3600 + 1] as never });
+    await pub.request({ method: "evm_mine" as never, params: [] as never });
+    expect((await app.ctx.chain.executeSlash(id)).submitted).toBe(true);
+    expect(await pub.readContract({ address: C.providerBond, abi: ProviderBondAbi, functionName: "pendingSlashes", args: [keccak256(toBytes("alpha"))] })).toBe(0n);
+    expect(await app.ctx.chain.custodyControlsReady()).toBe(true);
   }, 60_000);
 });
