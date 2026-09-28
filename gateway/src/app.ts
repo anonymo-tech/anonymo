@@ -1,3 +1,5 @@
+import { siteCsp } from "./lib/csp.ts";
+import { kv } from "./db/schema.ts";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { existsSync, readFileSync } from "node:fs";
@@ -38,7 +40,7 @@ export type AppOptions = {
 export async function createApp(opts: AppOptions = {}) {
   const cfg = loadConfig(opts.env ?? {});
   setLogLevel(cfg.logLevel);
-  const handle = await openDatabase(cfg.databaseUrl);
+  const handle = await openDatabase(cfg.databaseUrl, { migrate: cfg.autoMigrate });
   const redis = cfg.redisUrl ? new (await import("ioredis")).Redis(cfg.redisUrl, { maxRetriesPerRequest: 2, lazyConnect: false }) : undefined;
   const limiter: RateLimiter = redis ? new RedisRateLimiter(redis) : new MemoryRateLimiter();
   const signer = new ReceiptSigner(handle.db, cfg.appSecret, cfg.receipts.rotationDays, cfg.receipts.signingKey);
@@ -59,16 +61,24 @@ export async function createApp(opts: AppOptions = {}) {
     chain: opts.chain ?? new ChainService(cfg),
     cache: new ResponseCache(cfg.appSecret, 5_000, redis),
     telemetry: new Telemetry(cfg.gateway.otlpEndpoint, cfg.gateway.otelServiceName),
-    jobs: new Jobs(cfg.redisUrl),
+    jobs: new Jobs(cfg.redisUrl, async (state) => {
+      const value = { ...state, last_error: state.last_error ? "Job failed; inspect private operator logs." : null };
+      await handle.db.insert(kv).values({ key: `job-health:${state.name}`, value }).onConflictDoUpdate({ target: kv.key, set: { value, updatedAt: new Date() } });
+    }, cfg.runtimeRole === "worker" ? cfg.workerJobs : undefined),
     rand: opts.rand,
   };
 
+  const webDir = resolve(cfg.webDir ?? resolve(import.meta.dir, "../web/out"));
+  const webBuilt = existsSync(resolve(webDir, "index.html"));
+  const csp = webBuilt ? siteCsp(webDir) : "frame-ancestors 'none'; object-src 'none'; base-uri 'none'";
   const app = new Hono();
   app.use("/api/*", cors({ origin: "*", allowHeaders: ["authorization", "content-type", "x-pay-with", "x-payment", "x-wallet-auth", "x-anonymo-cache", "http-referer", "x-title", "traceparent"], exposeHeaders: ["x-generation-id", "x-payment-required", "retry-after"] }));
   app.use("*", async (c, next) => {
     await next();
     c.header("x-content-type-options", "nosniff");
     c.header("referrer-policy", "no-referrer");
+    c.header("x-frame-options", "DENY");
+    if (c.res.headers.get("content-type")?.includes("text/html")) c.header("content-security-policy", csp);
     if (cfg.production) c.header("strict-transport-security", "max-age=31536000; includeSubDomains");
   });
 
@@ -82,8 +92,7 @@ export async function createApp(opts: AppOptions = {}) {
   adminRoutes(app, ctx);
   // The website (web/out, a static Next.js export) is served at / when it has been built; otherwise
   // a small built-in page lists models and rankings.
-  const webDir = resolve(cfg.webDir ?? resolve(import.meta.dir, "../web/out"));
-  const webBuilt = existsSync(resolve(webDir, "index.html"));
+
   if (webBuilt) {
     app.use("/_next/static/*", async (c, next) => {
       await next();
@@ -115,10 +124,14 @@ export async function createApp(opts: AppOptions = {}) {
   registerJobs(ctx);
   if (opts.startJobs ?? cfg.workers.enabled) await ctx.jobs.start();
 
+  // Passive health belongs to each API replica, not the shared registry worker's memory.
+  const healthTimer = cfg.runtimeRole === "api" ? setInterval(() => void ctx.health.flush(ctx.db).catch(() => undefined), 5000) : null;
+  healthTimer?.unref();
   let closed = false;
   const close = async () => {
     if (closed) return;
     closed = true;
+    if (healthTimer) clearInterval(healthTimer);
     await ctx.jobs.stop();
     await ctx.health.flush(ctx.db).catch(() => undefined);
     await ctx.telemetry.close();

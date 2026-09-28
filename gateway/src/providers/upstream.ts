@@ -1,3 +1,5 @@
+import { openProviderHeaders } from "./headers.ts";
+import { providerFetch } from "./network.ts";
 import type { Candidate } from "../catalog/catalog.ts";
 import { decrypt } from "../lib/util.ts";
 
@@ -143,11 +145,14 @@ export async function callUpstream(opts: {
   body: Record<string, unknown>;
   stream: boolean;
   apiKey?: string;
+  appSecret?: string;
   signal: AbortSignal;
   timeoutMs: number;
   firstTokenTimeoutMs: number;
+  production: boolean;
 }): Promise<UpstreamResult> {
   const { candidate: c } = opts;
+  const customHeaders = openProviderHeaders(opts.appSecret ?? "", c.provider.headers);
   const started = performance.now();
   const ctl = new AbortController();
   const onAbort = () => ctl.abort(opts.signal.reason);
@@ -166,7 +171,7 @@ export async function callUpstream(opts: {
   const headers: Record<string, string> = {
     "content-type": "application/json",
     accept: opts.stream ? "text/event-stream" : "application/json",
-    ...((c.provider.headers as Record<string, string> | null) ?? {}),
+    ...customHeaders,
   };
   if (opts.apiKey) headers.authorization = `Bearer ${opts.apiKey}`;
 
@@ -176,12 +181,13 @@ export async function callUpstream(opts: {
     ? setTimeout(() => ctl.abort(new DOMException("first token timeout", "TimeoutError")), opts.firstTokenTimeoutMs)
     : undefined;
   try {
-    res = await fetch(c.provider.baseUrl.replace(/\/$/, "") + opts.path, {
+    res = await providerFetch(c.provider.baseUrl.replace(/\/$/, "") + opts.path, {
       method: "POST",
+      redirect: "error",
       headers,
       body: JSON.stringify(opts.body),
       signal: ctl.signal,
-    });
+    }, { production: opts.production, allowDevelopmentMockLoopback: !opts.production });
   } catch (e) {
     clearTimeout(firstTimer);
     if (opts.signal.aborted) {

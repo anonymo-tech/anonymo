@@ -52,6 +52,18 @@ contract DeployLocalTest is Test {
         assertEq(d.uniswapV3Adapter, address(0));
     }
 
+    function test_productionRejectsEoaOwnerSafe() public {
+        Deploy.Params memory p = script.localParams();
+        p.mock = false;
+        p.paymasterDeposit = 0.02 ether;
+        p.paymasterStake = 0.01 ether;
+        Deploy.Roles memory prodRoles = script.localRoles();
+        prodRoles.ownerSafe = makeAddr("owner-safe-eoa");
+        vm.chainId(4663);
+        vm.expectRevert(bytes("Deploy: OWNER_SAFE must be a deployed Safe"));
+        script.deployProduction(p, prodRoles);
+    }
+
     function test_rolesAreAnvilAccounts() public view {
         Deploy.Roles memory def = script.localRoles();
         assertEq(r.router, def.router);
@@ -141,9 +153,28 @@ contract DeployLocalTest is Test {
         assertEq(IERC20(d.usdg).balanceOf(d.credits), 5e6);
     }
 
+    function test_productionRejectsUnfundedPaymaster() public {
+        Deploy fresh = new Deploy();
+        Deploy.Params memory p = fresh.localParams();
+        Deploy.Roles memory roles = fresh.localRoles();
+        p.paymasterDeposit = 0;
+        vm.expectRevert("Deploy: paymaster deposit must cover two daily caps");
+        fresh.deployProduction(p, roles);
+    }
+
+    function test_productionRejectsUnstakedPaymaster() public {
+        Deploy fresh = new Deploy();
+        Deploy.Params memory p = fresh.localParams();
+        Deploy.Roles memory roles = fresh.localRoles();
+        p.paymasterStake = 0;
+        vm.expectRevert("Deploy: paymaster needs stake >= 0.01 ETH and delay >= 1 day");
+        fresh.deployProduction(p, roles);
+    }
+
     function test_localArtifact() public {
         Deploy s2 = new Deploy();
         Deploy.Params memory p = s2.localParams();
+        vm.createDir("deployments", true);
         p.outPath = "deployments/test-local-artifact.json";
         s2.deployLocal(p, s2.localRoles());
         Deploy.Deployed memory d2 = s2.deployed();

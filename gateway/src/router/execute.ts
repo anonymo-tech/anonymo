@@ -62,12 +62,14 @@ export async function route(opts: {
   path: "/chat/completions" | "/completions";
   body: Record<string, unknown>;
   stream: boolean;
+  appSecret?: string;
   keyFor: (c: Candidate) => string | undefined;
   signal: AbortSignal;
   health: HealthTracker;
   maxAttempts: number;
   timeoutMs: number;
   firstTokenTimeoutMs: number;
+  production: boolean;
   caller?: string | null;
 }): Promise<RouteSuccess | RouteFailure> {
   const stopRequested = opts.body.stop != null && !(Array.isArray(opts.body.stop) && opts.body.stop.length === 0);
@@ -90,9 +92,11 @@ export async function route(opts: {
         body,
         stream: opts.stream,
         apiKey: opts.keyFor(c),
+        appSecret: opts.appSecret,
         signal: opts.signal,
         timeoutMs: opts.timeoutMs,
         firstTokenTimeoutMs: opts.firstTokenTimeoutMs,
+        production: opts.production,
       });
       const failed = (f: UpstreamFailure) => {
         last = f;

@@ -527,7 +527,7 @@ function WithdrawDialog({ onClose, apiKey, credits, status, onDone }) {
 
 function SignIn({ onKey, onDemo, onSecret }) {
   const [value, setValue] = useState("");
-  const [remember, setRemember] = useState(false);
+  const remember = false;
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   async function run(label, fn) {
@@ -568,9 +568,6 @@ function SignIn({ onKey, onDemo, onSecret }) {
           <Field label="API key" id="signin-key">
             <input id="signin-key" type="password" autoComplete="off" value={value} onChange={(e) => setValue(e.target.value)} placeholder="sk-ar-v1-…" />
           </Field>
-          <label className="check-label">
-            <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Remember on this device
-          </label>
           <div className="button-row">
             <Button type="submit" disabled={!!busy}>
               {busy === "key" ? "Connecting…" : "Connect key"}
@@ -597,9 +594,9 @@ function SignIn({ onKey, onDemo, onSecret }) {
                 onClick={() =>
                   run("wallet", async () => {
                     const address = await connect();
-                    const timestamp = Math.floor(Date.now() / 1000);
-                    const signature = await personalSign(address, `anonymo:wallet-key:${timestamp}`);
-                    const r = await api("/api/v1/auth/wallet", { method: "POST", body: { address, timestamp, signature, name: "Wallet key" } });
+                    const { data: challenge } = await api("/api/v1/auth/wallet/challenge", { method: "POST", body: { address } });
+                    const signature = await personalSign(address, challenge.message);
+                    const r = await api("/api/v1/auth/wallet", { method: "POST", body: { address, nonce: challenge.nonce, signature, name: "Wallet key" } });
                     onSecret(r.key, null, "Your wallet’s API key");
                     await onKey(r.key, remember);
                   })
@@ -610,7 +607,7 @@ function SignIn({ onKey, onDemo, onSecret }) {
             )}
           </div>
         </form>
-        <p className="help-text">Keys stay in this browser (this session only, unless you choose to remember them). Prompts are never stored.</p>
+        <p className="help-text">Keys stay in this browser (this tab session only). Prompts are never stored.</p>
       </div>
     </section>
   );
@@ -652,6 +649,7 @@ export default function Dashboard() {
   const timer = useRef(null);
   const abort = useRef(null);
   const navRef = useRef(null);
+  const sectionRef = useRef(null);
   const stateRef = useRef(state);
   stateRef.current = state;
   const live = mode === "live";
@@ -753,6 +751,15 @@ export default function Dashboard() {
     const left = current.offsetLeft - (nav.clientWidth - current.offsetWidth) / 2;
     nav.scrollTo({ left: Math.max(0, left), behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }, [tab]);
+
+  // Hash links select a workspace section and move assistive-technology focus
+  // once its content is ready, including on direct links and browser Back/Forward.
+  useEffect(() => {
+    if (loaded && window.location.hash === "#" + tabId(tab)) {
+      const frame = requestAnimationFrame(() => sectionRef.current?.focus({ preventScroll: true }));
+      return () => cancelAnimationFrame(frame);
+    }
+  }, [tab, loaded]);
 
   function switchMode(next) {
     setMode(next);
@@ -1049,11 +1056,17 @@ export default function Dashboard() {
       </div>
       <nav className="dashboard-nav" aria-label="Workspace sections" ref={navRef}>
         {tabs.map((t) => (
-          <a key={t} href={"#" + tabId(t)} aria-current={tab === t ? "page" : undefined} onClick={() => navigate(t)}>
+          <a key={t} href={"#" + tabId(t)} aria-current={tab === t ? "page" : undefined} onClick={(event) => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault();
+            navigate(t);
+          }}>
             {t}
           </a>
         ))}
       </nav>
+      <section ref={sectionRef} className="dashboard-section" tabIndex={-1} aria-label={`${tab} workspace section`}>
+      {tabs.map((t) => <span key={t} id={tabId(t)} className="dashboard-anchor" aria-hidden="true" />)}
       {storageError && (
         <div className="error" role="alert">
           {storageError}
@@ -1597,7 +1610,7 @@ export default function Dashboard() {
                   <h3>{live ? "This browser" : "Browser-local data"}</h3>
                   <p>
                     {live
-                      ? `Signed in with ${ws?.me?.label ?? "—"}. The key is kept in this browser (this session, unless you chose to remember it). The router stores key hashes, balances and receipt metadata — never prompts or responses. The export contains your keys (no secrets), balance and receipts.`
+                      ? `Signed in with ${ws?.me?.label ?? "—"}. The key is kept in this browser (this tab session only). The router stores key hashes, balances and receipt metadata — never prompts or responses. The export contains your keys (no secrets), balance and receipts.`
                       : "Changes persist only in this browser. No account has been created. The workspace export contains demo keys, receipt metadata, sessions and sample balances; it contains no prompt text."}
                   </p>
                   <div className="button-row">
@@ -1642,6 +1655,7 @@ export default function Dashboard() {
           )}
         </div>
       )}
+      </section>
       {modal?.type === "receipt" && <ReceiptDetails receipt={modal.data} apiKey={apiKey} status={status} onClose={() => setModal(null)} />}
       {modal?.type === "key" && <KeyDialog live={live} existing={modal.data} onClose={() => setModal(null)} onSave={saveKeyValues} />}
       {modal?.type === "session" && <SessionDialog live={live} tokens={ws?.tokens || []} paywith={ws?.paywith || {}} existing={modal.data} onClose={() => setModal(null)} onSave={saveSession} />}
