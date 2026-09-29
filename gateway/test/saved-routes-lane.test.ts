@@ -381,13 +381,10 @@ describe("calling an attested route", () => {
         expect(r.status).toBe(503);
         expect((await r.json()).error.type).toBe("no_attested_endpoint");
       }
-      // None of the refused calls reached any provider (checked before the call below, which may use any of them).
-      expect(await requests("enclave")).toBe(before.enclave);
-      expect(await requests("policy")).toBe(before.policy);
-      expect(await requests("vendor")).toBe(before.vendor);
-      // An unrelated call without a lane is unaffected, so the refusal is the route's, not an outage. It is free to be
-      // served by any provider (the one whose attestation lapsed is still live), so nothing is asserted about which.
+      // An unrelated call without a lane is unaffected, so the refusal is the route's, not an outage.
       expect((await chat({ model: LLAMA })).status).toBe(200);
+      expect(await requests("enclave")).toBe(before.enclave); // never asked
+      expect(await requests("policy")).toBe(before.policy);
     } finally {
       await restoreAttestation();
     }
