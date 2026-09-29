@@ -81,8 +81,11 @@ export async function api(path, { key, method = "GET", body, signal, headers = {
   return json;
 }
 
-/** Streaming chat completion. Calls onDelta(text) as tokens arrive; resolves with the final summary. */
-export async function streamChat({ key, body, headers = {}, signal, onDelta }) {
+/**
+ * Streaming chat completion. Calls onDelta(text) as tokens arrive and, when given, onEvent(chunk) with every
+ * parsed chunk (reasoning, tool calls, images, audio, usage, receipt); resolves with the final summary.
+ */
+export async function streamChat({ key, body, headers = {}, signal, onDelta, onEvent }) {
   let res;
   try {
     res = await fetch(API_BASE + "/api/v1/chat/completions", {
@@ -96,13 +99,19 @@ export async function streamChat({ key, body, headers = {}, signal, onDelta }) {
     throw new ApiError(0, "The Anonymo API could not be reached. Check your connection and try again.", "unreachable");
   }
   if (!res.ok) {
-    let e = null;
+    let doc = null;
     try {
-      e = (await res.json())?.error;
+      doc = await res.json();
     } catch {
       /* not JSON */
     }
-    throw new ApiError(res.status, e?.message || `Request failed (${res.status}).`, e?.type || "error", e?.metadata);
+    const e = doc?.error;
+    const err = new ApiError(res.status, e?.message || `Request failed (${res.status}).`, e?.type || "error", e?.metadata);
+    err.retryAfter = res.headers.get("retry-after");
+    // A withheld answer is still billed and signed: keep the receipt and usage the refusal carries, so callers can show them.
+    if (doc?.receipt && typeof doc.receipt === "object") err.receipt = doc.receipt;
+    if (doc?.usage && typeof doc.usage === "object") err.usage = doc.usage;
+    throw err;
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -128,6 +137,7 @@ export async function streamChat({ key, body, headers = {}, signal, onDelta }) {
       } catch {
         continue;
       }
+      onEvent?.(ev);
       if (ev.error && !ev.choices) {
         out.error = new ApiError(ev.error.code || 502, ev.error.message || "The route failed.", ev.error.type || "error", ev.error.metadata);
         continue;
