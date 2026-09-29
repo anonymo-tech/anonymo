@@ -81,10 +81,10 @@ function ReceiptBox({providerId}){
     }finally{setBusy(false)}
   }
   const r=out?.result;const receipt=out?.receipt;
-  const [state,head]=r?(r.checks.some(c=>c.id==='signature'&&c.status==='not_checked')?['not_checked','Could not be checked here']:RESULT_HEAD[r.valid]):[];
-  const named=receipt?.payload?.provider;
+  const [state,head]=r?(r.checks.some(c=>(c.id==='signature'||c.id==='v2_signature')&&c.status==='not_checked')?['not_checked','Could not be checked here']:RESULT_HEAD[r.valid]):[];
+  const named=receipt?.payload?.provider??r?.claims?.node?.provider;
   return <section className={`${styles.section} ${styles.receipt}`} aria-labelledby="v-receipt"><h2 id="v-receipt">Verify a receipt</h2>
-    <p className={styles.lead}>Paste a receipt from a response, or from <span className="mono">GET /api/v1/receipts/&lt;id&gt;</span>. It is checked in this browser against the keys the router publishes at <span className="mono">{KEYS_PATH}</span>. Nothing you paste is sent anywhere.</p>
+    <p className={styles.lead}>Paste a receipt from a response, or from <span className="mono">GET /api/v1/receipts/&lt;id&gt;</span>. It is checked in this browser against the keys the router publishes at <span className="mono">{KEYS_PATH}</span>. A receipt with a v2 (COSE) encoding gets that checked too: signature, chain head and Merkle path. Nothing you paste is sent anywhere.</p>
     <form onSubmit={run}>
       <div className="field"><label htmlFor="receipt-json">Receipt (JSON)</label><textarea id="receipt-json" value={text} onChange={e=>setText(e.target.value)} spellCheck="false" autoComplete="off" placeholder={'{ "payload": { … }, "sig": "…", "key_id": "…" }'}/></div>
       <details className={styles.more}><summary>Check against a key I trust instead</summary><div>
@@ -134,6 +134,10 @@ export default function Verify(){
       <p className={styles.lead}>The record above is the router’s account. The SDKs go further before they send anything: they read the provider’s own <span className="mono">/attest</span>, check that the quote commits to its TLS key and digests, that its certificate name is derived from the quote, and refuse if any of it fails. They do not repeat Intel’s signature check on the quote; the router does that, and the SDK says so in its report.</p>
       <Code label="JavaScript · @anonymo/client">{SDK}</Code>
       <div className={styles.actions}><Button href="/docs/#sdk" secondary>SDK documentation</Button></div>
+    </section>
+    <section className={styles.section} aria-labelledby="v-registry"><h2 id="v-registry">History and badge</h2>
+      <p className={styles.lead}>The registry keeps every measurement the router verified for an attested provider, and every check it ran. Each entry has a badge any site can embed, which re-reads this record from the visitor’s browser and shows Attested only when the checks pass.</p>
+      <div className={styles.actions}><Button href={providerId&&view?`/registry/${encodeURIComponent(providerId)}/`:'/registry/'}>{providerId&&view?'Open its registry entry':'Open the registry'}</Button><Button href="/docs/#badge" secondary>Badge docs</Button></div>
     </section>
   </div>;
 }

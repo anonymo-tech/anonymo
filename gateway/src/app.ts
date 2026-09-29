@@ -1,5 +1,5 @@
 import { siteCsp } from "./lib/csp.ts";
-import { viaOnion } from "./api/common.ts";
+import { EXPOSED_RESPONSE_HEADERS, viaOnion } from "./api/common.ts";
 import { kv } from "./db/schema.ts";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
@@ -43,7 +43,10 @@ import { adminRoutes } from "./admin/trpc.ts";
 import { paymasterRoutes } from "./api/paymaster.ts";
 import { registerJobs } from "./services/register.ts";
 import { mcpRoutes } from "./api/mcp.ts";
+import { anthropicRoutes } from "./api/anthropic.ts";
+import { responsesRoutes } from "./api/responses.ts";
 import { siteRoutes } from "./api/site.ts";
+import { badgeRoutes } from "./api/badge.ts";
 import { BlindIssuer } from "./blind/issuer.ts";
 import { ensurePool } from "./blind/redeem.ts";
 import { blindRoutes } from "./blind/routes.ts";
@@ -95,7 +98,10 @@ export async function createApp(opts: AppOptions = {}) {
   const webBuilt = existsSync(resolve(webDir, "index.html"));
   const csp = webBuilt ? siteCsp(webDir) : "frame-ancestors 'none'; object-src 'none'; base-uri 'none'";
   const app = new Hono();
-  app.use("/api/*", cors({ origin: "*", allowHeaders: ["authorization", "content-type", "x-pay-with", "x-payment", "x-wallet-auth", "x-anonymo-cache", "x-anonymo-disclosure-max", "x-anonymo-lane", "http-referer", "x-title", "traceparent"], exposeHeaders: ["x-generation-id", "x-payment-required", "x-payment-response", "x-anonymo-disclosure", "x-anonymo-lane", "retry-after"] }));
+  // The OpenAI-style /v1/* aliases get the same CORS as /api/*, so a browser can read the receipt, lane and policy headers on either.
+  const apiCors = cors({ origin: "*", allowHeaders: ["authorization", "content-type", "x-pay-with", "x-payment", "x-wallet-auth", "x-anonymo-cache", "x-anonymo-disclosure-max", "x-anonymo-lane", "x-anonymo-lane-downgrade", "http-referer", "x-title", "traceparent", "x-api-key", "anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access"], exposeHeaders: EXPOSED_RESPONSE_HEADERS });
+  app.use("/api/*", apiCors);
+  app.use("/v1/*", apiCors);
   app.use("*", async (c, next) => {
     await next();
     c.header("x-content-type-options", "nosniff");
@@ -127,6 +133,7 @@ export async function createApp(opts: AppOptions = {}) {
   attestationHistoryRoutes(app, ctx); // before attestationRoutes: /attestation/summary must not be read as a provider id
   attestationRoutes(app, ctx);
   measurementRoutes(app, ctx);
+  badgeRoutes(app, ctx);
   laneRoutes(app, ctx);
   dayzeroRoutes(app, ctx);
   creatorClaimRoutes(app, ctx);
@@ -134,6 +141,8 @@ export async function createApp(opts: AppOptions = {}) {
   if (ctx.ohttp) ohttpRoutes(app, ctx);
   publicRoutes(app, ctx);
   mcpRoutes(app, ctx);
+  anthropicRoutes(app, ctx);
+  responsesRoutes(app, ctx);
   paymasterRoutes(app, ctx);
   adminRoutes(app, ctx);
   // The website (web/out, a static Next.js export) is served at / when it has been built; otherwise
@@ -145,6 +154,13 @@ export async function createApp(opts: AppOptions = {}) {
       c.header("cache-control", "public, max-age=31536000, immutable");
     });
     app.use("*", serveStatic({ root: webDir }));
+    // /registry/<provider id>/ is one static page (exported as /registry/_/) that reads the id from the address.
+    const registryShell = resolve(webDir, "registry/_/index.html");
+    if (existsSync(registryShell)) {
+      const html = readFileSync(registryShell, "utf8");
+      app.get("/registry/:id/", (c) => (/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(c.req.param("id")) ? c.html(html) : c.notFound()));
+      app.get("/registry/:id", (c) => (/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(c.req.param("id")) ? c.redirect(`/registry/${c.req.param("id")}/`, 308) : c.notFound()));
+    }
     if (existsSync(resolve(webDir, "brand/anonymo-symbol.png"))) app.get("/favicon.ico", (c) => c.redirect("/brand/anonymo-symbol.png", 301));
   } else siteRoutes(app, ctx);
   const notFoundPage = webBuilt && existsSync(resolve(webDir, "404.html")) ? readFileSync(resolve(webDir, "404.html"), "utf8") : null;

@@ -143,6 +143,89 @@ const mcpCurl = `curl -s ${BASE}/mcp \\
   -H "accept: application/json, text/event-stream" \\
   -H "Authorization: Bearer $ANONYMO_API_KEY" \\
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}'`;
+const claudeCodeEnv = `export ANTHROPIC_BASE_URL=${BASE}
+export ANTHROPIC_AUTH_TOKEN=$ANONYMO_API_KEY        # sent as Authorization: Bearer. ANTHROPIC_API_KEY sends x-api-key instead; either works.
+
+# Anthropic model names are not served here: name Anonymo models.
+export ANTHROPIC_MODEL=meta-llama/llama-3.3-70b-instruct
+export ANTHROPIC_DEFAULT_SONNET_MODEL=meta-llama/llama-3.3-70b-instruct
+export ANTHROPIC_DEFAULT_OPUS_MODEL=meta-llama/llama-3.3-70b-instruct
+export ANTHROPIC_DEFAULT_HAIKU_MODEL=qwen/qwen3-32b   # session titles and other background calls
+export CLAUDE_CODE_SUBAGENT_MODEL=qwen/qwen3-32b
+
+export CLAUDE_CODE_ATTRIBUTION_HEADER=0              # keep Claude Code's attribution line out of the prompt
+claude`;
+const claudeCodeAttestedEnv = `# Every request from this Claude Code session on the attested lane.
+# A request no attested provider can serve is refused (409) with nothing sent and nothing charged.
+export ANTHROPIC_CUSTOM_HEADERS="X-Anonymo-Lane: attested"
+export ANTHROPIC_MODEL=<a model from GET /v1/models?lane=attested>`;
+const claudeCodeSettings = JSON.stringify(
+  {
+    env: {
+      ANTHROPIC_BASE_URL: BASE,
+      ANTHROPIC_AUTH_TOKEN: "sk-ar-v1-…",
+      ANTHROPIC_MODEL: "<a model from GET /v1/models>",
+      ANTHROPIC_CUSTOM_HEADERS: "X-Anonymo-Lane: attested",
+    },
+  },
+  null,
+  2,
+);
+const anthropicPython = `import anthropic
+
+client = anthropic.Anthropic(base_url="${BASE}", api_key="sk-ar-v1-…")   # or auth_token=... for Authorization: Bearer
+
+raw = client.messages.with_raw_response.create(
+    model="<a model from GET /v1/models?lane=attested>",
+    max_tokens=512,
+    messages=[{"role": "user", "content": "Hello"}],
+    extra_body={"provider": {"lane": "attested"}},        # or extra_headers={"x-anonymo-lane": "attested"}
+)
+message = raw.parse()
+print(message.content[0].text)
+print(raw.headers["x-receipt-id"], raw.headers["x-anonymo-lane"], raw.headers.get("x-anonymo-policy-hash"))`;
+const anthropicTs = `import Anthropic from "@anthropic-ai/sdk";
+
+const client = new Anthropic({ baseURL: "${BASE}", apiKey: process.env.ANONYMO_API_KEY });
+
+const { data: message, response } = await client.messages
+  .create(
+    { model: "<a model from GET /v1/models?lane=attested>", max_tokens: 512, messages: [{ role: "user", content: "Hello" }] },
+    { headers: { "x-anonymo-lane": "attested" } }, // or provider: { lane: "attested" } in the body
+  )
+  .withResponse();
+console.log(message.content, response.headers.get("x-receipt-id"), response.headers.get("x-anonymo-lane"));`;
+const anthropicCurl = `curl -s ${BASE}/v1/messages \\
+  -H "x-api-key: $ANONYMO_API_KEY" \\
+  -H "anthropic-version: 2023-06-01" \\
+  -H "content-type: application/json" \\
+  -H "x-anonymo-lane: attested" \\
+  -d '{"model":"<a model from GET /v1/models?lane=attested>","max_tokens":256,"messages":[{"role":"user","content":"Hello"}]}'`;
+const anthropicReply = JSON.stringify(
+  {
+    id: "gen-…",
+    type: "message",
+    role: "assistant",
+    model: "<the model that answered>",
+    content: [{ type: "text", text: "…" }],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: { input_tokens: 12, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+    anonymo: {
+      receipt_id: "gen-…",
+      lane: "attested",
+      disclosure: "attested",
+      policy_hash: "sha256:<64 hex, only when the endpoint attested one>",
+      provider: "…",
+      cost_usd: 0.000022,
+      upstream_attestation: { attested: true, gpu_attested: true, receipt_verified: true, kind: "aci/1" },
+      receipt: { id: "gen-…", sig: "…", key_id: "…", alg: "Ed25519", payload: "…" },
+    },
+  },
+  null,
+  2,
+);
+const anthropicModelMap = `ANTHROPIC_MODEL_MAP={"claude-sonnet-4-5":"meta-llama/llama-3.3-70b-instruct","claude-haiku-*":"qwen/qwen3-32b"}`;
 const x402Example = `import { privateKeyToAccount } from "viem/accounts";
 import { toHex } from "viem";
 
@@ -182,6 +265,25 @@ const xPayment = btoa(JSON.stringify({
 const paid = await fetch(url, { method: "POST", headers: { ...headers, "X-PAYMENT": xPayment }, body });
 const completion = await paid.json(); // usage + signed receipt; receipt.payload.payment_tx is the settlement
 const settlement = JSON.parse(atob(paid.headers.get("X-PAYMENT-RESPONSE"))); // { success, transaction, network, payer }`;
+const laneRefusal = `POST /api/v1/chat/completions
+{ "model": "<model>", "messages": [...], "provider": { "lane": "attested" } }
+
+HTTP/1.1 503
+{ "error": { "code": 503, "type": "no_attested_endpoint",
+    "metadata": { "lane": "attested", "reason": "none_attested", "excluded": [...] } } }`;
+const responseHeaders = `X-Receipt-Id: gen-1790461071-M1D5SJxd7YpD5A
+Inference-Id: gen-1790461071-M1D5SJxd7YpD5A
+X-Anonymo-Lane: attested
+X-Anonymo-Policy-Hash: sha256:<64 hex, only when the endpoint attested one>`;
+
+const modelAttestation = `"attestation": {
+  "best": "attested",
+  "manifest_ref": { "rekor_entry": "<log entry uuid>", "registry_tx": null },
+  "exec_profile_id": null,
+  "policy_hash": "sha256:<64 hex>"
+},
+"datacenter_region": null`;
+
 const sdkReceipt = `import { Anonymo } from "@anonymo/client";
 
 const client = new Anonymo({ baseUrl: "https://<router>", apiKey: process.env.ANONYMO_API_KEY });
@@ -225,10 +327,17 @@ try:
     print(res["anonymo"]["receipt_verification"].valid)
 except AttestationRefused as e:
     print([c for c in e.verification.checks if c.status == "fail"])`;
+const badgeScript = `<script src="https://<router>/badge.js" data-endpoint="<provider id or model id>"
+        data-theme="light" async></script>`;
+const badgeImg = `<img src="https://<router>/api/v1/badge/<provider id>.svg" alt="Anonymo attestation status" height="48">
+
+<!-- Markdown, for a README or a model card -->
+[![Anonymo attestation status](https://<router>/api/v1/badge/<author>/<model>.svg)](https://<router>/registry/)`;
+
 const endpoints = [
   ["POST /api/v1/chat/completions", "Chat, tools and streaming (OpenAI/OpenRouter shape); X-Pay-With, X-Payment, X-Wallet-Auth headers"],
   ["POST /api/v1/completions · /embeddings", "Legacy completions; embeddings (prepaid keys)"],
-  ["GET /api/v1/models · /models/:author/:slug/endpoints", "Catalog, prices, policies, quantization, attestation; per-provider health"],
+  ["GET /api/v1/models · /models/:author/:slug/endpoints", "Catalog, prices, policies, quantization, attestation (best class, manifest reference, policy hash) and datacenter region; per-provider health and attested policy hash"],
   ["GET /api/v1/generation?id=… · /generations", "Full generation record with receipt and anchor proof; your recent generations"],
   ["POST · GET · PATCH · DELETE /api/v1/keys", "Create a self-custodial key (no auth), or budgeted sub-keys with rpm/tpm, model allowlists, guardrails"],
   ["GET /api/v1/key · /credits", "Current key; balance, held and total usage"],
@@ -237,7 +346,7 @@ const endpoints = [
   ["POST /api/v1/paywith/open · /close · /revoke · GET /session · /statement", "Stock Token sessions and monthly statements"],
   ["POST /api/v1/paywith/allowance/typed-data · /allowance · GET /charges · POST /charges/{id}/signature", "Wallet authorizations: a bounded allowance, or a signature per charge"],
   ["POST /api/v1/byok · /teams", "Bring your own provider key; team roles"],
-  ["GET · POST · PATCH · DELETE /api/v1/routes", "Saved Routes: named routing policies you call as model \"@route/<slug>\""],
+  ["GET · POST · PATCH · DELETE /api/v1/routes", "Saved Routes: named routing policies you call as model \"@route/<slug>\", optionally pinned to the attested lane"],
   ["POST · GET · DELETE /api/v1/sessions · GET /sessions/current", "Agent Sessions: short-lived, budget-capped keys for agent runs"],
   ["GET /api/v1/spend · /spend/alerts", "Spend Watch: totals, projection, breakdowns, key budgets and alert rules"],
   ["GET /api/v1/disclosure/:providerId", "A provider’s documented retention, jurisdiction, legal hold and training use, each with a source and date, and the class it is served under now"],
@@ -248,12 +357,15 @@ const endpoints = [
   ["GET /api/v1/ohttp/keys · POST /api/v1/ohttp/gateway", "Oblivious HTTP, where enabled: the gateway key configuration (application/ohttp-keys), and the gateway that unwraps message/ohttp-req sent by a relay and returns message/ohttp-res"],
   ["GET /api/v1/ohttp/key-list · GET /api/v1/relays", "Oblivious HTTP, where enabled: the gateway key history signed with the receipt key, and the relays clients may use, by operator"],
   ["GET /api/v1/holder", "$ANMO holders: balance, live tier (higher rate limits, lower fees), the tier ladder and free credits received"],
-  ["POST /api/v1/receipts/verify · GET /receipts/keys", "Verify a receipt’s signature and anchor inclusion; signing keys (JWKS)"],
+  ["POST /api/v1/receipts/verify · GET /receipts/keys", "Verify a receipt (v1, or v2 with its chain head and Merkle path); signing keys (JWKS)"],
+  ["GET /api/v1/receipts/:id · /receipts/:id/proof", "A receipt by id, v2 beside v1 (?format=cose for the COSE bytes); the Merkle path to its hourly root, with anchored true only once that root is on chain"],
   ["GET /.well-known/anonymo-receipt-keys.json", "The same signing keys at a fixed path, for clients that verify receipts themselves"],
   ["GET /api/v1/attestation/:providerId", "What the router has verified about a provider’s hardware attestation: status, verifiers, measurements, transparency-log and on-chain state, and what was not checked"],
+  ["GET /api/v1/badge/:id.svg", "Attestation badge image for a provider id or a model id (attested, policy, vendor-forwarded or unverified), with the measurement and policy hash while attested and the share of 7 days with a fresh attestation; ?theme=dark. An unknown id is Unverified with a 404"],
   ["GET /api/v1/attestation/summary · /attestation/:providerId/history", "Proof-time: per attesting provider, the share of the last 24 hours and 7 days with a fresh attestation the router verified itself, measurement changes and the last failed check; and a provider’s recorded attestor, canary and probe events, newest first, paged by cursor. Failures are codes with fixed messages, never the provider’s own text. Kept for ATTESTATION_HISTORY_DAYS (30); 501 when it is 0"],
   ["GET /api/v1/measurements/key · /measurements/bundles/:providerId", "Where enabled: the key that signs measurement bundles (compose hash, source commit and tarball hash, model and image digests, MRTD allow-list), and a provider’s bundles with the transparency-log entry the router verified for each"],
   ["POST /mcp", "Anonymo MCP: list_models, list_attested_models, chat (optionally on the attested lane), verify_provider, get_receipt and verify_receipt as tools for Claude, Cursor or any MCP client"],
+  ["POST /v1/messages · /messages/count_tokens", "Anthropic Messages API (also under /api/v1) for the Anthropic SDKs and Claude Code: x-api-key or Authorization: Bearer; tools, images and streaming; the lane in X-Anonymo-Lane or provider.lane; the receipt in the reply and in X-Receipt-Id"],
   ["GET /api/v1/rankings · /providers · /status", "Usage rankings and creator payouts; the provider registry with each provider’s attestation status (attestation.status, tee, verifiers, last_verified_at); router configuration, including its onion address where there is one"],
   ["POST /api/v1/providers/apply · /creators/claim · /paymaster", "Provider onboarding; royalty claims; ERC-7677 gas sponsorship"],
 ];
@@ -276,6 +388,7 @@ export default function Docs() {
             <a href="#quickstart">Quickstart</a>
             <a href="#routing">Routing</a>
             <a href="#disclosure">Disclosure</a>
+            <a href="#lanes">Lanes</a>
             <a href="#tor">Tor</a>
             <a href="#lane">Lane</a>
             <a href="#payments">Payments</a>
@@ -283,8 +396,10 @@ export default function Docs() {
             <a href="#receipts">Receipts</a>
             <a href="#council">Council</a>
             <a href="#mcp">MCP</a>
+            <a href="#anthropic">Anthropic</a>
             <a href="#sdk">SDKs</a>
             <a href="#run-a-provider">Run a provider</a>
+            <a href="#badge">Badge</a>
             <a href="#endpoints">Endpoints</a>
             <a href="#limits">Limits</a>
           </nav>
@@ -323,12 +438,42 @@ export default function Docs() {
           </p>
           <p>
             Set provider.disclosure (or the X-Anonymo-Disclosure-Max header) to none, policy or any, the default. none routes only to providers whose retention is declared attested and whose TEE attestation is fresh; policy also accepts a
-            documented no-retention policy with no legal hold. provider.lane (or X-Anonymo-Lane) is public, the default, or attested, which implies none; if both are set the stricter applies. When nothing qualifies the request fails with 409, or
-            503 when qualifying providers are down. It is never sent to a provider that does not qualify, and nothing is charged. The unlinkable lane is served only where the router enables Oblivious HTTP (see below); elsewhere it returns 501. A request with a disclosure setting never uses the response cache.
+            documented no-retention policy with no legal hold. provider.lane (or X-Anonymo-Lane) picks a privacy lane (see below); attested and unlinkable imply none, and if body and header are both set the stricter applies. When no
+            provider meets a disclosure setting the request fails with 409 disclosure_unavailable, or 503 disclosure_provider_unavailable when qualifying providers are down; a lane that no attested endpoint can serve fails with 503
+            no_attested_endpoint. It is never sent to a provider that does not qualify, and nothing is charged. A request with a disclosure setting or a lane never uses the response cache.
           </p>
           <p>
             Responses carry X-Anonymo-Disclosure (attested, policy or vendor-forwarded) and X-Anonymo-Lane, and the signed receipt records disclosure and lane. On a stream the header is sent only when every reachable provider shares one class; the
             receipt always states it. A development attestation is marked attestation_simulated and is refused in production. GET /api/v1/models?lane=attested lists the models that have an attested endpoint now.
+          </p>
+          <h2 id="lanes">Three privacy lanes.</h2>
+          <p>
+            Every request is served on one lane. public, the default, may use any endpoint. attested uses only endpoints whose retention is declared attested and whose hardware attestation the router verified recently. unlinkable adds two
+            things on top of attested: the request arrives through an Oblivious HTTP relay, and it is paid with a blind token, so the router cannot tie the payer or the address to the prompt. Pick one with provider.lane or the X-Anonymo-Lane
+            header. A key can carry a default (routing.provider.lane on PATCH /api/v1/keys/:hash), which a lane named in the request replaces. A saved route can pin a lane too (config.provider.lane, public or attested); there the stricter of the route and the request applies, as described below. A request that arrives through
+            an independent relay with a blind token and names no lane is served on unlinkable.
+          </p>
+          <p>
+            On attested and unlinkable there is no fallback. If no endpoint of the model has a fresh, verified attestation, the request fails with 503 no_attested_endpoint and error.metadata.reason none_attested; if attested endpoints exist but are
+            all down, the reason is attested_endpoints_down and Retry-After is set. Nothing is sent to any other endpoint and nothing is charged. provider.order, only and ignore still apply inside the lane, but they cannot bring back an endpoint the
+            lane excludes. On unlinkable, an API key or a wallet is refused with 403 lane_requires_anonymous_auth, because both name the payer; set provider.lane_downgrade (or X-Anonymo-Lane-Downgrade) to attested to be served on the attested lane
+            instead, never on public.
+          </p>
+          <p>
+            Within a lane the router picks among endpoints by weight: uptime times quality times attested_bonus, divided by the square of the price relative to the cheapest endpoint. attested_bonus is 1.25 on public, so an attested endpoint is
+            preferred at equal price, and 1 on the other two lanes, where every endpoint is attested. Ties break by stake, then provider id. GET /api/v1/models lists lanes for each model and each endpoint, GET /api/v1/models?lane=attested keeps the
+            models that can be served on that lane now, and GET /api/v1/status reports a lanes section with how many models and endpoints each lane has.
+          </p>
+          <p>
+            What the lanes do not do yet: on attested and unlinkable the router still terminates TLS and sees the prompt in plaintext before sending it to the enclave over a connection pinned to its attested key. The host outside the enclave cannot
+            read it; the router can. End-to-end encryption from your client to the enclave through the router is planned. Until then, a client that needs the router blind to the prompt can encrypt to the enclave directly (see the SDKs).
+          </p>
+          <Code label="503 · no attested endpoint">{laneRefusal}</Code>
+          <p>
+            A saved route can carry the same settings: provider.lane (public or attested) and provider.disclosure in its provider policy. When a request calls @route/&lt;slug&gt;, the stricter of the route’s and the request’s value applies, so a
+            request can tighten a route but never loosen it, and a route on the attested lane is served by an attested provider or refused. Saving such a route fails with 409 route_lane_unavailable, naming the models, when a model in its list has
+            no provider that meets the setting right now. In the dashboard, Batch Studio can run a whole batch on the attested lane: it sends provider.lane attested with every row, offers only the models GET /api/v1/models?lane=attested lists, shows
+            the lane and receipt id of each row from X-Anonymo-Lane and X-Receipt-Id, and marks a row the router refuses or withholds as failed closed.
           </p>
           <h2 id="unlinkable">The unlinkable lane, where the router enables it.</h2>
           <p>
@@ -337,8 +482,8 @@ export default function Docs() {
             says lane unlinkable. GET /api/v1/relays lists the relays by operator. GET /api/v1/ohttp/keys is the gateway’s key configuration and GET /api/v1/ohttp/key-list is the key history, signed with the receipt key and hash-chained, for pinning.
           </p>
           <p>
-            A direct request for the lane is refused with 403 unlinkable_requires_relay and says what to do; through the gateway without a token it is 401 (unlinkable_requires_token) with the token challenge, and 403 for a key or a relay run by the
-            router’s own operator. What is hidden: the relay sees your address and an encrypted request; the router sees the request and the relay, never your address; the token’s purchase cannot be tied to its use. What is not: a relay that
+            A request that carries an API key or a wallet is refused with 403 lane_requires_anonymous_auth. A direct request for the lane is refused with 403 unlinkable_requires_relay and says what to do; through the gateway without a token it
+            is 401 (unlinkable_requires_token) with the token challenge, and 403 through a relay run by the router’s own operator. With no attested endpoint it is 503 no_attested_endpoint, and the token is not spent. What is hidden: the relay sees your address and an encrypted request; the router sees the request and the relay, never your address; the token’s purchase cannot be tied to its use. What is not: a relay that
             cooperates with the router can join the two, timing and message sizes can be correlated (responses are padded), and any identifier you put in the request body reaches the provider. Streaming is not available through the gateway.
           </p>
           <Code label="Attested providers only">
@@ -450,14 +595,30 @@ export default function Docs() {
           <Code label="x402 client (JavaScript, viem)">{x402Example}</Code>
           <h2 id="receipts">The response is only the beginning.</h2>
           <p>
-            Every generation returns normalized usage and an Ed25519-signed receipt with hashes of the request and response (never their content). Receipts are anchored in hourly merkle batches on Robinhood Chain, and the signing keys
-            are published on-chain. Signed is not the same as anchored: the dashboard and /api/v1/receipts/verify report each separately.
+            Every generation returns normalized usage and a signed receipt with hashes of the request and response (never their content), in two encodings: v1 (JSON, Ed25519) and v2 (a COSE_Sign1 signed EdDSA with the same key, with token
+            counts in buckets such as 512-1024 and no payer). A stream commits to every event as it goes: after each one comes a comment line, <span className="mono">: anonymo-chain &lt;i&gt; &lt;hash&gt;</span>, that SSE parsers skip, and the v2
+            receipt signs the last hash, so a cut or altered stream shows. Receipts are rooted in hourly Merkle batches and GET /api/v1/receipts/&#123;id&#125;/proof returns the path. A root is posted to ReceiptAnchor on Robinhood Chain only
+            where the router runs with a configured chain; otherwise it stays off chain and the proof says anchored: false. Signed is not the same as anchored: the dashboard and /api/v1/receipts/verify report each separately.
           </p>
           <Code label="Response shape">{JSON.stringify(receipt, null, 2)}</Code>
+          <h3 id="response-headers">Response headers</h3>
+          <p>
+            Every chat, completion and embeddings response names its receipt in X-Receipt-Id, the same id as the body’s id and receipt.id, and again in Inference-Id, the header Hugging Face inference clients read. X-Anonymo-Lane is the lane
+            the request was served under: public, attested or unlinkable. X-Anonymo-Policy-Hash is sent only when the endpoint that served the call has a fresh, verified attestation that binds the hash of the policy its in-enclave classifier
+            enforces; the router relays that value and never computes one. On a stream these headers arrive before the first chunk, so the policy hash is sent there only when every endpoint the request can reach attested the same one. Browsers can
+            read all of them.
+          </p>
+          <Code label="Response headers">{responseHeaders}</Code>
+          <p>
+            GET /api/v1/models adds, per model, an attestation object for its strongest live endpoint and a datacenter_region. best is that endpoint’s disclosure class. manifest_ref points at the transparency-log entry and the on-chain registry
+            transaction of its measured image, each only once the router checked it. policy_hash is the attested classifier policy. Anything the router has not verified is null, never filled in; exec_profile_id stays null until an attestation reports
+            one. datacenter_region is set only when every endpoint reports the same single region.
+          </p>
+          <Code label="GET /api/v1/models (new fields)">{modelAttestation}</Code>
           <h2 id="council">Ask several models, or the same one twice.</h2>
           <p>
             Two opt-in modes, available when the router enables them (the ANONYMO_FEATURE_COUNCIL setting, off by default). Neither streams. Every call they make is routed, billed and receipted like a request of its own, and the worst case of all of
-            them is held before anything is sent, so your balance and key budget bound the whole request. Your provider preferences, including a disclosure ceiling or lane, apply to every call, the judge included: a member with no provider that meets them refuses the request with a 409 instead of being dropped or downgraded. The disclosure header and the top-level receipt show the weakest class among the calls; each member’s receipt shows its own.
+            them is held before anything is sent, so your balance and key budget bound the whole request. Your provider preferences, including a disclosure ceiling or lane, apply to every call, the judge included: a member with no provider that meets them refuses the request (409, or 503 no_attested_endpoint on a lane) instead of being dropped or downgraded. The disclosure header and the top-level receipt show the weakest class among the calls; each member’s receipt shows its own.
           </p>
           <p>
             <b>Council.</b> Set model to anonymo/council and list 2 to 5 members and a judge. The members run in parallel; the judge either picks one answer, returned unchanged (mode judge), or writes a final one (mode fuse, text only). A member
@@ -475,7 +636,7 @@ export default function Docs() {
           <p>
             <b>Attested council and attested dual verification.</b> Set council.attested to true (or send provider.lane or the X-Anonymo-Lane header as attested, which asks for the same thing) and every member and the judge are held to the attested lane:
             a provider whose retention is declared attested and whose hardware attestation the router holds fresh, the same test as any other attested-lane request. Nothing is downgraded and no member is dropped. A member, or the judge, with no
-            attested provider refuses the whole request with a 409 (lane_unavailable, and error.metadata.council_seat says which seat), or a 503 while attested providers are down; nothing is sent, held or charged. Each call’s signed receipt then has an
+            attested provider refuses the whole request with a 503 (no_attested_endpoint, and error.metadata.council_seat says which seat); nothing is sent, held or charged. Each call’s signed receipt then has an
             attestation_ref: the hash of the attestation report the router verified for the provider that served it, and the TLS key its connection was pinned to (tls_pin is null for a provider that did not attest through a self-signed certificate).
             The response’s council field adds attested and attestation_refs (members in order, then the judge), and both are signed in the top-level receipt, so changing a reference breaks its signature. attested is true only when every call was served
             under the attested class. These are the router’s own records, the same ones behind GET /api/v1/attestation/{"{providerId}"}; they show what was running and pinned, not what it did with your prompt.
@@ -484,7 +645,7 @@ export default function Docs() {
           <Code label="Attested council response (abridged)">{attestedCouncilResponse}</Code>
           <p>
             Dual verification with provider.lane set to attested sends the two calls to two different attested providers of the model. Both receipts carry the agreement bit, and the verification field and each receipt add attested and the two
-            attestation references. If the model has fewer than two attested providers the answer is 409 (verification_unavailable with one, lane_unavailable with none), and nothing is sent or charged. Agreement still only shows that two providers
+            attestation references. If the model has fewer than two attested providers the answer is 409 verification_unavailable with one, or 503 no_attested_endpoint with none, and nothing is sent or charged. Agreement still only shows that two providers
             gave the same text.
           </p>
           <Code label="Attested dual verification request">{attestedDualRequest}</Code>
@@ -507,7 +668,7 @@ export default function Docs() {
           <p>
             list_attested_models lists the models the attested lane can serve now: those with an endpoint whose TEE attestation the router verified itself and whose provider documents no retention. Each carries gpu_attested, true when the latest verified gateway receipt
             for the model asserted GPU attestation, false when it did not and null before any receipt. chat takes lane (public or attested) and disclosure (none, policy or any) with the meaning of provider.lane and provider.disclosure: on the attested lane the prompt goes only to
-            such a provider, and when none can answer the call fails (409 lane_unavailable, or 503 while they are down) with nothing sent and nothing charged. The result reports the lane, the disclosure class the signed receipt records and, when the provider is an attested gateway,
+            such a provider, and when none can answer the call fails (503 no_attested_endpoint) with nothing sent and nothing charged. The result reports the lane, the disclosure class the signed receipt records and, when the provider is an attested gateway,
             its upstream_attestation (attested, gpu_attested, receipt_verified and a reason when it is not attested). If the gateway’s receipt does not show an attested upstream, the reply is withheld and the error carries the receipt id; the upstream had already produced the answer, so the call is billed.
           </p>
           <p>
@@ -524,6 +685,106 @@ export default function Docs() {
           <p>
             The Telegram bot follows the same rule. /private on sends every chat with lane attested, /models attested lists the models with a proven enclave and /model accepts only those while private mode is on. Each answer’s footer says attested, or attested · GPU when the gateway’s receipt asserts GPU attestation,
             taken from the signed receipt, with a link to the provider’s verify page; an answer whose receipt does not show an attested provider is not delivered. When no attested provider can answer, the bot says nothing was sent and nothing was charged.
+          </p>
+          <h2 id="anthropic">Use Anonymo from Claude Code and the Anthropic SDKs.</h2>
+          <p>
+            The router speaks the Anthropic Messages API: POST /v1/messages (also under /api/v1) and POST /v1/messages/count_tokens. A client written for that API, such as the Anthropic SDKs or Claude Code, works with an Anonymo key and an Anonymo
+            model. The request is converted to a chat completion and sent through /api/v1/chat/completions inside the router, so the key, its balance and limits, the lane, the signed receipt and the response headers are those of a chat call. Anonymo serves open models, not
+            Anthropic’s, so choose a model from GET /v1/models. This is a compatibility layer over the Messages API, not an Anthropic service: how well an agent such as Claude Code works depends on the model you choose, and it needs reliable tool calling and a long context.
+          </p>
+          <h3>Claude Code</h3>
+          <p>
+            Point ANTHROPIC_BASE_URL at the router and put your Anonymo key in ANTHROPIC_AUTH_TOKEN (sent as Authorization: Bearer) or ANTHROPIC_API_KEY (sent as x-api-key); the router accepts both. Claude Code names Anthropic models for its main, subagent and background
+            calls, so set ANTHROPIC_MODEL and the ANTHROPIC_DEFAULT_SONNET_MODEL, ANTHROPIC_DEFAULT_OPUS_MODEL and ANTHROPIC_DEFAULT_HAIKU_MODEL variables (and CLAUDE_CODE_SUBAGENT_MODEL) to Anonymo model ids. Claude Code assumes a 200K context for a model it does not know;
+            if your model has less, set CLAUDE_CODE_AUTO_COMPACT_WINDOW to its window. Keep the key out of a project’s committed .claude/settings.json.
+          </p>
+          <Code label="Claude Code · environment">{claudeCodeEnv}</Code>
+          <Code label="Claude Code · ~/.claude/settings.json">{claudeCodeSettings}</Code>
+          <h3>The attested lane</h3>
+          <p>
+            Send X-Anonymo-Lane: attested, or {`{"provider":{"lane":"attested"}}`} in the body, and the prompt goes only to a provider whose TEE attestation the router has verified and that documents no retention: the same lane, with the same meaning, as on /api/v1/chat/completions. When no
+            such provider can serve the model the call is refused with 409 (503 while they are down) and nothing is sent or charged; an unrecognised lane is a 400, never public. X-Anonymo-Disclosure-Max and provider.disclosure work the same way. In Claude Code, ANTHROPIC_CUSTOM_HEADERS
+            adds the header to every request (one Name: Value pair per line; in a settings file use \n between pairs). Use a model from GET /v1/models?lane=attested. Attestation shows what code is running, not what a provider does with a prompt; see the verify page for what the router checked and did not.
+          </p>
+          <Code label="Claude Code · every request on the attested lane">{claudeCodeAttestedEnv}</Code>
+          <Code label="Python SDK · a call on the attested lane, reading the receipt headers">{anthropicPython}</Code>
+          <Code label="TypeScript SDK">{anthropicTs}</Code>
+          <Code label="curl">{anthropicCurl}</Code>
+          <h3>Model names</h3>
+          <p>
+            Any model id in the catalog works as sent, and so do saved routes and a key’s own model aliases. A claude-* name is not in the catalog: unless the operator has mapped it, the call is a 404 (not_found_error) that says so and names a model to use. An operator maps names
+            with ANTHROPIC_MODEL_MAP, a JSON object from a name sent by a client to a catalog model id. A name ending in * matches every name with that prefix (the longest prefix wins, and an exact name wins over a prefix), and a lone * answers any other name. A map that is not valid
+            JSON stops the router starting.
+          </p>
+          <Code label="Router configuration">{anthropicModelMap}</Code>
+          <h3>What is converted</h3>
+          <ul>
+            <li>
+              <b>Request.</b> model; system as a string or text blocks; messages with text, image (base64 and URL), tool_use and tool_result blocks (a tool result may hold text and images), and document blocks with a text source; system-role entries inside messages stay where they are. max_tokens, temperature,
+              top_p, top_k, stop_sequences and stream map directly; metadata.user_id is sent to the provider as user. top_k is dropped for a provider that does not list it, and a max_tokens above what the model can produce is lowered to its limit, since Anthropic clients ask for large values.
+              thinking blocks in history are dropped.
+            </li>
+            <li>
+              <b>Tools.</b> Custom tools become function tools with their JSON schema, and tool_choice auto, any, tool and none map to auto, required, a named function and none (disable_parallel_tool_use sets parallel_tool_calls to false). Tools hosted by Anthropic (web search, code execution, bash, text editor, computer use)
+              cannot run behind a model here: they are left out of the request and named in the X-Anonymo-Ignored response header, as is a thinking request, which is accepted and not acted on. PDF documents, mcp_servers and container are refused with a 400 that names the field.
+            </li>
+            <li>
+              <b>Reply.</b> A message object with text and tool_use blocks. stop_reason is end_turn, max_tokens, tool_use or refusal (from a content filter); stop_sequence appears only when the provider says which stop string ended the answer, otherwise an answer that hit one is end_turn. usage splits
+              cached prompt tokens out of input_tokens as cache_read_input_tokens and cache_creation_input_tokens, so the three add up to the prompt. cache_control markers are accepted and do nothing.
+            </li>
+            <li>
+              <b>Receipt.</b> The id of the message is the receipt id, and the reply carries an anonymo object with the lane, the disclosure class, the provider, the cost, the gateway’s upstream_attestation where there is one and the signed receipt. X-Receipt-Id, Inference-Id, X-Anonymo-Lane and X-Anonymo-Policy-Hash come back as
+              headers, as on a chat call.
+            </li>
+            <li>
+              <b>Streaming.</b> With stream: true the events are the API’s own: message_start, ping, then for each block content_block_start, content_block_delta (text_delta, or input_json_delta with the tool call’s arguments as they arrive) and content_block_stop, then message_delta with the billed usage and the
+              anonymo object, and message_stop. message_start states an estimate of the prompt tokens; message_delta has the counted figure. A failure after output has begun ends the stream with an error event and no message_stop. A request the router refuses before any output is a real HTTP error, so an SDK can retry it.
+            </li>
+            <li>
+              <b>Counting.</b> POST /v1/messages/count_tokens takes the same body without max_tokens and returns input_tokens. It is the router’s estimate (about one token for every three characters of text and JSON, and 1,600 per image), not a tokenizer’s count, and it costs nothing. It needs a key.
+            </li>
+          </ul>
+          <div className="table-wrap">
+            <table className="docs-table">
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>error.type</th>
+                  <th>When</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>400</td>
+                  <td>invalid_request_error</td>
+                  <td>The request is malformed or names something not supported; the message names the field. A provider that rejects the request also lands here.</td>
+                </tr>
+                <tr>
+                  <td>401</td>
+                  <td>authentication_error</td>
+                  <td>No key, an unknown key, or a disabled or expired key.</td>
+                </tr>
+                <tr>
+                  <td>402 · 403 · 404 · 413 · 429</td>
+                  <td>billing_error · permission_error · not_found_error · request_too_large · rate_limit_error</td>
+                  <td>Not enough balance; a key that may not do this; an unknown model; a body over 16 MB; a rate limit (with Retry-After).</td>
+                </tr>
+                <tr>
+                  <td>409 · 501</td>
+                  <td>invalid_request_error · api_error</td>
+                  <td>The requested lane cannot be served, or is not run by this router. Sent with X-Should-Retry: false so an SDK does not retry it.</td>
+                </tr>
+                <tr>
+                  <td>502 · 503 · 504</td>
+                  <td>api_error · api_error · timeout_error</td>
+                  <td>Every provider for the request failed (nothing is charged), or an attested reply was withheld because the gateway’s receipt did not show an attested upstream (that call is billed).</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            Every error has Anthropic’s shape, {`{"type":"error","error":{"type","message"},"request_id"}`}, plus an anonymo object with the router’s own error type, its metadata, and the receipt id when a refused call was billed. Every response has a request-id header. A browser
+            can call the endpoint directly: the router allows the x-api-key, anthropic-version, anthropic-beta and anthropic-dangerous-direct-browser-access headers.
           </p>
           <h2 id="sdk">Verify before you send.</h2>
           <p>
@@ -583,6 +844,22 @@ export default function Docs() {
               the providers page
             </a>
             .
+          </p>
+          <h2 id="badge">Show your attestation with a badge.</h2>
+          <p>
+            Any site can show an endpoint’s live status with one line. The script has no dependencies and sets no cookies. It reads the router’s public record from each visitor’s browser (the proof-time summary, the attestation record and the disclosure class, and for a model its attestation object and endpoints) and shows Attested only when every check passes: the record was read within five minutes of the visitor’s clock, the last verified attestation is inside the router’s freshness window, the record and the summary agree and name the same measurement, and the policy hash is well formed and, for a model, the same in the model’s attestation object, its endpoint and the record. Any failed check reads Unverified.
+          </p>
+          <Code label="HTML · script badge">{badgeScript}</Code>
+          <p>
+            data-endpoint takes a provider id or a model id. data-theme is light, dark or auto (follows the visitor’s colour scheme). The badge shows the status (Attested, Policy, Vendor-forwarded or Unverified), the first eight characters of the measurement and of the policy hash while attested, and the share of the last 7 days with a fresh attestation, never rounded up. It links to the endpoint’s registry entry. It does not verify the hardware quote itself: the router does that with its configured verifiers, and the badge says so.
+          </p>
+          <p>For places that do not run scripts, the router serves the same status as an image. The image says what the router’s record says; nothing about it is checked in the viewer’s browser.</p>
+          <Code label="HTML and Markdown · image badge">{badgeImg}</Code>
+          <p>
+            <a href="/registry/" className="inline-link">
+              The registry
+            </a>{" "}
+            lists every attested endpoint, and each entry (/registry/&lt;provider id&gt;/) shows its measurement versions, every check the router ran and the badge snippets for it.
           </p>
           <h2 id="endpoints">Endpoint map</h2>
           <div className="table-wrap">

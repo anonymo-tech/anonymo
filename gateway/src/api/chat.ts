@@ -9,18 +9,19 @@ import { canonical, canonicalJson, decrypt, genId, log, sha256 } from "../lib/ut
 import { reserve, release, settle } from "../ledger/ledger.ts";
 import { selectProviders, type ProviderPrefs } from "../router/select.ts";
 import { isRestricted } from "../router/lane.ts";
-import { disclosureClass, disclosureRefusal, profileOf, resolveDisclosureRequest, type DisclosureClass, type DisclosureRequest } from "../router/disclosure.ts";
-import { servedDisclosure } from "./disclosure.ts";
+import { disclosureClass, disclosureRefusal, profileOf, type DisclosureClass, type DisclosureRequest } from "../router/disclosure.ts";
+import { servedDisclosure, servedPolicyHash } from "./disclosure.ts";
 import { estimatePromptTokens, maxOutputTokens, priceUsage, readUsage, worstCase, type Mode, type Usage } from "../router/pricing.ts";
 import { route, type Attempt, type RouteSuccess, type RouteTarget } from "../router/execute.ts";
 import { providerKey } from "../providers/upstream.ts";
 import { compactUpstream, recordGpuAttested, unverifiedUpstream, verifyAciExchange, type UpstreamAttestation } from "../providers/aci.ts";
 import { receiptLeaf } from "../receipts/merkle.ts";
+import { buildClaimsV2, chainComment, ChunkChain, COSE_CONTENT_TYPE } from "../receipts/v2.ts";
 import { applyGuardrails, mergeGuardrails, redactOutput, type GuardrailConfig } from "../gateway/guardrails.ts";
 import { middleOut } from "../gateway/transforms.ts";
 import type { CacheMode } from "../gateway/cache.ts";
 import { bearer, requireRole, resolveKey, walletAuth, type KeyRow } from "./auth.ts";
-import { addressBucket, readJson } from "./common.ts";
+import { addressBucket, generationHeaders, readJson, sharedPolicyHash } from "./common.ts";
 import { grantFor, recordDebt, type PaywithGrant } from "../pay/paywith.ts";
 import { resolveSavedRoute } from "../routing/saved-routes.ts";
 import { payPerCall } from "../pay/percall.ts";
@@ -28,7 +29,8 @@ import { holderTier, scaleLimit, walletOfAccount } from "../holders/tiers.ts";
 import type { HolderTier } from "../config.ts";
 import { COUNCIL_MODEL, applyDualDecoding, runCouncil, runDual, validateMulti } from "./council.ts";
 import { gatewayOrigin } from "../ohttp/origin.ts";
-import { requireUnlinkable } from "../ohttp/lane.ts";
+import { requestLane } from "../ohttp/lane.ts";
+import { blockReasonForStatus, isPrivateLaneRequest, noteLane, recordPrivateLane } from "../services/private-stats.ts";
 import { BLIND_POOL, claimToken, confirmToken, isBlindRequest, presentBlindToken, redemptionSummary, requireValue, unclaimToken, type BlindPass } from "../blind/redeem.ts";
 
 export type Kind = "chat" | "completion";
@@ -148,6 +150,7 @@ function selectTargets(
       attestationMaxAgeMs: ctx.cfg.attestation.intervalMs * 3,
       disclosure: (id) => profileOf(ctx.catalog.disclosure.get(id)),
       modelLane: ctx.catalog.laneOf(r.model),
+      attestedBonus: ctx.cfg.routing.attestedBonus,
       rand: ctx.rand,
     });
     // Tools / structured output must be supported by whoever serves the request.
@@ -193,11 +196,21 @@ function chunkBase(id: string, created: number, model: ModelRow, provider: strin
 }
 
 export function chatRoutes(app: Hono, ctx: Ctx) {
-  app.post("/api/v1/chat/completions", (c) => handle(ctx, c, "chat"));
-  app.post("/api/v1/completions", (c) => handle(ctx, c, "completion"));
+  // A refused private-lane request is counted (noisily, see services/private-stats.ts) under the reason it was refused.
+  const run = async (c: Context, kind: Kind) => {
+    const t0 = Date.now();
+    try {
+      return await handle(ctx, c, kind);
+    } catch (e) {
+      if (isPrivateLaneRequest(c.req.raw)) recordPrivateLane(ctx, c.req.raw, { blocked: isApiError(e) ? blockReasonForStatus(e.status, e.type) : "upstream_error", latencyMs: Date.now() - t0 });
+      throw e;
+    }
+  };
+  app.post("/api/v1/chat/completions", (c) => run(c, "chat"));
+  app.post("/api/v1/completions", (c) => run(c, "completion"));
   // OpenAI-SDK style base URLs (…/api/v1) already covered; also accept /v1/* for convenience.
-  app.post("/v1/chat/completions", (c) => handle(ctx, c, "chat"));
-  app.post("/v1/completions", (c) => handle(ctx, c, "completion"));
+  app.post("/v1/chat/completions", (c) => run(c, "chat"));
+  app.post("/v1/completions", (c) => run(c, "completion"));
 }
 
 async function handle(ctx: Ctx, c: Context, kind: Kind): Promise<Response> {
@@ -251,11 +264,15 @@ async function handle(ctx: Ctx, c: Context, kind: Kind): Promise<Response> {
   const savedRoute = await resolveSavedRoute(ctx.db, key?.accountId ?? wallet?.accountId ?? null, body);
   if (routing?.provider) body.provider = { ...routing.provider, ...((body.provider as object) ?? {}) };
   // Disclosure ceiling and lane: `provider.disclosure` / `provider.lane` and the X-Anonymo-* headers, the
-  // stricter of the two winning. Defaults (any, public) add nothing to `prefs`, so existing requests route as before.
-  const { disclosure: _wantDisclosure, lane: _wantLane, ...basePrefs } = (body.provider ?? {}) as ProviderPrefs;
-  const disc = resolveDisclosureRequest((body.provider ?? {}) as ProviderPrefs, { disclosureMax: c.req.header("x-anonymo-disclosure-max"), lane: c.req.header("x-anonymo-lane") }, { unlinkable: ctx.cfg.ohttp.enabled });
-  // Lane "unlinkable" (OHTTP_ENABLED): only through a relay, only with a blind token. Checked before anything is priced or spent.
-  if (disc.lane === "unlinkable") requireUnlinkable(ctx, c, { hasKey: !!key, hasWallet: !!wallet, hasToken: !!pass });
+  // stricter of the two winning, after the key's default and the saved route filled in what the request left unset.
+  // A request naming no lane is public, except one relayed through the Oblivious HTTP gateway and paid with a blind
+  // token, which defaults to unlinkable. Defaults (any, public) add nothing to `prefs`, so such requests route as before.
+  // Lane "unlinkable" (OHTTP_ENABLED): only through an independent relay, only with a blind token and no key or wallet.
+  // Checked before anything is priced or spent (ohttp/lane.ts).
+  const { disclosure: _wantDisclosure, lane: _wantLane, lane_downgrade: _wantDowngrade, ...basePrefs } = (body.provider ?? {}) as ProviderPrefs & { lane_downgrade?: unknown };
+  const disc = requestLane(ctx, c, (body.provider ?? {}) as Record<string, unknown>, { hasKey: !!key, hasWallet: !!wallet || (!key && !pass && !!c.req.header("x-payment")), hasToken: !!pass });
+  // Private-lane traffic (and `:private`, stored as private) is published only through noisy hourly counters.
+  noteLane(c.req.raw, disc.lane !== "public" ? disc.lane : (body.provider as ProviderPrefs | undefined)?.private === true || String(body.model ?? "").includes(":private") ? "attested" : "public");
   const strict = disc.max !== "any";
   const prefs: ProviderPrefs = { ...basePrefs, ...(strict ? { disclosure: disc.max } : {}), ...(disc.lane !== "public" ? { lane: disc.lane } : {}) };
 
@@ -381,7 +398,9 @@ async function handle(ctx: Ctx, c: Context, kind: Kind): Promise<Response> {
   // provider this request can reach is served under the same class; the signed receipt always carries the truth.
   const classes = new Set(attemptable.map(({ cand }) => servedDisclosure(ctx, cand).class));
   const planned = classes.size === 1 ? [...classes][0] : null;
-  const common = { ctx, c, body, billing, holdId, t0, bodySha, stream, kind, byok, meta, guardCfg, promptTokens, tier, disc, planned };
+  // Likewise the policy hash: up front on a stream only when every reachable endpoint attested the same one.
+  const plannedPolicy = sharedPolicyHash(attemptable.map(({ cand }) => servedPolicyHash(ctx, cand)));
+  const common = { ctx, c, body, billing, holdId, t0, bodySha, stream, kind, byok, meta, guardCfg, promptTokens, tier, disc, planned, plannedPolicy };
 
   if (stream) return streamResponse({ ...common, run: () => route({ appSecret: ctx.cfg.appSecret, targets, path, body, stream: true, keyFor, signal: abort.signal, health: ctx.health, maxAttempts: ctx.cfg.routing.maxAttempts, timeoutMs: ctx.cfg.routing.providerTimeoutMs, firstTokenTimeoutMs: ctx.cfg.routing.firstTokenTimeoutMs, production: ctx.cfg.production, caller: sha256(billing.accountId).slice(0, 16) }), abort });
 
@@ -406,7 +425,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind): Promise<Response> {
   const fin = await finalize({ ...common, r, usage, responseText, finishReason: json.choices?.[0]?.finish_reason ?? null, nativeFinish: json.choices?.[0]?.native_finish_reason ?? json.choices?.[0]?.finish_reason ?? null, generationMs: Date.now() - t0, cancelled: false, upstreamAttestation });
   if (upstreamAttestation && requiresAttestedUpstream(body, disc) && !upstreamAttestation.attested) {
     const err = unattestedUpstream(upstreamAttestation);
-    return c.json({ ...err.toJSON(), id: fin.id, usage: fin.usageJson, receipt: fin.receiptJson }, 502, { "x-generation-id": fin.id, "x-anonymo-disclosure": fin.disclosure, "x-anonymo-lane": disc.lane, ...paymentHeaders(billing) });
+    return c.json({ ...err.toJSON(), id: fin.id, usage: fin.usageJson, receipt: fin.receiptJson }, 502, { ...generationHeaders(fin.id, disc.lane, fin.policyHash), "x-anonymo-disclosure": fin.disclosure, ...paymentHeaders(billing) });
   }
   const out = {
     ...json,
@@ -419,7 +438,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind): Promise<Response> {
     ...(fin.extras(redactions) ?? {}),
   };
   if (cacheMode && !stream) await ctx.cache.put(cacheMode, cacheScope, body, out, fin.upstream, (body.cache as { ttl?: number } | undefined)?.ttl ?? ctx.cfg.gateway.cacheTtlS);
-  return c.json(out, 200, { "x-generation-id": fin.id, "x-anonymo-disclosure": fin.disclosure, "x-anonymo-lane": disc.lane, ...paymentHeaders(billing) });
+  return c.json(out, 200, { ...generationHeaders(fin.id, disc.lane, fin.policyHash), "x-anonymo-disclosure": fin.disclosure, ...paymentHeaders(billing) });
 }
 
 function allFailed(attempts: Attempt[], last?: { status?: number; errorKind: string; message: string }): ApiError {
@@ -497,6 +516,8 @@ export type Common = {
   disc: DisclosureRequest;
   /** The disclosure class every reachable provider shares, or null when it depends on who serves the call. */
   planned: DisclosureClass | null;
+  /** The attested policy hash every reachable endpoint shares, or null (see generationHeaders); used by streams. */
+  plannedPolicy?: string | null;
 };
 
 /** Extra inputs for calls made on behalf of a larger request (council members, dual verification). */
@@ -529,6 +550,8 @@ export type FinalizeInput = Common & {
    * gateway, finalize checks it itself (council and dual verification calls).
    */
   upstreamAttestation?: UpstreamAttestation | null;
+  /** For a stream: the head of the chunk hash chain over every event sent before the receipt (receipt v2 resp.chain). */
+  chainHead?: string | null;
 };
 
 async function finalize(p: FinalizeInput) {
@@ -595,11 +618,37 @@ async function finalize(p: FinalizeInput) {
   };
   const signed = ctx.signer.sign(payload);
   const leaf = receiptLeaf(signed.bytes, signed.sigBytes);
+  // Receipt v2 alongside v1: the same facts minus payer and exact counts, as a COSE_Sign1 under the same key.
+  const policyHash = servedPolicyHash(ctx, r.candidate);
+  const claimsV2 = buildClaimsV2({
+    rid: id,
+    issuedAt: new Date(payload.issued),
+    router: ctx.cfg.publicUrl,
+    modelId: r.model.id,
+    providerId: r.candidate.providerId,
+    attestation,
+    policyHash,
+    requestSha256: p.bodySha,
+    responseSha256: payload.response_sha256,
+    chainHead: p.stream ? (p.chainHead ?? null) : null,
+    tokensIn: p.usage.prompt,
+    tokensOut: p.usage.completion,
+    finish: p.finishReason,
+    stream: p.stream,
+    complete: !p.cancelled && p.finishReason !== "error",
+    lane: p.disc.lane,
+    disclosure: served.class,
+    mode,
+    chargedPico: charged,
+    keyset: billing.mode === "blind" ? billing.pass.keyId : null,
+  });
+  const signedV2 = ctx.signer.signCose(claimsV2);
 
   const referer = p.c.req.header("http-referer") ?? p.c.req.header("referer");
   const title = p.c.req.header("x-title");
   let appId: string | null = null;
-  if (referer || title) {
+  // App attribution names where a call came from, so it is never recorded for the unlinkable lane.
+  if ((referer || title) && p.disc.lane !== "unlinkable") {
     appId = sha256((referer ?? "") + "|" + (title ?? "")).slice(0, 24);
     await ctx.db.insert(apps).values({ id: appId, url: referer?.slice(0, 500) ?? null, title: title?.slice(0, 200) ?? null }).onConflictDoNothing();
   }
@@ -640,6 +689,9 @@ async function finalize(p: FinalizeInput) {
     receiptKeyId: signed.keyId,
     receipt: payload,
     receiptLeaf: leaf,
+    receiptV2: claimsV2,
+    receiptCose: signedV2.cose.toString("base64"),
+    receiptLeafV2: signedV2.leaf,
     paidWith,
     paymentTx: billing.mode === "per_call" ? (billing.paymentTx ?? null) : null,
     appId,
@@ -649,7 +701,10 @@ async function finalize(p: FinalizeInput) {
   });
   if (billing.mode === "blind") await confirmToken(ctx, billing.pass, id);
 
-  ctx.telemetry.span("chat " + r.model.id, p.t0, Date.now(), {
+  // A private-lane request is counted once in the noisy counters and sends no per-request trace span.
+  const privateLane = isPrivateLaneRequest(p.c.req.raw);
+  recordPrivateLane(ctx, p.c.req.raw, { latencyMs: p.generationMs, tokens: p.usage.prompt + p.usage.completion });
+  if (!privateLane) ctx.telemetry.span("chat " + r.model.id, p.t0, Date.now(), {
     "gen_ai.system": r.candidate.providerId,
     "gen_ai.operation.name": p.kind === "chat" ? "chat" : "text_completion",
     "gen_ai.request.model": String(p.body.model ?? r.model.id),
@@ -681,13 +736,16 @@ async function finalize(p: FinalizeInput) {
     alg: "Ed25519",
     payload,
     leaf,
-    anchor_hint: `Anchored on chain ${ctx.cfg.chain.id} within the hour; GET /api/v1/generation?id=${id} returns the merkle proof.`,
+    anchor_hint: `Rooted within the hour; GET /api/v1/receipts/${id}/proof returns the merkle path.`,
     ...(paidWith ? { paid_with: paidWith } : {}),
+    v2: { alg: "EdDSA", kid: signedV2.keyId, content_type: COSE_CONTENT_TYPE, cose: signedV2.cose.toString("base64"), claims: claimsV2, leaf: signedV2.leaf },
   };
   return {
     id,
     disclosure: served.class,
     simulated: served.simulated,
+    /** The classifier policy hash the serving endpoint's fresh attestation bound, or null (X-Anonymo-Policy-Hash). */
+    policyHash,
     upstream: cost.upstream,
     charged,
     cost,
@@ -748,11 +806,20 @@ function streamResponse(p: Common & { run: () => ReturnType<typeof route>; abort
       }
       const r = result as Extract<RouteSuccess, { kind: "stream" }>;
       const base = chunkBase(p.holdId, created, r.model, r.candidate.provider.name, kind);
+      // Chunk hash chain (receipt v2 resp.chain): every event before the receipt is chained, and c_i follows the
+      // i-th event as an SSE comment, which OpenAI-compatible parsers discard. Only what was enqueued is chained.
+      const chain = new ChunkChain(p.holdId);
+      const chained = (obj: unknown) => {
+        if (closed) return;
+        const data = JSON.stringify(obj);
+        const hex = chain.push(data);
+        send(`data: ${data}\n\n` + chainComment(chain.count, hex));
+      };
       // What an attested gateway streams for a request that requires attested hardware is held back until its
       // receipt shows an attested upstream (providers/aci.ts); every other stream is relayed as it arrives.
       const hold = !!r.candidate.provider.aci && requiresAttestedUpstream(p.body, p.disc);
       const held: unknown[] = [];
-      const relay = (obj: unknown) => (hold ? held.push(obj) : event(obj));
+      const relay = (obj: unknown) => (hold ? held.push(obj) : chained(obj));
       const holdKeepalive = hold ? setInterval(() => send(": ANONYMO PROCESSING\n\n"), 5_000) : undefined;
       let text = "";
       let reasoningText = ""; // billed when usage never arrives (e.g. the client cancels mid-stream)
@@ -805,9 +872,10 @@ function streamResponse(p: Common & { run: () => ReturnType<typeof route>; abort
         const upstreamAttestation = await upstreamAttestationOf(ctx, r, p.byok);
         clearInterval(holdKeepalive);
         const refused = hold && !!upstreamAttestation && !upstreamAttestation.attested;
-        if (hold && !refused) for (const e of held) event(e);
-        const fin = await finalize({ ...p, r, usage, responseText: text, finishReason: finish ?? (cancelled ? "cancelled" : midError ? "error" : null), nativeFinish, generationMs: Date.now() - p.t0, cancelled, upstreamAttestation });
-        if (refused) event({ ...unattestedUpstream(upstreamAttestation!).toJSON(), id: p.holdId });
+        if (hold && !refused) for (const e of held) chained(e);
+        // The refusal goes out before the receipt is signed, so the chain covers it too.
+        if (refused) chained({ ...unattestedUpstream(upstreamAttestation!).toJSON(), id: p.holdId });
+        const fin = await finalize({ ...p, r, usage, responseText: text, finishReason: finish ?? (cancelled ? "cancelled" : midError ? "error" : null), nativeFinish, generationMs: Date.now() - p.t0, cancelled, upstreamAttestation, chainHead: chain.head });
         event({ ...base, choices: [], usage: fin.usageJson, receipt: fin.receiptJson, ...(fin.extras(0) ?? {}) });
       } catch (e) {
         clearInterval(holdKeepalive);
@@ -829,7 +897,7 @@ function streamResponse(p: Common & { run: () => ReturnType<typeof route>; abort
   });
   return new Response(body, {
     status: 200,
-    headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive", "x-generation-id": p.holdId, "x-accel-buffering": "no", "x-anonymo-lane": p.disc.lane, ...(p.planned ? { "x-anonymo-disclosure": p.planned } : {}), ...paymentHeaders(p.billing) },
+    headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive", "x-accel-buffering": "no", ...generationHeaders(p.holdId, p.disc.lane, p.plannedPolicy), ...(p.planned ? { "x-anonymo-disclosure": p.planned } : {}), ...paymentHeaders(p.billing) },
   });
 }
 
@@ -887,7 +955,8 @@ async function cachedResponse(ctx: Ctx, c: Context, p: { body: Record<string, un
       receipt: { id, sig: signed.sig, key_id: signed.keyId, alg: "Ed25519", payload, leaf },
     },
     200,
-    { "x-generation-id": id, "x-anonymo-cache": "hit", "x-anonymo-disclosure": "vendor-forwarded", "x-anonymo-lane": p.disc.lane, ...paymentHeaders(p.billing) },
+    // Served from the cache, not by an attested endpoint: no policy hash.
+    { ...generationHeaders(id, p.disc.lane), "x-anonymo-cache": "hit", "x-anonymo-disclosure": "vendor-forwarded", ...paymentHeaders(p.billing) },
   );
 }
 

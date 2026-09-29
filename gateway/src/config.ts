@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { z } from "zod";
 import { usdToPico } from "./lib/money.ts";
 import { parseOnionAddress, parseOnionSecrets } from "./lib/onion.ts";
+import { parseModelMap } from "./anthropic/models.ts";
 
 // Every setting comes from the environment. Missing optional services produce
 // an explicit "unavailable" state at runtime; they never fake success.
@@ -155,6 +156,12 @@ const schema = z.object({
   MAX_PROVIDER_ATTEMPTS: int(4),
   EMPTY200_SLASH_THRESHOLD: num(0.02),
   UPTIME_SLASH_THRESHOLD: num(0.95),
+  // Selection weight multiplier for an endpoint served under the attested class (declared attested retention and a
+  // fresh, verified attestation), per lane. On lanes attested and unlinkable every eligible endpoint is attested, so
+  // their bonus only matters if set differently from 1. Must be at least 1: attestation never lowers a weight.
+  ATTESTED_BONUS_PUBLIC: z.coerce.number().min(1).max(10).default(1.25),
+  ATTESTED_BONUS_ATTESTED: z.coerce.number().min(1).max(10).default(1),
+  ATTESTED_BONUS_UNLINKABLE: z.coerce.number().min(1).max(10).default(1),
 
   // Canaries
   CANARY_INTERVAL_MS: int(3_600_000),
@@ -221,6 +228,9 @@ const schema = z.object({
   CACHE_TTL_S: z.coerce.number().int().min(1).default(3600),
   SEMANTIC_CACHE_THRESHOLD: num(0.97),
   SEMANTIC_CACHE_EMBEDDING_MODEL: opt,
+
+  // Anthropic Messages endpoint (POST /v1/messages): JSON object mapping the model names an Anthropic client sends to catalog model ids.
+  ANTHROPIC_MODEL_MAP: opt,
 
   // Council mode (model "anonymo/council") and dual verification (verify: "dual"). Off unless enabled.
   ANONYMO_FEATURE_COUNCIL: bool.default(false),
@@ -542,6 +552,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
       maxAttempts: e.MAX_PROVIDER_ATTEMPTS,
       empty200SlashThreshold: e.EMPTY200_SLASH_THRESHOLD,
       uptimeSlashThreshold: e.UPTIME_SLASH_THRESHOLD,
+      attestedBonus: { public: e.ATTESTED_BONUS_PUBLIC, attested: e.ATTESTED_BONUS_ATTESTED, unlinkable: e.ATTESTED_BONUS_UNLINKABLE },
     },
     canaries: { intervalMs: e.CANARY_INTERVAL_MS, enabled: e.CANARIES, shadowDays: e.SHADOW_DAYS },
     buyback: {
@@ -589,6 +600,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
       semanticThreshold: e.SEMANTIC_CACHE_THRESHOLD,
       semanticEmbeddingModel: e.SEMANTIC_CACHE_EMBEDDING_MODEL,
     },
+    anthropic: { modelMap: parseModelMap(e.ANTHROPIC_MODEL_MAP) },
     // Off unless enabled. Council members and the judge are billed and receipted like any other call.
     features: { council: e.ANONYMO_FEATURE_COUNCIL },
     council: { models: councilModels, judge: e.ANONYMO_COUNCIL_JUDGE ?? null, mode: e.ANONYMO_COUNCIL_MODE },

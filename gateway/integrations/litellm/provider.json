@@ -1,0 +1,6 @@
+{
+    "anonymo": {
+        "base_url": "https://api-production-70da.up.railway.app/api/v1",
+        "api_key_env": "ANONYMO_API_KEY"
+    }
+}

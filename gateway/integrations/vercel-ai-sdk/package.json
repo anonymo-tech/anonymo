@@ -1,0 +1,51 @@
+{
+  "name": "@anonymo/ai-sdk-provider",
+  "version": "0.1.0",
+  "description": "Anonymo provider for the Vercel AI SDK: 350+ models behind one key, a signed receipt on every call, and an attested-only lane.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "ai",
+    "ai-sdk",
+    "vercel-ai-sdk",
+    "provider",
+    "anonymo",
+    "openai-compatible",
+    "attested",
+    "tee"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anonymo-tech/anonymo.git",
+    "directory": "integrations/vercel-ai-sdk"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.59",
+    "@ai-sdk/provider-utils": "^5.0.51"
+  },
+  "devDependencies": {
+    "ai": "^7.0.122",
+    "typescript": "^5.9.0",
+    "zod": "^4.1.8"
+  }
+}
