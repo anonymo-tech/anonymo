@@ -57,6 +57,24 @@ const councilResponse = JSON.stringify(
   2,
 );
 const verifyRequest = JSON.stringify({ model: "meta-llama/llama-3.3-70b-instruct", messages: [{ role: "user", content: "Your prompt" }], verify: "dual" }, null, 2);
+const claimRequest = JSON.stringify({ model: "<author>/<model>", address: "0x…your payout address" }, null, 2);
+const claimResponse = JSON.stringify(
+  {
+    data: {
+      id: "claim-…",
+      model: "<author>/<model>",
+      hugging_face_id: "<owner>/<repository>",
+      handle: "<owner>",
+      status: "pending",
+      file: "anonymo-claim.txt",
+      file_content: "anonymo-claim-…\n",
+      expires_at: "2026-…",
+      royalty_bps: 500,
+    },
+  },
+  null,
+  2,
+);
 const BASE = API_BASE || "<your router>";
 const claudeCode = `claude mcp add --transport http anonymo ${BASE}/mcp --header "Authorization: Bearer $ANONYMO_API_KEY"`;
 const cursorConfig = JSON.stringify({ mcpServers: { anonymo: { url: `${BASE}/mcp`, headers: { Authorization: "Bearer sk-ar-v1-…" } } } }, null, 2);
@@ -109,6 +127,49 @@ const xPayment = btoa(JSON.stringify({
 const paid = await fetch(url, { method: "POST", headers: { ...headers, "X-PAYMENT": xPayment }, body });
 const completion = await paid.json(); // usage + signed receipt; receipt.payload.payment_tx is the settlement
 const settlement = JSON.parse(atob(paid.headers.get("X-PAYMENT-RESPONSE"))); // { success, transaction, network, payer }`;
+const sdkReceipt = `import { Anonymo } from "@anonymo/client";
+
+const client = new Anonymo({ baseUrl: "https://<router>", apiKey: process.env.ANONYMO_API_KEY });
+const res = await client.chat.completions.create(
+  { model: "meta-llama/llama-3.3-70b-instruct", messages: [{ role: "user", content: "Hello" }] },
+  { disclosure: "policy" }, // or lane: "attested"; the router refuses rather than downgrade
+);
+
+const check = res.anonymo.receiptVerification; // checked against /.well-known/anonymo-receipt-keys.json
+console.log(check.valid, check.anchor);          // anchor: "proof_valid" | "proof_invalid" | "no_proof"
+for (const c of check.checks) console.log(c.id, c.status, c.detail); // pass | fail | not_checked`;
+const sdkAttested = `import { Anonymo, AttestationRefused } from "@anonymo/client";
+import { nodeAttestFetcher } from "@anonymo/client/node"; // Node and Bun: reads the provider's certificate too
+
+try {
+  const res = await client.chat.completions.create(request, {
+    attested: {
+      providerId: "<provider id>",
+      attestUrl: "https://<provider>/attest",
+      expected: { modelDigest: "sha256:<the digest you expect>" }, // optional, but this is what makes it your model
+      attestFetcher: nodeAttestFetcher(),
+    },
+  });
+  console.log(res.anonymo.provider.bound.modelDigest, res.anonymo.servedByVerifiedProvider);
+} catch (e) {
+  if (e instanceof AttestationRefused) console.error(e.verification.checks.filter((c) => c.status === "fail"));
+  else throw e;
+}`;
+const sdkPython = `from anonymo_client import Anonymo, AttestedOptions, AttestationRefused, ExpectedDigests
+
+client = Anonymo("https://<router>", "sk-ar-v1-…")
+try:
+    res = client.chat(
+        {"model": "meta-llama/llama-3.3-70b-instruct", "messages": [{"role": "user", "content": "Hello"}]},
+        attested=AttestedOptions(
+            provider_id="<provider id>",
+            attest_url="https://<provider>/attest",
+            expected=ExpectedDigests(model_digest="sha256:<the digest you expect>"),
+        ),
+    )
+    print(res["anonymo"]["receipt_verification"].valid)
+except AttestationRefused as e:
+    print([c for c in e.verification.checks if c.status == "fail"])`;
 const endpoints = [
   ["POST /api/v1/chat/completions", "Chat, tools and streaming (OpenAI/OpenRouter shape); X-Pay-With, X-Payment, X-Wallet-Auth headers"],
   ["POST /api/v1/completions · /embeddings", "Legacy completions; embeddings (prepaid keys)"],
@@ -125,10 +186,14 @@ const endpoints = [
   ["POST · GET · DELETE /api/v1/sessions · GET /sessions/current", "Agent Sessions: short-lived, budget-capped keys for agent runs"],
   ["GET /api/v1/spend · /spend/alerts", "Spend Watch: totals, projection, breakdowns, key budgets and alert rules"],
   ["GET /api/v1/disclosure/:providerId", "A provider’s documented retention, jurisdiction, legal hold and training use, each with a source and date, and the class it is served under now"],
+  ["GET /api/v1/models?variant=…", "Open-weights variants (mainstream, native_low_refusal, abliterated) with license, base model and weights source; restricted variants list only attested endpoints"],
+  ["POST /api/v1/creators/claims · /claims/{id}/verify", "Claim a model’s creator royalty by publishing a challenge in its Hugging Face repository"],
   ["GET /api/v1/blind/keys", "Blind tokens, where enabled: the issuer keys per epoch and denomination, the challenge every token carries, and prices"],
   ["POST /api/v1/blind/purchase", "Blind tokens, where enabled: buy tokens with credits by sending blinded messages; spend one with Authorization: PrivateToken on chat or embeddings"],
   ["GET /api/v1/holder", "$ANMO holders: balance, live tier (higher rate limits, lower fees), the tier ladder and free credits received"],
   ["POST /api/v1/receipts/verify · GET /receipts/keys", "Verify a receipt’s signature and anchor inclusion; signing keys (JWKS)"],
+  ["GET /.well-known/anonymo-receipt-keys.json", "The same signing keys at a fixed path, for clients that verify receipts themselves"],
+  ["GET /api/v1/attestation/:providerId", "What the router has verified about a provider’s hardware attestation: status, verifiers, measurements, transparency-log and on-chain state, and what was not checked"],
   ["POST /mcp", "Anonymo MCP: list_models, chat, get_receipt and verify_receipt as tools for Claude, Cursor or any MCP client"],
   ["GET /api/v1/rankings · /providers · /status", "Usage rankings and creator payouts; provider registry; router configuration"],
   ["POST /api/v1/providers/apply · /creators/claim · /paymaster", "Provider onboarding; royalty claims; ERC-7677 gas sponsorship"],
@@ -152,11 +217,13 @@ export default function Docs() {
             <a href="#quickstart">Quickstart</a>
             <a href="#routing">Routing</a>
             <a href="#disclosure">Disclosure</a>
+            <a href="#lane">Lane</a>
             <a href="#payments">Payments</a>
             <a href="#x402">x402</a>
             <a href="#receipts">Receipts</a>
             <a href="#council">Council</a>
             <a href="#mcp">MCP</a>
+            <a href="#sdk">SDKs</a>
             <a href="#endpoints">Endpoints</a>
             <a href="#limits">Limits</a>
           </nav>
@@ -213,6 +280,32 @@ export default function Docs() {
               2,
             )}
           </Code>
+          <h2 id="lane">Open-weights variants, and paying their creators.</h2>
+          <p>
+            Every model has a variant. mainstream keeps the publisher’s own alignment. native_low_refusal (trained to refuse little) and abliterated (refusal behaviour removed from the weights after training) are restricted variants. GET
+            /api/v1/models reports variant, variant_source, license, base_model, weights (source, revision, digest) and creator_handle, and takes ?variant= (a comma list) next to ?lane=. variant_source says whether an operator declared the
+            variant; a model nobody has classified whose name says its refusals were removed is treated as abliterated.
+          </p>
+          <p>
+            A restricted variant is served only by a provider that is served under attested retention with a fresh attestation and whose attestation reported the in-enclave hard-block classifier as enabled (classifier_enabled in GET
+            /api/v1/providers). That is a property of the model, not a request option: no lane or disclosure setting, and no provider.only, sends it anywhere else, and the response cache is never used for it. Its listing shows only the endpoints
+            that qualify, and a request with none qualifying fails with no_providers before anything is sent. The router takes the flag only from what a verified attestation commits to (a development report counts only outside production) and treats
+            anything unknown as off, so a provider whose attestation says nothing about a classifier does not qualify. The flag shows what the attestation reports; it does not prove how the classifier behaves.
+          </p>
+          <p>
+            When an operator enables the day-zero pipeline (DAYZERO_ENABLED, with DAYZERO_BASE_MODELS naming the base models), the router watches Hugging Face for new fine-tunes of those models whose name or tags contain a configured keyword (abliterated, uncensored,
+            decensored and unfiltered by default), and keeps those whose model card carries an allowed license (MIT or Apache-2.0 by default; the base model’s own card is checked too). Each candidate is evaluated on a provider’s endpoint with 16 benign prompts that base models often
+            over-refuse (fiction, security education, medical and legal information; none is harmful or illegal), 12 capability prompts with exact checks and the router’s canary set, and the scores are stored. A model becomes servable only after an
+            operator approves the evaluated candidate and an attested provider that reports the classifier serves it. Until then it is routed to no one, and a candidate that later fails an evaluation is withdrawn. The operator endpoints are under
+            /api/v1/lane/candidates.
+          </p>
+          <p>
+            The uploader of a model’s weights can claim its royalty. POST /api/v1/creators/claims with the model and a payout address returns a challenge. Commit it, on its own line, to the file named in the response on the main branch of the Hugging
+            Face repository the weights come from, then POST /api/v1/creators/claims/{"{id}"}/verify. The router reads the repository’s owner and the file through the Hugging Face API. On a match the address is recorded as the model’s royalty recipient
+            (5% of the notional price unless the router is configured otherwise, at most 20%), registered in the royalty contract where one is deployed, and shown as creator and royalty_bps. Every later call to the model includes the royalty as its own
+            cost line, and each hourly settlement streams it in USDG to the recipient. A claim needs a Hugging Face weights source recorded by the operator, and it proves control of that repository and nothing more.
+          </p>
+          <Code label="Claim a royalty: request, then response">{`${claimRequest}\n\n${claimResponse}`}</Code>
           <h2 id="payments">One settlement unit. More ways to pay.</h2>
           <div className="table-wrap">
             <table className="docs-table">
@@ -303,6 +396,43 @@ export default function Docs() {
           <Code label="Cursor · ~/.cursor/mcp.json">{cursorConfig}</Code>
           <Code label="Claude Desktop · claude_desktop_config.json (through the mcp-remote bridge)">{desktopConfig}</Code>
           <Code label="Check it with curl">{mcpCurl}</Code>
+          <h2 id="sdk">Verify before you send.</h2>
+          <p>
+            Two client libraries wrap the OpenAI-shaped call and add the checks a plain HTTP client would skip. The TypeScript package, @anonymo/client, has no runtime dependencies and runs on Bun, Node 20 and later, and in browsers. The Python package, anonymo-client (Python
+            3.10 and later), depends only on cryptography and httpx. Their source is in packages/client and packages/client-py in the repository. Both report every check as pass, fail or not checked, and a check they did not make is never shown as passed.
+          </p>
+          <h3>Receipts</h3>
+          <p>
+            Each response carries its verification: the Ed25519 signature over the receipt’s canonical JSON against the key in the router’s published key list (fetched once, and read again if a receipt names a key it has not seen, as after a weekly rotation), that the key id is the
+            hash of the key, that the receipt is dated inside its key’s window, that its leaf recomputes from the signed bytes and, when the receipt came with an anchor proof, that the leaf is under the stated root. It does not check that the key is registered on chain or that the root was posted
+            there, and says so. Pass pinned keys to skip the fetch. A receipt a provider’s sidecar signed with its enclave key is checked against the receipt key its attestation binds, and must name the same attestation and model digest.
+          </p>
+          <Code label="TypeScript · receipts, disclosure and lane">{sdkReceipt}</Code>
+          <h3>Attested providers</h3>
+          <p>
+            Give a request an attested option and the client checks the provider first and sends nothing unless every check passes. It reads the router’s record (GET /api/v1/attestation/:providerId) and the provider’s own /attest document, then checks that the router reports the provider
+            attested with a quote it verified recently; that the quote is an Intel TDX quote whose report_data is SHA-256 of the canonical bindings followed by the nonce, so the TLS key, receipt key and the image, compose and model digests are committed in the quote; that a fresh quote for a random nonce
+            the client chose says the same; that the certificate name is derived from SHA-256 of the quote; that, where the runtime can read the connection’s certificate, it carries that name and the attested TLS key; and that the router’s recorded digests equal the provider’s. If you supply the model digest you
+            expect, it must match. Simulated (development) evidence is refused unless you opt in, and is then labelled simulated. On success the request is pinned to that provider (provider.only, no fallbacks, lane attested), and the receipt is checked for naming it.
+          </p>
+          <p>
+            What it does not check, and reports as not checked: Intel’s signature and certificate chain over the quote (the router does that; pass a quoteVerifier to run your own), what the provider does with your prompt, whether the running software matches its published source, and
+            the transport when the runtime cannot read the certificate, as in a browser. Passing nodeAttestFetcher on Node or Bun reads the certificate from the same connection that served /attest.
+          </p>
+          <Code label="TypeScript · verify before send">{sdkAttested}</Code>
+          <Code label="Python">{sdkPython}</Code>
+          <h3>Blind tokens and end-to-end encryption</h3>
+          <p>
+            Where the router has blind tokens enabled, buyTokens() from @anonymo/client/blind blinds, buys and unblinds tokens with your key, and client.withPrivateToken(token) makes a client that spends one; the blind-token module needs the optional package @cloudflare/blindrsa-ts, and the main entry point never loads it. For end-to-end encryption to an enclave, sealedPost() encrypts
+            a request with an HPKE implementation you supply, sends it as application/anonymo-hpke and opens the reply. It seals only to an HPKE key the provider’s verified quote commits to, and refuses if the provider did not verify or the quote commits to no such key. The SDK ships no HPKE cipher: the
+            implementation and wire format must match the provider’s sidecar. The Python package covers receipts, provider verification, and disclosure and lane options, and can spend a blind token you already hold; it cannot buy tokens and has no streaming or HPKE support.
+          </p>
+          <p>
+            <a href="/verify/" className="inline-link">
+              The verify page
+            </a>{" "}
+            shows what the router has recorded for a provider (/verify/?p=&lt;provider id&gt;) and checks a pasted receipt in your browser. It reads the router’s record only; use an SDK to check the provider itself.
+          </p>
           <h2 id="endpoints">Endpoint map</h2>
           <div className="table-wrap">
             <table className="docs-table endpoint-table">
