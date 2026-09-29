@@ -57,6 +57,32 @@ const councilResponse = JSON.stringify(
   2,
 );
 const verifyRequest = JSON.stringify({ model: "meta-llama/llama-3.3-70b-instruct", messages: [{ role: "user", content: "Your prompt" }], verify: "dual" }, null, 2);
+const attestedCouncilRequest = JSON.stringify(
+  {
+    model: "anonymo/council",
+    messages: [{ role: "user", content: "Your prompt" }],
+    council: { models: ["<model-a>", "<model-b>"], judge: "<judge-model>", attested: true },
+  },
+  null,
+  2,
+);
+const attestedCouncilResponse = JSON.stringify(
+  {
+    id: "<judge receipt id>",
+    model: "anonymo/council",
+    council: {
+      attested: true,
+      attestation_refs: [
+        { role: "member", label: "A", receipt_id: "<member receipt id>", provider: "<provider-a>", tee: "tdx", report_hash: "<attestation report hash>", attested_at: "…", tls_pin: { spki_sha256: "…", attestation_ref: "…" } },
+        { role: "member", label: "B", receipt_id: "<member receipt id>", provider: "<provider-b>", tee: "tdx", report_hash: "…", attested_at: "…", tls_pin: null },
+        { role: "judge", receipt_id: "<judge receipt id>", provider: "<provider-a>", tee: "tdx", report_hash: "…", attested_at: "…", tls_pin: { spki_sha256: "…", attestation_ref: "…" } },
+      ],
+    },
+  },
+  null,
+  2,
+);
+const attestedDualRequest = JSON.stringify({ model: "<model>", messages: [{ role: "user", content: "Your prompt" }], verify: "dual", provider: { lane: "attested" } }, null, 2);
 const claimRequest = JSON.stringify({ model: "<author>/<model>", address: "0x…your payout address" }, null, 2);
 const claimResponse = JSON.stringify(
   {
@@ -190,6 +216,8 @@ const endpoints = [
   ["POST /api/v1/creators/claims · /claims/{id}/verify", "Claim a model’s creator royalty by publishing a challenge in its Hugging Face repository"],
   ["GET /api/v1/blind/keys", "Blind tokens, where enabled: the issuer keys per epoch and denomination, the challenge every token carries, and prices"],
   ["POST /api/v1/blind/purchase", "Blind tokens, where enabled: buy tokens with credits by sending blinded messages; spend one with Authorization: PrivateToken on chat or embeddings"],
+  ["GET /api/v1/ohttp/keys · POST /api/v1/ohttp/gateway", "Oblivious HTTP, where enabled: the gateway key configuration (application/ohttp-keys), and the gateway that unwraps message/ohttp-req sent by a relay and returns message/ohttp-res"],
+  ["GET /api/v1/ohttp/key-list · GET /api/v1/relays", "Oblivious HTTP, where enabled: the gateway key history signed with the receipt key, and the relays clients may use, by operator"],
   ["GET /api/v1/holder", "$ANMO holders: balance, live tier (higher rate limits, lower fees), the tier ladder and free credits received"],
   ["POST /api/v1/receipts/verify · GET /receipts/keys", "Verify a receipt’s signature and anchor inclusion; signing keys (JWKS)"],
   ["GET /.well-known/anonymo-receipt-keys.json", "The same signing keys at a fixed path, for clients that verify receipts themselves"],
@@ -263,11 +291,22 @@ export default function Docs() {
           <p>
             Set provider.disclosure (or the X-Anonymo-Disclosure-Max header) to none, policy or any, the default. none routes only to providers whose retention is declared attested and whose TEE attestation is fresh; policy also accepts a
             documented no-retention policy with no legal hold. provider.lane (or X-Anonymo-Lane) is public, the default, or attested, which implies none; if both are set the stricter applies. When nothing qualifies the request fails with 409, or
-            503 when qualifying providers are down. It is never sent to a provider that does not qualify, and nothing is charged. The unlinkable lane is not available yet and returns 501. A request with a disclosure setting never uses the response cache.
+            503 when qualifying providers are down. It is never sent to a provider that does not qualify, and nothing is charged. The unlinkable lane is served only where the router enables Oblivious HTTP (see below); elsewhere it returns 501. A request with a disclosure setting never uses the response cache.
           </p>
           <p>
             Responses carry X-Anonymo-Disclosure (attested, policy or vendor-forwarded) and X-Anonymo-Lane, and the signed receipt records disclosure and lane. On a stream the header is sent only when every reachable provider shares one class; the
             receipt always states it. A development attestation is marked attestation_simulated and is refused in production. GET /api/v1/models?lane=attested lists the models that have an attested endpoint now.
+          </p>
+          <h2 id="unlinkable">The unlinkable lane, where the router enables it.</h2>
+          <p>
+            Lane unlinkable keeps the router from tying together who pays, where a request came from and what it says. It is served only when all three hold: the request arrives through the router’s Oblivious HTTP gateway (RFC 9458) by way of a relay
+            run by an operator other than the router’s own; it is paid with a blind token (Authorization: PrivateToken), never a key or a wallet; and it is routed only to attested providers, the same filter as lane attested. The receipt then
+            says lane unlinkable. GET /api/v1/relays lists the relays by operator. GET /api/v1/ohttp/keys is the gateway’s key configuration and GET /api/v1/ohttp/key-list is the key history, signed with the receipt key and hash-chained, for pinning.
+          </p>
+          <p>
+            A direct request for the lane is refused with 403 unlinkable_requires_relay and says what to do; through the gateway without a token it is 401 (unlinkable_requires_token) with the token challenge, and 403 for a key or a relay run by the
+            router’s own operator. What is hidden: the relay sees your address and an encrypted request; the router sees the request and the relay, never your address; the token’s purchase cannot be tied to its use. What is not: a relay that
+            cooperates with the router can join the two, timing and message sizes can be correlated (responses are padded), and any identifier you put in the request body reaches the provider. Streaming is not available through the gateway.
           </p>
           <Code label="Attested providers only">
             {JSON.stringify(
@@ -386,6 +425,27 @@ export default function Docs() {
             is the first provider’s output. If fewer than two providers of the model support temperature and seed under your routing preferences, the answer is 409. Agreement shows two providers gave the same text; it does not show that either is attested, and providers running different quantizations may legitimately differ.
           </p>
           <Code label="Dual verification request">{verifyRequest}</Code>
+          <p>
+            <b>Attested council and attested dual verification.</b> Set council.attested to true (or send provider.lane or the X-Anonymo-Lane header as attested, which asks for the same thing) and every member and the judge are held to the attested lane:
+            a provider whose retention is declared attested and whose hardware attestation the router holds fresh, the same test as any other attested-lane request. Nothing is downgraded and no member is dropped. A member, or the judge, with no
+            attested provider refuses the whole request with a 409 (lane_unavailable, and error.metadata.council_seat says which seat), or a 503 while attested providers are down; nothing is sent, held or charged. Each call’s signed receipt then has an
+            attestation_ref: the hash of the attestation report the router verified for the provider that served it, and the TLS key its connection was pinned to (tls_pin is null for a provider that did not attest through a self-signed certificate).
+            The response’s council field adds attested and attestation_refs (members in order, then the judge), and both are signed in the top-level receipt, so changing a reference breaks its signature. attested is true only when every call was served
+            under the attested class. These are the router’s own records, the same ones behind GET /api/v1/attestation/{"{providerId}"}; they show what was running and pinned, not what it did with your prompt.
+          </p>
+          <Code label="Attested council request">{attestedCouncilRequest}</Code>
+          <Code label="Attested council response (abridged)">{attestedCouncilResponse}</Code>
+          <p>
+            Dual verification with provider.lane set to attested sends the two calls to two different attested providers of the model. Both receipts carry the agreement bit, and the verification field and each receipt add attested and the two
+            attestation references. If the model has fewer than two attested providers the answer is 409 (verification_unavailable with one, lane_unavailable with none), and nothing is sent or charged. Agreement still only shows that two providers
+            gave the same text.
+          </p>
+          <Code label="Attested dual verification request">{attestedDualRequest}</Code>
+          <p>
+            <b>Availability.</b> Production has one attested provider today, and it serves a small (0.5B) model, so an attested council, which needs an attested provider for every member and the judge, and attested dual verification, which needs
+            two for one model, will mostly answer with the 409 above until more attested providers join. That refusal is the intended behaviour, not a fault: the router does not fall back to a provider that is not attested. On a development
+            router the attestation can be a development report; receipts then say so (attestation_simulated, and simulated inside the reference), and a production router never accepts one. Receipts from calls made any other way do not carry attestation_ref, and older receipts verify as before.
+          </p>
           <h2 id="mcp">Use every model as a tool.</h2>
           <p>
             The router hosts a remote MCP server at /mcp (Streamable HTTP, stateless, JSON replies). Connect it to Claude, Cursor or any MCP client with your Anonymo key. Four tools: list_models (live models, context length and price per 1M

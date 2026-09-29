@@ -138,7 +138,8 @@ describe("against a running router", () => {
   test("a receipt from a real chat call verifies against the keys the router publishes, and a tampered copy does not", async () => {
     const k = await h.fundedKey(5n);
     const c = new Anonymo({ baseUrl: "http://router.test", apiKey: k.secret, fetch: shim(h) });
-    const res = await c.chat.completions.create(chat);
+    // Pin the provider: the harness serves this model from more than one, and the assertions below are about "vendor".
+    const res = await c.chat.completions.create({ ...chat, provider: { only: ["vendor"] } });
     expect(res.anonymo.receipt?.payload.provider).toBe("vendor");
     expect(res.anonymo.receiptVerification?.valid).toBe(true);
     expect(res.anonymo.receiptVerification?.checks.find((x) => x.id === "leaf")?.status).toBe("pass");
