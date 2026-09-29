@@ -84,13 +84,13 @@ These hold for the design, not only for today's code, and are published with it.
 | On-chain measurement registry (image, compose and model digests, log entry, quote-proof hash) | 0001 | Implemented | [`contracts/src/MeasurementRegistry.sol`](../contracts/src/MeasurementRegistry.sol) |
 | GPU evidence bound into the sidecar's own quote; `policy-hash` and `exec-profile-hash` boot events; RTMR3 replay by clients | 0001 | Planned | |
 | In-toto manifests, policy registry contract, threshold KMS with on-chain governance | 0001 | Planned | |
-| Anonymo-run transparency log (tlog-tiles) with witnesses; client split-view checks | 0001, 0002 | Planned | |
+| Anonymo-run transparency log (tlog-tiles) with witnesses; client split-view checks | 0001, 0002 | Implemented, off by default; logs receipt keys, Oblivious HTTP key configurations, blind-token issuer keys, measurement bundles and sidecar key bindings (manifests and e-cash keysets are planned) | [`src/tlog/`](../src/tlog), [`packages/client/src/tlog.ts`](../packages/client/src/tlog.ts), [`scripts/tlog-witness.ts`](../scripts/tlog-witness.ts) |
 | Inner E2EE `anonymo-hpke/v1` (single-shot request, framed streaming response) | 0002 | Implemented, off by default | [`sidecar/src/hpke.ts`](../sidecar/src/hpke.ts), [`packages/client/src/hpke.ts`](../packages/client/src/hpke.ts) |
 | Inner ciphertext carried through the router on the `attested` and `unlinkable` lanes (today the router terminates TLS and sees the request) | 0002 | Planned | |
 | Chunked inner E2EE for streamed requests; fixed-size padding and send tick | 0002 | Planned | |
 | Oblivious HTTP gateway (RFC 9458, 9292); per-epoch keys; key history as a signed hash chain; relay list with operator independence | 0002 | Implemented, off by default; non-streaming only | [`src/ohttp/`](../src/ohttp) |
 | Independent Oblivious HTTP relay | 0002 | Implemented | [`relay/`](../relay) |
-| Chunked Oblivious HTTP for streaming responses | 0002 | Planned | |
+| Chunked Oblivious HTTP for streaming responses | 0002 | Implemented, off by default | [`src/ohttp/chunked.ts`](../src/ohttp/chunked.ts), [`relay/`](../relay), [`packages/client/src/ohttp.ts`](../packages/client/src/ohttp.ts) |
 | Tor onion service in front of the router | 0002 | Implemented | [`deploy/onion/`](../deploy/onion) |
 | Lanes `public`, `attested`, `unlinkable` in the router: per request, per key and per saved route; no fallback off an attested lane (`no_attested_endpoint`); lane-aware selection weight | 0002 | Implemented; `unlinkable` needs Oblivious HTTP and blind tokens switched on | [`src/router/disclosure.ts`](../src/router/disclosure.ts), [`src/router/select.ts`](../src/router/select.ts), [`src/ohttp/lane.ts`](../src/ohttp/lane.ts) |
 | Blind RSA tokens (Privacy Pass type 0x0002), per-epoch issuer keys, on-chain key commitments | 0003 | Implemented, off by default | [`src/blind/`](../src/blind), [`contracts/src/BlindIssuer.sol`](../contracts/src/BlindIssuer.sol) |
