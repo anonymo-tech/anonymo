@@ -77,7 +77,7 @@ const schema = z.object({
   DEV_FAUCET: bool.default(false),
   DEV_FAUCET_PRIVATE_KEY: pk,
   V4_POOL_MANAGER: addr.default("0x8366a39cc670b4001a1121b8f6a443a643e40951"),
-  ANMO_POOL_LEGS: opt, // JSON [{key:{currency0,currency1,fee,tickSpacing,hooks}, sign}] pricing ANMO in USDG
+  ANMO_POOL_LEGS: opt, // optional off-chain second opinion: JSON v4 legs [{key:{currency0,currency1,fee,tickSpacing,hooks}, sign}] pricing ANMO in USDG
   BUYBACK_TWAP_MINUTES: num(30),
   BUYBACK_MAX_DEVIATION: num(0.05),
   BUYBACK_SLIPPAGE_BPS: int(100),
@@ -163,6 +163,12 @@ const schema = z.object({
   BUYBACK_ORACLE_ADDRESS: addr, // the reviewed buyback-floor oracle AnmoStaking uses; production refuses buybacks without it
   PAYWITH_DELEGATION_ACCEPTED: bool.default(false),
   PAYWITH_MAX_DAILY_CAP_USD: opt, // largest daily cap (USD at the fair price) the API will build a PayWithStock session for
+
+  // Operations: optional alert webhook (a secret URL) and off-host backup freshness.
+  ALERT_WEBHOOK_URL: opt,
+  ALERT_WEBHOOK_FORMAT: z.enum(["ntfy", "slack", "discord", "json"]).optional().or(z.literal("").transform(() => undefined)),
+  BACKUP_REQUIRED: bool.default(false),
+  BACKUP_MAX_AGE_HOURS: num(26),
 });
 
 export type Config = ReturnType<typeof loadConfig>;
@@ -220,7 +226,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     if (escrowMode && Object.values(roleKeys).some(Boolean)) throw new Error("PAYMENTS_MODE=escrow must not receive settlement, anchoring, slashing or keeper signing keys.");
     if (e.RUNTIME_ROLE === "worker") {
       const names = e.WORKER_JOBS.split(",").map((v) => v.trim()).filter(Boolean);
-      const allowed = ["health-flush", "holds-expire", "catalog-refresh", "provider-registry", "health-probes", "canaries", "attestor", "receipts-anchor", "receipt-key-rotation", "settlement", "slasher", "buyback", "chain-indexer", "paywith-aggregator", "escrow-indexer"];
+      const allowed = ["health-flush", "holds-expire", "catalog-refresh", "provider-registry", "health-probes", "canaries", "attestor", "receipts-anchor", "receipt-key-rotation", "settlement", "slasher", "buyback", "chain-indexer", "paywith-aggregator", "escrow-indexer", "alert-notifier"];
       if (!names.length || names.some((n) => !allowed.includes(n))) throw new Error("Worker requires an explicit valid WORKER_JOBS list.");
       const keyJobs = { settlement: "settlement", anchoring: "receipts-anchor", slashing: "slasher", buyback: "buyback" };
       if (Object.values(roleKeys).filter(Boolean).length > 1) throw new Error("Privileged worker signing roles must be isolated.");
@@ -244,6 +250,13 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     if (!["127.0.0.1", "localhost", "[::1]", "::1"].includes(host)) throw new Error("DEV_FAUCET only works against a local chain (RHC_RPC_URL on 127.0.0.1/localhost).");
     if (!e.DEV_FAUCET_PRIVATE_KEY) throw new Error("DEV_FAUCET needs DEV_FAUCET_PRIVATE_KEY (a funded local development account).");
   }
+  // The webhook is optional: without it the alert-notifier job only records state. Never echo the URL.
+  if (e.ALERT_WEBHOOK_URL) {
+    let protocol = "";
+    try { protocol = new URL(e.ALERT_WEBHOOK_URL).protocol; } catch { /* reported below */ }
+    if (protocol !== "https:" && (production || protocol !== "http:")) throw new Error("ALERT_WEBHOOK_URL must be an https URL.");
+  }
+  if (!(e.BACKUP_MAX_AGE_HOURS > 0)) throw new Error("BACKUP_MAX_AGE_HOURS must be positive.");
   if (e.PER_CALL_MARGIN_BPS > 100) throw new Error("PER_CALL_MARGIN_BPS must be <= 100 (1%).");
   const tokenList = z.array(
     z.object({
@@ -363,6 +376,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     canaries: { intervalMs: e.CANARY_INTERVAL_MS, enabled: e.CANARIES, shadowDays: e.SHADOW_DAYS },
     buyback: {
       legs: e.ANMO_POOL_LEGS ? (JSON.parse(e.ANMO_POOL_LEGS) as import("./chain/twap.ts").Leg[]) : null,
+      oracle: e.BUYBACK_ORACLE_ADDRESS && !/^0x0{40}$/.test(e.BUYBACK_ORACLE_ADDRESS) ? (e.BUYBACK_ORACLE_ADDRESS.toLowerCase() as `0x${string}`) : null,
       twapMinutes: e.BUYBACK_TWAP_MINUTES,
       maxDeviation: e.BUYBACK_MAX_DEVIATION,
       slippageBps: e.BUYBACK_SLIPPAGE_BPS,
@@ -391,6 +405,8 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
       semanticEmbeddingModel: e.SEMANTIC_CACHE_EMBEDDING_MODEL,
     },
     limits: { defaultRpm: e.DEFAULT_RPM, defaultTpm: e.DEFAULT_TPM, unauthRpm: e.UNAUTH_RPM, newKeysPerHour: e.NEW_KEYS_PER_HOUR },
+    alerts: { webhookUrl: e.ALERT_WEBHOOK_URL, webhookFormat: e.ALERT_WEBHOOK_FORMAT },
+    backup: { required: e.BACKUP_REQUIRED, maxAgeHours: e.BACKUP_MAX_AGE_HOURS },
   };
 }
 
@@ -473,7 +489,8 @@ function contractPathGuards(e: Env, production: boolean, escrowMode: boolean) {
     if (escrowMode) throw new Error("Buybacks need the Anonymo contracts; PAYMENTS_MODE=escrow must not run the buyback job.");
     if (!e.BUYBACK_ORACLE_ADDRESS || /^0x0{40}$/.test(e.BUYBACK_ORACLE_ADDRESS))
       throw new Error("Buybacks stay disabled until BUYBACK_ORACLE_ADDRESS names the reviewed buyback-floor oracle; otherwise remove the buyback job and KEEPER_PRIVATE_KEY.");
-    if (!e.ANMO_STAKING_ADDRESS || !e.ANMO_POOL_LEGS) throw new Error("Buybacks require ANMO_STAKING_ADDRESS and ANMO_POOL_LEGS.");
+    // The floor is that on-chain oracle's quote; ANMO_POOL_LEGS only adds an optional off-chain second opinion.
+    if (!e.ANMO_STAKING_ADDRESS) throw new Error("Buybacks require ANMO_STAKING_ADDRESS.");
   }
 
   // M-06: PayWithStock delegates router spending up to each session's daily cap.

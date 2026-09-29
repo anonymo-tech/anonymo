@@ -14,7 +14,7 @@ groups:
         annotations:
           summary: Anonymo cannot safely accept traffic
       - alert: AnonymoDependencyFailed
-        expr: anonymo_readiness_check{job="anonymo"} == 0
+        expr: anonymo_readiness_check{job="anonymo",check!="backup_fresh"} == 0
         for: 2m
         labels: { severity: critical }
         annotations:
@@ -25,6 +25,13 @@ groups:
         labels: { severity: critical }
         annotations:
           summary: Latest Credits spent root omits a funded key, overspends a key or does not reconcile; approve no root until scripts/reconcile-roots.ts passes
+      # Present only when BACKUP_REQUIRED=true; the backup job records each verified upload.
+      - alert: AnonymoBackupStale
+        expr: anonymo_readiness_check{job="anonymo",check="backup_fresh"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: Anonymo has no verified off-host backup inside its freshness window
       - alert: AnonymoeadinessMetricsMissing
         expr: up{job="anonymo"} == 1 unless on(job, instance) anonymo_ready{job="anonymo"}
         for: 2m

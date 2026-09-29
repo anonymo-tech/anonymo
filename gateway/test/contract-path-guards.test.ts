@@ -174,7 +174,10 @@ describe("M-05: buybacks stay off without a reviewed floor oracle", () => {
     expect(() => loadConfig(verified({ ...keeper, BUYBACK_ORACLE_ADDRESS: ORACLE }))).toThrow(/reads on-chain/);
     expect(() => loadConfig(verified({ ...keeper, BUYBACK_ORACLE_ADDRESS: a(91), DEPLOYMENT_VERIFICATION: reportWithOracle }))).toThrow(/reads on-chain/);
     expect(loadConfig(verified({ ...keeper, BUYBACK_ORACLE_ADDRESS: ORACLE, DEPLOYMENT_VERIFICATION: reportWithOracle })).workerJobs).toEqual(["buyback"]);
-    expect(() => loadConfig(verified({ ...keeper, BUYBACK_ORACLE_ADDRESS: ORACLE, DEPLOYMENT_VERIFICATION: reportWithOracle, ANMO_POOL_LEGS: "" }))).toThrow(/ANMO_POOL_LEGS/);
+    // The floor is the on-chain oracle's quote; off-chain pool legs are only an optional second opinion.
+    const noLegs = loadConfig(verified({ ...keeper, BUYBACK_ORACLE_ADDRESS: ORACLE, DEPLOYMENT_VERIFICATION: reportWithOracle, ANMO_POOL_LEGS: "" }));
+    expect(noLegs.buyback).toMatchObject({ legs: null, oracle: ORACLE.toLowerCase() });
+    expect(() => loadConfig(verified({ ...keeper, BUYBACK_ORACLE_ADDRESS: ORACLE, DEPLOYMENT_VERIFICATION: reportWithOracle, ANMO_STAKING_ADDRESS: "" }))).toThrow(/ANMO_STAKING_ADDRESS/);
   });
 
   test("fixtures still need an explicit oracle, escrow mode never runs buybacks, development is unchanged", () => {
