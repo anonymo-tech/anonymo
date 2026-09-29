@@ -93,6 +93,10 @@ flowchart LR
 
 [Report a bug](https://github.com/anonymo-tech/anonymo/issues/new?template=bug.yml), [suggest an improvement](https://github.com/anonymo-tech/anonymo/issues/new?template=feature.yml), or read the [contribution guide](CONTRIBUTING.md). Security findings belong in [private vulnerability reports](SECURITY.md).
 
+## Support
+
+Questions or problems with the service or a deposit: Anonymo1@atomicmail.io. Security issues: see [SECURITY.md](SECURITY.md).
+
 ## License
 
 Anonymo is **source-available under [PolyForm Noncommercial 1.0.0](LICENSE)**, except for files with their own license notices. Commercial use outside the license's permitted purposes requires separate written permission. [Request commercial licensing →](https://github.com/anonymo-tech/anonymo/issues/new?template=licensing.yml)
