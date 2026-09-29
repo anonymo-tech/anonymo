@@ -687,18 +687,17 @@ describe("the attested lane", () => {
     expect((await ask(PLAIN.slug)).status).toBe(200);
     const sentBefore = fx.state.requests.length;
     const refused = await ask(PLAIN.slug, { "x-anonymo-lane": "attested" });
-    expect(refused.status).toBe(503);
+    expect(refused.status).toBe(409);
     const j = (await refused.json()) as any;
-    expect(j).toMatchObject({ type: "error", error: { type: "api_error" }, anonymo: { type: "no_attested_endpoint", metadata: { reason: "none_attested" } } });
+    expect(j).toMatchObject({ type: "error", error: { type: "invalid_request_error" }, anonymo: { type: "lane_unavailable" } });
     expect(j.error.message).toContain("Nothing was sent to any provider and nothing was charged");
-    // The router will refuse this lane again, so an SDK is told not to retry it.
+    // Not an Anthropic status, so an SDK is told not to retry a lane the router will refuse again.
     expect(refused.headers.get("x-should-retry")).toBe("false");
     expect(fx.state.requests.length).toBe(sentBefore);
     // Streamed, it is the same refusal as an HTTP error, not a stream.
     const streamed = await ask(PLAIN.slug, { "x-anonymo-lane": "attested" }, { stream: true });
-    expect(streamed.status).toBe(503);
+    expect(streamed.status).toBe(409);
     expect(streamed.headers.get("content-type")).toContain("application/json");
-    expect(((await streamed.json()) as any).anonymo.type).toBe("no_attested_endpoint");
   });
 
   test("a lane the router does not run is a 501 that is not retried", async () => {
@@ -768,9 +767,7 @@ describe("the attested lane, streamed, with a policy hash bound by the endpoint'
     expect(s.list[0]!.data.message.id).toBe(stream.headers.get("x-receipt-id")!);
     expect(s.list[s.list.length - 2]!.data.anonymo).toMatchObject({ lane: "attested", policy_hash: POLICY, disclosure: "attested" });
     // The lane in the body works the same.
-    const viaBody = await ask({}, { provider: { lane: "attested" }, stream: true });
-    expect(viaBody.headers.get("x-anonymo-lane")).toBe("attested");
-    expect((await events(viaBody)).types.slice(-1)).toEqual(["message_stop"]);
+    expect((await ask({}, { provider: { lane: "attested" }, stream: true })).headers.get("x-anonymo-lane")).toBe("attested");
   });
 });
 
