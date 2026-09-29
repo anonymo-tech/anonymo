@@ -151,6 +151,22 @@ const schema = z.object({
   NVIDIA_NRAS_URL: z.string().default("https://nras.attestation.nvidia.com/v3/attest/gpu"),
   TDX_VERIFIER_URL: opt,
   TDX_VERIFIER_KEY: opt,
+  // Which services confirm a TEE quote: a comma list of dcap (TDX_VERIFIER_URL, the default), intel-ta, dstack.
+  // Every listed verifier must accept the quote.
+  ATTESTATION_VERIFIERS: z.string().default("dcap"),
+  INTEL_TA_URL: z.string().default("https://api.trustauthority.intel.com/appraisal/v2/attest"),
+  INTEL_TA_JWKS_URL: z.string().default("https://portal.trustauthority.intel.com/certs"),
+  INTEL_TA_API_KEY: opt,
+  DSTACK_VERIFIER_URL: opt,
+  DSTACK_VERIFIER_KEY: opt,
+
+  // Measurements: record the image/compose/model digests bound into verified quotes, look them up in the
+  // Rekor transparency log and prepare MeasurementRegistry.register() calldata. Off by default; nothing is submitted.
+  MEASUREMENTS_ENABLED: bool.default(false),
+  MEASUREMENTS_INTERVAL_MS: int(300_000),
+  REKOR_URL: z.string().default("https://rekor.sigstore.dev"),
+  REKOR_PUBLIC_KEY: opt, // PEM (ECDSA P-256) that signs Rekor checkpoints; without it checkpoints are not verified
+  MEASUREMENT_REGISTRY_ADDRESS: addr,
 
   // Workers
   WORKERS: bool.default(true),
@@ -164,6 +180,12 @@ const schema = z.object({
   CACHE_TTL_S: z.coerce.number().int().min(1).default(3600),
   SEMANTIC_CACHE_THRESHOLD: num(0.97),
   SEMANTIC_CACHE_EMBEDDING_MODEL: opt,
+
+  // Council mode (model "anonymo/council") and dual verification (verify: "dual"). Off unless enabled.
+  ANONYMO_FEATURE_COUNCIL: bool.default(false),
+  ANONYMO_COUNCIL_MODELS: opt, // comma list of 2-5 model ids used when a council request names none
+  ANONYMO_COUNCIL_JUDGE: opt, // model id of the judge used when a council request names none
+  ANONYMO_COUNCIL_MODE: z.enum(["judge", "fuse"]).default("judge"),
 
   // Default per-key limits (0 = unlimited)
   DEFAULT_RPM: int(600),
@@ -258,7 +280,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     if (escrowMode && Object.values(roleKeys).some(Boolean)) throw new Error("PAYMENTS_MODE=escrow must not receive settlement, anchoring, slashing or keeper signing keys.");
     if (e.RUNTIME_ROLE === "worker") {
       const names = e.WORKER_JOBS.split(",").map((v) => v.trim()).filter(Boolean);
-      const allowed = ["health-flush", "holds-expire", "catalog-refresh", "provider-registry", "health-probes", "canaries", "attestor", "receipts-anchor", "receipt-key-rotation", "settlement", "slasher", "buyback", "chain-indexer", "paywith-aggregator", "escrow-indexer", "spend-watch", "alert-notifier", "telegram-bot"];
+      const allowed = ["health-flush", "holds-expire", "catalog-refresh", "provider-registry", "health-probes", "canaries", "attestor", "receipts-anchor", "receipt-key-rotation", "settlement", "slasher", "buyback", "chain-indexer", "paywith-aggregator", "escrow-indexer", "spend-watch", "alert-notifier", "telegram-bot", "measurements"];
       if (!names.length || names.some((n) => !allowed.includes(n))) throw new Error("Worker requires an explicit valid WORKER_JOBS list.");
       const keyJobs = { settlement: "settlement", anchoring: "receipts-anchor", slashing: "slasher", buyback: "buyback" };
       if (Object.values(roleKeys).filter(Boolean).length > 1) throw new Error("Privileged worker signing roles must be isolated.");
@@ -268,6 +290,15 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
           if (enabled !== !!key) throw new Error(`Worker ${role} job and signing-key configuration must match.`);
         }
     }
+  }
+  const verifierNames = e.ATTESTATION_VERIFIERS.split(",").map((v) => v.trim()).filter(Boolean);
+  if (!verifierNames.length || verifierNames.some((v) => !["dcap", "intel-ta", "dstack"].includes(v))) throw new Error("ATTESTATION_VERIFIERS must list dcap, intel-ta and/or dstack.");
+  if (new Set(verifierNames).size !== verifierNames.length) throw new Error("ATTESTATION_VERIFIERS lists a verifier twice.");
+  if (verifierNames.includes("intel-ta") && !e.INTEL_TA_API_KEY) throw new Error("ATTESTATION_VERIFIERS includes intel-ta, which needs INTEL_TA_API_KEY.");
+  if (verifierNames.includes("dstack") && !e.DSTACK_VERIFIER_URL) throw new Error("ATTESTATION_VERIFIERS includes dstack, which needs DSTACK_VERIFIER_URL.");
+  if (production) {
+    if (verifierNames.includes("intel-ta") && !(e.INTEL_TA_URL.startsWith("https://") && e.INTEL_TA_JWKS_URL.startsWith("https://"))) throw new Error("INTEL_TA_URL and INTEL_TA_JWKS_URL must be https in production.");
+    if (e.MEASUREMENTS_ENABLED && !e.REKOR_URL.startsWith("https://")) throw new Error("REKOR_URL must be https in production.");
   }
   // Contract-path guards: verified deployment (H-02), buyback oracle (M-05), PayWithStock delegation (M-06).
   const contractPath = contractPathGuards(e, production, escrowMode);
@@ -322,6 +353,9 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
   const lower = escrowTokens.map((t) => t.address.toLowerCase());
   if (new Set(lower).size !== lower.length) throw new Error("ESCROW_TOKENS lists a token address twice.");
   if (escrowMode && !escrowTokens.length) throw new Error("PAYMENTS_MODE=escrow requires ESCROW_TOKENS (or PAYWITH_TOKENS) with price feeds.");
+  const councilModels = (e.ANONYMO_COUNCIL_MODELS ?? "").split(",").map((v) => v.trim()).filter(Boolean);
+  if (councilModels.length && (councilModels.length < 2 || councilModels.length > 5 || new Set(councilModels).size !== councilModels.length))
+    throw new Error("ANONYMO_COUNCIL_MODELS must list 2 to 5 distinct model ids.");
   const anmoEscrow = anmoEscrowConfig(e, lower);
   const holders = holderSettings(e, anmoEscrow);
   return {
@@ -430,6 +464,17 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
       nrasUrl: e.NVIDIA_NRAS_URL,
       tdxVerifierUrl: e.TDX_VERIFIER_URL,
       tdxVerifierKey: e.TDX_VERIFIER_KEY,
+      verifiers: verifierNames as ("dcap" | "intel-ta" | "dstack")[],
+      intelTa: { url: e.INTEL_TA_URL, jwksUrl: e.INTEL_TA_JWKS_URL, apiKey: e.INTEL_TA_API_KEY },
+      dstackVerifierUrl: e.DSTACK_VERIFIER_URL,
+      dstackVerifierKey: e.DSTACK_VERIFIER_KEY,
+    },
+    measurements: {
+      enabled: e.MEASUREMENTS_ENABLED,
+      intervalMs: e.MEASUREMENTS_INTERVAL_MS,
+      rekorUrl: e.REKOR_URL.replace(/\/$/, ""),
+      rekorPublicKey: e.REKOR_PUBLIC_KEY,
+      registry: e.MEASUREMENT_REGISTRY_ADDRESS && !/^0x0{40}$/.test(e.MEASUREMENT_REGISTRY_ADDRESS) ? (e.MEASUREMENT_REGISTRY_ADDRESS.toLowerCase() as `0x${string}`) : null,
     },
     workers: {
       enabled: e.WORKERS && e.RUNTIME_ROLE !== "api",
@@ -444,6 +489,9 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
       semanticThreshold: e.SEMANTIC_CACHE_THRESHOLD,
       semanticEmbeddingModel: e.SEMANTIC_CACHE_EMBEDDING_MODEL,
     },
+    // Off unless enabled. Council members and the judge are billed and receipted like any other call.
+    features: { council: e.ANONYMO_FEATURE_COUNCIL },
+    council: { models: councilModels, judge: e.ANONYMO_COUNCIL_JUDGE ?? null, mode: e.ANONYMO_COUNCIL_MODE },
     limits: { defaultRpm: e.DEFAULT_RPM, defaultTpm: e.DEFAULT_TPM, unauthRpm: e.UNAUTH_RPM, newKeysPerHour: e.NEW_KEYS_PER_HOUR },
     alerts: { webhookUrl: e.ALERT_WEBHOOK_URL, webhookFormat: e.ALERT_WEBHOOK_FORMAT },
     telegram: { botToken: e.TELEGRAM_BOT_TOKEN },
