@@ -226,7 +226,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     if (escrowMode && Object.values(roleKeys).some(Boolean)) throw new Error("PAYMENTS_MODE=escrow must not receive settlement, anchoring, slashing or keeper signing keys.");
     if (e.RUNTIME_ROLE === "worker") {
       const names = e.WORKER_JOBS.split(",").map((v) => v.trim()).filter(Boolean);
-      const allowed = ["health-flush", "holds-expire", "catalog-refresh", "provider-registry", "health-probes", "canaries", "attestor", "receipts-anchor", "receipt-key-rotation", "settlement", "slasher", "buyback", "chain-indexer", "paywith-aggregator", "escrow-indexer", "alert-notifier"];
+      const allowed = ["health-flush", "holds-expire", "catalog-refresh", "provider-registry", "health-probes", "canaries", "attestor", "receipts-anchor", "receipt-key-rotation", "settlement", "slasher", "buyback", "chain-indexer", "paywith-aggregator", "escrow-indexer", "spend-watch", "alert-notifier"];
       if (!names.length || names.some((n) => !allowed.includes(n))) throw new Error("Worker requires an explicit valid WORKER_JOBS list.");
       const keyJobs = { settlement: "settlement", anchoring: "receipts-anchor", slashing: "slasher", buyback: "buyback" };
       if (Object.values(roleKeys).filter(Boolean).length > 1) throw new Error("Privileged worker signing roles must be isolated.");
@@ -425,9 +425,11 @@ export type EscrowToken = PaywithToken & { feed: string };
 //   sign-in; it may run without a manifest and reports deployment status "fixture".
 // M-05: buybacks stay off until BUYBACK_ORACLE_ADDRESS names the reviewed buyback-floor oracle, and
 //   (with a verified deployment) that oracle is the one AnmoStaking reads on-chain.
-// M-06: a PayWithStock session lets the router key spend up to the wallet's daily cap without a
-//   per-charge wallet authorization. Production requires an explicit PAYWITH_DELEGATION_ACCEPTED and
-//   keeps the exposure small: PAYWITH_MAX_DEBT_USD <= $5 and PAYWITH_MAX_DAILY_CAP_USD <= $25.
+// M-06: every PayWithStock charge needs the session wallet's EIP-712 signature, either for that charge
+//   or as a bounded allowance (<= 7 days, <= $5 per charge, tied to a usage commitment). Within an
+//   allowance the router still chooses when to charge, so production requires an explicit
+//   PAYWITH_DELEGATION_ACCEPTED and keeps the exposure small: PAYWITH_MAX_DEBT_USD <= $5 and
+//   PAYWITH_MAX_DAILY_CAP_USD <= $25.
 
 type Env = z.infer<typeof schema>;
 export type DeploymentStatus = {
@@ -496,7 +498,7 @@ function contractPathGuards(e: Env, production: boolean, escrowMode: boolean) {
   // M-06: PayWithStock delegates router spending up to each session's daily cap.
   if (e.PAYWITHSTOCK_ADDRESS) {
     if (!e.PAYWITH_DELEGATION_ACCEPTED)
-      throw new Error("PayWithStock sessions let the router key spend up to each wallet's daily cap without a per-charge wallet authorization. Set PAYWITH_DELEGATION_ACCEPTED=true only after accepting that exposure.");
+      throw new Error("PayWithStock allowances let the router key charge a wallet within its signed allowance (<= 7 days, <= $5 per charge) and daily cap without signing each charge. Set PAYWITH_DELEGATION_ACCEPTED=true only after accepting that bounded exposure.");
     if (!(e.PAYWITH_MAX_DEBT_USD > 0 && e.PAYWITH_MAX_DEBT_USD <= PAYWITH_MAX_DEBT_CEILING_USD)) throw new Error(`PAYWITH_MAX_DEBT_USD must be above 0 and at most ${PAYWITH_MAX_DEBT_CEILING_USD} in production.`);
     if (maxDailyCapUsd === null || maxDailyCapUsd > PAYWITH_DAILY_CAP_CEILING_USD || maxDailyCapUsd < e.PAYWITH_MAX_DEBT_USD)
       throw new Error(`PayWithStock requires PAYWITH_MAX_DAILY_CAP_USD between PAYWITH_MAX_DEBT_USD and ${PAYWITH_DAILY_CAP_CEILING_USD} in production.`);
