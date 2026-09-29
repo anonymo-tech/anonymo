@@ -32,6 +32,7 @@ import { embeddingsRoutes } from "./api/embeddings.ts";
 import { adminRoutes } from "./admin/trpc.ts";
 import { paymasterRoutes } from "./api/paymaster.ts";
 import { registerJobs } from "./services/register.ts";
+import { mcpRoutes } from "./api/mcp.ts";
 import { siteRoutes } from "./api/site.ts";
 
 export type AppOptions = {
@@ -96,6 +97,7 @@ export async function createApp(opts: AppOptions = {}) {
   agentSessionsRoutes(app, ctx);
   spendRoutes(app, ctx);
   publicRoutes(app, ctx);
+  mcpRoutes(app, ctx);
   paymasterRoutes(app, ctx);
   adminRoutes(app, ctx);
   // The website (web/out, a static Next.js export) is served at / when it has been built; otherwise
@@ -129,7 +131,7 @@ export async function createApp(opts: AppOptions = {}) {
     return c.json(new ApiError(500, "Internal router error.", "internal").toJSON(), 500);
   });
 
-  registerJobs(ctx);
+  registerJobs(ctx, (path, init) => app.request(path, init));
   if (opts.startJobs ?? cfg.workers.enabled) await ctx.jobs.start();
 
   // Passive health belongs to each API replica, not the shared registry worker's memory.
@@ -140,6 +142,7 @@ export async function createApp(opts: AppOptions = {}) {
     if (closed) return;
     closed = true;
     if (healthTimer) clearInterval(healthTimer);
+    await ctx.telegram?.stop();
     await ctx.jobs.stop();
     await ctx.health.flush(ctx.db).catch(() => undefined);
     await ctx.telemetry.close();
