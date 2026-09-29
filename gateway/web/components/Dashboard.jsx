@@ -10,10 +10,11 @@ import EvalLab from "./features/EvalLab";
 import BatchStudio from "./features/BatchStudio";
 import AgentSessions from "./features/AgentSessions";
 import SpendWatch from "./features/SpendWatch";
+import Holders from "./features/Holders";
 
-const tabs = ["Overview", "Playground", "Saved Routes", "Eval Lab", "Batch Studio", "Models", "API keys", "Agent Sessions", "Receipts", "Spend Watch", "Payments", "Providers", "Settings"];
+const tabs = ["Overview", "Playground", "Saved Routes", "Eval Lab", "Batch Studio", "Models", "API keys", "Agent Sessions", "Receipts", "Spend Watch", "Payments", "Holders", "Providers", "Settings"];
 const tabId = (t) => t.toLowerCase().replace(" ", "-");
-const publicTabs = ["Models", "Providers"];
+const publicTabs = ["Models", "Providers", "Holders"];
 
 function Field({ label, id, children }) {
   return (
@@ -408,6 +409,15 @@ const finalityWait = (escrow) => {
   const m = Math.max(1, Math.round(s / 60));
   return `once the chain finalizes the transfer (about ${m} minute${m === 1 ? "" : "s"})`;
 };
+/** A haircut in basis points as a percentage: 300 -> "3%". */
+const pct = (bps) => `${Number(bps || 0) / 100}%`;
+/** A token price: cents from $1 up, four significant digits below (ANMO can trade well under a cent). */
+const tokenPrice = (p) => (p >= 1 ? p.toFixed(2) : p.toPrecision(4));
+/** How $ANMO is valued in escrow, in words (null when the router does not take it). */
+const anmoTerms = (anmo) =>
+  anmo
+    ? `$${anmo.symbol} is valued at its pool price (the lower of spot and the ${anmo.twap_minutes}-minute average)${anmo.haircut_bps ? ` minus ${pct(anmo.haircut_bps)}` : " with no haircut"} and credited up to $${money(anmo.max_usd_per_deposit, 2)} per deposit; any more is held for operator review.`
+    : null;
 const DEPOSIT_STATUS = {
   pending_finality: ["Waiting for finality", ""],
   pending: ["Pricing", ""],
@@ -427,13 +437,17 @@ function StockDepositDialog({ onClose, escrow, stock, status, onDone }) {
   const [error, setError] = useState("");
   const token = tokens.find((t) => t.symbol === symbol);
   const wallet = stock?.wallet || "";
-  const estimate = token?.credit_usd_per_token && Number(amount) > 0 ? Number(amount) * token.credit_usd_per_token : null;
+  const anmo = escrow?.anmo || null;
+  const isAnmo = !!anmo && token?.address === anmo.address;
+  const limit = token?.max_usd_per_deposit ?? null;
+  const value = token?.credit_usd_per_token && Number(amount) > 0 ? Number(amount) * token.credit_usd_per_token : null;
+  const estimate = value != null && limit != null ? Math.min(value, limit) : value;
   const discount = (escrow?.haircut_bps ?? 0) / 100;
   return (
-    <Modal title="Pay with stock" onClose={onClose}>
+    <Modal title={anmo ? `Pay with stock or $${anmo.symbol}` : "Pay with stock"} onClose={onClose}>
       <p>
-        Send a listed Stock Token on {chainOf(status).name} to the escrow wallet. Your balance is credited {finalityWait(escrow)} at the live Chainlink
-        price{discount ? ` minus ${discount}%` : ""}. Credits are spent on API calls and are not withdrawable.
+        Send a listed Stock Token{anmo ? ` or $${anmo.symbol}` : ""} on {chainOf(status).name} to the escrow wallet. Your balance is credited {finalityWait(escrow)}. Stock Tokens are
+        valued at the live Chainlink price{discount ? ` minus ${discount}%` : ""}.{anmo ? " " + anmoTerms(anmo) : ""} Credits are spent on API calls and are not withdrawable.
       </p>
       {error && (
         <div className="error" role="alert">
@@ -450,12 +464,13 @@ function StockDepositDialog({ onClose, escrow, stock, status, onDone }) {
       ) : (
         <>
           <div className="two-fields">
-            <Field label="Stock Token" id="stock-token">
+            <Field label={anmo ? "Token" : "Stock Token"} id="stock-token">
               <select id="stock-token" value={symbol} onChange={(e) => setSymbol(e.target.value)} disabled={!!step}>
                 {tokens.map((t) => (
                   <option key={t.symbol} value={t.symbol}>
                     {t.symbol}
-                    {t.price_usd ? ` · $${t.price_usd.toFixed(2)}` : " · price paused"}
+                    {t.price_usd ? ` · $${tokenPrice(t.price_usd)}` : " · price paused"}
+                    {anmo ? ` · ${pct(t.haircut_bps ?? escrow.haircut_bps)} haircut` : ""}
                   </option>
                 ))}
               </select>
@@ -467,8 +482,26 @@ function StockDepositDialog({ onClose, escrow, stock, status, onDone }) {
           <dl className="detail-list">
             <div>
               <dt>You receive</dt>
-              <dd>{estimate != null ? `≈ $${money(estimate, 2)} in credits` : "Credited when the price updates (markets closed or feed paused)"}</dd>
+              <dd>
+                {estimate != null
+                  ? `≈ $${money(estimate, 2)} in credits${value > estimate ? " (the per-deposit limit; the rest is held for review)" : ""}`
+                  : isAnmo
+                    ? "Credited once the pool price is steady again"
+                    : "Credited when the price updates (markets closed or feed paused)"}
+              </dd>
             </div>
+            {token && anmo && (
+              <div>
+                <dt>Haircut</dt>
+                <dd>{pct(token.haircut_bps ?? escrow.haircut_bps)}</dd>
+              </div>
+            )}
+            {limit != null && (
+              <div>
+                <dt>Limit per deposit</dt>
+                <dd>${money(limit, 2)} in credits</dd>
+              </div>
+            )}
             <div>
               <dt>Send from</dt>
               <dd className="mono">{wallet}</dd>
@@ -686,7 +719,7 @@ function WithdrawDialog({ onClose, apiKey, credits, status, onDone }) {
   );
 }
 
-function SignIn({ onKey, onDemo, onSecret, stockMode }) {
+function SignIn({ onKey, onDemo, onSecret, stockMode, anmo }) {
   const [value, setValue] = useState("");
   const remember = false;
   const [error, setError] = useState("");
@@ -709,7 +742,7 @@ function SignIn({ onKey, onDemo, onSecret, stockMode }) {
         <h2 id="signin-title">Connect your workspace</h2>
         <p>
           {stockMode
-            ? "Sign in with your wallet, send a listed Stock Token to the escrow wallet and start calling. No account, email or password."
+            ? `Sign in with your wallet, send a listed Stock Token${anmo ? ` or $${anmo.symbol}` : ""} to the escrow wallet and start calling. No account, email or password.`
             : "Anonymo keys are self-custodial: create a key, deposit USDG to it and start calling. No account, email or password."}
         </p>
         <button className="text-button" onClick={onDemo}>
@@ -1322,7 +1355,7 @@ export default function Dashboard() {
               {error}
             </div>
           )}
-          <SignIn stockMode={stockMode} onKey={signInWith} onDemo={() => switchMode("demo")} onSecret={(secret, deposit, title) => setReveal({ secret, deposit, title })} />
+          <SignIn stockMode={stockMode} anmo={status?.escrow?.anmo} onKey={signInWith} onDemo={() => switchMode("demo")} onSecret={(secret, deposit, title) => setReveal({ secret, deposit, title })} />
         </div>
       ) : (
         <div className="tab-panel" key={tab}>
@@ -1654,7 +1687,7 @@ export default function Dashboard() {
                   <p>{`Held for calls in progress: $${money(ws?.credits?.held ?? 0, 6)} · Credited in total: $${money(ws?.credits?.total_credits ?? 0, 2)}.`}</p>
                 </div>
                 <div className="button-row">
-                  <Button onClick={() => setModal({ type: "stock" })}>Pay with stock</Button>
+                  <Button onClick={() => setModal({ type: "stock" })}>{ws.escrow.anmo ? `Pay with stock or $${ws.escrow.anmo.symbol}` : "Pay with stock"}</Button>
                 </div>
               </div>
               <div className="panel-heading">
@@ -1669,7 +1702,7 @@ export default function Dashboard() {
               </div>
               <StockDeposits deposits={ws?.stock?.deposits} />
               <div className="note">
-                {`Each deposit is valued with the token’s Chainlink feed on ${chainOf(status).name}${ws.escrow.haircut_bps ? `, minus ${ws.escrow.haircut_bps / 100}%` : ""}. Equity feeds pause while markets are closed; deposits made then are credited when the price updates. Tokens stay in escrow; credits are spent on API calls.`}
+                {`Each ${ws.escrow.anmo ? "Stock Token " : ""}deposit is valued with the token’s Chainlink feed on ${chainOf(status).name}${ws.escrow.haircut_bps ? `, minus ${ws.escrow.haircut_bps / 100}%` : ""}. Equity feeds pause while markets are closed; deposits made then are credited when the price updates.${ws.escrow.anmo ? " " + anmoTerms(ws.escrow.anmo) : ""} Tokens stay in escrow; credits are spent on API calls.`}
               </div>
             </>
           )}
@@ -1810,6 +1843,7 @@ export default function Dashboard() {
               if (tab === "Agent Sessions") return <AgentSessions {...featureProps} />;
               return <SpendWatch {...featureProps} />;
             })()}
+          {tab === "Holders" && <Holders live={live} apiKey={apiKey} status={status} signedIn={signedIn} navigate={navigate} />}
           {tab === "Providers" && (
             <>
               <div className="panel-heading">

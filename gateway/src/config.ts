@@ -91,6 +91,10 @@ const schema = z.object({
   DEFAULT_ROYALTY_BPS: int(500),
   PER_CALL_QUOTE_TTL_S: int(300),
   PER_CALL_MAX_USD: num(25),
+  // x402 (exact scheme): agents sign a USDG EIP-3009 transferWithAuthorization to X402_PAY_TO and send it as
+  // X-PAYMENT; the router relays it (ROUTER_PRIVATE_KEY pays the gas). Enabled when X402_PAY_TO is set.
+  X402_PAY_TO: addr,
+  X402_NETWORK: z.string().min(1).default("robinhood-chain"),
   PAYMENT_WAIT_MS: int(8_000),
 
   // Pay with Stock Tokens
@@ -114,6 +118,17 @@ const schema = z.object({
   // and keep re-verifying credits for ESCROW_REORG_HORIZON_BLOCKS below that point (~1 day on Robinhood Chain).
   ESCROW_FINALITY: z.enum(["finalized", "safe"]).default("finalized"),
   ESCROW_REORG_HORIZON_BLOCKS: int(864_000),
+
+  // Pay with $ANMO in escrow (off unless ANMO_TOKEN_ADDRESS is set). ANMO sent to ESCROW_ADDRESS is credited
+  // like a Stock Token, with the same finality and reorganization rules, but priced from its pools
+  // (ANMO_POOL_LEGS: the lower of spot and the BUYBACK_TWAP_MINUTES average) instead of a Chainlink feed,
+  // minus ANMO_ESCROW_HAIRCUT_BPS, and credited at most ANMO_ESCROW_MAX_USD_PER_DEPOSIT per deposit.
+  ANMO_TOKEN_ADDRESS: addr,
+  ANMO_TOKEN_SYMBOL: z.string().default("ANMO"),
+  ANMO_TOKEN_DECIMALS: int(18), // checked against the token contract before anything is credited
+  ANMO_ESCROW_HAIRCUT_BPS: int(0),
+  ANMO_ESCROW_MAX_USD_PER_DEPOSIT: num(250),
+  ANMO_ESCROW_MAX_DEVIATION: opt, // no price while spot is further than this from the average; default BUYBACK_MAX_DEVIATION
 
   // Routing / health
   OUTAGE_WINDOW_MS: int(30_000),
@@ -172,6 +187,20 @@ const schema = z.object({
 
   // Optional Telegram bot (BotFather token, a secret). Without it the bot never starts.
   TELEGRAM_BOT_TOKEN: opt,
+
+  // ---- $ANMO holder perks: free inference credits (scripts/holder-credits.ts) and live holder tiers.
+  // The token is ANMO_TOKEN_ADDRESS / ANMO_TOKEN_SYMBOL above (the $ANMO escrow settings).
+  ANMO_TOKEN_DEPLOY_BLOCK: z.coerce.bigint().optional(), // first block the holder snapshot scans for Transfer logs
+  HOLDER_CREDITS_EXCLUDE: opt, // comma list of addresses never credited (pool, treasury, escrow, burn...)
+  HOLDER_TIERS: opt, // JSON [{name,min,rpm_multiplier,discount_bps}]; tiers are off unless ANMO_TOKEN_ADDRESS is set too
+
+  // ---- IPX, the inference price index: volume-weighted USDG price per 1M tokens per model class,
+  // computed from real generations (GET /api/v1/ipx/:class). Off unless IPX_ENABLED.
+  IPX_ENABLED: bool.default(false),
+  IPX_CLASSES: opt, // JSON {"IPX-OPEN-70B":["author/model-id", ...]}; default: IPX-OPEN-70B = meta-llama/llama-3.3-70b-instruct
+  IPX_THIN_USDG: z.string().regex(/^\d+(\.\d{1,6})?$/, "must be a USDG amount like \"50000\"").default("50000"), // trailing-24h volume below which a class is THIN
+  IPX_MAX_ACCOUNT_SHARE_BPS: int(10_000), // cap on one account's share of a window's volume; 10000 = no cap
+  IPX_ATTESTED_ONLY: bool.default(true), // count only fills served by providers with a stored attestation
 });
 
 export type Config = ReturnType<typeof loadConfig>;
@@ -263,6 +292,8 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
   }
   if (!(e.BACKUP_MAX_AGE_HOURS > 0)) throw new Error("BACKUP_MAX_AGE_HOURS must be positive.");
   if (e.PER_CALL_MARGIN_BPS > 100) throw new Error("PER_CALL_MARGIN_BPS must be <= 100 (1%).");
+  if (e.X402_PAY_TO && /^0x0{40}$/.test(e.X402_PAY_TO)) throw new Error("X402_PAY_TO must not be the zero address.");
+  if (production && e.X402_PAY_TO && e.RUNTIME_ROLE === "api" && !e.ROUTER_PRIVATE_KEY) throw new Error("X402_PAY_TO requires the router signing role (ROUTER_PRIVATE_KEY) to relay x402 settlements.");
   const tokenList = z.array(
     z.object({
       symbol: z.string().min(1).max(16),
@@ -291,6 +322,8 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
   const lower = escrowTokens.map((t) => t.address.toLowerCase());
   if (new Set(lower).size !== lower.length) throw new Error("ESCROW_TOKENS lists a token address twice.");
   if (escrowMode && !escrowTokens.length) throw new Error("PAYMENTS_MODE=escrow requires ESCROW_TOKENS (or PAYWITH_TOKENS) with price feeds.");
+  const anmoEscrow = anmoEscrowConfig(e, lower);
+  const holders = holderSettings(e, anmoEscrow);
   return {
     env: e.ANONYMO_ENV,
     production,
@@ -349,6 +382,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
       perCallMaxUsd: e.PER_CALL_MAX_USD,
       paymentWaitMs: e.PAYMENT_WAIT_MS,
     },
+    x402: { payTo: e.X402_PAY_TO?.toLowerCase() as `0x${string}` | undefined, network: e.X402_NETWORK },
     paywith: {
       thresholdUsd: e.PAYWITH_THRESHOLD_USD,
       maxAgeH: e.PAYWITH_MAX_AGE_H,
@@ -368,6 +402,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
       finality: e.ESCROW_FINALITY,
       reorgHorizonBlocks: e.ESCROW_REORG_HORIZON_BLOCKS,
     },
+    anmoEscrow, // null unless ANMO_TOKEN_ADDRESS is set
     routing: {
       outageWindowMs: e.OUTAGE_WINDOW_MS,
       probeIntervalMs: e.HEALTH_PROBE_INTERVAL_MS,
@@ -413,11 +448,151 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     alerts: { webhookUrl: e.ALERT_WEBHOOK_URL, webhookFormat: e.ALERT_WEBHOOK_FORMAT },
     telegram: { botToken: e.TELEGRAM_BOT_TOKEN },
     backup: { required: e.BACKUP_REQUIRED, maxAgeHours: e.BACKUP_MAX_AGE_HOURS },
+    holders,
+    ipx: ipxSettings(e),
+  };
+}
+
+// ---- IPX ---------------------------------------------------------------------------------------
+export type IpxClass = { id: string; models: string[] };
+const IPX_CLASS_ID = /^IPX-[A-Z0-9]+(?:-[A-Z0-9]+)*$/;
+const IPX_DEFAULT_CLASSES: Record<string, string[]> = { "IPX-OPEN-70B": ["meta-llama/llama-3.3-70b-instruct"] };
+
+function ipxSettings(e: Env) {
+  let raw: unknown = IPX_DEFAULT_CLASSES;
+  if (e.IPX_CLASSES) {
+    try {
+      raw = JSON.parse(e.IPX_CLASSES);
+    } catch {
+      throw new Error("IPX_CLASSES must be a JSON object of class id to model ids.");
+    }
+  }
+  const parsed = z.record(z.string(), z.array(z.string().trim().min(1).max(200)).min(1).max(500)).refine((o) => Object.keys(o).length > 0 && Object.keys(o).length <= 20, "1 to 20 classes").safeParse(raw);
+  if (!parsed.success) throw new Error(`IPX_CLASSES must be a JSON object of class id to model ids: ${parsed.error.issues.map((i) => i.message).join("; ")}`);
+  const classes: IpxClass[] = Object.entries(parsed.data).map(([id, models]) => ({ id: id.toUpperCase(), models: [...new Set(models.map((m) => m.toLowerCase()))] }));
+  const bad = classes.find((c) => !IPX_CLASS_ID.test(c.id) || c.id.length > 32);
+  if (bad) throw new Error(`IPX_CLASSES: "${bad.id}" is not a valid class id (IPX-<UPPERCASE-OR-DIGITS>, at most 32 characters).`);
+  if (new Set(classes.map((c) => c.id)).size !== classes.length) throw new Error("IPX_CLASSES: class ids must be unique.");
+  const seen = new Map<string, string>();
+  for (const c of classes)
+    for (const m of c.models) {
+      if (seen.has(m)) throw new Error(`IPX_CLASSES: model ${m} is in both ${seen.get(m)} and ${c.id}.`);
+      seen.set(m, c.id);
+    }
+  if (e.IPX_MAX_ACCOUNT_SHARE_BPS < 1 || e.IPX_MAX_ACCOUNT_SHARE_BPS > 10_000) throw new Error("IPX_MAX_ACCOUNT_SHARE_BPS must be between 1 and 10000.");
+  const [whole, frac = ""] = e.IPX_THIN_USDG.split(".");
+  return {
+    enabled: e.IPX_ENABLED,
+    classes,
+    /** Trailing-24h volume (USDG base units, 6 decimals) below which a class is THIN. */
+    thinUsdg: BigInt(whole) * 1_000_000n + BigInt(frac.padEnd(6, "0")),
+    maxAccountShareBps: e.IPX_MAX_ACCOUNT_SHARE_BPS,
+    attestedOnly: e.IPX_ATTESTED_ONLY,
+  };
+}
+
+// ---- $ANMO holder perks ------------------------------------------------------------------------
+// Tiers are read live from the wallet's token balance; `min` is in whole tokens (a decimal string).
+export type HolderTier = { name: string; min: string; rpmMultiplier: number; discountBps: number };
+const DECIMAL_TOKENS = /^\d+(\.\d{1,18})?$/;
+/** A whole-token decimal string as an integer with 18 fractional digits, for ordering tiers. */
+const tokens18 = (v: string) => {
+  const [whole, frac = ""] = v.split(".");
+  return BigInt(whole) * 10n ** 18n + BigInt(frac.padEnd(18, "0"));
+};
+
+function holderSettings(e: Env, anmo: AnmoEscrow | null) {
+  // The token is the one ANMO_TOKEN_ADDRESS configures for $ANMO escrow payments (null when unset).
+  const token = anmo ? { address: anmo.address, symbol: anmo.symbol } : null;
+  const exclude = (e.HOLDER_CREDITS_EXCLUDE ?? "").split(",").map((v) => v.trim()).filter(Boolean);
+  const badExclude = exclude.find((a) => !/^0x[0-9a-fA-F]{40}$/.test(a));
+  if (badExclude) throw new Error("HOLDER_CREDITS_EXCLUDE must be a comma list of 0x addresses.");
+  let tiers: HolderTier[] = [];
+  if (e.HOLDER_TIERS) {
+    const tierList = z
+      .array(
+        z.object({
+          name: z.string().trim().min(1).max(32),
+          min: z.union([z.string().regex(DECIMAL_TOKENS, "min must be a token amount like \"100000\""), z.number().int().positive().max(Number.MAX_SAFE_INTEGER)]).transform(String),
+          rpm_multiplier: z.number().min(1).max(100).default(1),
+          discount_bps: z.number().int().min(0).max(10_000).default(0),
+        }),
+      )
+      .min(1)
+      .max(10);
+    try {
+      tiers = tierList
+        .parse(JSON.parse(e.HOLDER_TIERS))
+        .map((t) => ({ name: t.name, min: t.min, rpmMultiplier: t.rpm_multiplier, discountBps: t.discount_bps }))
+        .sort((a, b) => (tokens18(a.min) < tokens18(b.min) ? -1 : 1));
+    } catch (err) {
+      throw new Error(`HOLDER_TIERS must be a JSON array of {name,min,rpm_multiplier,discount_bps}: ${(err as Error).message}`);
+    }
+    if (tiers.some((t) => tokens18(t.min) === 0n)) throw new Error("HOLDER_TIERS: every tier needs a min above 0.");
+    if (new Set(tiers.map((t) => tokens18(t.min))).size !== tiers.length) throw new Error("HOLDER_TIERS: two tiers share the same min.");
+    if (new Set(tiers.map((t) => t.name.toLowerCase())).size !== tiers.length) throw new Error("HOLDER_TIERS: tier names must be unique.");
+  }
+  return {
+    token,
+    deployBlock: e.ANMO_TOKEN_DEPLOY_BLOCK,
+    exclude: exclude.map((a) => a.toLowerCase() as `0x${string}`),
+    tiers,
+    /** Live tiers (rate limits and fee discounts) run only with both the token and HOLDER_TIERS set. */
+    enabled: !!token && tiers.length > 0,
   };
 }
 
 export type PaywithToken = { symbol: string; address: string; decimals: number; feed?: string; name?: string };
 export type EscrowToken = PaywithToken & { feed: string };
+
+// ---- Pay with $ANMO in escrow ------------------------------------------------------------------
+// ANMO has no Chainlink feed, so escrow prices it with the off-chain v4 TWAP the buyback keeper already
+// uses (ANMO_POOL_LEGS). The legs must chain from the ANMO token to USDG, or ANMO deposits could be
+// priced in the wrong unit; a leg may set `minLiquidity` (raw v4 liquidity) so a thin pool gives no price.
+export type AnmoEscrow = {
+  address: `0x${string}`;
+  symbol: string;
+  decimals: number;
+  haircutBps: number;
+  maxUsdPerDeposit: number;
+  maxDeviation: number;
+  legs: import("./chain/twap.ts").Leg[];
+};
+
+function anmoEscrowConfig(e: Env, stockAddresses: string[]): AnmoEscrow | null {
+  if (!e.ANMO_TOKEN_ADDRESS || /^0x0{40}$/.test(e.ANMO_TOKEN_ADDRESS)) return null;
+  const address = e.ANMO_TOKEN_ADDRESS.toLowerCase() as `0x${string}`;
+  if (!/^[A-Za-z0-9.$_-]{1,16}$/.test(e.ANMO_TOKEN_SYMBOL)) throw new Error("ANMO_TOKEN_SYMBOL must be 1-16 letters or digits.");
+  if (e.ANMO_TOKEN_DECIMALS < 0 || e.ANMO_TOKEN_DECIMALS > 36) throw new Error("ANMO_TOKEN_DECIMALS must be between 0 and 36.");
+  if (e.ANMO_ESCROW_HAIRCUT_BPS < 0 || e.ANMO_ESCROW_HAIRCUT_BPS >= 10_000) throw new Error("ANMO_ESCROW_HAIRCUT_BPS must be between 0 and 9999.");
+  if (!(e.ANMO_ESCROW_MAX_USD_PER_DEPOSIT > 0) || !Number.isFinite(e.ANMO_ESCROW_MAX_USD_PER_DEPOSIT)) throw new Error("ANMO_ESCROW_MAX_USD_PER_DEPOSIT must be a positive USD amount.");
+  const maxDeviation = e.ANMO_ESCROW_MAX_DEVIATION === undefined ? e.BUYBACK_MAX_DEVIATION : Number(e.ANMO_ESCROW_MAX_DEVIATION);
+  if (!(maxDeviation > 0 && maxDeviation <= 1)) throw new Error("ANMO_ESCROW_MAX_DEVIATION must be above 0 and at most 1 (100%).");
+  if (stockAddresses.includes(address)) throw new Error("ANMO_TOKEN_ADDRESS is also listed in ESCROW_TOKENS.");
+  if (!e.ANMO_POOL_LEGS) throw new Error("ANMO_TOKEN_ADDRESS needs ANMO_POOL_LEGS: ANMO deposits are priced from its pools.");
+  const hex = /^0x[0-9a-fA-F]{40}$/;
+  const leg = z.object({
+    key: z.object({ currency0: z.string().regex(hex), currency1: z.string().regex(hex), fee: z.number().int().min(0), tickSpacing: z.number().int(), hooks: z.string().regex(hex) }),
+    sign: z.union([z.literal(1), z.literal(-1)]),
+    minLiquidity: z.union([z.string().regex(/^\d+$/), z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)]).optional(),
+  });
+  let legs: AnmoEscrow["legs"];
+  try {
+    legs = z.array(leg).min(1).parse(JSON.parse(e.ANMO_POOL_LEGS)) as AnmoEscrow["legs"];
+  } catch (err) {
+    throw new Error(`ANMO_POOL_LEGS must be a JSON array of {key:{currency0,currency1,fee,tickSpacing,hooks},sign,minLiquidity?}: ${(err as Error).message.slice(0, 200)}`);
+  }
+  // Each leg prices its base in its quote (sign 1: currency0 in currency1); the first base must be ANMO
+  // and every quote the next leg's base, ending in USDG.
+  let at = address as string;
+  for (const l of legs) {
+    const [base, quote] = l.sign === 1 ? [l.key.currency0, l.key.currency1] : [l.key.currency1, l.key.currency0];
+    if (base.toLowerCase() !== at) throw new Error("ANMO_POOL_LEGS must price ANMO_TOKEN_ADDRESS: each leg's base must be ANMO or the previous leg's quote.");
+    at = quote.toLowerCase();
+  }
+  if (at !== e.USDG_ADDRESS?.toLowerCase()) throw new Error("ANMO_POOL_LEGS must end in USDG (USDG_ADDRESS).");
+  return { address, symbol: e.ANMO_TOKEN_SYMBOL, decimals: e.ANMO_TOKEN_DECIMALS, haircutBps: e.ANMO_ESCROW_HAIRCUT_BPS, maxUsdPerDeposit: e.ANMO_ESCROW_MAX_USD_PER_DEPOSIT, maxDeviation, legs };
+}
 
 // ---- Contract-path launch guards ---------------------------------------------------------------
 // H-02: production contract mode moves customer funds through the Anonymo contracts, so it starts

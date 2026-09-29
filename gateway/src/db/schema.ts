@@ -367,7 +367,7 @@ export const quotes = pgTable(
     requestSha256: text("request_sha256").notNull(),
     modelId: text("model_id").notNull(),
     expiresAt: ts("expires_at").notNull(),
-    status: text("status").notNull().default("open"), // open | paid | used | expired
+    status: text("status").notNull().default("open"), // open | paid | used | expired | failed (x402 claims: nonce "x402:<payer>:<authorization nonce>")
     payer: text("payer"),
     txHash: text("tx_hash"),
     accountId: text("account_id"),
@@ -601,3 +601,20 @@ export const spendAlerts = pgTable(
   },
   (t) => [index("spend_alerts_account_idx").on(t.accountId)],
 );
+
+// ---- Disclosure profiles (what a provider says, and can prove, about how it handles a prompt) ----
+
+// One operator-curated row per provider. A provider with no row is treated as the most conservative
+// profile (retention "logs", jurisdiction "unknown"). `claims` holds { <claim>: { source, as_of } }
+// for retention, jurisdiction, legal_hold and training_use, so every stated value points at a
+// document and a date. legal_hold is null until declared. Nothing here is derived from traffic.
+export const providerDisclosure = pgTable("provider_disclosure", {
+  providerId: text("provider_id").primaryKey(),
+  retention: text("retention").notNull().default("logs"), // attested | policy | logs
+  jurisdiction: text("jurisdiction").notNull().default("unknown"),
+  legalHold: boolean("legal_hold"), // null = not declared
+  legalHoldNote: text("legal_hold_note"),
+  trainingUse: text("training_use").notNull().default("unknown"), // none | opt_in | yes | unknown
+  claims: jsonb("claims").notNull().default({}),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});

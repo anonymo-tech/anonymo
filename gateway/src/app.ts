@@ -27,6 +27,9 @@ import { escrowRoutes } from "./api/escrow.ts";
 import { savedRoutesRoutes } from "./api/saved-routes.ts";
 import { agentSessionsRoutes } from "./api/agent-sessions.ts";
 import { spendRoutes } from "./api/spend.ts";
+import { holdersRoutes } from "./api/holders.ts";
+import { disclosureRoutes } from "./api/disclosure.ts";
+import { ipxRoutes } from "./api/ipx.ts";
 import { publicRoutes } from "./api/public.ts";
 import { embeddingsRoutes } from "./api/embeddings.ts";
 import { adminRoutes } from "./admin/trpc.ts";
@@ -77,7 +80,7 @@ export async function createApp(opts: AppOptions = {}) {
   const webBuilt = existsSync(resolve(webDir, "index.html"));
   const csp = webBuilt ? siteCsp(webDir) : "frame-ancestors 'none'; object-src 'none'; base-uri 'none'";
   const app = new Hono();
-  app.use("/api/*", cors({ origin: "*", allowHeaders: ["authorization", "content-type", "x-pay-with", "x-payment", "x-wallet-auth", "x-anonymo-cache", "http-referer", "x-title", "traceparent"], exposeHeaders: ["x-generation-id", "x-payment-required", "retry-after"] }));
+  app.use("/api/*", cors({ origin: "*", allowHeaders: ["authorization", "content-type", "x-pay-with", "x-payment", "x-wallet-auth", "x-anonymo-cache", "x-anonymo-disclosure-max", "x-anonymo-lane", "http-referer", "x-title", "traceparent"], exposeHeaders: ["x-generation-id", "x-payment-required", "x-payment-response", "x-anonymo-disclosure", "x-anonymo-lane", "retry-after"] }));
   app.use("*", async (c, next) => {
     await next();
     c.header("x-content-type-options", "nosniff");
@@ -96,6 +99,9 @@ export async function createApp(opts: AppOptions = {}) {
   savedRoutesRoutes(app, ctx);
   agentSessionsRoutes(app, ctx);
   spendRoutes(app, ctx);
+  holdersRoutes(app, ctx);
+  disclosureRoutes(app, ctx);
+  ipxRoutes(app, ctx);
   publicRoutes(app, ctx);
   mcpRoutes(app, ctx);
   paymasterRoutes(app, ctx);
