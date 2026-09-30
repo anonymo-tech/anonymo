@@ -1,3 +1,6 @@
+import { recordBreakerRequest, withBreakerModels } from "./breaker-state.ts";
+import { breakerKillReason } from "./breakers.ts";
+import { recordAutonomyBreaker, recordAutonomyClean } from "./autonomy.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Ctx } from "../context.ts";
 import type { Db, Tx } from "../db/client.ts";
@@ -29,13 +32,14 @@ export function agentReservation(ctx: Ctx, build: () => AgentReservation) {
   } } : {};
 }
 export function decisionError(decision: AgentDecision, row: PolicyRow) {
-  const type = decision.reasons.some(r => r.code === "killed") ? "agent_killed" : decision.decision === "approval_required" ? "agent_approval_required" : "agent_policy_denied";
+  const type = decision.reasons.some(r => r.code === "killed") || breakerKillReason(decision) ? "agent_killed" : decision.decision === "approval_required" ? "agent_approval_required" : "agent_policy_denied";
   return new ApiError(403, decision.reasons.map(r => r.message).join(" "), type, { reasons: decision.reasons, policy_sha256: row.sha256 });
 }
 async function recordDecisions(tx: Tx, rows: PolicyRow[], intents: AgentIntent[], actor: string, now: Date) {
   let refusal: ApiError | undefined;
   for (const row of rows) {
-    const state = await policyState(tx, row, now);
+    const state = withBreakerModels(await policyState(tx, row, now), intents);
+    await recordBreakerRequest(tx, row, state, intents, now);
     for (const intent of intents) {
       const decision = evaluateAgentPolicy(row.spec, state, intent, now);
       await appendEvent(tx, { keyHash: row.keyHash, kind: "decision", decision: decision.decision, reasons: decision.reasons, intent: intentJson(intent), policySha256: row.sha256 }, now);
@@ -43,8 +47,9 @@ async function recordDecisions(tx: Tx, rows: PolicyRow[], intents: AgentIntent[]
         const error = decisionError(decision, row);
         const priority = (e: ApiError) => e.type === "agent_killed" ? 3 : e.type === "agent_policy_denied" ? 2 : 1;
         if (!refusal || priority(error) > priority(refusal)) refusal = error;
-        if (decision.decision === "deny" && row.spec.on_breach === "kill" && !state.killed) {
-          await changeKill(tx, row, true, decision.reasons.map(r => r.code).join(","), actor);
+        if (decision.decision === "deny" && (row.spec.on_breach === "kill" || breakerKillReason(decision)) && !state.killed) {
+          if (breakerKillReason(decision)) await recordAutonomyBreaker(tx, row, now);
+          await changeKill(tx, row, true, breakerKillReason(decision) ?? decision.reasons.map(r => r.code).join(","), actor);
           state.killed = true;
         }
       }
@@ -69,6 +74,7 @@ export async function enforceAgentReservation(db: Db, r: ReserveInput, reserve: 
     let value: bigint;
     try { value = await reserve(tx as unknown as Db); } catch (error) { return { error }; }
     await approval.use?.();
+    if (!refusal) await recordAutonomyClean(tx, rows, now);
     return { value };
   });
   if ("error" in outcome) throw outcome.error;
@@ -81,7 +87,7 @@ export async function enforceAgentCached(ctx: Ctx, key: { keyHash: string; accou
     const rows = await policiesFor(tx, key.keyHash), now = new Date();
     const intents: AgentIntent[] = [{ kind: "inference", model, lane, est_cost_pico: 0n, max_output_tokens: Number(body.max_completion_tokens ?? body.max_tokens ?? 10_000_000) * Math.max(1, Number(body.n ?? 1), Number(body.best_of ?? 1)), tools: declaredTools(body) }];
     const approval = await prepareApproval(ctx.db, tx, rows, intents, key.keyHash, await recordDecisions(tx, rows, intents, key.keyHash, now), now);
-    if (!approval.error) await approval.use?.();
+    if (!approval.error) { await approval.use?.(); await recordAutonomyClean(tx, rows, now); }
     return approval.error;
   });
   if (error) throw error;
@@ -92,7 +98,10 @@ export async function enforceAgentTool(ctx: Ctx, authorization: string | undefin
   if (!(await policiesFor(ctx.db, key.keyHash)).length) return;
   const error = await ctx.db.transaction(async tx => {
     await lockAccount(tx, key.accountId);
-    return recordDecisions(tx, await policiesFor(tx, key.keyHash), [{ kind: "mcp_tool", name }], key.keyHash, new Date());
+    const rows = await policiesFor(tx, key.keyHash), now = new Date();
+    const error = await recordDecisions(tx, rows, [{ kind: "mcp_tool", name }], key.keyHash, now);
+    if (!error) await recordAutonomyClean(tx, rows, now);
+    return error;
   });
   if (error) throw error;
 }

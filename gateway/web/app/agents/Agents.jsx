@@ -1,10 +1,12 @@
 'use client';
+import Autonomy from "./Autonomy";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '../../components/UI';
 import { api, loadKey, saveKey, clearKey, validKey } from '../../lib/api';
 import { LANES, DAYS, CAP_FIELDS, LIMITS, FEATURE_OFF, buildPolicy, policyForm, capBars, reasonText, decisionText, intentSummary, eventsPage, sampleIntent, confirmKill, errorState, utcTime } from '../../lib/agents';
 import s from './agents.module.css';
 import Approvals from './Approvals';
+import { BreakersForm, TrippedBadge } from './Breakers';
 
 function Field({ label, id, children }) {
   return <div className="field"><label htmlFor={id}>{label}</label>{children}</div>;
@@ -38,6 +40,7 @@ function RulebookForm({ policy, onSave, onRemove, busy, hasPolicy }) {
       {form.restrictWindows && <>{form.windows.map((w,index) => <div className={s.window} key={index}><div className={s.checks}>{DAYS.map((day,d) => <label className="check-label" key={day}><input type="checkbox" checked={w.days.includes(d)} onChange={e => windowSet(index,{ days:e.target.checked ? [...w.days,d] : w.days.filter(v => v !== d) })}/>{day}</label>)}</div><div className="two-fields">{['start','end'].map(time => <Field key={time} id={`window-${index}-${time}`} label={`${time} (UTC)`}><input id={`window-${index}-${time}`} type="time" step="60" required value={w[time]} onChange={e => windowSet(index,{ [time]:e.target.value })}/></Field>)}</div><button type="button" className="text-button" onClick={() => set('windows',form.windows.filter((_,i) => i !== index))}>Remove window {index+1}</button></div>)}<Button type="button" secondary disabled={form.windows.length >= 64} onClick={() => set('windows',[...form.windows,{ days:[1,2,3,4,5],start:'09:00',end:'17:00' }])}>Add UTC window</Button></>}
     </fieldset>
     <fieldset disabled={busy} className={s.fieldset}><legend>Approval and breaches</legend><Field label="Require approval above (USD)" id="approval"><input id="approval" type="number" step="any" max={LIMITS.usd} value={form.approval} onChange={e => set('approval',e.target.value)}/></Field><Field label="On breach" id="breach"><select id="breach" value={form.onBreach} onChange={e => set('onBreach',e.target.value)}><option value="deny">Deny this request</option><option value="kill">Kill agent</option></select></Field><p className="help-text">A kill breach stops future requests until the principal resumes the agent.</p></fieldset>
+    <BreakersForm values={form.breakers} onChange={values => set('breakers', values)} busy={busy}/>
     <Errors errors={errors}/><div className="button-row"><Button type="submit" disabled={busy}>Save rulebook</Button>{hasPolicy && <Button type="button" secondary disabled={busy} onClick={() => { if (window.confirm('Remove this rulebook? Its restrictions will no longer apply.')) onRemove(); }}>Remove rulebook</Button>}<button type="button" className="text-button" aria-expanded={json} onClick={() => setJson(!json)}>{json ? 'Hide JSON' : 'View JSON'}</button></div>
     {json && <><Errors errors={built.errors}/><pre className={s.json}>{JSON.stringify(built.policy,null,2)}</pre></>}
   </form>;
@@ -90,6 +93,7 @@ function AgentDetail({ agent, request, refreshList, refreshVersion, onError }) {
   const policy = record?.policy ?? record?.spec ?? (record?.version === 1 && record?.models ? record : null);
   return <>
     <section className="control-panel"><div className={s.heading}><h2>{agent.name || 'Unnamed agent'}</h2><span className={'badge'+(killed ? ' dark' : '')}>{killed ? 'Killed' : 'Running'}</span></div>
+      <TrippedBadge record={record} agent={agent}/>
       <span className={s.hash}>Key {agent.key_hash}</span><Spend agent={agent}/><p className={s.hash}>Policy SHA {record?.sha256 || agent.policy_sha256 || 'None'}</p>
       {notice && <p role="status">{notice}</p>}{busy && <p role="status">Reading or updating rulebook…</p>}{readError && <><p role="alert">{readError}</p><Button secondary disabled={busy} onClick={() => setRevision(r => r+1)}>Read rulebook again</Button></>}
       {record && <RulebookForm key={revision} policy={policy} hasPolicy={!!policy} busy={busy} onSave={body => mutate(() => request(path+'/policy',{ method:'PUT',body }))} onRemove={() => mutate(() => request(path+'/policy',{ method:'DELETE' }))}/>}
@@ -135,6 +139,7 @@ export default function Agents() {
     {off ? <section className="empty" role="status"><h2>{FEATURE_OFF}</h2><p>This router is not serving agent rulebooks.</p></section> : <>
       {key && <section aria-label="Agent keys"><div className={s.heading}><h2>Agent keys</h2><button className="text-button" disabled={busy} onClick={() => setRevision(r => r+1)}>Refresh</button></div>{busy && <p role="status">Reading agent keys…</p>}{loaded && !agents.length && <div className="empty"><p>No agent keys returned for this account.</p><a className="inline-link" href="/dashboard/#api-keys">Manage API keys</a></div>}<div className={s.list}>{agents.map(a => <button key={a.key_hash} className={s.agent} aria-pressed={selected === a.key_hash} onClick={() => { setSelected(a.key_hash); setError(''); }}><div className={s.heading}><strong>{a.name || 'Unnamed agent'}</strong><span className={s.badges}><span className="badge">Rulebook {a.has_policy ? 'on' : 'off'}</span>{a.killed && <span className="badge dark">Killed</span>}</span></div><span className={s.hash}>Policy SHA {a.policy_sha256 ? a.policy_sha256.slice(0,12) : 'None'}</span><Spend agent={a}/></button>)}</div></section>}
       {key && <Approvals key={key} request={request} agents={agents} onError={onError}/>}
+      {key && agent && <Autonomy agent={agent}/> }
       {key && agent && <AgentDetail key={key+agent.key_hash} agent={agent} request={request} onError={onError} refreshVersion={revision} refreshList={() => setRevision(r => r+1)}/>}
       {key && <TryIt key={key} principalKey={key} onError={onError}/>}
       {!key && <p className="note">Connect your key to read and manage agent rulebooks.</p>}

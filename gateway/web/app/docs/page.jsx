@@ -1,10 +1,15 @@
+import NetworkPayoutDocs from "../../components/NetworkPayoutDocs";
+import HostBondsDocs from "../../components/HostBondsDocs";
 import NetworkHostsDocs from "../../components/NetworkHostsDocs";
 import SanctionsSection from "./SanctionsSection";
 import E2eeDocs from "../../components/E2eeDocs";
 import PageFrame from "../../components/PageFrame";
 import { Button, Code } from "../../components/UI";
 import { sampleRequest } from "../../components/Extensions";
+import AgentAutonomyDocs from "../../components/AgentAutonomyDocs";
 import AgentRulebookDocs from "../../components/AgentRulebookDocs";
+import AgentBreakersDocs from "../../components/AgentBreakersDocs";
+import AgentCertificateDocs from "../../components/AgentCertificateDocs";
 import AgentApprovalDocs from "../../components/AgentApprovalDocs";
 import { API_BASE } from "../../lib/api";
 import { QUICKSTART, QUICKSTART_FLAGS } from "../../lib/providers";
@@ -801,8 +806,9 @@ export default function Docs() {
           <div className="note" data-reveal>
             The router serves this site, so your base URL is this site’s address followed by /api/v1. Create a key in the dashboard, deposit USDG to it and call it from any OpenAI- or OpenRouter-compatible client.
           </div>
-          <AgentRulebookDocs />
+          <AgentRulebookDocs /><AgentBreakersDocs /><AgentAutonomyDocs />
           <AgentApprovalDocs />
+          <AgentCertificateDocs />
           <h2 id="quickstart">Two changes to get started.</h2>
           <p>
             Anonymo accepts the familiar chat-completions request. Replace the base URL and key; requests, streaming, tools, provider preferences and usage fields work unchanged. Keys are self-custodial: POST /api/v1/keys (no account) returns a key and the hash to deposit USDG to.
@@ -1663,7 +1669,7 @@ OK  team team_…  42 entries  3 hourly roots  head 9f2c…`}</Code>
             </a>{" "}
             shows what the router has recorded for a provider (/verify/?p=&lt;provider id&gt;), the privacy label of a receipt id (/verify/?r=&lt;receipt id&gt;) and checks a pasted receipt in your browser. It reads the router’s record only; use an SDK to check the provider itself.
           </p>
-          <HostsDocs /><NetworkHostsDocs />
+          <HostsDocs /><NetworkHostsDocs /><HostBondsDocs />
           <h2 id="run-a-provider">Run a provider.</h2>
           <p>
             A model host runs the sidecar in front of its model server, inside a confidential VM. The sidecar hashes the weights at boot and refuses to start unless the digest is on its allow-list, binds its TLS key, receipt key and the image, compose and model digests into an Intel TDX quote, and signs a receipt for every
@@ -1748,6 +1754,7 @@ OK  team team_…  42 entries  3 hourly roots  head 9f2c…`}</Code>
           </div>
         </article>
         </div>
+      <NetworkPayoutDocs />
       </main>
     </PageFrame>
   );

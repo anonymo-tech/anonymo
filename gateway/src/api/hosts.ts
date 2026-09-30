@@ -1,3 +1,5 @@
+import { networkPayoutDashboard } from "../network/payout-dashboard.ts";
+import { publicHostBond } from "../network/bonds.ts";
 import type { Hono } from "hono";
 import { and, desc, eq, inArray, isNotNull, ne, or, sql } from "drizzle-orm";
 import type { Ctx } from "../context.ts";
@@ -36,6 +38,7 @@ async function publicHost(ctx: Ctx, p: Pick<typeof providers.$inferSelect, keyof
     probation: p.status === "shadow" || !!p.shadowUntil && p.shadowUntil.getTime() > Date.now(),
     shadow_until: p.shadowUntil?.toISOString() ?? null,
     models: models.map((m) => m.id), attestation, admission: await hostAdmission(ctx, p, attestation),
+    ...(ctx.cfg.hostBonds.enabled ? { bond: await publicHostBond(ctx, p.id) } : {}),
     verify_url: `/verify/?p=${encodeURIComponent(p.id)}`,
   };
 }
@@ -91,7 +94,7 @@ export function hostRoutes(app: Hono, ctx: Ctx) {
     const summary = proofTime?.data;
     const total = BigInt(invoice[0].total);
     return c.json({ data: {
-      ...host,
+      ...host, ...(await networkPayoutDashboard(ctx, id, p.networkHost, !!operator, earningsBand)),
       attestation: { ...host.attestation, checks: e.checks, not_checked: e.not_checked },
       attestation_history: history ? { data: history.data, next: history.next, history_days: history.history_days, url: `/api/v1/attestation/${encodeURIComponent(id)}/history` } : null,
       measurement: e.measurement, measurement_history: e.measurement_history,
