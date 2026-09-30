@@ -4870,8 +4870,7 @@
             "ohttp_key_config",
             "blind_issuer_key",
             "measurement_bundle",
-            "attestation_binding",
-            "data_inventory"
+            "attestation_binding"
           ]
         }
       },
@@ -10458,8 +10457,7 @@
                     "ohttp_key_config",
                     "blind_issuer_key",
                     "measurement_bundle",
-                    "attestation_binding",
-                    "data_inventory"
+                    "attestation_binding"
                   ]
                 }
               },
@@ -10580,8 +10578,7 @@
                   "ohttp_key_config",
                   "blind_issuer_key",
                   "measurement_bundle",
-                  "attestation_binding",
-                  "data_inventory"
+                  "attestation_binding"
                 ]
               },
               "sha256": {
@@ -10671,8 +10668,7 @@
                   "ohttp_key_config",
                   "blind_issuer_key",
                   "measurement_bundle",
-                  "attestation_binding",
-                  "data_inventory"
+                  "attestation_binding"
                 ]
               },
               "sha256": {
