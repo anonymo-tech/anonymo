@@ -1,10 +1,12 @@
 import type { Hono } from "hono";
-import { and, desc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, ne, or, sql } from "drizzle-orm";
 import type { Ctx } from "../context.ts";
 import { hostAnchors, offers, providers, settlements } from "../db/schema.ts";
 import { fail } from "../lib/errors.ts";
 import { sha256 } from "../lib/util.ts";
 import { walletAuth } from "./auth.ts";
+import { probationRegistryFilter } from "../network/offers.ts";
+import { hostAdmission } from "../network/dashboard.ts";
 import { latestAttempts, summarizeAttestation } from "./provider-attestation.ts";
 
 // A GET has no body. Bind its wallet signature to this exact resource instead,
@@ -20,8 +22,8 @@ export function earningsBand(units: bigint) {
   return "$1,000+";
 }
 
-const facts = { id: providers.id, name: providers.name, teeKind: providers.teeKind, attested: providers.attested, attestationHash: providers.attestationHash, attestedAt: providers.attestedAt, status: providers.status, shadowUntil: providers.shadowUntil };
-const visible = and(inArray(providers.status, ["shadow", "live", "suspended", "delisted"]), isNotNull(providers.attestedAt), isNotNull(providers.attestationHash), isNotNull(providers.teeKind), ne(providers.teeKind, "dev"));
+const facts = { networkHost: providers.networkHost, networkReasons: providers.networkReasons, id: providers.id, name: providers.name, teeKind: providers.teeKind, attested: providers.attested, attestationHash: providers.attestationHash, attestedAt: providers.attestedAt, status: providers.status, shadowUntil: providers.shadowUntil };
+const visible = (ctx: Ctx) => and(or(inArray(providers.status, ["shadow", "live", "suspended", "delisted"]), probationRegistryFilter(ctx.cfg)), isNotNull(providers.attestedAt), isNotNull(providers.attestationHash), isNotNull(providers.teeKind), ne(providers.teeKind, "dev"));
 
 async function publicHost(ctx: Ctx, p: Pick<typeof providers.$inferSelect, keyof typeof facts>, attempts: Awaited<ReturnType<typeof latestAttempts>>) {
   const last = attempts.get(p.id);
@@ -33,14 +35,14 @@ async function publicHost(ctx: Ctx, p: Pick<typeof providers.$inferSelect, keyof
     attested: attestation.status === "attested", status: p.status,
     probation: p.status === "shadow" || !!p.shadowUntil && p.shadowUntil.getTime() > Date.now(),
     shadow_until: p.shadowUntil?.toISOString() ?? null,
-    models: models.map((m) => m.id), attestation,
+    models: models.map((m) => m.id), attestation, admission: await hostAdmission(ctx, p, attestation),
     verify_url: `/verify/?p=${encodeURIComponent(p.id)}`,
   };
 }
 
 export function hostRoutes(app: Hono, ctx: Ctx) {
   app.get("/api/v1/hosts", async (c) => {
-    const rows = await ctx.db.select(facts).from(providers).where(visible).orderBy(providers.id);
+    const rows = await ctx.db.select(facts).from(providers).where(visible(ctx)).orderBy(providers.id);
     const attempts = await latestAttempts(ctx, rows.map((p) => p.id));
     const data = await Promise.all(rows.map((p) => publicHost(ctx, p, attempts)));
     c.header("Cache-Control", "public, max-age=30");
@@ -52,7 +54,7 @@ export function hostRoutes(app: Hono, ctx: Ctx) {
     c.header("Cache-Control", "no-store");
     c.header("Vary", "X-Wallet-Auth");
     const id = c.req.param("providerId");
-    const [p] = await ctx.db.select(facts).from(providers).where(and(visible, eq(providers.id, id)));
+    const [p] = await ctx.db.select(facts).from(providers).where(and(visible(ctx), eq(providers.id, id)));
     if (!p) fail(404, "Unknown host.", "not_found");
     const host = await publicHost(ctx, p, await latestAttempts(ctx, [id]));
     if (host.attestation.status === "simulated" || host.attestation.reason === "simulated_evidence_refused") fail(404, "Unknown host.", "not_found");
