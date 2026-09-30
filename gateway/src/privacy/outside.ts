@@ -1,4 +1,5 @@
 import type { Evidence, ExternalDoc, RedisFamily, Touchpoint } from "./types.ts";
+import { networkJoinStores } from "./network-join.ts";
 
 // Everything the router keeps, or touches, outside Postgres: Redis keys (with their lifetimes and whether they contain a network
 // address), the application log, telemetry, backups and the places in the code that read a request's body or a caller's address.
@@ -30,6 +31,8 @@ function limit(o: { prefix: string; shape: string; purpose: string; holds: Redis
 const ADDRESS_NOTE = "The caller's network address is part of the key. Over Tor the address is replaced by the word onion, so no address is used.";
 
 const redisFamilies: RedisFamily[] = [
+  limit({ prefix: "network-host-wallet:", shape: "network-host-wallet:<operator wallet>", purpose: "Wallet-authenticated host signup and credential updates, three per minute per wallet. Links attempts by the public operator wallet.", holds: "wallet", seconds: 60, evidence: [ev("src/api/network-hosts.ts", "await ctx.limiter.take(`network-host-wallet:${auth.wallet}`")] }),
+  limit({ prefix: "network-host-address:", shape: "network-host-address:<caller address or onion>", purpose: "Host signup and credential attempts, ten per minute per network address, with the existing scaled shared onion bucket. The raw address is temporarily part of the Redis key.", holds: "address", seconds: 60, evidence: [ev("src/api/network-hosts.ts", "await ctx.limiter.take(`network-host-address:${from.id}`")] }),
   limit({ prefix: "network-waitlist:", shape: "network-waitlist:<minute-keyed address digest or onion>", purpose: "Waitlist POST and DELETE requests, ten per minute per address; onion requests share the existing scaled onion bucket. A secret-keyed HMAC rotates every minute; no raw IP or user agent is stored. The digest still links requests within that minute.", holds: "digest", seconds: 60, evidence: [ev("src/network/waitlist.ts", "await ctx.limiter.take(`network-waitlist:${bucket}`")] }),
   limit({
     prefix: "ip:",
@@ -252,6 +255,7 @@ const redisFamilies: RedisFamily[] = [
 ];
 
 const addressReaders: Touchpoint[] = [
+  { file: "src/api/network-hosts.ts", reads: "The caller address bucket on host signup and credential writes.", then: "Counts attempts through the existing per-address limiter; trusted proxy and onion rules apply.", kept: "Raw address in the limiter key for 61 seconds in Redis, or until the memory limiter sweeps; never in the host row or application log.", evidence: [ev("src/api/network-hosts.ts", "const from = addressBucket(c, ctx.cfg);")] },
   { file: "src/network/waitlist.ts", reads: "Address bucket for a waitlist POST or DELETE; onion requests use the shared onion bucket.", then: "A secret-keyed HMAC of the address and current minute is passed to the existing limiter; onion stays the word onion.", kept: "Only a minute-specific keyed digest and counter: 61 seconds in Redis, or up to six minutes without Redis until the memory limiter sweeps old windows. No raw IP or user agent, and no address-derived value in the waitlist table.", evidence: [ev("src/network/waitlist.ts", "const from = addressBucket(c, ctx.cfg);")] },
   { file: "src/api/e2ee.ts", reads: "The address only for encrypted calls without a key outside the Oblivious HTTP gateway; over Tor the fixed onion bucket is used.", then: "Uses the existing blind-ip rate-limit family.", kept: "Only the counter key, for 61 seconds; no address in a generation, receipt or log.", evidence: [ev("src/api/e2ee.ts", "const from = addressBucket(c, ctx.cfg);")] },
   {
@@ -369,6 +373,7 @@ const addressReaders: Touchpoint[] = [
 ];
 
 const bodyReaders: ExternalDoc["bodyReaders"] = [
+  { file: "src/api/network-hosts.ts", carries: "settings", reads: "Up to 8 KiB of host signup JSON or an operator-generated sidecar credential, with an existing wallet signature over the canonical JSON hash.", then: "Strictly validates signup fields, verifies the wallet and performs attestation, policy and sanctions checks. Credentials are accepted only for the recovered operator wallet.", kept: "Provider name, endpoint, operator and payout wallets, requested model IDs, optional contact, status and refusal reasons. Credential stored only in existing AES-GCM api_key_enc. The router sees it in memory. No whole-body log or signature column.", evidence: [ev("src/api/network-hosts.ts", "const reader = c.req.raw.body?.getReader();")] },
   { file: "src/network/waitlist.ts", carries: "settings", reads: "At most 4 KiB of JSON: waitlist fields or a deletion code.", then: "Validated strictly; a filled honeypot is discarded. The deletion code is hashed for an atomic delete.", kept: "Only sign-up fields, optional contact, id, deletion digest and time in network_waitlist. No raw deletion code, body log, IP or user agent. Free text is readable by the owner; public stats return counts only.", evidence: [ev("src/network/waitlist.ts", "const reader = c.req.raw.body?.getReader();")] },
   {
     file: "src/admin/trpc.ts", carries: "settings",
@@ -686,6 +691,8 @@ export const EXTERNAL: ExternalDoc = {
     evidence: [ev("src/lib/util.ts", "(level === \"error\" || level === \"warn\" ? console.error : console.log)(line);"), ev("src/lib/util.ts", "const line = JSON.stringify({ t: new Date().toISOString(), level, msg, ...fields }")],
   },
   otherStores: [
+    { id: "network-routing-evidence", name: "Network host routing evidence in memory", purpose: "When NETWORK_HOSTS_ENABLED is on, routing uses existing signed generation records, health probes and attestation outcomes to limit admitted hosts during probation and exclude unavailable hosts.", holds: "Provider ids, probation deadlines, aggregate attested success and recent outcome counts, probe availability and median latency, the latest attestation failure flag and refresh time. No request text or caller address. Successful network probes also record latency in the existing health table.", ttl: "Rebuilt by health refreshes, including idle flushes; evidence older than 120 seconds is refused. Failed refreshes clear the evidence. Lost when the router instance is released or exits.", requestText: "none", evidence: [ev("src/network/routing.ts", "const states = new WeakMap<HealthView, State>();"), ev("src/network/routing.ts", "state.evidence = new Map();"), ev("src/network/weight-config.ts", "evidenceMaxAgeMs: 120_000")] },
+    ...networkJoinStores,
     {
       id: "messages-proxy-prices",
       name: "Messages proxy prices on the caller's computer",
