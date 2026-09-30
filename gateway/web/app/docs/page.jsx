@@ -1,3 +1,5 @@
+import SanctionsSection from "./SanctionsSection";
+import E2eeDocs from "../../components/E2eeDocs";
 import PageFrame from "../../components/PageFrame";
 import { Button, Code } from "../../components/UI";
 import { sampleRequest } from "../../components/Extensions";
@@ -5,7 +7,9 @@ import { API_BASE } from "../../lib/api";
 import { QUICKSTART, QUICKSTART_FLAGS } from "../../lib/providers";
 import OnionAddress from "../../components/OnionAddress";
 import ClaudeUnlinkableDocs from "../../components/ClaudeUnlinkableDocs";
+import NetworkPolicyDocs from "../../components/NetworkPolicyDocs";
 import PrivateProxyDocs from "../../components/PrivateProxyDocs";
+import HostsDocs from "../../components/HostsDocs";
 export const metadata = { title: "Developer documentation — Anonymo" };
 const receipt = {
   id: "gen-1790461071-M1D5SJxd7YpD5A",
@@ -904,6 +908,7 @@ Model ID:                @character/<id>`}</Code>
             Any OTLP/HTTP collector works: /v1/traces is added to the endpoint unless it is already there, and the body is OTLP JSON. For a self-hosted Tempo or an OpenTelemetry Collector, expose its OTLP/HTTP receiver over https and put its
             auth in headers.
           </p>
+          <SanctionsSection />
           <h2 id="teams">Teams: anonymous organisations with an audit log.</h2>
           <p>
             A team is an organisation with no email and no names. Its owner is the account that made it, a wallet, or a Safe: POST /api/v1/teams/&lt;id&gt;/owner/challenge returns a one-time message, and POST /owner checks the
@@ -1037,6 +1042,8 @@ OK  team team_…  42 entries  3 hourly roots  head 9f2c…`}</Code>
             sent on one circuit can be linked to each other, so give calls you want kept apart their own circuit (a different SOCKS user name, as above, or Tor Browser’s New Identity); buying tokens right before spending them links the two by
             time; and anything in the body that identifies you reaches the provider. End-to-end encryption through the router to the enclave is planned.
           </p>
+          <NetworkPolicyDocs />
+          <E2eeDocs />
           <PrivateProxyDocs />
           <ClaudeUnlinkableDocs />
           <h2 id="private-tokens">Private tokens from your wallet, kept on your device.</h2>
@@ -1651,6 +1658,7 @@ OK  team team_…  42 entries  3 hourly roots  head 9f2c…`}</Code>
             </a>{" "}
             shows what the router has recorded for a provider (/verify/?p=&lt;provider id&gt;), the privacy label of a receipt id (/verify/?r=&lt;receipt id&gt;) and checks a pasted receipt in your browser. It reads the router’s record only; use an SDK to check the provider itself.
           </p>
+          <HostsDocs />
           <h2 id="run-a-provider">Run a provider.</h2>
           <p>
             A model host runs the sidecar in front of its model server, inside a confidential VM. The sidecar hashes the weights at boot and refuses to start unless the digest is on its allow-list, binds its TLS key, receipt key and the image, compose and model digests into an Intel TDX quote, and signs a receipt for every

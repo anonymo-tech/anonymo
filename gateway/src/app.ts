@@ -1,3 +1,5 @@
+import { networkSanctionsRoutes } from "./api/network-sanctions.ts";
+import { e2eeRoutes } from "./api/e2ee.ts";
 import { siteCsp } from "./lib/csp.ts";
 import { EXPOSED_RESPONSE_HEADERS, viaOnion } from "./api/common.ts";
 import { onionIngress } from "./onion/ingress.ts";
@@ -63,9 +65,12 @@ import { blindRoutes } from "./blind/routes.ts";
 import { OhttpKeys } from "./ohttp/keys.ts";
 import { ohttpRoutes } from "./ohttp/gateway.ts";
 import { hostAnchorRoutes } from "./api/host-anchor.ts";
+import { hostRoutes } from "./api/hosts.ts";
 import { TransparencyLog } from "./tlog/log.ts";
+import { networkPolicyRoutes } from "./network/routes.ts";
 import { tlogRoutes } from "./tlog/routes.ts";
 import { statusRoutes } from "./api/status.ts";
+import { networkRoutes } from "./network/waitlist.ts";
 import { skillsRoutes } from "./api/skills.ts";
 import { startStatusLoop, statusMiddleware } from "./services/slo.ts";
 
@@ -117,7 +122,7 @@ export async function createApp(opts: AppOptions = {}) {
   const csp = webBuilt ? siteCsp(webDir) : "frame-ancestors 'none'; object-src 'none'; base-uri 'none'";
   const app = new Hono();
   // The OpenAI-style /v1/* aliases get the same CORS as /api/*, so a browser can read the receipt, lane and policy headers on either.
-  const apiCors = cors({ origin: "*", allowHeaders: ["authorization", "content-type", "x-pay-with", "x-payment", "x-wallet-auth", "x-anonymo-cache", "x-anonymo-disclosure-max", "x-anonymo-lane", "x-anonymo-lane-downgrade", "http-referer", "x-title", "traceparent", "x-api-key", "anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access"], exposeHeaders: EXPOSED_RESPONSE_HEADERS });
+  const apiCors = cors({ origin: "*", allowHeaders: ["authorization", "content-type", "x-e2ee-version", "x-client-pub-key", "x-model-pub-key", "x-e2ee-nonce", "x-e2ee-timestamp", "x-pay-with", "x-payment", "x-wallet-auth", "x-anonymo-cache", "x-anonymo-disclosure-max", "x-anonymo-lane", "x-anonymo-lane-downgrade", "http-referer", "x-title", "traceparent", "x-api-key", "anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access"], exposeHeaders: [...EXPOSED_RESPONSE_HEADERS, "x-e2ee-applied", "x-e2ee-version", "x-e2ee-algo", "x-e2ee-receipt-id"] });
   app.use("/api/*", apiCors);
   app.use("/v1/*", apiCors);
   app.use("/ollama/*", apiCors);
@@ -140,6 +145,7 @@ export async function createApp(opts: AppOptions = {}) {
   app.use("*", onionIngress(cfg)); // onion requests: drop every client address header before any route reads one
   app.use("*", statusMiddleware(ctx)); // public-lane outcomes per API surface for /api/v1/status/slo; private lanes are not counted here
   chatRoutes(app, ctx);
+  e2eeRoutes(app, ctx);
   embeddingsRoutes(app, ctx);
   batchesRoutes(app, ctx);
   rerankRoutes(app, ctx);
@@ -159,6 +165,7 @@ export async function createApp(opts: AppOptions = {}) {
   ipxRoutes(app, ctx);
   attestationHistoryRoutes(app, ctx); // before attestationRoutes: /attestation/summary must not be read as a provider id
   attestationRoutes(app, ctx);
+  if (ctx.cfg.hostDashboard.enabled) hostRoutes(app, ctx);
   measurementRoutes(app, ctx);
   badgeRoutes(app, ctx);
   laneRoutes(app, ctx);
@@ -168,9 +175,12 @@ export async function createApp(opts: AppOptions = {}) {
   if (ctx.ohttp) ohttpRoutes(app, ctx);
   if (ctx.cfg.hostAnchor.enabled) hostAnchorRoutes(app, ctx);
   if (ctx.tlog) tlogRoutes(app, ctx);
+  networkPolicyRoutes(app, ctx);
   statusRoutes(app, ctx);
   skillsRoutes(app, ctx);
+  networkRoutes(app, ctx);
   publicRoutes(app, ctx);
+  networkSanctionsRoutes(app, ctx);
   mcpRoutes(app, ctx);
   anthropicRoutes(app, ctx);
   ollamaRoutes(app, ctx);

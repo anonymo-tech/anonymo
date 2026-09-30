@@ -1,3 +1,4 @@
+import { sanctionsTables } from "./tables/sanctions.ts";
 import { canonicalJson, sha256 } from "../lib/util.ts";
 import { columnFlags, informationSchemaType } from "./rules.ts";
 import { schemaTables, type SchemaTable } from "./schema.ts";
@@ -6,6 +7,7 @@ import { billingTables } from "./tables/billing.ts";
 import { chainTables } from "./tables/chain.ts";
 import { characterTables } from "./tables/characters.ts";
 import { keyTables } from "./tables/keys.ts";
+import { networkTables } from "./tables/network.ts";
 import { operationTables } from "./tables/operations.ts";
 import { providerTables } from "./tables/providers.ts";
 import { receiptTables } from "./tables/receipts.ts";
@@ -21,7 +23,7 @@ import { CATEGORIES, CATEGORY_INFO, type AboutRequest, type ColumnDoc, type Exte
 
 export const INVENTORY_FORMAT = "anonymo.data-inventory/1";
 
-export const TABLE_DOCS: Record<string, TableDoc> = { ...requestTables, ...billingTables, ...receiptTables, ...keyTables, ...providerTables, ...chainTables, ...operationTables, ...characterTables, ...skillTables };
+export const TABLE_DOCS: Record<string, TableDoc> = { ...requestTables, ...billingTables, ...receiptTables, ...keyTables, ...providerTables, ...chainTables, ...operationTables, ...characterTables, ...skillTables, ...networkTables, ...sanctionsTables };
 export { EXTERNAL };
 
 // ---- consistency -----------------------------------------------------------------------------------------------------
@@ -217,7 +219,7 @@ export function summarize(tables: TableOut[], ext: ExternalDoc): Summary {
     facts,
     caveats,
     reads:
-      "This page is about what is kept. It is not a claim that nobody can read a request while it is in flight: on every lane today the router reads the text of a request in memory to route it, and the provider that answers reads it too under its own policy.",
+      "This page is about what is kept. It is not a claim that nobody can read a request while it is in flight: on ordinary chat routes on every lane the router reads the text of a request in memory, and the provider reads it too under its own policy. The dedicated, off-by-default E2EE adapter forwards encrypted content without decryption; the gateway enclave restores it. Clear routing and billing metadata remains visible.",
     counts: { tables: tables.length, columns: cols.length, reviewed_columns: cols.filter((c) => c.col.review).length, hash_columns: hashes.length },
   };
 }

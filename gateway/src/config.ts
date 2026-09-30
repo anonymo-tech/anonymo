@@ -1,3 +1,5 @@
+import { sanctionsEnv, sanctionsSettings } from "./network/config.ts";
+import { e2eeSettings } from "./e2ee/config.ts";
 import { createHash, createHmac, createPrivateKey, createPublicKey, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -45,6 +47,7 @@ function measurementPublicKey(raw: string | undefined): string | null {
 }
 
 const schema = z.object({
+  ...sanctionsEnv,
   RUNTIME_ROLE: z.enum(["all", "api", "worker"]).default("all"),
   WORKER_JOBS: z.string().default(""),
   AUTO_MIGRATE: bool.default(true),
@@ -71,6 +74,7 @@ const schema = z.object({
   // receipt key its router-verified attestation binds, and roots them per host and interval; with a configured chain and
   // anchorer key it posts each root with ReceiptAnchor.anchorAttested, otherwise keeps it off chain (status "local").
   HOST_ANCHOR_ENABLED: bool.default(false),
+  HOST_DASHBOARD_ENABLED: bool.default(false),
   HOST_ANCHOR_INTERVAL_MS: int(3_600_000),
   HOST_ANCHOR_TOKENS: opt, // JSON {"<provider id>": "<that sidecar's SIDECAR_ANCHOR_TOKEN>"}
 
@@ -238,6 +242,9 @@ const schema = z.object({
   SETTLEMENT_INTERVAL_MS: int(3_600_000),
   PROVIDER_REGISTRY_INTERVAL_MS: int(600_000),
   PROVIDERS_FILE: opt,
+  E2EE_PASSTHROUGH_ENABLED: bool.default(false),
+  E2EE_GATEWAY_BASE_URL: opt, // production pin for the Phala gateway when PROVIDERS_FILE is not used
+  E2EE_GATEWAY_ATTESTATION_URL: opt,
 
   // Gateway features
   OTEL_EXPORTER_OTLP_ENDPOINT: opt,
@@ -378,6 +385,7 @@ const schema = z.object({
 
   // ---- Transparency log of keys and configurations (C2SP tlog-tiles with signed-note checkpoints and tlog-cosignature
   // witnesses; src/tlog). Off by default: no route is registered and nothing is appended.
+  NETWORK_POLICY_ENABLED: bool.default(false),
   TLOG_ENABLED: bool.default(false),
   TLOG_ORIGIN: opt, // checkpoint origin and the log's key name; default "<host of PUBLIC_BASE_URL>/tlog"
   TLOG_SIGNING_KEY: opt, // the log's Ed25519 key: base64 PKCS#8, or PRIVATE+KEY+<origin>+<id>+<key>; required in production
@@ -406,6 +414,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     throw new Error(`Invalid configuration: ${issues}`);
   }
   const e = parsed.data;
+  if (e.NETWORK_POLICY_ENABLED && !e.TLOG_ENABLED) throw new Error("NETWORK_POLICY_ENABLED needs TLOG_ENABLED.");
   const production = e.ANONYMO_ENV === "production";
   const escrowMode = e.PAYMENTS_MODE === "escrow";
   const contractAddresses = {
@@ -456,7 +465,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     if (e.IPX_KEEPER_PRIVATE_KEY && (escrowMode || Object.values(roleKeys).some(Boolean))) throw new Error("IPX_KEEPER_PRIVATE_KEY must be isolated from every other signing role.");
     if (e.RUNTIME_ROLE === "worker") {
       const names = e.WORKER_JOBS.split(",").map((v) => v.trim()).filter(Boolean);
-      const allowed = ["health-flush", "holds-expire", "catalog-refresh", "provider-registry", "health-probes", "canaries", "attestor", "receipts-anchor", "receipt-key-rotation", "settlement", "slasher", "buyback", "chain-indexer", "paywith-aggregator", "escrow-indexer", "spend-watch", "alert-notifier", "telegram-bot", "measurements", "blind-key-rotation", "ipx-oracle", "dayzero", "ohttp-key-rotation", "host-anchor", "tlog", "batches", "skills-mirror"];
+      const allowed = ["health-flush", "holds-expire", "catalog-refresh", "provider-registry", "health-probes", "canaries", "attestor", "receipts-anchor", "receipt-key-rotation", "settlement", "slasher", "buyback", "chain-indexer", "paywith-aggregator", "escrow-indexer", "spend-watch", "alert-notifier", "telegram-bot", "measurements", "blind-key-rotation", "ipx-oracle", "dayzero", "ohttp-key-rotation", "host-anchor", "tlog", "batches", "skills-mirror", "sanctions-refresh"];
       if (!names.length || names.some((n) => !allowed.includes(n))) throw new Error("Worker requires an explicit valid WORKER_JOBS list.");
       const keyJobs = { settlement: "settlement", anchoring: "receipts-anchor", slashing: "slasher", buyback: "buyback" };
       if (Object.values(roleKeys).filter(Boolean).length > 1) throw new Error("Privileged worker signing roles must be isolated.");
@@ -540,6 +549,9 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
   return {
     env: e.ANONYMO_ENV,
     production,
+    hostDashboard: { enabled: e.HOST_DASHBOARD_ENABLED },
+    sanctions: sanctionsSettings(e, production),
+    e2ee: e2eeSettings(e.E2EE_PASSTHROUGH_ENABLED, e.PROVIDERS_FILE, production, { baseUrl: e.E2EE_GATEWAY_BASE_URL, attestationUrl: e.E2EE_GATEWAY_ATTESTATION_URL }),
     runtimeRole: e.RUNTIME_ROLE,
     autoMigrate: e.AUTO_MIGRATE,
     workerJobs: e.WORKER_JOBS.split(",").map((n) => n.trim()).filter(Boolean),
@@ -555,6 +567,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     redisUrl: e.REDIS_URL,
     appSecret: e.APP_SECRET ?? "dev-insecure-secret-change-me-dev-insecure",
     adminToken: e.ADMIN_TOKEN,
+    networkPolicyEnabled: e.NETWORK_POLICY_ENABLED,
     logLevel: e.LOG_LEVEL,
     trustProxy: e.TRUST_PROXY,
     release: { commit: contractPath.releaseCommit, deployment: contractPath.deployment },
