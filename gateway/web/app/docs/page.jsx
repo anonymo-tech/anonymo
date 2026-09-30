@@ -733,6 +733,7 @@ const endpoints = [
   ["POST · GET /api/v1/batches · GET /batches/:id · POST /batches/:id/cancel · GET /batches/:id/output · /batches/:id/errors", "Batch API (also under /v1): many chat or embeddings requests in one call, run in the background at 50% of the normal price within 24 hours; results as JSONL for 24 hours after the batch finishes (prepaid key)"],
   ["POST /api/v1/rag · /v1/rag","Answers from documents you send with the question, ranked in memory and stored nowhere: it embeds, ranks and answers through the embeddings and chat routes, and returns the sources and every call’s receipt (prepaid key; the lane and disclosure options of chat)"],
   ["GET /api/v1/rankings · /providers · /status", "Usage rankings and creator payouts; the provider registry with each provider’s attestation status (attestation.status, tee, verifiers, last_verified_at); router configuration, including its onion address where there is one"],
+  ["GET /api/v1/status/slo · /status/incidents · /status/incidents.atom · .rss", "The status page (/status): per lane and API surface, availability over 1 hour, 24 hours, 7 days and 30 days, p50 and p95 latency, error counts, the SLO target (STATUS_SLO_PUBLIC 99.5%, STATUS_SLO_ATTESTED and STATUS_SLO_UNLINKABLE 99%), the 30-day error budget and 90 daily figures, cached for 30 seconds. The public lane is summed from public-lane request outcomes; the attested and unlinkable lanes use only the noisy hourly releases of /api/v1/stats (source: dp-noised). Incidents as JSON, Atom and RSS. The operator (ADMIN_TOKEN) opens incidents with POST /status/incidents, posts updates with POST /status/incidents/:id/updates and confirms or dismisses the suggestions the router records when a lane stays below target for five minutes (an hour on the private lanes)"],
   ["POST /api/v1/providers/apply · /creators/claim · /paymaster", "Provider onboarding; royalty claims; ERC-7677 gas sponsorship"],
 ];
 export default function Docs() {
@@ -755,6 +756,7 @@ export default function Docs() {
             <a href="#routing">Routing</a>
             <a href="#presets">Presets</a>
             <a href="#tracing">Tracing</a>
+            <a href="#teams">Teams</a>
             <a href="#disclosure">Disclosure</a>
             <a href="#lanes">Lanes</a>
             <a href="#tor">Tor</a>
@@ -864,6 +866,25 @@ export default function Docs() {
             Any OTLP/HTTP collector works: /v1/traces is added to the endpoint unless it is already there, and the body is OTLP JSON. For a self-hosted Tempo or an OpenTelemetry Collector, expose its OTLP/HTTP receiver over https and put its
             auth in headers.
           </p>
+          <h2 id="teams">Teams: anonymous organisations with an audit log.</h2>
+          <p>
+            A team is an organisation with no email and no names. Its owner is the account that made it, a wallet, or a Safe: POST /api/v1/teams/&lt;id&gt;/owner/challenge returns a one-time message, and POST /owner checks the
+            signature by recovery for a wallet or by EIP-1271 for a contract wallet (isValidSignature must return 0x1626ba7e, read on chain). A team made by a wallet-signed-in account is owned by that wallet from the start. The bound
+            address signs in as owner.
+          </p>
+          <p>
+            Roles: owner, admin (members, invites, keys and budgets), dev (creates keys in the team within its org budget), viewer (reads the team, usage, receipts and the audit log) and agent (API calls only, 403 on every team route).
+            An admin makes a single-use invite (POST /invites, only its SHA-256 is kept). The invitee joins with a passkey (WebAuthn, attestation none, so only the public key is stored) or a wallet signature, and signs in the same way
+            later with POST /api/v1/teams/&lt;id&gt;/sign-in. A sign-in returns a key that lasts 12 hours and has a limit of 0: it manages the team within the member&apos;s role, and a dev or admin creates API keys to call models. With
+            budget_usd set, every key in the team needs a limit and the limits together must fit (409 org_budget_exceeded).
+          </p>
+          <p>
+            Every change to members, invites, the owner, keys, budgets, presets, routes and lane settings is appended to the team&apos;s audit log, never prompt text. Each entry is chained to the one before it: hash = sha256(prev_hash
+            bytes, then the canonical JSON of team, seq, at, actor, action, target and detail), starting from 64 zeros, with an RFC 6962 Merkle root per hour. GET /audit pages through it, GET /audit/roots lists the hourly roots and
+            GET /audit/export?format=jsonl|csv downloads the chain. Anyone holding an export can check it with Node alone: an edited, dropped or reordered entry fails.
+          </p>
+          <Code label="Verify an audit export offline">{`node scripts/verify-audit.mjs anonymo-audit-<team>.jsonl --head <hash you saw>
+OK  team team_…  42 entries  3 hourly roots  head 9f2c…`}</Code>
           <h2 id="disclosure">Route by what a provider discloses.</h2>
           <p>
             Each provider has a disclosure profile its operator documents: retention (attested, policy or logs), jurisdiction, legal-hold status and training use, each with a source and a date. Anything undocumented reads as the conservative
@@ -1154,7 +1175,8 @@ export default function Docs() {
             one. datacenter_region is set only when every endpoint reports the same single region.
           </p>
           <Code label="GET /api/v1/models (new fields)">{modelAttestation}</Code>
-          <h2 id="what-we-saw">What we saw: a privacy label for every answer.</h2>
+          <h2 id="what-we-saw">What we saw: a privacy label for every receipt.</h2>
+          <p>The output facet reads usage.unit_type and usage.units: token (the default for older receipts) covers text and embeddings, image_mp images, video_sec video, audio_sec voice and audio, call tools or search, and gpu_sec computation or fine-tuning. Units describe metering, not every input modality or which operation ran. A token call can include image references. The router reads request text in memory on every lane. For media, generation records keep request and output hashes, not the media itself; metering does not establish retention outside that record or by a provider. A call unit alone does not prove a search query was sent, and GPU time does not prove training data or weights were deleted. Unfamiliar units report content and address handling as unrecorded. Council labels include members and the judge; RAG has separate embedding and chat receipts. The response cache keeps the encrypted reply, never the prompt itself; semantic caching keeps a hashed word vector. Batch content is kept sealed outside the database; requests are deleted when the batch finishes and answers when results expire. Failed-provider errors can retain a short sanitized fragment of a rejected request, and unexpected library errors can quote fragments in logs. See <a href="/keep/" className="inline-link">What we keep</a> for these limits.</p>
           <p>
             GET /api/v1/receipts/&#123;id&#125;/privacy reads a receipt back in plain English: who could read the prompt, who saw your network address, how the call was paid, what the router kept and what hardware answered. It is public by id, like the receipt.
             The router works it out from the receipt’s signed fields (lane, disclosure, mode, payer, nullifier, attestation and, for an attested gateway, upstream_attestation) and from what its code does for that combination. A field a receipt does not carry is

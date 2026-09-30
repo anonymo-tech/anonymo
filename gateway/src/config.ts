@@ -52,6 +52,9 @@ const schema = z.object({
   HOST: z.string().default("127.0.0.1"),
   PORT: int(8787),
   PUBLIC_BASE_URL: z.string().default("http://127.0.0.1:8787"),
+  // Passkeys for organisation members (WebAuthn). Default: the host and origin of PUBLIC_BASE_URL, where the dashboard is served.
+  WEBAUTHN_RP_ID: opt,
+  WEBAUTHN_ORIGINS: opt, // comma-separated origins allowed in clientDataJSON
   DATABASE_URL: z.string().default("pglite://.data/pglite"),
   REDIS_URL: opt,
   APP_SECRET: opt,
@@ -182,6 +185,12 @@ const schema = z.object({
   // 0 records nothing and switches the two history endpoints off; rows already stored are left alone.
   ATTESTATION_HISTORY_DAYS: z.coerce.number().int().min(0).max(366).default(30),
   ALLOW_DEV_ATTESTATION: bool.default(false),
+  // Public status page (GET /api/v1/status/slo): availability targets per lane, as fractions, and how many requests a window
+  // needs before a dip below target is recorded as an incident suggestion for an operator to confirm.
+  STATUS_SLO_PUBLIC: z.coerce.number().min(0.5).max(1).default(0.995),
+  STATUS_SLO_ATTESTED: z.coerce.number().min(0.5).max(1).default(0.99),
+  STATUS_SLO_UNLINKABLE: z.coerce.number().min(0.5).max(1).default(0.99),
+  STATUS_SUGGEST_MIN_REQUESTS: z.coerce.number().int().min(1).default(20),
   NVIDIA_NRAS_URL: z.string().default("https://nras.attestation.nvidia.com/v3/attest/gpu"),
   TDX_VERIFIER_URL: opt,
   TDX_VERIFIER_KEY: opt,
@@ -434,7 +443,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     if (e.IPX_KEEPER_PRIVATE_KEY && (escrowMode || Object.values(roleKeys).some(Boolean))) throw new Error("IPX_KEEPER_PRIVATE_KEY must be isolated from every other signing role.");
     if (e.RUNTIME_ROLE === "worker") {
       const names = e.WORKER_JOBS.split(",").map((v) => v.trim()).filter(Boolean);
-      const allowed = ["health-flush", "holds-expire", "catalog-refresh", "provider-registry", "health-probes", "canaries", "attestor", "receipts-anchor", "receipt-key-rotation", "settlement", "slasher", "buyback", "chain-indexer", "paywith-aggregator", "escrow-indexer", "spend-watch", "alert-notifier", "telegram-bot", "measurements", "blind-key-rotation", "ipx-oracle", "dayzero", "ohttp-key-rotation", "host-anchor", "tlog"];
+      const allowed = ["health-flush", "holds-expire", "catalog-refresh", "provider-registry", "health-probes", "canaries", "attestor", "receipts-anchor", "receipt-key-rotation", "settlement", "slasher", "buyback", "chain-indexer", "paywith-aggregator", "escrow-indexer", "spend-watch", "alert-notifier", "telegram-bot", "measurements", "blind-key-rotation", "ipx-oracle", "dayzero", "ohttp-key-rotation", "host-anchor", "tlog", "batches"];
       if (!names.length || names.some((n) => !allowed.includes(n))) throw new Error("Worker requires an explicit valid WORKER_JOBS list.");
       const keyJobs = { settlement: "settlement", anchoring: "receipts-anchor", slashing: "slasher", buyback: "buyback" };
       if (Object.values(roleKeys).filter(Boolean).length > 1) throw new Error("Privileged worker signing roles must be isolated.");
@@ -525,6 +534,10 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     host: e.HOST,
     port: e.PORT,
     publicUrl: e.PUBLIC_BASE_URL.replace(/\/$/, ""),
+    webauthn: {
+      rpId: e.WEBAUTHN_RP_ID ?? new URL(e.PUBLIC_BASE_URL).hostname,
+      origins: e.WEBAUTHN_ORIGINS ? e.WEBAUTHN_ORIGINS.split(",").map((o) => o.trim().replace(/\/$/, "")).filter(Boolean) : [new URL(e.PUBLIC_BASE_URL).origin],
+    },
     databaseUrl: e.DATABASE_URL,
     redisUrl: e.REDIS_URL,
     appSecret: e.APP_SECRET ?? "dev-insecure-secret-change-me-dev-insecure",
@@ -617,6 +630,10 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     },
     hfBaseUrl: e.HF_BASE_URL.replace(/\/$/, ""),
     webDir: e.WEB_DIR,
+    status: {
+      targets: { public: e.STATUS_SLO_PUBLIC, attested: e.STATUS_SLO_ATTESTED, unlinkable: e.STATUS_SLO_UNLINKABLE },
+      suggestMinRequests: e.STATUS_SUGGEST_MIN_REQUESTS,
+    },
     attestation: {
       intervalMs: e.ATTESTATION_INTERVAL_MS,
       historyDays: e.ATTESTATION_HISTORY_DAYS,

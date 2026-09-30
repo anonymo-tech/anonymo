@@ -26,6 +26,7 @@ import { chatRoutes } from "./api/chat.ts";
 import { modelsRoutes } from "./api/models.ts";
 import { generationRoutes } from "./api/generation.ts";
 import { keysRoutes } from "./api/keys.ts";
+import { teamsRoutes } from "./api/teams.ts";
 import { escrowRoutes } from "./api/escrow.ts";
 import { savedRoutesRoutes } from "./api/saved-routes.ts";
 import { presetsRoutes } from "./api/presets.ts";
@@ -62,6 +63,8 @@ import { ohttpRoutes } from "./ohttp/gateway.ts";
 import { hostAnchorRoutes } from "./api/host-anchor.ts";
 import { TransparencyLog } from "./tlog/log.ts";
 import { tlogRoutes } from "./tlog/routes.ts";
+import { statusRoutes } from "./api/status.ts";
+import { startStatusLoop, statusMiddleware } from "./services/slo.ts";
 
 export type AppOptions = {
   env?: Record<string, unknown>;
@@ -132,6 +135,7 @@ export async function createApp(opts: AppOptions = {}) {
   });
 
   app.use("*", onionIngress(cfg)); // onion requests: drop every client address header before any route reads one
+  app.use("*", statusMiddleware(ctx)); // public-lane outcomes per API surface for /api/v1/status/slo; private lanes are not counted here
   chatRoutes(app, ctx);
   embeddingsRoutes(app, ctx);
   batchesRoutes(app, ctx);
@@ -139,6 +143,7 @@ export async function createApp(opts: AppOptions = {}) {
   modelsRoutes(app, ctx);
   generationRoutes(app, ctx);
   keysRoutes(app, ctx);
+  teamsRoutes(app, ctx);
   escrowRoutes(app, ctx);
   savedRoutesRoutes(app, ctx);
   presetsRoutes(app, ctx);
@@ -158,6 +163,7 @@ export async function createApp(opts: AppOptions = {}) {
   if (ctx.ohttp) ohttpRoutes(app, ctx);
   if (ctx.cfg.hostAnchor.enabled) hostAnchorRoutes(app, ctx);
   if (ctx.tlog) tlogRoutes(app, ctx);
+  statusRoutes(app, ctx);
   publicRoutes(app, ctx);
   mcpRoutes(app, ctx);
   anthropicRoutes(app, ctx);
@@ -211,11 +217,13 @@ export async function createApp(opts: AppOptions = {}) {
   // Passive health belongs to each API replica, not the shared registry worker's memory.
   const healthTimer = cfg.runtimeRole === "api" ? setInterval(() => void ctx.health.flush(ctx.db).catch(() => undefined), 5000) : null;
   healthTimer?.unref();
+  const stopStatus = startStatusLoop(ctx);
   let closed = false;
   const close = async () => {
     if (closed) return;
     closed = true;
     if (healthTimer) clearInterval(healthTimer);
+    await stopStatus();
     await ctx.telegram?.stop();
     await ctx.jobs.stop();
     await ctx.tlog?.stop();
