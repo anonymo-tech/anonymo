@@ -30,6 +30,8 @@ import { teamsRoutes } from "./api/teams.ts";
 import { escrowRoutes } from "./api/escrow.ts";
 import { savedRoutesRoutes } from "./api/saved-routes.ts";
 import { presetsRoutes } from "./api/presets.ts";
+import { characterRoutes } from "./api/characters.ts";
+import { memoryRoutes } from "./api/memory.ts";
 import { agentSessionsRoutes } from "./api/agent-sessions.ts";
 import { spendRoutes } from "./api/spend.ts";
 import { holdersRoutes } from "./api/holders.ts";
@@ -64,6 +66,7 @@ import { hostAnchorRoutes } from "./api/host-anchor.ts";
 import { TransparencyLog } from "./tlog/log.ts";
 import { tlogRoutes } from "./tlog/routes.ts";
 import { statusRoutes } from "./api/status.ts";
+import { skillsRoutes } from "./api/skills.ts";
 import { startStatusLoop, statusMiddleware } from "./services/slo.ts";
 
 export type AppOptions = {
@@ -147,6 +150,8 @@ export async function createApp(opts: AppOptions = {}) {
   escrowRoutes(app, ctx);
   savedRoutesRoutes(app, ctx);
   presetsRoutes(app, ctx);
+  characterRoutes(app, ctx);
+  memoryRoutes(app, ctx);
   agentSessionsRoutes(app, ctx);
   spendRoutes(app, ctx);
   holdersRoutes(app, ctx);
@@ -164,6 +169,7 @@ export async function createApp(opts: AppOptions = {}) {
   if (ctx.cfg.hostAnchor.enabled) hostAnchorRoutes(app, ctx);
   if (ctx.tlog) tlogRoutes(app, ctx);
   statusRoutes(app, ctx);
+  skillsRoutes(app, ctx);
   publicRoutes(app, ctx);
   mcpRoutes(app, ctx);
   anthropicRoutes(app, ctx);

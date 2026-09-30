@@ -1156,3 +1156,102 @@ export const statusIncidents = pgTable(
   },
   (t) => [index("status_incidents_started_idx").on(t.startedAt)],
 );
+
+// Characters (src/characters, src/api/characters.ts): Tavern cards a creator publishes. A public or unlisted card is the
+// creator's published text, kept as written; a private card is kept only as the ciphertext the client sealed, plus its hash.
+export const characters = pgTable(
+  "characters",
+  {
+    id: text("id").primaryKey(), // ch_<24 hex>
+    accountId: text("account_id").notNull(), // the owner
+    visibility: text("visibility").notNull(), // public | unlisted | private
+    name: text("name"), // null for a private card
+    tags: text("tags").array().notNull().default(sql`'{}'::text[]`), // empty for a private card
+    creator: text("creator"), // the card's creator field; null for a private card
+    spec: text("spec"), // chara_card_v2 | chara_card_v3; null for a private card
+    card: jsonb("card"), // the normalized card (public and unlisted only)
+    sealedCard: text("sealed_card"), // private only: arm1.<iv>.<ciphertext> sealed on the client
+    cardHash: text("card_hash").notNull(), // sha256 hex of the normalized card's canonical JSON
+    defaultModel: text("default_model"), // the model @character/<id> uses when the request names none
+    createdAt: ts("created_at").notNull().defaultNow(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [index("characters_account_idx").on(t.accountId), index("characters_visibility_idx").on(t.visibility, t.updatedAt)],
+);
+
+// Creator attribution for public cards: calls and cost per character per UTC day. No request, user or content.
+export const characterUsage = pgTable(
+  "character_usage",
+  {
+    characterId: text("character_id").notNull(),
+    period: text("period").notNull(), // YYYY-MM-DD (UTC)
+    calls: integer("calls").notNull().default(0),
+    cost: money("cost").notNull().default(sql`0`),
+  },
+  (t) => [primaryKey({ columns: [t.characterId, t.period] })],
+);
+
+// Character memory (src/api/memory.ts): ciphertext the client sealed under a viewing key the router never receives.
+export const characterMemory = pgTable(
+  "character_memory",
+  {
+    id: text("id").primaryKey(), // mem_<24 hex>
+    accountId: text("account_id").notNull(),
+    scope: text("scope").notNull(), // 32 hex, an HMAC of the character id under the client's key: opaque to the router
+    kind: text("kind").notNull(), // summary | fact | lorebook | state
+    sealed: text("sealed").notNull(), // arm1.<iv>.<ciphertext>
+    keyId: text("key_id").notNull(), // 16 hex fingerprint of the client's key, so a client can tell which key sealed it
+    bytes: integer("bytes").notNull(),
+    embedding: real("embedding").array(), // only when the client opts in
+    createdAt: ts("created_at").notNull().defaultNow(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [index("character_memory_account_scope_idx").on(t.accountId, t.scope)],
+);
+
+// Secured Skills Hub (src/skills/): agent skill folders (SKILL.md plus scripts and resources) imported from a repository, an
+// uploaded archive or a mirrored registry, stored as one canonical tar with its sha256 and the static scan report.
+export const skills = pgTable(
+  "skills",
+  {
+    id: text("id").primaryKey(), // sk_ + the first 24 hex characters of content_hash
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    version: text("version").notNull(),
+    description: text("description").notNull(),
+    author: text("author").notNull(), // as written in SKILL.md frontmatter
+    accountId: text("account_id"), // the publishing account, paid the author share of installs; null for a mirrored skill
+    createdBy: text("created_by"), // key hash that imported it; null for the mirror job
+    source: jsonb("source").notNull(), // { kind: upload | git | mirror, repo?, ref?, commit?, path?, registry? }
+    files: jsonb("files").notNull(), // [{ path, type, mode, size, sha256, target? }] in canonical order
+    contentHash: text("tar_sha256").notNull(), // content hash: sha256 of the canonical tar
+    archive: text("archive").notNull(), // base64 of the gzipped canonical tar
+    size: integer("size").notNull(),
+    fileCount: integer("file_count").notNull(),
+    level: text("level").notNull(), // trusted | caution | dangerous
+    score: integer("score").notNull(),
+    report: jsonb("report").notNull(), // the scan report (src/skills/scanner.ts)
+    priceUsdg: bigint("price_usdg", { mode: "bigint" }).notNull().default(sql`0`), // USDG base units (1e-6); 0 = free
+    revokedAt: ts("revoked_at"),
+    revokedReason: text("revoked_reason"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("skills_tar_sha256_uq").on(t.contentHash), index("skills_slug_idx").on(t.slug), index("skills_level_idx").on(t.level)],
+);
+
+export const skillInstalls = pgTable(
+  "skill_installs",
+  {
+    id: text("id").primaryKey(),
+    skillId: text("skill_id").notNull(),
+    accountId: text("account_id").notNull(), // the installer
+    keyHash: text("key_hash"),
+    priceUsdg: bigint("price_usdg", { mode: "bigint" }).notNull(),
+    authorShare: money("author_share").notNull(), // pico-USD credited to the author
+    fee: money("fee").notNull(), // pico-USD network fee
+    receipt: jsonb("receipt").notNull(), // { payload, signature: { alg, key_id, sig } }
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("skill_installs_skill_account_uq").on(t.skillId, t.accountId), index("skill_installs_account_idx").on(t.accountId)],
+);

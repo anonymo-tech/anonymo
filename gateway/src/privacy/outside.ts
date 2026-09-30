@@ -143,6 +143,14 @@ const redisFamilies: RedisFamily[] = [
     evidence: [ev("src/api/chat.ts", "await limitOrThrow(ctx, `kt:${billing.key.keyHash}`"), ev("src/api/council.ts", "tk.limitOrThrow(ctx, `kt:${billing.key.keyHash}`")],
   }),
   limit({
+    prefix: "skills-import:",
+    shape: "skills-import:<key hash>",
+    purpose: "Skill imports per hour for one API key (each import may fetch a repository and runs the scanner).",
+    holds: "key-hash",
+    seconds: 3600,
+    evidence: [ev("src/api/skills.ts", "await ctx.limiter.take(`skills-import:${key.keyHash}`")],
+  }),
+  limit({
     prefix: "blind:buy:",
     shape: "blind:buy:<key hash>",
     purpose: "Blind-token purchases per minute for one API key.",
@@ -393,9 +401,9 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
   {
     file: "src/api/anthropic.ts",
     carries: "prompt-or-answer",
-    reads: "The JSON body of an Anthropic-format messages call.",
+    reads: "The JSON body of an Anthropic-format messages call and free onion count requests. The router reads code, prompts and tools in memory.",
     then: "Converted to a chat request and sent through the router's own chat route, so it is handled and kept exactly as a chat call is.",
-    kept: "Nothing beyond what src/api/chat.ts keeps.",
+    kept: "Nothing beyond what src/api/chat.ts keeps; token counts alone create no payment or request record.",
     evidence: [ev("src/api/anthropic.ts", "const raw = await readJson(c);")],
   },
   {
@@ -479,12 +487,38 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
     evidence: [ev("src/api/saved-routes.ts", "routeCreateSchema.parse(await readJson(c))")],
   },
   {
+    file: "src/api/skills.ts",
+    carries: "public-data",
+    reads:
+      "A skill to publish: a repository URL, ref and folder, or an uploaded .tar.gz, .tar or .zip of a skill folder (SKILL.md, scripts and resources), and an optional price; an author's new price; an operator's revocation reason.",
+    then: "The archive is read in memory under size, file-count and path limits (nothing is extracted to disk), normalised into one canonical tar, hashed and scanned; a repository is fetched at depth 1 and its tree read without a checkout.",
+    kept: "The published skill, its hash and scan report in skills; installs in skill_installs.",
+    evidence: [ev("src/api/skills.ts", "importSchema.parse(await readJson(c))"), ev("src/api/skills.ts", "new Uint8Array(await c.req.arrayBuffer())"), ev("src/skills/archive.ts", "Nothing is extracted to disk")],
+  },
+  {
     file: "src/api/presets.ts",
     carries: "settings",
     reads: "A preset: fallback models, provider preferences, sampling controls and the owner's own system prompt, response_format and tool definitions.",
     then: "Validated against a strict schema with size caps, then stored as a new version.",
     kept: "The preset's versions in preset_versions.",
     evidence: [ev("src/api/presets.ts", "presetDocSchema.parse(await readJson(c))")],
+  },
+  {
+    file: "src/api/characters.ts",
+    carries: "prompt-or-answer",
+    reads:
+      "A character card (JSON or PNG) or, for a private card, only its ciphertext and hash; and on POST /api/v1/characters/:id/chat a chat request with the conversation, the memory the client decrypted and, for a private card, the decrypted card.",
+    then: "A public or unlisted card is normalized and stored. A chat is assembled into a prompt in memory and sent through the chat route (src/api/chat.ts), like any other call; a private card sent with it is checked against its stored hash and used for that call only.",
+    kept: "Public and unlisted cards in characters; for a private card only the ciphertext and hash. Nothing of a chat, its memory or a decrypted private card; public characters add one to a daily call and cost counter (character_usage).",
+    evidence: [ev("src/api/characters.ts", "const v = bodySchema.parse(await readJson(c));"), ev("src/characters/registry.ts", "for (const k of EXTRA_FIELDS) delete body[k]; // never forwarded to a provider")],
+  },
+  {
+    file: "src/api/memory.ts",
+    carries: "settings",
+    reads: "A memory blob the client sealed (ciphertext), its opaque scope, kind and key fingerprint, and an embedding vector only when the client opts in.",
+    then: "Checked to be in sealed form (plaintext is refused), then stored.",
+    kept: "The ciphertext and its labels in character_memory, and the vector when the client opted in.",
+    evidence: [ev("src/api/memory.ts", "plaintext is refused")],
   },
   {
     file: "src/api/teams.ts",
@@ -639,6 +673,15 @@ export const EXTERNAL: ExternalDoc = {
     evidence: [ev("src/lib/util.ts", "(level === \"error\" || level === \"warn\" ? console.error : console.log)(line);"), ev("src/lib/util.ts", "const line = JSON.stringify({ t: new Date().toISOString(), level, msg, ...fields }")],
   },
   otherStores: [
+    {
+      id: "messages-proxy-prices",
+      name: "Messages proxy prices on the caller's computer",
+      purpose: "The local proxy estimates a Messages budget using model prices fetched over Tor. The request text, code, tool schemas and results are read in memory to count tokens, then forwarded over Tor; count_tokens is answered locally without any network request.",
+      holds: "The public unlinkable model directory in memory. The existing local tokens.json file atomically moves every selected bearer token to unconfirmed before sending; uncertainty keeps all members there, while a definite unserved refusal returns them. No request or answer text is written to that file or logged.",
+      ttl: "Model prices are refreshed after one minute and lost on process exit. Local token credentials remain until expiry filtering, successful settlement or removal by the caller; uncertain sent sets are never automatically reused.",
+      requestText: "none",
+      evidence: [ev("packages/private/src/messages.ts", "cached = { until: Date.now() + 60_000, rows: json.data }"), ev("packages/private/src/store.ts", "leaseBudget(budget: bigint"), ev("packages/private/src/proxy.ts", "countMessageTokens(JSON.parse")],
+    },
     {
       id: "batch-memory",
       name: "Batch requests and answers in the router's memory, without Redis",
