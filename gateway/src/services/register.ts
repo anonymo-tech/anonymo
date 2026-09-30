@@ -1,6 +1,8 @@
 import { runNetworkFeeBurn } from "../network/fee-burn.ts";
 import { pollHostBonds } from "../network/bond-indexer.ts";
 import { runHostSlasher } from "../network/slashing.ts";
+import { pruneAgentLedgerLinks } from "../agents/ledger-context.ts";
+import { runAgentAlerts } from "../agents/alert-delivery.ts";
 import { refreshSanctions } from "../network/sanctions.ts";
 import type { Ctx } from "../context.ts";
 import { pruneAgentPolicyEvents } from "../agents/store.ts";
@@ -29,10 +31,12 @@ import { runSkillsMirror } from "../skills/service.ts";
 export function registerJobs(ctx: Ctx, router?: RouterCall, dispatch?: Dispatch) {
   const { cfg, jobs } = ctx;
   if (cfg.hostBonds.enabled) { jobs.register("host-bond-indexer", 5_000, () => pollHostBonds(ctx), { atStart: true }); jobs.register("host-slasher", 60_000, () => runHostSlasher(ctx)); }
+  if (cfg.agentPolicyEnabled) jobs.register("agent-alerts", 60_000, () => runAgentAlerts(ctx));
   if (cfg.sanctions.enabled) jobs.register("sanctions-refresh", 86_400_000, () => refreshSanctions(ctx), { atStart: true });
   const chainOn = () => ["credits", "callPay", "payWithStock", "providerBond", "receiptAnchor", "royalty", "staking"].some((n) => ctx.chain.address(n as never));
   jobs.register("health-flush", 5_000, () => ctx.health.flush(ctx.db));
   jobs.register("holds-expire", 60_000, () => expireHolds(ctx.db));
+  if (cfg.agentPolicyEnabled) jobs.register("agent-ledger-retention", 3_600_000, () => pruneAgentLedgerLinks(ctx.db));
   if (cfg.agentPolicyEnabled) jobs.register("agent-policy-retention", 3_600_000, () => pruneAgentPolicyEvents(ctx.db));
   jobs.register("catalog-refresh", 30_000, () => ctx.catalog.refresh(), { atStart: true });
   jobs.register("provider-registry", cfg.workers.registryIntervalMs, () => runRegistry(ctx), { atStart: true });

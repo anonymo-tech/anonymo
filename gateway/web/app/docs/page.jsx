@@ -1,5 +1,6 @@
 import NetworkPayoutDocs from "../../components/NetworkPayoutDocs";
 import HostBondsDocs from "../../components/HostBondsDocs";
+import AgentLedgerDocs from "../../components/AgentLedgerDocs";
 import NetworkHostsDocs from "../../components/NetworkHostsDocs";
 import SanctionsSection from "./SanctionsSection";
 import E2eeDocs from "../../components/E2eeDocs";
@@ -7,6 +8,7 @@ import PageFrame from "../../components/PageFrame";
 import { Button, Code } from "../../components/UI";
 import { sampleRequest } from "../../components/Extensions";
 import AgentAutonomyDocs from "../../components/AgentAutonomyDocs";
+import AgentAlertDocs from "../../components/AgentAlertDocs";
 import AgentRulebookDocs from "../../components/AgentRulebookDocs";
 import AgentBreakersDocs from "../../components/AgentBreakersDocs";
 import AgentCertificateDocs from "../../components/AgentCertificateDocs";
@@ -807,6 +809,8 @@ export default function Docs() {
             The router serves this site, so your base URL is this site’s address followed by /api/v1. Create a key in the dashboard, deposit USDG to it and call it from any OpenAI- or OpenRouter-compatible client.
           </div>
           <AgentRulebookDocs /><AgentBreakersDocs /><AgentAutonomyDocs />
+          <AgentLedgerDocs />
+          <AgentAlertDocs />
           <AgentApprovalDocs />
           <AgentCertificateDocs />
           <h2 id="quickstart">Two changes to get started.</h2>
