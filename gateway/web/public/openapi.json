@@ -3,7 +3,7 @@
   "info": {
     "title": "Anonymo API",
     "version": "1.0.0",
-    "description": "Scope: a documented subset of the public HTTP API that the Anonymo router implements. It covers the model catalog, chat completions, embeddings, key creation and listing, generations, status, health and receipts, plus the blind-token issuer keys and purchase (present only when the router enables blind tokens) the Oblivious HTTP gateway keys, gateway and relay list (present only when the router enables Oblivious HTTP) the transparency log of keys and configurations with its tiles, checkpoints and witness cosignatures (present only when the router enables it) the Lane: model variants, day-zero candidates and creator royalty claims, and Private RAG (answers from documents sent with the question, nothing kept). Other implemented routes (for example legacy completions, the /v1 aliases, key updates, credits, Stock Token payments, BYOK, teams, wallet sign-in, rankings, provider onboarding and the paymaster) are not described here, and a route's absence from this document does not mean it is absent from the router. Endpoint availability, payment modes and model capabilities are deployment-specific. Errors share the OpenRouter-shaped ApiError body; the 4xx responses each operation can return are declared with the reusable responses in components.responses.",
+    "description": "Scope: a documented subset of the public HTTP API that the Anonymo router implements. It covers the model catalog, chat completions, embeddings, key creation and listing, generations, status, health and receipts, plus the blind-token issuer keys and purchase (present only when the router enables blind tokens) the Oblivious HTTP gateway keys, gateway and relay list (present only when the router enables Oblivious HTTP) the transparency log of keys and configurations with its tiles, checkpoints and witness cosignatures (present only when the router enables it) the Lane: model variants, day-zero candidates and creator royalty claims, Private RAG (answers from documents sent with the question, nothing kept), and the Batch API (many chat or embeddings requests run in the background at a discount, with the lines and answers kept sealed outside the database until the results expire). Other implemented routes (for example legacy completions, the /v1 aliases, key updates, credits, Stock Token payments, BYOK, teams, wallet sign-in, rankings, provider onboarding and the paymaster) are not described here, and a route's absence from this document does not mean it is absent from the router. Endpoint availability, payment modes and model capabilities are deployment-specific. Errors share the OpenRouter-shaped ApiError body; the 4xx responses each operation can return are declared with the reusable responses in components.responses.",
     "contact": {
       "name": "Anonymo support",
       "email": "Anonymo1@atomicmail.io"
@@ -61,6 +61,10 @@
       "description": "Named routing policies callable as model @route/<slug>."
     },
     {
+      "name": "Presets",
+      "description": "Versioned configs callable as model @preset/<name> or @preset/<name>@<version>: a saved route plus a system prompt, tools and a response_format, with diff and rollback."
+    },
+    {
       "name": "Agent Sessions",
       "description": "Short-lived, budget-capped session keys for agent runs."
     },
@@ -111,6 +115,18 @@
     {
       "name": "Transparency log",
       "description": "An append-only log (C2SP tlog-tiles, RFC 6962 hashing) of the keys and configurations clients encrypt to or verify against: receipt keys, Oblivious HTTP key configurations, blind-token issuer keys, measurement bundles and sidecar key bindings. Checkpoints are signed notes (C2SP tlog-checkpoint) that witnesses cosign (C2SP tlog-cosignature, cosignature/v1). With TLOG_REKOR_ENABLED, each new checkpoint is also recorded in Sigstore's Rekor log (a hashedrekord entry signed with an ECDSA P-256 anchoring key), an alternative to witnesses. Present only when the router enables it (TLOG_ENABLED)."
+    },
+    {
+      "name": "Ollama",
+      "description": "The Ollama API under /ollama for Ollama clients (Open WebUI, Continue, the ollama libraries, LangChain's ChatOllama): set the client's host to <router>/ollama. Chat, generate and embed calls run on the same keys, lanes and signed receipts as chat completions; the key is sent as Authorization: Bearer."
+    },
+    {
+      "name": "Batches",
+      "description": "The Batch API: many chat completions or embeddings requests sent in one call and run in the background on the router's worker, at 50% of the normal price, with results kept for 24 hours after the batch finishes."
+    },
+    {
+      "name": "Rerank",
+      "description": "Rerank documents against a query (Cohere and Jina shape), billed per token or per search unit, with a signed receipt."
     }
   ],
   "paths": {
@@ -155,6 +171,18 @@
               "type": "string",
               "examples": [
                 "abliterated,native_low_refusal"
+              ]
+            }
+          },
+          {
+            "name": "output_modalities",
+            "in": "query",
+            "required": false,
+            "description": "Comma-separated output modalities to keep (text, embeddings, rerank, ...); a model is kept when it outputs any of them. all, or unset, keeps every model.",
+            "schema": {
+              "type": "string",
+              "examples": [
+                "rerank"
               ]
             }
           }
@@ -1992,6 +2020,494 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/presets": {
+      "get": {
+        "tags": [
+          "Presets"
+        ],
+        "operationId": "listPresets",
+        "summary": "List the account's presets at their latest version",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Presets, sorted by name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Preset"
+                      }
+                    },
+                    "limit": {
+                      "type": "integer"
+                    },
+                    "limits": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/presets/{name}": {
+      "get": {
+        "tags": [
+          "Presets"
+        ],
+        "operationId": "getPreset",
+        "summary": "Get a preset (the latest version, or ?version=)",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{1,47}$"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "A version number (3 or v3) or a hash prefix of at least 7 hex characters."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The preset version.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Preset"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Presets"
+        ],
+        "operationId": "putPreset",
+        "summary": "Create a preset or save a new version",
+        "description": "Owner or admin. The body is the whole document. A change appends an immutable version; an unchanged document adds nothing (changed: false). Models, the lane and the size caps are checked as for a saved route.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresetDocument"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A new version, or the unchanged latest one.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Preset"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created as version 1.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Preset"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "preset_limit_reached (100 per account), preset_version_limit (100 versions per preset), or route_lane_unavailable (a model has no provider that meets the preset's lane or disclosure ceiling right now).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{1,47}$"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Presets"
+        ],
+        "operationId": "deletePreset",
+        "summary": "Delete a preset and every version of it",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "model": {
+                          "type": "string"
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        },
+                        "versions": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{1,47}$"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/presets/{name}/versions": {
+      "get": {
+        "tags": [
+          "Presets"
+        ],
+        "operationId": "listPresetVersions",
+        "summary": "List a preset's versions, newest first",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PresetVersion"
+                      }
+                    },
+                    "latest": {
+                      "type": "integer"
+                    },
+                    "limit": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{1,47}$"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/presets/{name}/diff": {
+      "get": {
+        "tags": [
+          "Presets"
+        ],
+        "operationId": "diffPresetVersions",
+        "summary": "JSON diff between two versions of a preset",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{1,47}$"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Defaults to the version before `to`."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Defaults to the latest version."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The changes from `from` to `to`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PresetDiff"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/presets/{name}/rollback": {
+      "post": {
+        "tags": [
+          "Presets"
+        ],
+        "operationId": "rollbackPreset",
+        "summary": "Restore an earlier version as a new version",
+        "description": "Owner or admin. Appends a version with the content (and hash) of the one named; nothing is rewritten or deleted.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "version"
+                ],
+                "properties": {
+                  "version": {
+                    "oneOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ],
+                    "description": "A version number or a hash prefix."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The new latest version (changed: false when it was already current).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Preset"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "preset_version_limit, preset_invalid, or route_lane_unavailable: the version's models can no longer be served under its lane.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{1,47}$"
             }
           }
         ]
@@ -4751,6 +5267,1210 @@
           }
         }
       }
+    },
+    "/api/v1/batches": {
+      "post": {
+        "tags": [
+          "Batches"
+        ],
+        "operationId": "createBatch",
+        "summary": "Create a batch of chat or embeddings requests, run in the background at a discount",
+        "description": "Also at POST /v1/batches. The OpenAI Batch API shape without files: send the lines inline as requests (a list) or input_jsonl (JSON Lines text), one request per line with a unique custom_id (at most 64 characters), method POST, a url of /v1/chat/completions or /v1/embeddings (the /api/v1 forms are accepted too) and the request body. endpoint, when given, must match every line's url. input_file_id is refused with 400: there is no files endpoint, so send requests or input_jsonl. stream true, council mode (model anonymo/council) and verify are refused in a batch. A batch with an invalid line is not created: the 400 invalid_request carries error.metadata.errors, a list of { line, code, message } with 1-based line numbers. Needs a prepaid key. The lines run on the router's worker in spare capacity, so a batch can take minutes; lines not run within the 24h completion window expire and are not charged. Each line is billed at 50% of the normal price (BATCH_DISCOUNT_BPS 5000), a failed line is not charged, and every answered line gets its own signed receipt. Lanes, provider preferences, key budgets and key rate limits apply to each line exactly as to a normal call. Limits (operator settings): BATCH_MAX_LINES (1000 lines), BATCH_MAX_BYTES (8 MiB of input) and BATCH_MAX_ACTIVE (2 unfinished batches per key; one more is refused with 429 batch_limit); a batch over the line or byte limit is refused. The request lines and answers are never written to the database: until the results expire they are kept sealed (AES-256-GCM, with a key derived from the router's secret) in Redis, or in the router's memory without Redis, and then deleted. The database keeps only counts, costs, statuses and generation ids.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The batch was accepted; its status is validating until the worker picks it up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Batch"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Batches"
+        ],
+        "operationId": "listBatches",
+        "summary": "List the key's batches, newest first",
+        "description": "Also at GET /v1/batches. Pages with limit and after (the id of the last batch of the previous page).",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Batches per page.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 20
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "description": "A batch id: list the batches after it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of batches, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/batches/{id}": {
+      "get": {
+        "tags": [
+          "Batches"
+        ],
+        "operationId": "getBatch",
+        "summary": "Read a batch: status, counts and cost",
+        "description": "Also at GET /v1/batches/{id}. Poll it until status is completed, failed, expired or cancelled, then read the output and errors files.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The batch id (batch_...).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The batch.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Batch"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/batches/{id}/cancel": {
+      "post": {
+        "tags": [
+          "Batches"
+        ],
+        "operationId": "cancelBatch",
+        "summary": "Cancel a batch",
+        "description": "Also at POST /v1/batches/{id}/cancel. The status becomes cancelling, then cancelled: lines already running finish and are billed, lines not started are never run or billed and appear in the errors file.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The batch id (batch_...).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The batch, cancelling or cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Batch"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/batches/{id}/output": {
+      "get": {
+        "tags": [
+          "Batches"
+        ],
+        "operationId": "getBatchOutput",
+        "summary": "The answered lines of a batch, as JSONL",
+        "description": "Also at GET /v1/batches/{id}/output. One line per answered request: { id: batch_req_..., custom_id, response: { status_code: 200, request_id: the generation id, body: the normal chat or embeddings response, usage.cost and receipt included }, error: null }. Kept for BATCH_RESULTS_TTL (24 hours by default) after the batch finishes.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The batch id (batch_...).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The answered lines.",
+            "content": {
+              "application/jsonl": {
+                "schema": {
+                  "type": "string",
+                  "description": "JSON Lines: one BatchResultLine object per line."
+                },
+                "x-line-schema": {
+                  "$ref": "#/components/schemas/BatchResultLine"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "410": {
+            "description": "The results were deleted: they are kept for BATCH_RESULTS_TTL (24 hours by default) after the batch finishes (batch_results_expired).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/batches/{id}/errors": {
+      "get": {
+        "tags": [
+          "Batches"
+        ],
+        "operationId": "getBatchErrors",
+        "summary": "The failed and unrun lines of a batch, as JSONL",
+        "description": "Also at GET /v1/batches/{id}/errors. One line per failed or unrun request: { id, custom_id, response: { status_code, request_id, body: { error } } or null for a line that never ran, error: { code, message } }. Failed and unrun lines are not charged. Kept for BATCH_RESULTS_TTL (24 hours by default) after the batch finishes.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The batch id (batch_...).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The failed and unrun lines.",
+            "content": {
+              "application/jsonl": {
+                "schema": {
+                  "type": "string",
+                  "description": "JSON Lines: one BatchResultLine object per line."
+                },
+                "x-line-schema": {
+                  "$ref": "#/components/schemas/BatchResultLine"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "410": {
+            "description": "The results were deleted: they are kept for BATCH_RESULTS_TTL (24 hours by default) after the batch finishes (batch_results_expired).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/ollama/api/version": {
+      "get": {
+        "tags": [
+          "Ollama"
+        ],
+        "operationId": "ollamaVersion",
+        "summary": "The Ollama API version this endpoint speaks",
+        "responses": {
+          "200": {
+            "description": "The version.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "version"
+                  ],
+                  "properties": {
+                    "version": {
+                      "type": "string",
+                      "examples": [
+                        "0.12.6"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/OllamaError"
+          }
+        }
+      }
+    },
+    "/ollama/api/tags": {
+      "get": {
+        "tags": [
+          "Ollama"
+        ],
+        "operationId": "ollamaTags",
+        "summary": "List models in Ollama's shape",
+        "description": "The live catalog, as GET /api/v1/models lists it. Each name is a catalog id with Ollama's :latest tag (a routing suffix such as :free or :private works as a tag too). size is 0 (there are no local weights) and digest is the SHA-256 of the catalog id. X-Anonymo-Lane: attested lists only the models that lane can serve now. Public.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Lane"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The models.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "models"
+                  ],
+                  "properties": {
+                    "models": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/OllamaModel"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/OllamaError"
+          }
+        }
+      }
+    },
+    "/ollama/api/ps": {
+      "get": {
+        "tags": [
+          "Ollama"
+        ],
+        "operationId": "ollamaPs",
+        "summary": "Models held in memory (always none)",
+        "description": "Models are served on demand by hosted providers, so the list is always empty.",
+        "responses": {
+          "200": {
+            "description": "An empty list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "models"
+                  ],
+                  "properties": {
+                    "models": {
+                      "type": "array",
+                      "maxItems": 0,
+                      "items": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/OllamaError"
+          }
+        }
+      }
+    },
+    "/ollama/api/show": {
+      "post": {
+        "tags": [
+          "Ollama"
+        ],
+        "operationId": "ollamaShow",
+        "summary": "Describe a model",
+        "description": "details, capabilities (completion, tools, vision, thinking, or embedding) and the context length in model_info. Public. An unknown model is a 404.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "model": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Older clients send the name here."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The model.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OllamaShowResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/OllamaError"
+          }
+        }
+      }
+    },
+    "/ollama/api/chat": {
+      "post": {
+        "tags": [
+          "Ollama"
+        ],
+        "operationId": "ollamaChat",
+        "summary": "Chat (Ollama)",
+        "description": "Converted to a chat completion and sent through /api/v1/chat/completions in-process, so the key, its balance and limits, the lane and the signed receipt are those of a chat call. Streams NDJSON unless stream is false: lines with done false, tool calls whole in one line, then a closing line with done true, done_reason, the counts and durations (nanoseconds) and an anonymo object with the receipt id. A request the router refuses before any output is an HTTP error; a failure after output has begun is an {\"error\"} line. No messages: the model is loaded as Ollama does (done_reason load), with no call and no charge.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Lane"
+          },
+          {
+            "$ref": "#/components/parameters/DisclosureMax"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OllamaChatRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The reply, or its NDJSON stream.",
+            "headers": {
+              "X-Anonymo-Lane": {
+                "$ref": "#/components/headers/LaneServed"
+              },
+              "X-Receipt-Id": {
+                "$ref": "#/components/headers/ReceiptId"
+              },
+              "Inference-Id": {
+                "$ref": "#/components/headers/InferenceId"
+              },
+              "X-Generation-Id": {
+                "$ref": "#/components/headers/GenerationId"
+              },
+              "X-Anonymo-Policy-Hash": {
+                "$ref": "#/components/headers/PolicyHash"
+              },
+              "X-Anonymo-Disclosure": {
+                "$ref": "#/components/headers/Disclosure"
+              },
+              "X-Anonymo-Ignored": {
+                "description": "Present when the request asked for something that is accepted and not acted on: options that tune a local runtime (options.num_ctx and the like), suffix, template, raw or context. A comma separated list.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OllamaChatResponse"
+                }
+              },
+              "application/x-ndjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/OllamaChatResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/OllamaError"
+          }
+        }
+      }
+    },
+    "/ollama/api/generate": {
+      "post": {
+        "tags": [
+          "Ollama"
+        ],
+        "operationId": "ollamaGenerate",
+        "summary": "Generate (Ollama)",
+        "description": "system and prompt are sent as a system and a user message through /api/v1/chat/completions, with the same billing, lanes and receipts. The answer is in response. Streams NDJSON unless stream is false. suffix, template, raw and context are accepted and named in X-Anonymo-Ignored.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Lane"
+          },
+          {
+            "$ref": "#/components/parameters/DisclosureMax"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OllamaGenerateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The reply, or its NDJSON stream.",
+            "headers": {
+              "X-Anonymo-Lane": {
+                "$ref": "#/components/headers/LaneServed"
+              },
+              "X-Receipt-Id": {
+                "$ref": "#/components/headers/ReceiptId"
+              },
+              "Inference-Id": {
+                "$ref": "#/components/headers/InferenceId"
+              },
+              "X-Generation-Id": {
+                "$ref": "#/components/headers/GenerationId"
+              },
+              "X-Anonymo-Policy-Hash": {
+                "$ref": "#/components/headers/PolicyHash"
+              },
+              "X-Anonymo-Disclosure": {
+                "$ref": "#/components/headers/Disclosure"
+              },
+              "X-Anonymo-Ignored": {
+                "description": "Present when the request asked for something that is accepted and not acted on: options that tune a local runtime (options.num_ctx and the like), suffix, template, raw or context. A comma separated list.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OllamaGenerateResponse"
+                }
+              },
+              "application/x-ndjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/OllamaGenerateResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/OllamaError"
+          }
+        }
+      }
+    },
+    "/ollama/api/embed": {
+      "post": {
+        "tags": [
+          "Ollama"
+        ],
+        "operationId": "ollamaEmbed",
+        "summary": "Embeddings (Ollama)",
+        "description": "Sent through /api/v1/embeddings, with the same billing, lanes and receipts.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Lane"
+          },
+          {
+            "$ref": "#/components/parameters/DisclosureMax"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "model",
+                  "input"
+                ],
+                "properties": {
+                  "model": {
+                    "type": "string"
+                  },
+                  "input": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "minItems": 1
+                      }
+                    ]
+                  },
+                  "dimensions": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "truncate": {
+                    "type": "boolean",
+                    "description": "Accepted and ignored."
+                  },
+                  "keep_alive": {
+                    "description": "Accepted and ignored."
+                  },
+                  "options": {
+                    "type": "object",
+                    "description": "Accepted and named in X-Anonymo-Ignored."
+                  },
+                  "provider": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The vectors, in the order of input.",
+            "headers": {
+              "X-Anonymo-Lane": {
+                "$ref": "#/components/headers/LaneServed"
+              },
+              "X-Receipt-Id": {
+                "$ref": "#/components/headers/ReceiptId"
+              },
+              "Inference-Id": {
+                "$ref": "#/components/headers/InferenceId"
+              },
+              "X-Generation-Id": {
+                "$ref": "#/components/headers/GenerationId"
+              },
+              "X-Anonymo-Policy-Hash": {
+                "$ref": "#/components/headers/PolicyHash"
+              },
+              "X-Anonymo-Disclosure": {
+                "$ref": "#/components/headers/Disclosure"
+              },
+              "X-Anonymo-Ignored": {
+                "description": "Present when the request asked for something that is accepted and not acted on: options that tune a local runtime (options.num_ctx and the like), suffix, template, raw or context. A comma separated list.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "model",
+                    "embeddings"
+                  ],
+                  "properties": {
+                    "model": {
+                      "type": "string"
+                    },
+                    "embeddings": {
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        }
+                      }
+                    },
+                    "total_duration": {
+                      "type": "integer"
+                    },
+                    "load_duration": {
+                      "type": "integer"
+                    },
+                    "prompt_eval_count": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/OllamaError"
+          }
+        }
+      }
+    },
+    "/ollama/api/embeddings": {
+      "post": {
+        "tags": [
+          "Ollama"
+        ],
+        "operationId": "ollamaEmbeddingsLegacy",
+        "summary": "One embedding (older Ollama endpoint)",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Lane"
+          },
+          {
+            "$ref": "#/components/parameters/DisclosureMax"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "model",
+                  "prompt"
+                ],
+                "properties": {
+                  "model": {
+                    "type": "string"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The vector.",
+            "headers": {
+              "X-Anonymo-Lane": {
+                "$ref": "#/components/headers/LaneServed"
+              },
+              "X-Receipt-Id": {
+                "$ref": "#/components/headers/ReceiptId"
+              },
+              "Inference-Id": {
+                "$ref": "#/components/headers/InferenceId"
+              },
+              "X-Generation-Id": {
+                "$ref": "#/components/headers/GenerationId"
+              },
+              "X-Anonymo-Policy-Hash": {
+                "$ref": "#/components/headers/PolicyHash"
+              },
+              "X-Anonymo-Disclosure": {
+                "$ref": "#/components/headers/Disclosure"
+              },
+              "X-Anonymo-Ignored": {
+                "description": "Present when the request asked for something that is accepted and not acted on: options that tune a local runtime (options.num_ctx and the like), suffix, template, raw or context. A comma separated list.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "embedding"
+                  ],
+                  "properties": {
+                    "embedding": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/OllamaError"
+          }
+        }
+      }
+    },
+    "/ollama/api/pull": {
+      "post": {
+        "tags": [
+          "Ollama"
+        ],
+        "operationId": "ollamaPull",
+        "summary": "Pull a model (nothing to download)",
+        "description": "A listed model is ready as soon as it is named, so the pull succeeds at once with {\"status\":\"success\"} (one NDJSON line unless stream is false). An unknown model is a 404. create, copy, push, delete and blob uploads are 501s.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "model": {
+                    "type": "string"
+                  },
+                  "stream": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "success"
+                    }
+                  }
+                }
+              },
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "success"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/OllamaError"
+          }
+        }
+      }
+    },
+    "/api/v1/keys/{hash}": {
+      "get": {
+        "tags": [
+          "Keys"
+        ],
+        "operationId": "getKey",
+        "summary": "Get one key, with its tracing export status",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "hash",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The key's hash (Key.hash)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The key's metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Key"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Keys"
+        ],
+        "operationId": "updateKey",
+        "summary": "Update a key's limits, guardrails or tracing destination",
+        "description": "Accepts the fields of KeyCreateRequest. `tracing` sets where spans of this key's public-lane calls go: your OpenTelemetry collector (OTLP/HTTP JSON), Langfuse or Helicone. Spans follow the OpenTelemetry GenAI semantic conventions and add anonymo.cost_usd, anonymo.receipt_id, anonymo.lane and anonymo.provider. Prompt and completion text is included only with include_content: true. Attested and unlinkable lane calls are never exported.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "hash",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The key's hash (Key.hash)."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeyCreateRequest"
+              },
+              "examples": {
+                "honeycomb": {
+                  "summary": "Honeycomb over OTLP",
+                  "value": {
+                    "tracing": {
+                      "type": "otlp",
+                      "endpoint": "https://api.honeycomb.io",
+                      "headers": {
+                        "x-honeycomb-team": "YOUR_API_KEY"
+                      }
+                    }
+                  }
+                },
+                "langfuse": {
+                  "summary": "Langfuse, with content",
+                  "value": {
+                    "tracing": {
+                      "type": "langfuse",
+                      "public_key": "pk-lf-...",
+                      "secret_key": "sk-lf-...",
+                      "include_content": true
+                    }
+                  }
+                },
+                "off": {
+                  "summary": "Stop exporting",
+                  "value": {
+                    "tracing": null
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The key's metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Key"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/rerank": {
+      "post": {
+        "tags": [
+          "Rerank"
+        ],
+        "operationId": "createRerank",
+        "summary": "Rerank documents",
+        "description": "Orders documents by relevance to a query through a provider's own /rerank. Served only by models whose output modalities include rerank; any other model, or a router where no provider lists a rerank model, is 404 model_not_found. Priced per token (pricing.prompt) and per search unit (pricing.request) as the provider reports them. An answer that is not a valid ranking of the documents sent is a failed attempt: the next provider is tried, and 502 providers_unavailable with nothing charged if none answers. Keys, budgets, per-call payment (HTTP 402), blind tokens, lanes, the disclosure ceiling and provider preferences work as for embeddings; the Oblivious HTTP gateway does not carry rerank calls yet. Also served at /v1/rerank.",
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "PrivateToken": []
+          },
+          {}
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Payment"
+          },
+          {
+            "$ref": "#/components/parameters/DisclosureMax"
+          },
+          {
+            "$ref": "#/components/parameters/Lane"
+          },
+          {
+            "$ref": "#/components/parameters/LaneDowngrade"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RerankRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Results best first, with usage, cost and a signed receipt.",
+            "headers": {
+              "X-Anonymo-Disclosure": {
+                "$ref": "#/components/headers/Disclosure"
+              },
+              "X-Anonymo-Lane": {
+                "$ref": "#/components/headers/LaneServed"
+              },
+              "X-Receipt-Id": {
+                "$ref": "#/components/headers/ReceiptId"
+              },
+              "Inference-Id": {
+                "$ref": "#/components/headers/InferenceId"
+              },
+              "X-Generation-Id": {
+                "$ref": "#/components/headers/GenerationId"
+              },
+              "X-Anonymo-Policy-Hash": {
+                "$ref": "#/components/headers/PolicyHash"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RerankResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/DisclosureUnavailable"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/LaneNotAvailable"
+          },
+          "503": {
+            "$ref": "#/components/responses/DisclosureProviderDown"
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5085,6 +6805,16 @@
             }
           }
         }
+      },
+      "OllamaError": {
+        "description": "Ollama's error shape, {\"error\": \"...\"}, with the router's status: 400 for a bad field (the message names it), 401 or 402 without a usable key, 404 for an unknown model (the message names one to use), 409 or 503 when the requested lane cannot be served, 429 with Retry-After, 501 for local-model operations, 502 when every provider failed before any output.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/OllamaErrorBody"
+            }
+          }
+        }
       }
     },
     "schemas": {
@@ -5300,6 +7030,19 @@
               "null"
             ],
             "description": "The one datacenter region every live endpoint of the model reports; null when any endpoint does not report one or they differ."
+          },
+          "routing_variants": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "nitro",
+                "floor",
+                "free",
+                "private"
+              ]
+            },
+            "description": "Model suffixes that change how this model is routed right now: nitro (fastest providers first, as provider.sort throughput) and floor (cheapest first, as provider.sort price) always; free while a free endpoint serves it; private while an endpoint has a fresh TEE attestation."
           }
         }
       },
@@ -5384,7 +7127,7 @@
         "properties": {
           "model": {
             "type": "string",
-            "description": "Public model ID, optionally with a supported routing modifier. The reserved ID anonymo/council selects council mode when the router enables it."
+            "description": "Public model ID, optionally with routing suffixes: :nitro sorts providers by throughput (fastest first) and :floor by price (cheapest first), the same as provider.sort throughput and price and winning over it; both only order the providers the other preferences and the lane allow. :free and :private also apply. The reserved ID anonymo/council selects council mode when the router enables it. @route/<slug> calls a saved route and @preset/<name> (or @preset/<name>@<version> to pin one version) calls a preset of the key's account."
           },
           "models": {
             "type": "array",
@@ -6273,6 +8016,17 @@
           "management": {
             "type": "boolean",
             "description": "Only honored for authorized authenticated sub-key creation; root-key management is never granted by this field."
+          },
+          "tracing": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TracingSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Trace export for this key's public-lane calls; null removes it."
           }
         },
         "additionalProperties": false
@@ -6323,6 +8077,16 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "tracing": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Tracing"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -11344,6 +13108,1631 @@
               "null"
             ],
             "description": "The verify page for this receipt, when the router's address is known."
+          }
+        }
+      },
+      "BatchRequestLine": {
+        "type": "object",
+        "required": [
+          "custom_id",
+          "method",
+          "url",
+          "body"
+        ],
+        "properties": {
+          "custom_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Your id for the line, unique in the batch; results carry it back."
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "POST"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "enum": [
+              "/v1/chat/completions",
+              "/v1/embeddings",
+              "/api/v1/chat/completions",
+              "/api/v1/embeddings"
+            ]
+          },
+          "body": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "The chat completions or embeddings request body. stream true, model anonymo/council and verify are refused."
+          }
+        }
+      },
+      "BatchCreateRequest": {
+        "type": "object",
+        "description": "Send requests or input_jsonl. input_file_id is refused with 400 (there is no files endpoint).",
+        "oneOf": [
+          {
+            "required": [
+              "requests"
+            ]
+          },
+          {
+            "required": [
+              "input_jsonl"
+            ]
+          }
+        ],
+        "properties": {
+          "requests": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/BatchRequestLine"
+            }
+          },
+          "input_jsonl": {
+            "type": "string",
+            "description": "The lines as JSON Lines text: one BatchRequestLine object per line."
+          },
+          "endpoint": {
+            "type": "string",
+            "enum": [
+              "/v1/chat/completions",
+              "/v1/embeddings"
+            ],
+            "description": "When given, every line's url must match it."
+          },
+          "completion_window": {
+            "type": "string",
+            "enum": [
+              "24h"
+            ],
+            "default": "24h"
+          }
+        }
+      },
+      "Batch": {
+        "type": "object",
+        "required": [
+          "id",
+          "object",
+          "status",
+          "completion_window",
+          "created_at",
+          "request_counts",
+          "cost",
+          "output_url",
+          "errors_url"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "batch_ followed by a random id."
+          },
+          "object": {
+            "type": "string",
+            "const": "batch"
+          },
+          "endpoint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The endpoint of the lines, as sent or as the lines' url."
+          },
+          "errors": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Problems found in the batch as a whole, else null.",
+            "properties": {
+              "object": {
+                "type": "string",
+                "const": "list"
+              },
+              "data": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "line": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "input_file_id": {
+            "type": "null",
+            "description": "Always null: the lines are sent inline."
+          },
+          "completion_window": {
+            "type": "string",
+            "const": "24h"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "validating",
+              "in_progress",
+              "completed",
+              "failed",
+              "expired",
+              "cancelling",
+              "cancelled"
+            ],
+            "description": "validating: accepted, waiting for the worker. completed, failed, expired and cancelled are final."
+          },
+          "output_file_id": {
+            "type": "null",
+            "description": "Always null: read the results at output_url."
+          },
+          "error_file_id": {
+            "type": "null",
+            "description": "Always null: read the errors at errors_url."
+          },
+          "output_url": {
+            "type": "string",
+            "description": "/api/v1/batches/{id}/output"
+          },
+          "errors_url": {
+            "type": "string",
+            "description": "/api/v1/batches/{id}/errors"
+          },
+          "created_at": {
+            "type": "integer",
+            "description": "Unix seconds."
+          },
+          "in_progress_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Unix seconds, or null."
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "When unfinished lines expire (the end of the completion window), unix seconds."
+          },
+          "finalizing_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Unix seconds, or null."
+          },
+          "completed_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Unix seconds, or null."
+          },
+          "failed_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Unix seconds, or null."
+          },
+          "expired_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Unix seconds, or null."
+          },
+          "cancelling_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Unix seconds, or null."
+          },
+          "cancelled_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Unix seconds, or null."
+          },
+          "request_counts": {
+            "type": "object",
+            "required": [
+              "total",
+              "completed",
+              "failed"
+            ],
+            "properties": {
+              "total": {
+                "type": "integer"
+              },
+              "completed": {
+                "type": "integer"
+              },
+              "failed": {
+                "type": "integer"
+              }
+            }
+          },
+          "cost": {
+            "type": "object",
+            "required": [
+              "usd",
+              "discount_bps",
+              "list_usd"
+            ],
+            "properties": {
+              "usd": {
+                "type": "number",
+                "description": "What the answered lines cost so far, at the batch price."
+              },
+              "discount_bps": {
+                "type": "integer",
+                "description": "The discount in basis points; 5000 is half the normal price."
+              },
+              "list_usd": {
+                "type": "number",
+                "description": "What the same lines would cost as normal calls."
+              }
+            }
+          },
+          "results_expire_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "When the output and errors files are deleted, unix seconds; null until the batch finishes."
+          },
+          "metadata": {
+            "type": "null"
+          }
+        }
+      },
+      "BatchList": {
+        "type": "object",
+        "required": [
+          "object",
+          "data",
+          "has_more"
+        ],
+        "properties": {
+          "object": {
+            "type": "string",
+            "const": "list"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Batch"
+            }
+          },
+          "first_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        }
+      },
+      "BatchResultLine": {
+        "type": "object",
+        "required": [
+          "id",
+          "custom_id",
+          "response",
+          "error"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "batch_req_ followed by a random id."
+          },
+          "custom_id": {
+            "type": "string"
+          },
+          "response": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The response to the line; null for a line that never ran.",
+            "properties": {
+              "status_code": {
+                "type": "integer"
+              },
+              "request_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The generation id (and receipt id) of an answered line."
+              },
+              "body": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "The normal response body (usage.cost and receipt included), or { error } for a failed line."
+              }
+            }
+          },
+          "error": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "null for an answered line.",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "PresetDocument": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "models"
+        ],
+        "description": "A preset: the routing part of a saved route plus prompt-side defaults. The whole document is at most 64 KB as JSON.",
+        "properties": {
+          "description": {
+            "type": "string",
+            "maxLength": 280
+          },
+          "models": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "string"
+            },
+            "description": "Catalog model ids in fallback order; no @route/ or @preset/ entries."
+          },
+          "provider": {
+            "type": "object",
+            "description": "The same provider preferences as a saved route (SavedRouteConfig.provider), including lane (public|attested) and disclosure (none|policy|any), where the stricter of the preset and the request applies."
+          },
+          "params": {
+            "type": "object",
+            "description": "The same closed list of sampling defaults as a saved route (SavedRouteConfig.params). Request values win."
+          },
+          "system_prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16000,
+            "description": "Prepended as a system message only when the request's messages have no system or developer message. Chat completions only."
+          },
+          "response_format": {
+            "type": "object",
+            "description": "text, json_object or json_schema (at most 16 KB). Used when the request sets no response_format."
+          },
+          "tools": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "object"
+            },
+            "description": "Function tool definitions (unique names, at most 32 KB). Used with tool_choice when the request sets no tools."
+          },
+          "tool_choice": {
+            "description": "none, auto, required, or a function the preset's tools define.",
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "auto",
+                  "required"
+                ]
+              },
+              {
+                "type": "object"
+              }
+            ]
+          }
+        }
+      },
+      "Preset": {
+        "type": "object",
+        "required": [
+          "name",
+          "model",
+          "version",
+          "hash",
+          "config"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{1,47}$"
+          },
+          "model": {
+            "type": "string",
+            "description": "Use as the request model, e.g. @preset/support; add @<version> to pin one."
+          },
+          "description": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The version shown: the latest unless one was asked for."
+          },
+          "hash": {
+            "type": "string",
+            "description": "SHA-256 (hex) of the version's canonical JSON. Equal content, equal hash."
+          },
+          "config": {
+            "$ref": "#/components/schemas/PresetDocument"
+          },
+          "versions": {
+            "type": "integer",
+            "description": "In the list: how many versions the preset has."
+          },
+          "latest_version": {
+            "type": "integer"
+          },
+          "changed": {
+            "type": "boolean",
+            "description": "PUT and rollback: false when the document equals the latest version, so no version was added."
+          },
+          "restored_from": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PresetVersion": {
+        "type": "object",
+        "required": [
+          "version",
+          "hash",
+          "model",
+          "source",
+          "created_at"
+        ],
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "hash": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "description": "The pinned model name, e.g. @preset/support@3."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "put",
+              "rollback"
+            ]
+          },
+          "restored_from": {
+            "type": "integer",
+            "description": "For a rollback: the version whose content it copied."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PresetDiff": {
+        "type": "object",
+        "required": [
+          "name",
+          "from",
+          "to",
+          "identical",
+          "changes"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "from": {
+            "$ref": "#/components/schemas/PresetVersion"
+          },
+          "to": {
+            "$ref": "#/components/schemas/PresetVersion"
+          },
+          "identical": {
+            "type": "boolean"
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "op",
+                "path"
+              ],
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "add",
+                    "remove",
+                    "replace"
+                  ]
+                },
+                "path": {
+                  "type": "string",
+                  "description": "JSON Pointer into the preset document."
+                },
+                "from": {},
+                "to": {}
+              }
+            }
+          }
+        }
+      },
+      "OllamaModel": {
+        "type": "object",
+        "required": [
+          "name",
+          "model",
+          "modified_at",
+          "size",
+          "digest",
+          "details"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "examples": [
+              "meta-llama/llama-3.3-70b-instruct:latest"
+            ]
+          },
+          "model": {
+            "type": "string"
+          },
+          "modified_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "size": {
+            "type": "integer",
+            "const": 0
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "details": {
+            "type": "object",
+            "properties": {
+              "parent_model": {
+                "type": "string"
+              },
+              "format": {
+                "type": "string"
+              },
+              "family": {
+                "type": "string"
+              },
+              "families": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "parameter_size": {
+                "type": "string"
+              },
+              "quantization_level": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "OllamaShowResponse": {
+        "type": "object",
+        "required": [
+          "details",
+          "capabilities",
+          "model_info"
+        ],
+        "properties": {
+          "modelfile": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "string"
+          },
+          "template": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object",
+            "properties": {
+              "parent_model": {
+                "type": "string"
+              },
+              "format": {
+                "type": "string"
+              },
+              "family": {
+                "type": "string"
+              },
+              "families": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "parameter_size": {
+                "type": "string"
+              },
+              "quantization_level": {
+                "type": "string"
+              }
+            }
+          },
+          "model_info": {
+            "type": "object",
+            "description": "general.architecture, general.parameter_count where the name states it, and <family>.context_length."
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "completion",
+                "tools",
+                "vision",
+                "thinking",
+                "embedding"
+              ]
+            }
+          },
+          "modified_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "anonymo": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "lanes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "context_length": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "OllamaChatRequest": {
+        "type": "object",
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "A name from GET /ollama/api/tags. :latest names the model itself."
+          },
+          "stream": {
+            "type": "boolean",
+            "default": true
+          },
+          "format": {
+            "description": "\"json\" for JSON mode, or a JSON schema for structured output (response_format).",
+            "oneOf": [
+              {
+                "const": "json"
+              },
+              {
+                "type": "object"
+              }
+            ]
+          },
+          "options": {
+            "type": "object",
+            "description": "temperature, top_p, top_k, min_p, seed, stop, frequency_penalty and presence_penalty map directly; repeat_penalty to repetition_penalty; num_predict to max_tokens (-1 and -2 set no limit). Other options tune a local runtime and are named in X-Anonymo-Ignored.",
+            "properties": {
+              "temperature": {
+                "type": "number"
+              },
+              "top_p": {
+                "type": "number"
+              },
+              "top_k": {
+                "type": "number"
+              },
+              "min_p": {
+                "type": "number"
+              },
+              "frequency_penalty": {
+                "type": "number"
+              },
+              "presence_penalty": {
+                "type": "number"
+              },
+              "repeat_penalty": {
+                "type": "number"
+              },
+              "seed": {
+                "type": "integer"
+              },
+              "num_predict": {
+                "type": "integer"
+              },
+              "stop": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "think": {
+            "description": "false leaves the model's reasoning out of the reply.",
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              }
+            ]
+          },
+          "keep_alive": {
+            "description": "Accepted and ignored; 0 with no messages or prompt answers done_reason unload."
+          },
+          "provider": {
+            "type": "object",
+            "description": "The router's provider preferences, as on chat completions, for example {\"lane\":\"attested\"}."
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "role"
+              ],
+              "properties": {
+                "role": {
+                  "enum": [
+                    "system",
+                    "user",
+                    "assistant",
+                    "tool"
+                  ]
+                },
+                "content": {
+                  "type": "string"
+                },
+                "images": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Base64 images (user messages); the media type is read from the bytes."
+                },
+                "tool_calls": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "function"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "function": {
+                        "type": "object",
+                        "required": [
+                          "name",
+                          "arguments"
+                        ],
+                        "properties": {
+                          "index": {
+                            "type": "integer"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "arguments": {
+                            "type": "object"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "tool_name": {
+                  "type": "string",
+                  "description": "On a tool message: the tool whose call it answers."
+                },
+                "tool_call_id": {
+                  "type": "string"
+                },
+                "thinking": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "function"
+              ],
+              "properties": {
+                "type": {
+                  "const": "function"
+                },
+                "function": {
+                  "type": "object",
+                  "required": [
+                    "name"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "parameters": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "OllamaGenerateRequest": {
+        "type": "object",
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "A name from GET /ollama/api/tags. :latest names the model itself."
+          },
+          "stream": {
+            "type": "boolean",
+            "default": true
+          },
+          "format": {
+            "description": "\"json\" for JSON mode, or a JSON schema for structured output (response_format).",
+            "oneOf": [
+              {
+                "const": "json"
+              },
+              {
+                "type": "object"
+              }
+            ]
+          },
+          "options": {
+            "type": "object",
+            "description": "temperature, top_p, top_k, min_p, seed, stop, frequency_penalty and presence_penalty map directly; repeat_penalty to repetition_penalty; num_predict to max_tokens (-1 and -2 set no limit). Other options tune a local runtime and are named in X-Anonymo-Ignored.",
+            "properties": {
+              "temperature": {
+                "type": "number"
+              },
+              "top_p": {
+                "type": "number"
+              },
+              "top_k": {
+                "type": "number"
+              },
+              "min_p": {
+                "type": "number"
+              },
+              "frequency_penalty": {
+                "type": "number"
+              },
+              "presence_penalty": {
+                "type": "number"
+              },
+              "repeat_penalty": {
+                "type": "number"
+              },
+              "seed": {
+                "type": "integer"
+              },
+              "num_predict": {
+                "type": "integer"
+              },
+              "stop": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "think": {
+            "description": "false leaves the model's reasoning out of the reply.",
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              }
+            ]
+          },
+          "keep_alive": {
+            "description": "Accepted and ignored; 0 with no messages or prompt answers done_reason unload."
+          },
+          "provider": {
+            "type": "object",
+            "description": "The router's provider preferences, as on chat completions, for example {\"lane\":\"attested\"}."
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "system": {
+            "type": "string"
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "suffix": {
+            "type": "string",
+            "description": "Accepted and named in X-Anonymo-Ignored."
+          },
+          "template": {
+            "type": "string",
+            "description": "Accepted and named in X-Anonymo-Ignored."
+          },
+          "raw": {
+            "type": "boolean"
+          },
+          "context": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Deprecated in Ollama; accepted and named in X-Anonymo-Ignored."
+          }
+        }
+      },
+      "OllamaChatResponse": {
+        "type": "object",
+        "required": [
+          "model",
+          "created_at",
+          "done"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "message": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "const": "assistant"
+              },
+              "content": {
+                "type": "string"
+              },
+              "thinking": {
+                "type": "string"
+              },
+              "tool_calls": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "function"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "function": {
+                      "type": "object",
+                      "required": [
+                        "name",
+                        "arguments"
+                      ],
+                      "properties": {
+                        "index": {
+                          "type": "integer"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "arguments": {
+                          "type": "object"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "done_reason": {
+            "enum": [
+              "stop",
+              "length",
+              "load",
+              "unload"
+            ]
+          },
+          "total_duration": {
+            "type": "integer",
+            "description": "Nanoseconds."
+          },
+          "load_duration": {
+            "type": "integer",
+            "const": 0
+          },
+          "prompt_eval_count": {
+            "type": "integer"
+          },
+          "prompt_eval_duration": {
+            "type": "integer"
+          },
+          "eval_count": {
+            "type": "integer"
+          },
+          "eval_duration": {
+            "type": "integer"
+          },
+          "anonymo": {
+            "type": "object",
+            "description": "On the closing object: the receipt and where the call was served.",
+            "properties": {
+              "receipt_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "lane": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "disclosure": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "policy_hash": {
+                "type": "string"
+              },
+              "provider": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "cost_usd": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "OllamaGenerateResponse": {
+        "type": "object",
+        "required": [
+          "model",
+          "created_at",
+          "done"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "response": {
+            "type": "string"
+          },
+          "thinking": {
+            "type": "string"
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "done_reason": {
+            "enum": [
+              "stop",
+              "length",
+              "load",
+              "unload"
+            ]
+          },
+          "total_duration": {
+            "type": "integer",
+            "description": "Nanoseconds."
+          },
+          "load_duration": {
+            "type": "integer",
+            "const": 0
+          },
+          "prompt_eval_count": {
+            "type": "integer"
+          },
+          "prompt_eval_duration": {
+            "type": "integer"
+          },
+          "eval_count": {
+            "type": "integer"
+          },
+          "eval_duration": {
+            "type": "integer"
+          },
+          "anonymo": {
+            "type": "object",
+            "description": "On the closing object: the receipt and where the call was served.",
+            "properties": {
+              "receipt_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "lane": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "disclosure": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "policy_hash": {
+                "type": "string"
+              },
+              "provider": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "cost_usd": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "OllamaErrorBody": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TracingSettings": {
+        "type": "object",
+        "description": "Where to send one span per public-lane call made with this key. Calls on the attested and unlinkable lanes are never exported. URLs must be public https:// addresses. The endpoint, headers and keys are encrypted at rest and never returned. A secret left out of a PATCH keeps the stored one when the type is unchanged.",
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "otlp",
+              "langfuse",
+              "helicone"
+            ],
+            "description": "otlp: OTLP/HTTP JSON to your collector. langfuse: Langfuse public ingestion API. helicone: Helicone custom log API."
+          },
+          "endpoint": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "description": "otlp: collector base URL; /v1/traces is appended unless present. No query string."
+          },
+          "headers": {
+            "type": "object",
+            "maxProperties": 16,
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "description": "otlp: headers sent with every export, e.g. x-honeycomb-team or Authorization. Write-only."
+          },
+          "host": {
+            "type": "string",
+            "format": "uri",
+            "description": "langfuse (default https://cloud.langfuse.com) or helicone (default https://api.worker.helicone.ai)."
+          },
+          "public_key": {
+            "type": "string",
+            "description": "langfuse public key."
+          },
+          "secret_key": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "langfuse secret key. Write-only."
+          },
+          "api_key": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "helicone API key. Write-only."
+          },
+          "include_content": {
+            "type": "boolean",
+            "default": false,
+            "description": "Also export the prompt messages and the completion text. Off unless set."
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "Tracing": {
+        "type": "object",
+        "description": "A key's tracing destination as the API returns it: no URL path, header value or secret.",
+        "required": [
+          "type",
+          "enabled",
+          "include_content",
+          "target",
+          "header_names",
+          "secrets_set",
+          "updated_at"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "otlp",
+              "langfuse",
+              "helicone"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "include_content": {
+            "type": "boolean"
+          },
+          "target": {
+            "type": "string",
+            "description": "Scheme and host only, e.g. https://api.honeycomb.io/…"
+          },
+          "header_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "public_key_hint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "langfuse: the public key's first and last characters."
+          },
+          "secrets_set": {
+            "type": "boolean",
+            "const": true
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "This router process's export counters for the key (GET /api/v1/keys/{hash} and PATCH only). null before the first export.",
+            "properties": {
+              "queued": {
+                "type": "integer"
+              },
+              "exported": {
+                "type": "integer"
+              },
+              "dropped": {
+                "type": "integer",
+                "description": "Dropped because the queue was full or the circuit was open."
+              },
+              "failed": {
+                "type": "integer",
+                "description": "Given up after retries."
+              },
+              "retries": {
+                "type": "integer"
+              },
+              "circuit": {
+                "type": "string",
+                "enum": [
+                  "closed",
+                  "open",
+                  "half_open"
+                ]
+              },
+              "last_error": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "http_<status>, timeout, network or destination_blocked."
+              },
+              "last_success_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      },
+      "RerankRequest": {
+        "type": "object",
+        "required": [
+          "model",
+          "query",
+          "documents"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "A catalogue model whose architecture.output_modalities include rerank (GET /api/v1/models?output_modalities=rerank), optionally with :nitro (fastest providers first) or :floor (cheapest first)."
+          },
+          "query": {
+            "type": "string",
+            "minLength": 1
+          },
+          "documents": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1000,
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "text"
+                  ],
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
+            },
+            "description": "Strings, or objects with a text. Sent to the provider as strings."
+          },
+          "top_n": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "How many results to return, best first. Default: every document."
+          },
+          "return_documents": {
+            "type": "boolean",
+            "default": false,
+            "description": "Attach each result's document text (the text you sent)."
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ProviderPreferences"
+          }
+        }
+      },
+      "RerankResult": {
+        "type": "object",
+        "required": [
+          "index",
+          "relevance_score"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Position of the document in the request."
+          },
+          "relevance_score": {
+            "type": "number",
+            "description": "The provider's score. The router checks it and never makes one up."
+          },
+          "document": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              }
+            },
+            "description": "Present when return_documents is true."
+          }
+        }
+      },
+      "RerankResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "model",
+          "results",
+          "usage",
+          "cost",
+          "receipt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Generation and receipt id (also X-Receipt-Id)."
+          },
+          "object": {
+            "type": "string",
+            "const": "rerank"
+          },
+          "model": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RerankResult"
+            },
+            "description": "Best first, ties by index, at most top_n."
+          },
+          "usage": {
+            "type": "object",
+            "required": [
+              "total_tokens",
+              "search_units",
+              "cost"
+            ],
+            "properties": {
+              "total_tokens": {
+                "type": "integer"
+              },
+              "search_units": {
+                "type": "integer",
+                "description": "One query over up to 100 documents, each split into chunks of 500 tokens."
+              },
+              "estimated": {
+                "type": "boolean",
+                "description": "true when the provider did not report a quantity it is priced on and the router's estimate was billed."
+              },
+              "cost": {
+                "type": "number"
+              },
+              "cost_details": {
+                "type": "object"
+              }
+            }
+          },
+          "meta": {
+            "type": "object",
+            "properties": {
+              "billed_units": {
+                "type": "object",
+                "properties": {
+                  "search_units": {
+                    "type": "integer"
+                  }
+                }
+              }
+            },
+            "description": "The billed search units where Cohere clients read them."
+          },
+          "cost": {
+            "type": "number",
+            "description": "USD charged for this call."
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/Receipt"
           }
         }
       }

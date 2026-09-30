@@ -17,6 +17,7 @@ import { MemoryRateLimiter, RedisRateLimiter, type RateLimiter } from "./lib/rat
 import { ChainService } from "./chain/service.ts";
 import { ResponseCache } from "./gateway/cache.ts";
 import { Telemetry } from "./gateway/otel.ts";
+import { TracingExporter } from "./services/tracing.ts";
 import { Jobs } from "./services/jobs.ts";
 import type { Ctx } from "./context.ts";
 import { ApiError } from "./lib/errors.ts";
@@ -27,6 +28,7 @@ import { generationRoutes } from "./api/generation.ts";
 import { keysRoutes } from "./api/keys.ts";
 import { escrowRoutes } from "./api/escrow.ts";
 import { savedRoutesRoutes } from "./api/saved-routes.ts";
+import { presetsRoutes } from "./api/presets.ts";
 import { agentSessionsRoutes } from "./api/agent-sessions.ts";
 import { spendRoutes } from "./api/spend.ts";
 import { holdersRoutes } from "./api/holders.ts";
@@ -40,11 +42,14 @@ import { dayzeroRoutes } from "./api/dayzero.ts";
 import { creatorClaimRoutes } from "./api/creator-claims.ts";
 import { publicRoutes } from "./api/public.ts";
 import { embeddingsRoutes } from "./api/embeddings.ts";
+import { batchesRoutes } from "./api/batches.ts";
+import { rerankRoutes } from "./api/rerank.ts";
 import { adminRoutes } from "./admin/trpc.ts";
 import { paymasterRoutes } from "./api/paymaster.ts";
 import { registerJobs } from "./services/register.ts";
 import { mcpRoutes } from "./api/mcp.ts";
 import { anthropicRoutes } from "./api/anthropic.ts";
+import { ollamaRoutes } from "./ollama/routes.ts";
 import { responsesRoutes } from "./api/responses.ts";
 import { ragRoutes } from "./api/rag.ts";
 import { siteRoutes } from "./api/site.ts";
@@ -89,6 +94,7 @@ export async function createApp(opts: AppOptions = {}) {
     chain: opts.chain ?? new ChainService(cfg),
     cache: new ResponseCache(cfg.appSecret, 5_000, redis),
     telemetry: new Telemetry(cfg.gateway.otlpEndpoint, cfg.gateway.otelServiceName),
+    tracing: new TracingExporter(cfg.appSecret),
     jobs: new Jobs(cfg.redisUrl, async (state) => {
       const value = { ...state, last_error: state.last_error ? "Job failed; inspect private operator logs." : null };
       await handle.db.insert(kv).values({ key: `job-health:${state.name}`, value }).onConflictDoUpdate({ target: kv.key, set: { value, updatedAt: new Date() } });
@@ -108,6 +114,7 @@ export async function createApp(opts: AppOptions = {}) {
   const apiCors = cors({ origin: "*", allowHeaders: ["authorization", "content-type", "x-pay-with", "x-payment", "x-wallet-auth", "x-anonymo-cache", "x-anonymo-disclosure-max", "x-anonymo-lane", "x-anonymo-lane-downgrade", "http-referer", "x-title", "traceparent", "x-api-key", "anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access"], exposeHeaders: EXPOSED_RESPONSE_HEADERS });
   app.use("/api/*", apiCors);
   app.use("/v1/*", apiCors);
+  app.use("/ollama/*", apiCors);
   app.use("*", async (c, next) => {
     await next();
     c.header("x-content-type-options", "nosniff");
@@ -127,11 +134,14 @@ export async function createApp(opts: AppOptions = {}) {
   app.use("*", onionIngress(cfg)); // onion requests: drop every client address header before any route reads one
   chatRoutes(app, ctx);
   embeddingsRoutes(app, ctx);
+  batchesRoutes(app, ctx);
+  rerankRoutes(app, ctx);
   modelsRoutes(app, ctx);
   generationRoutes(app, ctx);
   keysRoutes(app, ctx);
   escrowRoutes(app, ctx);
   savedRoutesRoutes(app, ctx);
+  presetsRoutes(app, ctx);
   agentSessionsRoutes(app, ctx);
   spendRoutes(app, ctx);
   holdersRoutes(app, ctx);
@@ -151,6 +161,7 @@ export async function createApp(opts: AppOptions = {}) {
   publicRoutes(app, ctx);
   mcpRoutes(app, ctx);
   anthropicRoutes(app, ctx);
+  ollamaRoutes(app, ctx);
   responsesRoutes(app, ctx);
   ragRoutes(app, ctx);
   paymasterRoutes(app, ctx);
@@ -193,7 +204,8 @@ export async function createApp(opts: AppOptions = {}) {
     return c.json(new ApiError(500, "Internal router error.", "internal").toJSON(), 500);
   });
 
-  registerJobs(ctx, (path, init) => app.request(path, init));
+  // Batch lines are dispatched in process with a marker in `env` that no network request can carry (router/batch-line.ts).
+  registerJobs(ctx, (path, init) => app.request(path, init), (path, init, env) => app.request(path, init, env as never));
   if (opts.startJobs ?? cfg.workers.enabled) await ctx.jobs.start();
 
   // Passive health belongs to each API replica, not the shared registry worker's memory.
@@ -209,6 +221,7 @@ export async function createApp(opts: AppOptions = {}) {
     await ctx.tlog?.stop();
     await ctx.health.flush(ctx.db).catch(() => undefined);
     await ctx.telemetry.close();
+    await ctx.tracing.close();
     await limiter.close();
     redis?.disconnect();
     await handle.close();

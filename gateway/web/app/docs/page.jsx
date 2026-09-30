@@ -347,6 +347,47 @@ const anthropicReply = JSON.stringify(
   2,
 );
 const anthropicModelMap = `ANTHROPIC_MODEL_MAP={"claude-sonnet-4-5":"meta-llama/llama-3.3-70b-instruct","claude-haiku-*":"qwen/qwen3-32b"}`;
+const ollamaHost = `export OLLAMA_HOST=${BASE}/ollama
+ollama list                      # the live catalog, as Ollama names
+ollama show meta-llama/llama-3.3-70b-instruct:latest`;
+const ollamaPython = `from ollama import Client
+
+client = Client(
+    host="${BASE}/ollama",
+    headers={"Authorization": "Bearer sk-ar-v1-…", "X-Anonymo-Lane": "attested"},
+)
+reply = client.chat(
+    model="<a model from GET /ollama/api/tags>",
+    messages=[{"role": "user", "content": "Hello"}],
+)
+print(reply.message.content)`;
+const ollamaOpenWebUi = `# Open WebUI: the Ollama connection
+OLLAMA_BASE_URL=${BASE}/ollama
+# then in Admin Settings, Connections, give that connection your key (sk-ar-v1-…) as its Bearer key`;
+const ollamaContinue = `# Continue: ~/.continue/config.yaml
+models:
+  - name: Anonymo
+    provider: ollama
+    model: meta-llama/llama-3.3-70b-instruct:latest
+    apiBase: ${BASE}/ollama
+    apiKey: sk-ar-v1-…            # sent as Authorization: Bearer
+    requestOptions:
+      headers:
+        X-Anonymo-Lane: attested`;
+const ollamaLangChain = `from langchain_ollama import ChatOllama
+
+llm = ChatOllama(
+    model="<a model from GET /ollama/api/tags>",
+    base_url="${BASE}/ollama",
+    client_kwargs={"headers": {"Authorization": "Bearer sk-ar-v1-…"}},
+)`;
+const ollamaCurl = `curl -s ${BASE}/ollama/api/chat \\
+  -H "Authorization: Bearer $ANONYMO_API_KEY" \\
+  -H "X-Anonymo-Lane: attested" \\
+  -d '{"model":"<a model from GET /ollama/api/tags>","messages":[{"role":"user","content":"Hello"}],"stream":false}'`;
+const ollamaStream = `{"model":"meta-llama/llama-3.3-70b-instruct:latest","created_at":"2026-09-30T12:00:00.000Z","message":{"role":"assistant","content":"Hel"},"done":false}
+{"model":"meta-llama/llama-3.3-70b-instruct:latest","created_at":"2026-09-30T12:00:00.041Z","message":{"role":"assistant","content":"lo!"},"done":false}
+{"model":"meta-llama/llama-3.3-70b-instruct:latest","created_at":"2026-09-30T12:00:00.052Z","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","total_duration":412000000,"load_duration":0,"prompt_eval_count":9,"prompt_eval_duration":361000000,"eval_count":3,"eval_duration":51000000,"anonymo":{"receipt_id":"gen-…","lane":"attested","disclosure":"attested","provider":"…","cost_usd":0.0000021}}`;
 const x402Example = `import { privateKeyToAccount } from "viem/accounts";
 import { toHex } from "viem";
 
@@ -567,6 +608,27 @@ const responsesRefusal = JSON.stringify(
   null,
   2,
 );
+const rerankCurl = `curl ${BASE}/api/v1/rerank \\
+  -H "Authorization: Bearer $ANONYMO_API_KEY" -H "Content-Type: application/json" \\
+  -d '{"model":"<rerank model>:floor","query":"How long do refunds take?","documents":["Shipping takes 3 to 5 days.","Refunds are issued within 14 days.",{"text":"Returns need a receipt."}],"top_n":2,"return_documents":true}'`;
+const rerankResponse = JSON.stringify(
+  {
+    id: "<receipt id>",
+    object: "rerank",
+    model: "<rerank model>",
+    provider: "<provider>",
+    results: [
+      { index: 1, relevance_score: 0.93, document: { text: "Refunds are issued within 14 days." } },
+      { index: 2, relevance_score: 0.41, document: { text: "Returns need a receipt." } },
+    ],
+    usage: { total_tokens: 48, search_units: 1, cost: 0.002, cost_details: { upstream_inference_cost: 0.002, royalty: 0 } },
+    meta: { billed_units: { search_units: 1 } },
+    cost: 0.002,
+    receipt: { id: "<receipt id>", sig: "…", key_id: "…", alg: "Ed25519", payload: { kind: "rerank", search_units: 1, documents: 3, "…": "" } },
+  },
+  null,
+  2,
+);
 const ragCurl = `curl ${BASE}/api/v1/rag \\
   -H "Authorization: Bearer $ANONYMO_API_KEY" -H "Content-Type: application/json" \\
   -d '{"documents":[{"id":"handbook","text":"Refunds are issued within 14 days of the return arriving. …"},{"id":"faq","text":"…"}],"question":"How long do refunds take?","model":"<chat model>","provider":{"lane":"attested"}}'`;
@@ -615,12 +677,25 @@ const ragRefusal = JSON.stringify(
   null,
   2,
 );
+const batchCurl = `curl ${BASE}/api/v1/batches \\
+  -H "Authorization: Bearer $ANONYMO_API_KEY" -H "Content-Type: application/json" \\
+  -d '{"completion_window":"24h","requests":[{"custom_id":"row-1","method":"POST","url":"/v1/chat/completions","body":{"model":"<chat model>","messages":[{"role":"user","content":"Summarize: …"}],"max_tokens":200}},{"custom_id":"row-2","method":"POST","url":"/v1/chat/completions","body":{"model":"<chat model>","messages":[{"role":"user","content":"Classify: …"}]}}]}'
+
+# Check on it, then read the results once status is completed
+curl ${BASE}/api/v1/batches/$BATCH_ID -H "Authorization: Bearer $ANONYMO_API_KEY"
+curl ${BASE}/api/v1/batches/$BATCH_ID/output -H "Authorization: Bearer $ANONYMO_API_KEY" > output.jsonl
+curl ${BASE}/api/v1/batches/$BATCH_ID/errors -H "Authorization: Bearer $ANONYMO_API_KEY" > errors.jsonl`;
+const batchOutputLine = [
+  JSON.stringify({ id: "batch_req_…", custom_id: "row-1", response: { status_code: 200, request_id: "<generation id>", body: { id: "<generation id>", choices: ["…"], usage: { "…": "tokens", cost: 0.0000162 }, receipt: { "…": "the signed receipt of this line" } } }, error: null }),
+  JSON.stringify({ id: "batch_req_…", custom_id: "row-2", response: { status_code: 402, request_id: null, body: { error: { "…": "the error a normal call returns" } } }, error: { code: "insufficient_credits", message: "…" } }),
+].join("\n");
 const endpoints = [
   ["POST /api/v1/chat/completions", "Chat, tools and streaming (OpenAI/OpenRouter shape); X-Pay-With, X-Payment, X-Wallet-Auth headers"],
   ["POST /api/v1/completions · /embeddings", "Legacy completions; embeddings (prepaid keys)"],
+  ["POST /api/v1/rerank · /v1/rerank", "Rerank documents against a query (Cohere and Jina shape: query, documents, top_n, return_documents), billed per token or per search unit, with a signed receipt; 404 model_not_found until a provider lists a rerank model"],
   ["GET /api/v1/models · /models/:author/:slug/endpoints", "Catalog, prices, policies, quantization, attestation (best class, manifest reference, policy hash) and datacenter region; per-provider health and attested policy hash"],
   ["GET /api/v1/generation?id=… · /generations", "Full generation record with receipt and anchor proof; your recent generations"],
-  ["POST · GET · PATCH · DELETE /api/v1/keys", "Create a self-custodial key (no auth), or budgeted sub-keys with rpm/tpm, model allowlists, guardrails"],
+  ["POST · GET · PATCH · DELETE /api/v1/keys", "Create a self-custodial key (no auth), or budgeted sub-keys with rpm/tpm, model allowlists, guardrails and a tracing destination"],
   ["GET /api/v1/key · /credits", "Current key; balance, held and total usage"],
   ["POST /api/v1/credits/deposit-tx · /withdraw-request", "Unsigned wallet transactions to deposit, or a key-signed withdrawal request"],
   ["GET /api/v1/credits/withdrawal-proof", "Merkle proof and calldata to finalize a withdrawal"],
@@ -628,6 +703,7 @@ const endpoints = [
   ["POST /api/v1/paywith/allowance/typed-data · /allowance · GET /charges · POST /charges/{id}/signature", "Wallet authorizations: a bounded allowance, or a signature per charge"],
   ["POST /api/v1/byok · /teams", "Bring your own provider key; team roles"],
   ["GET · POST · PATCH · DELETE /api/v1/routes", "Saved Routes: named routing policies you call as model \"@route/<slug>\", optionally pinned to the attested lane"],
+  ["GET · PUT · DELETE /api/v1/presets/:name · /versions · /diff · POST /rollback", "Presets: versioned saved routes with a system prompt, tools and response_format, called as model \"@preset/<name>\" or pinned as \"@preset/<name>@<version>\""],
   ["POST · GET · DELETE /api/v1/sessions · GET /sessions/current", "Agent Sessions: short-lived, budget-capped keys for agent runs"],
   ["GET /api/v1/spend · /spend/alerts", "Spend Watch: totals, projection, breakdowns, key budgets and alert rules"],
   ["GET /api/v1/disclosure/:providerId", "A provider’s documented retention, jurisdiction, legal hold and training use, each with a source and date, and the class it is served under now"],
@@ -652,8 +728,10 @@ const endpoints = [
   ["GET /api/v1/measurements/key · /measurements/bundles/:providerId", "Where enabled: the key that signs measurement bundles (compose hash, source commit and tarball hash, model and image digests, MRTD allow-list), and a provider’s bundles with the transparency-log entry the router verified for each"],
   ["POST /mcp", "Anonymo MCP: list_models, list_attested_models, chat (optionally on the attested lane), verify_provider, get_receipt and verify_receipt as tools for Claude, Cursor or any MCP client"],
   ["POST /v1/messages · /messages/count_tokens", "Anthropic Messages API (also under /api/v1) for the Anthropic SDKs and Claude Code: x-api-key or Authorization: Bearer; tools, images and streaming; the lane in X-Anonymo-Lane or provider.lane; the receipt in the reply and in X-Receipt-Id"],
+  ["GET /ollama/api/tags · POST /ollama/api/chat · /generate · /embed", "Ollama API for Ollama clients (Open WebUI, Continue, the ollama libraries, LangChain): set the host to <router>/ollama and send the key as Authorization: Bearer; NDJSON streaming, tools, images, format and options; also /api/show, /api/version, /api/ps and /api/embeddings; the lane in X-Anonymo-Lane; the receipt in X-Receipt-Id and the closing line"],
   ["POST /v1/responses · /api/v1/responses", "OpenAI Responses API for the OpenAI Agents SDK, the Codex CLI and other Responses clients: the chat route’s billing, lanes and signed receipts behind the Responses shape and event stream. Stateless: store must be false, there is no previous_response_id and no GET; function and custom tools only"],
-  ["POST /api/v1/rag · /v1/rag", "Answers from documents you send with the question, ranked in memory and stored nowhere: it embeds, ranks and answers through the embeddings and chat routes, and returns the sources and every call’s receipt (prepaid key; the lane and disclosure options of chat)"],
+  ["POST · GET /api/v1/batches · GET /batches/:id · POST /batches/:id/cancel · GET /batches/:id/output · /batches/:id/errors", "Batch API (also under /v1): many chat or embeddings requests in one call, run in the background at 50% of the normal price within 24 hours; results as JSONL for 24 hours after the batch finishes (prepaid key)"],
+  ["POST /api/v1/rag · /v1/rag","Answers from documents you send with the question, ranked in memory and stored nowhere: it embeds, ranks and answers through the embeddings and chat routes, and returns the sources and every call’s receipt (prepaid key; the lane and disclosure options of chat)"],
   ["GET /api/v1/rankings · /providers · /status", "Usage rankings and creator payouts; the provider registry with each provider’s attestation status (attestation.status, tee, verifiers, last_verified_at); router configuration, including its onion address where there is one"],
   ["POST /api/v1/providers/apply · /creators/claim · /paymaster", "Provider onboarding; royalty claims; ERC-7677 gas sponsorship"],
 ];
@@ -675,6 +753,8 @@ export default function Docs() {
             <span className="side-nav-label">On this page</span>
             <a href="#quickstart">Quickstart</a>
             <a href="#routing">Routing</a>
+            <a href="#presets">Presets</a>
+            <a href="#tracing">Tracing</a>
             <a href="#disclosure">Disclosure</a>
             <a href="#lanes">Lanes</a>
             <a href="#tor">Tor</a>
@@ -690,8 +770,11 @@ export default function Docs() {
             <a href="#council">Council</a>
             <a href="#mcp">MCP</a>
             <a href="#anthropic">Anthropic</a>
+            <a href="#ollama">Ollama</a>
             <a href="#responses">Responses</a>
             <a href="#rag">Private RAG</a>
+            <a href="#batches">Batch API</a>
+            <a href="#rerank">Rerank</a>
             <a href="#sdk">SDKs</a>
             <a href="#run-a-provider">Run a provider</a>
             <a href="#badge">Badge</a>
@@ -710,7 +793,8 @@ export default function Docs() {
           <h2 id="routing">Make the route explicit.</h2>
           <p>
             The provider object supports order, allow_fallbacks, only, ignore, data_collection, zdr, quantizations, sort, max_price, require_parameters and preferred latency or throughput. Model suffixes :nitro, :floor, :free and :private work
-            too. models[] lists fallback models. The private flag is an Anonymo extension: it selects only providers with a fresh TEE attestation. By default providers are weighted by 1/price² × 30-day uptime × canary quality, and a
+            too. :nitro puts the fastest providers first (by measured throughput) and :floor the cheapest, exactly as provider.sort throughput and price do; a suffix wins over provider.sort. They only order the providers that your other preferences and your lane already allow, so
+            provider.order still goes first and a lane never falls back outside itself. GET /api/v1/models lists them per model in routing_variants. models[] lists fallback models. The private flag is an Anonymo extension: it selects only providers with a fresh TEE attestation. By default providers are weighted by 1/price² × 30-day uptime × canary quality, and a
             provider with two failures in 30 seconds is skipped.
           </p>
           <Code label="Routing preferences">
@@ -725,6 +809,61 @@ export default function Docs() {
               2,
             )}
           </Code>
+          <h2 id="presets">Presets: config as code, with versions.</h2>
+          <p>
+            A preset is a saved route with a version history. It holds the same fallback models, provider preferences and sampling defaults as @route/&lt;slug&gt;, plus what a route may not hold: a system_prompt (up to 16,000 characters), a
+            response_format and up to 32 tool definitions with a tool_choice. PUT /api/v1/presets/&lt;name&gt; saves the whole document. Each change adds an immutable version, numbered 1, 2, 3 and identified by the SHA-256 of its canonical
+            JSON; saving the same content again adds nothing. Call the latest with model &quot;@preset/&lt;name&gt;&quot;, or pin one with &quot;@preset/&lt;name&gt;@3&quot; or a hash prefix of at least 7 characters. The response carries
+            preset: name, version and hash.
+          </p>
+          <p>
+            The request wins over the preset for every parameter, provider field, models list, tools and response_format it sets. For provider.lane and provider.disclosure the stricter of the two applies, as for a saved route. The
+            system prompt is added as the first message only when the request has no system or developer message; a request with its own keeps it and gets no second one. Legacy /completions has no messages, so a preset with a system
+            prompt, tools or a response_format is refused there (400 preset_unsupported). GET /api/v1/presets/&lt;name&gt;/versions lists the history, /diff?from=1&amp;to=2 returns a JSON diff (JSON Pointer paths with the old and new
+            value), and POST /rollback with {"{"}&quot;version&quot;: 1{"}"} adds a new version with that content, so nothing is rewritten and every pin keeps resolving until the preset is deleted. A key or agent session allowed
+            &quot;@preset/&lt;name&gt;&quot; may use that preset’s models. Limits: 100 presets per account, 100 versions per preset, 64 KB per version.
+          </p>
+          <Code label="PUT /api/v1/presets/support">
+            {JSON.stringify(
+              {
+                description: "Support replies in one line",
+                models: ["qwen/qwen3-32b", "meta-llama/llama-3.3-70b-instruct"],
+                provider: { data_collection: "deny" },
+                params: { temperature: 0.2, max_tokens: 200 },
+                system_prompt: "You are the support assistant. Answer in one line.",
+              },
+              null,
+              2,
+            )}
+          </Code>
+          <h2 id="tracing">Tracing: your spans, in your own tools.</h2>
+          <p>
+            Give a key a tracing destination and every public-lane call made with it is sent there as one span that follows the OpenTelemetry GenAI semantic conventions: gen_ai.system, gen_ai.request.model, gen_ai.response.model,
+            gen_ai.usage.input_tokens and output_tokens, gen_ai.request.temperature and max_tokens, gen_ai.response.finish_reasons, plus anonymo.cost_usd, anonymo.receipt_id, anonymo.lane, anonymo.provider and the server latency. Send a
+            W3C traceparent header and the span joins your trace. Set it with PATCH /api/v1/keys/&lt;hash&gt; and a tracing object; tracing: null turns it off.
+          </p>
+          <p>
+            Prompt and completion text is exported only with include_content: true; it is off by default. Calls on the attested and unlinkable lanes are never exported, whatever the key says: those lanes promise that a call’s model, timing,
+            size and cost do not leave the router tied to a key. The endpoint, headers and keys are encrypted at rest and never returned; GET shows the type, the host, the header names and export counters. Leave a secret out of a later PATCH
+            to keep the stored one. Export runs after the response, from a bounded queue: a full queue drops and counts, failures are retried with backoff, and a destination that keeps failing is paused for a minute. Your calls are never slowed
+            or failed by it. Destinations must be public https:// addresses.
+          </p>
+          <Code label="Honeycomb (OTLP)">
+            {JSON.stringify({ tracing: { type: "otlp", endpoint: "https://api.honeycomb.io", headers: { "x-honeycomb-team": "YOUR_INGEST_KEY" } } }, null, 2)}
+          </Code>
+          <Code label="Grafana Cloud Tempo (OTLP)">
+            {JSON.stringify({ tracing: { type: "otlp", endpoint: "https://otlp-gateway-prod-<region>.grafana.net/otlp", headers: { authorization: "Basic <base64 of instanceId:token>" } } }, null, 2)}
+          </Code>
+          <Code label="Langfuse (ingestion API; host defaults to https://cloud.langfuse.com)">
+            {JSON.stringify({ tracing: { type: "langfuse", public_key: "pk-lf-...", secret_key: "sk-lf-...", host: "https://us.cloud.langfuse.com", include_content: true } }, null, 2)}
+          </Code>
+          <Code label="Helicone (custom log API; host defaults to https://api.worker.helicone.ai)">
+            {JSON.stringify({ tracing: { type: "helicone", api_key: "sk-helicone-..." } }, null, 2)}
+          </Code>
+          <p>
+            Any OTLP/HTTP collector works: /v1/traces is added to the endpoint unless it is already there, and the body is OTLP JSON. For a self-hosted Tempo or an OpenTelemetry Collector, expose its OTLP/HTTP receiver over https and put its
+            auth in headers.
+          </p>
           <h2 id="disclosure">Route by what a provider discloses.</h2>
           <p>
             Each provider has a disclosure profile its operator documents: retention (attested, policy or logs), jurisdiction, legal-hold status and training use, each with a source and a date. Anything undocumented reads as the conservative
@@ -1222,6 +1361,54 @@ export default function Docs() {
             Every error has Anthropic’s shape, {`{"type":"error","error":{"type","message"},"request_id"}`}, plus an anonymo object with the router’s own error type, its metadata, and the receipt id when a refused call was billed. Every response has a request-id header. A browser
             can call the endpoint directly: the router allows the x-api-key, anthropic-version, anthropic-beta and anthropic-dangerous-direct-browser-access headers.
           </p>
+          <h2 id="ollama">Use Anonymo from any Ollama client.</h2>
+          <p>
+            The router speaks the Ollama API under /ollama: GET /ollama/api/tags, /api/version and /api/ps, and POST /api/show, /api/chat, /api/generate, /api/embed and the older /api/embeddings. Point an Ollama client (Open WebUI, Continue, the ollama Python and JavaScript libraries, LangChain’s ChatOllama, editor and
+            notes plugins) at this router’s address followed by /ollama, and give it your Anonymo key. Each call is converted and sent through /api/v1/chat/completions (or /api/v1/embeddings) inside the router, so the key’s balance and limits, the lane, the signed receipt and the response headers are those of a chat call.
+            The models run on hosted providers: nothing is downloaded and nothing runs on your machine.
+          </p>
+          <h3>The key</h3>
+          <p>
+            Send the key as Authorization: Bearer, which most Ollama clients set from an API key or headers setting. There is no ?key= query parameter, so a key never ends up in a URL or a log line. The ollama command line tool sends no key: with OLLAMA_HOST set it lists (ollama list) and describes (ollama show) the
+            catalog, which are public, and a chat needs a client that sends the header.
+          </p>
+          <Code label="ollama CLI · OLLAMA_HOST">{ollamaHost}</Code>
+          <Code label="Python · the ollama library, on the attested lane">{ollamaPython}</Code>
+          <Code label="Open WebUI">{ollamaOpenWebUi}</Code>
+          <Code label="Continue">{ollamaContinue}</Code>
+          <Code label="LangChain · ChatOllama">{ollamaLangChain}</Code>
+          <Code label="curl">{ollamaCurl}</Code>
+          <h3>What is converted</h3>
+          <ul>
+            <li>
+              <b>Models.</b> GET /ollama/api/tags lists the live catalog. Each name is a catalog id with Ollama’s :latest tag, and a routing suffix works as a tag too (:free, :nitro, :private). size is 0, since there are no local weights, and digest is the SHA-256 of the id; details has the family, the parameter size
+              and the precision, read from the name and the live endpoints. With X-Anonymo-Lane: attested the list holds only the models that lane can serve now. POST /api/show adds capabilities (completion, tools, vision, thinking, or embedding) and the context length in model_info. A pull of a listed model succeeds
+              at once; create, copy, push, delete and blob uploads are 501s; /api/ps is always empty.
+            </li>
+            <li>
+              <b>Requests.</b> /api/chat messages (system, user, assistant, tool) map to chat messages, and images (base64, with the media type read from the bytes) become image parts. /api/generate sends system and prompt as a system and a user message. format "json" is JSON mode and a JSON schema is structured
+              output. options temperature, top_p, top_k, min_p, seed, stop, frequency_penalty and presence_penalty map directly, repeat_penalty becomes repetition_penalty and num_predict becomes max_tokens (-1 and -2 set no limit). Options that tune a local runtime (num_ctx, num_gpu, num_thread and the like), suffix,
+              template, raw and context are accepted and named in the X-Anonymo-Ignored header; keep_alive is ignored. A request with no messages or no prompt loads the model as Ollama does: done_reason load (unload with keep_alive 0), with no call and no charge.
+            </li>
+            <li>
+              <b>Tools.</b> tools are function tools, and the model’s calls come back in message.tool_calls with the arguments as an object. A tool message answers the call it names with tool_call_id, else the earlier call with the same tool_name, else the next call without an answer.
+            </li>
+            <li>
+              <b>Streaming.</b> Ollama streams unless stream is false. The reply is NDJSON (application/x-ndjson): one object per line with done false and a piece of message.content (response for /api/generate), tool calls whole in one line, then a closing line with done true, done_reason (stop or length),
+              total_duration, load_duration (0), prompt_eval_count, prompt_eval_duration, eval_count and eval_duration in nanoseconds, and an anonymo object with the receipt id, the lane, the disclosure class, the provider and the cost. Reasoning the provider returns comes back as thinking unless think is false.
+            </li>
+            <li>
+              <b>Embeddings.</b> /api/embed takes input as a string or a list and returns embeddings, in order; /api/embeddings takes prompt and returns one embedding. dimensions is passed on.
+            </li>
+            <li>
+              <b>Receipt and lane.</b> X-Anonymo-Lane, X-Anonymo-Disclosure-Max and provider in the body work as on a chat call, and X-Receipt-Id, Inference-Id, X-Anonymo-Lane and X-Anonymo-Policy-Hash come back as headers.
+            </li>
+          </ul>
+          <Code label="A streamed /api/chat reply">{ollamaStream}</Code>
+          <p>
+            Every error is Ollama’s {`{"error":"..."}`} with the router’s status: 400 for a bad field (the message names it), 401 or 402 without a usable key, 404 for an unknown model (the message names one to use), 409 or 503 when the requested lane cannot be served, and 429 with Retry-After. A request every
+            provider fails before any output is an HTTP error; a failure after output has begun ends the stream with an {`{"error"}`} line and no closing line.
+          </p>
           <h2 id="responses">Use Anonymo with the OpenAI Agents SDK and Codex.</h2>
           <p>
             POST /v1/responses (also /api/v1/responses) is the OpenAI Responses API, so the OpenAI Agents SDK, the Codex CLI and other Responses clients work with a change of base URL and key. The base URL is this router’s address followed by /v1 (or /api/v1: the two are the same), and the key is the
@@ -1320,6 +1507,46 @@ export default function Docs() {
           <p>
             <b>Untrusted text.</b> Documents are treated as untrusted. The prompt tells the model to use only the numbered sources and to ignore instructions inside them, and a source cannot close its own tag. That lowers, and does not remove, the chance that a document steers the answer.
             The cost of a request is the sum of its calls; each holds its worst case before it is sent, so your balance bounds every step, and a refusal partway leaves the earlier calls billed.
+          </p>
+          <h2 id="batches">Run many calls at half the price.</h2>
+          <p>
+            POST /api/v1/batches (also /v1/batches) is the OpenAI Batch API without files. Send many chat completions or embeddings requests in one call and the router runs them in the background, in spare capacity, at 50% of the normal price. A batch can take minutes,
+            and lines not run within the 24-hour completion window expire and are not charged. It needs a prepaid key (Authorization: Bearer). Each line is billed, budgeted, rate-limited and routed exactly like a normal call of that key, so lanes, provider preferences, key budgets and
+            key rate limits apply to every line; a failed line is not charged, and every answered line has its own signed receipt. In the dashboard, Batch Studio can send a batch this way (Run on the server).
+          </p>
+          <Code label="Send a batch inline, then read the results">{batchCurl}</Code>
+          <p>
+            <b>Request.</b> Send requests, a list of lines, or input_jsonl, the same lines as JSONL text, with completion_window 24h. Each line has a custom_id (unique, at most 64 characters), method POST, a url of /v1/chat/completions or /v1/embeddings, and the body of that request.
+            endpoint, if you send it, must match every line’s url. There is no files endpoint, so input_file_id is refused with 400: send the lines inline. stream: true, council mode (anonymo/council) and verify are refused in a batch. A batch with an invalid line is not created: the 400
+            invalid_request lists each problem in error.metadata.errors with its line (counted from 1), code and message.
+          </p>
+          <p>
+            <b>Progress and results.</b> The response is a Batch object with its id (batch_…). GET /api/v1/batches/:id returns it again: status (validating, in_progress, then completed, failed or expired; cancelling, then cancelled, after a cancel), request_counts (total, completed,
+            failed) and cost (usd, the discounted cost so far, and list_usd, what the same calls cost at the normal price). GET /api/v1/batches?limit=20&amp;after=&lt;batch id&gt; lists your batches, newest first. POST /api/v1/batches/:id/cancel stops a batch: lines already running finish
+            and are billed, lines not started are never run or billed. GET /api/v1/batches/:id/output returns one JSONL line per answered request, with the normal response body (usage.cost and the receipt included), and GET /api/v1/batches/:id/errors one per failed or unrun request.
+          </p>
+          <Code label="A line of the output file, and one of the errors file (abridged)">{batchOutputLine}</Code>
+          <p>
+            <b>Limits.</b> By default a batch holds up to 1,000 lines and 8 MiB of input, and a key can have 2 unfinished batches at a time; one more is refused with 429 batch_limit. The operator sets these with BATCH_MAX_LINES, BATCH_MAX_BYTES and BATCH_MAX_ACTIVE. Results are kept for
+            24 hours after the batch finishes (BATCH_RESULTS_TTL) and then deleted; after that the output and errors routes answer 410 batch_results_expired.
+          </p>
+          <p>
+            <b>What is kept.</b> The request lines and the answers are never written to the database. Until the results expire they are kept sealed (AES-256-GCM, with a key derived from the router’s secret) in Redis, or in the router’s memory where there is no Redis, and then deleted.
+            The seal protects them from someone who can read Redis without the router’s secret; the router itself can open them, which it does to return your results. The database keeps only each batch’s counts, costs and statuses and the generation id of each answered line, and every
+            answered line has the generation record and signed receipt of a normal call.
+          </p>
+          <h2 id="rerank">Rerank documents against a query.</h2>
+          <p>
+            POST /api/v1/rerank (also /v1/rerank) takes the Cohere and Jina request: a model, a query, documents as strings or objects with a text, and optionally top_n and return_documents. It answers with results best first, each with the index of a document you sent and its
+            relevance_score (and the document’s text when return_documents is true), usage with total_tokens and search_units, the cost, and a signed receipt. The scores are the provider’s own: an answer that is not a valid ranking of the documents sent counts as a failed attempt, the
+            next provider is tried, and if none answers the call fails with 502 and nothing is charged. One request may carry 1,000 documents; a long document is truncated or split by the provider.
+          </p>
+          <Code label="Rerank three documents, cheapest provider first">{rerankCurl}</Code>
+          <Code label="Response (abridged)">{rerankResponse}</Code>
+          <p>
+            Only models whose architecture.output_modalities include rerank serve it; GET /api/v1/models?output_modalities=rerank lists them. Any other model, or a router where no provider lists a rerank model yet, answers 404 model_not_found. A rerank model is priced per token
+            (pricing.prompt) and per search unit (pricing.request: one query over up to 100 documents, each split into chunks of 500 tokens), from what the provider reports; when it reports nothing, from the router’s estimate, and usage.estimated says so. Keys, budgets, per-call payment,
+            blind tokens, lanes, the disclosure ceiling, provider preferences and the :nitro and :floor suffixes work as they do for embeddings. The Oblivious HTTP gateway does not carry rerank calls yet.
           </p>
           <h2 id="sdk">Verify before you send.</h2>
           <p>
@@ -1426,7 +1653,7 @@ export default function Docs() {
             provider fails, nothing is charged. A cancelled stream is billed only for what was generated.
           </p>
           <p>
-            The router stores key hashes, balances and receipt metadata. It never stores prompts or responses; the optional response cache is encrypted, per-workspace and expires. Provider data policies are listed per provider.
+            The router stores key hashes, balances and receipt metadata. It never stores prompts or responses; the optional response cache is encrypted, per-workspace and expires, and a <a href="#batches" className="inline-link">Batch API</a> batch keeps its lines and answers sealed, outside the database, only until its results expire. Provider data policies are listed per provider.
           </p>
           <h3>Primary references</h3>
           <p>

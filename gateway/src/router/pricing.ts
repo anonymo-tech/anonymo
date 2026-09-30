@@ -10,6 +10,8 @@ export type Usage = {
   webSearch: number;
   images: number;
   estimated: boolean;
+  /** Rerank only: search units billed (one query over up to 100 document chunks). Each is charged the offer's request price; unset = one request. */
+  searchUnits?: number;
 };
 
 export type Mode = "prepaid" | "per_call" | "paywith" | "byok" | "cache" | "blind";
@@ -54,7 +56,7 @@ export function upstreamCost(c: Candidate, u: Usage): { cost: Pico; cacheDiscoun
     tokenCost(writes, writePrice) +
     tokenCost(u.completion - reasoning, c.priceCompletion) +
     tokenCost(reasoning, c.priceReasoning) +
-    c.priceRequest +
+    c.priceRequest * BigInt(u.searchUnits == null ? 1 : Math.max(0, Math.ceil(u.searchUnits))) +
     BigInt(u.webSearch) * c.priceWebSearch +
     BigInt(u.images) * c.priceImage;
   const cacheDiscount = readPrice < c.pricePrompt ? tokenCost(cached, c.pricePrompt - readPrice) : 0n;
@@ -116,3 +118,17 @@ export function worstCase(c: Candidate, model: ModelRow, body: Record<string, un
   const usage: Usage = { prompt: promptTokens, completion: out, reasoning: c.priceReasoning > c.priceCompletion ? out : 0, cachedRead: 0, cacheWrite: 0, webSearch: 0, images: 0, estimated: true };
   return priceUsage(c, model, usage, mode, fees, byok).total;
 }
+
+/**
+ * A batch line's price: the normal price less `discountBps` (BATCH_DISCOUNT_BPS, 5000 = half). The discount is rounded up,
+ * so the caller is never charged more than exactly the discounted price. The cost components (upstream, royalty, margin)
+ * stay as priced: the operator absorbs the discount.
+ */
+export function batchPrice(cost: Cost, discountBps: number): Cost & { batchDiscount: Pico } {
+  const bps = Math.min(10_000, Math.max(0, discountBps));
+  const batchDiscount = mulBps(cost.total, bps, "ceil");
+  return { ...cost, total: cost.total - batchDiscount, batchDiscount };
+}
+
+/** The hold for a batch line: the worst case less the discount, rounded so it still covers the discounted price. */
+export const batchHold = (hold: Pico, discountBps: number): Pico => hold - mulBps(hold, Math.min(10_000, Math.max(0, discountBps)), "floor");

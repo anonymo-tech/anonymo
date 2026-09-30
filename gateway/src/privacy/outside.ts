@@ -36,7 +36,7 @@ const redisFamilies: RedisFamily[] = [
     purpose: `Requests per minute for a call that carries no API key. ${ADDRESS_NOTE}`,
     holds: "address",
     seconds: 60,
-    evidence: [ev("src/api/chat.ts", "await limitOrThrow(ctx, `ip:${from.id}`"), ev("src/api/embeddings.ts", "await ctx.limiter.take(`ip:${from.id}`")],
+    evidence: [ev("src/api/chat.ts", "await limitOrThrow(ctx, `ip:${from.id}`"), ev("src/api/embeddings.ts", "await ctx.limiter.take(`ip:${from.id}`"), ev("src/api/rerank.ts", "await ctx.limiter.take(`ip:${from.id}`")],
   }),
   limit({
     prefix: "blind-ip:",
@@ -44,7 +44,7 @@ const redisFamilies: RedisFamily[] = [
     purpose: `Requests per minute for a call paid with a blind token. ${ADDRESS_NOTE}`,
     holds: "address",
     seconds: 60,
-    evidence: [ev("src/api/chat.ts", "await limitOrThrow(ctx, `blind-ip:${from.id}`"), ev("src/api/embeddings.ts", "await ctx.limiter.take(`blind-ip:${from.id}`")],
+    evidence: [ev("src/api/chat.ts", "await limitOrThrow(ctx, `blind-ip:${from.id}`"), ev("src/api/embeddings.ts", "await ctx.limiter.take(`blind-ip:${from.id}`"), ev("src/api/rerank.ts", "await ctx.limiter.take(`blind-ip:${from.id}`")],
   }),
   limit({
     prefix: "newkey:",
@@ -116,7 +116,7 @@ const redisFamilies: RedisFamily[] = [
     purpose: "Requests per minute for one API key. Keyed by the SHA-256 of the key; no address is read for a call that carries a key.",
     holds: "key-hash",
     seconds: 60,
-    evidence: [ev("src/api/chat.ts", "await limitOrThrow(ctx, `k:${key.keyHash}`"), ev("src/api/embeddings.ts", "await ctx.limiter.take(`k:${key.keyHash}`")],
+    evidence: [ev("src/api/chat.ts", "await limitOrThrow(ctx, `k:${key.keyHash}`"), ev("src/api/embeddings.ts", "await ctx.limiter.take(`k:${key.keyHash}`"), ev("src/api/rerank.ts", "await ctx.limiter.take(`k:${key.keyHash}`")],
   }),
   limit({
     prefix: "kc:",
@@ -212,6 +212,20 @@ const redisFamilies: RedisFamily[] = [
     evidence: [ev("src/api/auth.ts", "`walletauth:${id}`, \"1\", \"PX\", 600_000, \"NX\"")],
   },
   {
+    key: "batch:<batch id>:in and batch:<batch id>:out",
+    purpose:
+      "The Batch API (POST /api/v1/batches). A batch's requests (:in) and its answers (:out), one field per line, each sealed with AES-256-GCM under a key derived from the router's APP_SECRET, the batch id and the hash of the key that sent it, so only that key's batch can read them back. They are kept here, never in the database, so the worker can run the lines and the key can fetch the results.",
+    holds: "nothing-personal",
+    requestText: "request-and-answer-text",
+    ttl: "The sealed requests are deleted when the batch finishes; the sealed answers BATCH_RESULTS_TTL after that (86,400 seconds, 24 hours, unless the operator changed it). A batch that never finishes ends when its 24-hour completion window closes, so nothing outlives the window plus that time.",
+    evidence: [
+      ev("src/services/batches.ts", "saveInputs = (b: BatchRow, lines: LineInput[], ttlMs: number) => this.hset(`batch:${b.id}:in`"),
+      ev("src/services/batches.ts", "private seal = (b: Pick<BatchRow, \"id\" | \"keyHash\">, v: unknown) => encrypt(this.scope(b), JSON.stringify(v));"),
+      ev("src/services/batches.ts", "await this.del(`batch:${b.id}:in`);"),
+      ev("src/services/batches.ts", "await batchStore(ctx).purge(b);"),
+    ],
+  },
+  {
     key: "bull:anonymo-jobs-<group>:*",
     purpose: "The background job queue (BullMQ) that makes exactly one replica run each recurring job. The job data is empty ({}), so no request or user data is in it; a finished job's result or failure message is kept for the last 100 completed and 100 failed jobs.",
     holds: "nothing-personal",
@@ -241,6 +255,13 @@ const addressReaders: Touchpoint[] = [
     then: "Counted against ip:<address> or blind-ip:<address>.",
     kept: "Only as the Redis rate-limit key.",
     evidence: [ev("src/api/embeddings.ts", "const from = addressBucket(c, ctx.cfg);")],
+  },
+  {
+    file: "src/api/rerank.ts",
+    reads: "The caller's address, only for a call without an API key.",
+    then: "Counted against ip:<address> or blind-ip:<address>.",
+    kept: "Only as the Redis rate-limit key.",
+    evidence: [ev("src/api/rerank.ts", "const from = addressBucket(c, ctx.cfg);")],
   },
   {
     file: "src/api/keys.ts",
@@ -292,6 +313,13 @@ const addressReaders: Touchpoint[] = [
     evidence: [ev("src/api/responses.ts", "const from = clientIp(c, ctx.cfg.trustProxy);"), ev("src/api/responses.ts", "{ requestIP: () => ({ address: from }) }")],
   },
   {
+    file: "src/ollama/routes.ts",
+    reads: "The caller's address, so the internal chat or embeddings call it makes on the caller's behalf is limited exactly as the caller's own call would be.",
+    then: "Passed to the chat or embeddings route as an in-process value (requestIP) and then handled as in src/api/chat.ts.",
+    kept: "Nothing beyond what src/api/chat.ts keeps.",
+    evidence: [ev("src/ollama/routes.ts", "const from = clientIp(c, ctx.cfg.trustProxy);"), ev("src/ollama/routes.ts", "{ requestIP: () => ({ address: from }) }")],
+  },
+  {
     file: "src/onion/ingress.ts",
     reads: "Nothing. It deletes every header that names a client address (X-Forwarded-For, X-Real-IP, CF-Connecting-IP and others) from requests that arrived over Tor, before any route runs.",
     then: "Requests over Tor therefore carry no client address for a route, a limiter or a log line to use.",
@@ -324,12 +352,28 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
     evidence: [ev("src/api/chat.ts", "const body = await readJson(c);"), ev("src/api/chat.ts", "const bodySha = requestHash(body);"), ev("src/api/chat.ts", "response_sha256: sha256(p.responseText),")],
   },
   {
+    file: "src/api/batches.ts",
+    carries: "prompt-or-answer",
+    reads: "The JSON body of a batch: up to BATCH_MAX_LINES chat or embeddings requests (requests or input_jsonl).",
+    then: "Checked line by line, then sealed at once and kept in Redis (or memory) for the worker, which runs each line through the chat or embeddings handler as the key that sent the batch.",
+    kept: "Not in the database: the database gets counts, statuses, costs and generation ids. The sealed requests are deleted when the batch finishes and the sealed answers when its results expire (see the Redis section).",
+    evidence: [ev("src/api/batches.ts", "const body = await readJson(c);"), ev("src/services/batches.ts", "await batchStore(ctx).saveInputs(row, lines, storeTtl(ctx, row));")],
+  },
+  {
     file: "src/api/embeddings.ts",
     carries: "prompt-or-answer",
     reads: "The JSON body of an embeddings call: the input text.",
     then: "Sent to the provider chosen and the vectors returned.",
     kept: "Not stored; a generation row and receipt with hashes and counts are written.",
     evidence: [ev("src/api/embeddings.ts", "const body = await readJson(c);")],
+  },
+  {
+    file: "src/api/rerank.ts",
+    carries: "prompt-or-answer",
+    reads: "The JSON body of a rerank call: the query and the documents.",
+    then: "Sent to the provider chosen; its scores are checked and returned, with the documents' own text when asked.",
+    kept: "Not stored; a generation row and receipt with hashes and counts are written.",
+    evidence: [ev("src/api/rerank.ts", "const body = await readJson(c);")],
   },
   {
     file: "src/api/anthropic.ts",
@@ -346,6 +390,14 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
     then: "Converted to a chat request and sent through the router's own chat route.",
     kept: "Nothing beyond what src/api/chat.ts keeps.",
     evidence: [ev("src/api/responses.ts", "chatRequestFrom(await readJson(c))")],
+  },
+  {
+    file: "src/ollama/routes.ts",
+    carries: "prompt-or-answer",
+    reads: "The JSON body of an Ollama-format chat, generate or embed call.",
+    then: "Converted to a chat or embeddings request and sent through the router's own route, so it is handled and kept exactly as that call is.",
+    kept: "Nothing beyond what src/api/chat.ts and src/api/embeddings.ts keep.",
+    evidence: [ev("src/ollama/routes.ts", "const raw = await readJson(c);")],
   },
   {
     file: "src/api/mcp.ts",
@@ -398,9 +450,9 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
   {
     file: "src/api/keys.ts",
     carries: "settings",
-    reads: "Key settings (name, budget, limits, allowed models), amounts, BYOK provider keys, team roles and wallet sign-in challenges.",
+    reads: "Key settings (name, budget, limits, allowed models, tracing destination), amounts, BYOK provider keys, team roles and wallet sign-in challenges.",
     then: "Validated and written to the keys, byok_keys, teams and kv tables as described above.",
-    kept: "The settings and, for a BYOK key, the key encrypted under APP_SECRET.",
+    kept: "The settings and, for a BYOK key or a tracing destination, the key or the destination URL and credentials encrypted under APP_SECRET.",
     evidence: [ev("src/api/keys.ts", "const spec = keySpec.parse(await readJson(c));")],
   },
   {
@@ -410,6 +462,14 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
     then: "Validated against a strict schema with no field for message text, then stored.",
     kept: "The route in saved_routes.",
     evidence: [ev("src/api/saved-routes.ts", "routeCreateSchema.parse(await readJson(c))")],
+  },
+  {
+    file: "src/api/presets.ts",
+    carries: "settings",
+    reads: "A preset: fallback models, provider preferences, sampling controls and the owner's own system prompt, response_format and tool definitions.",
+    then: "Validated against a strict schema with size caps, then stored as a new version.",
+    kept: "The preset's versions in preset_versions.",
+    evidence: [ev("src/api/presets.ts", "presetDocSchema.parse(await readJson(c))")],
   },
   {
     file: "src/api/spend.ts",
@@ -548,6 +608,15 @@ export const EXTERNAL: ExternalDoc = {
   },
   otherStores: [
     {
+      id: "batch-memory",
+      name: "Batch requests and answers in the router's memory, without Redis",
+      purpose: "Without Redis (a single router in development), the Batch API keeps the same sealed requests and answers in the router process's memory instead.",
+      holds: "The same sealed requests and answers as the Redis keys batch:<batch id>:in and :out.",
+      ttl: "The sealed requests are deleted when the batch finishes; the sealed answers BATCH_RESULTS_TTL after that (86,400 seconds, 24 hours, unless the operator changed it). A batch that never finishes ends when its 24-hour completion window closes, so nothing outlives the window plus that time. A restart loses them.",
+      requestText: "request-and-answer-text",
+      evidence: [ev("src/services/batches.ts", "private mem = new Map<string, { fields: Map<string, string>; expires: number }>();")],
+    },
+    {
       id: "response-cache-memory",
       name: "Response cache in the router's memory",
       purpose: "The opt-in response cache also keeps each entry in the router process's memory (up to 5,000 entries), whether or not Redis is configured.",
@@ -585,6 +654,19 @@ export const EXTERNAL: ExternalDoc = {
         ev("src/api/chat.ts", "if (!privateLane) ctx.telemetry.span(\"chat \" + r.model.id"),
         ev("src/api/chat.ts", "p.c.req.header(\"traceparent\")?.split(\"-\")[1]"),
         ev("src/gateway/otel.ts", "Spans never carry prompt or completion content."),
+      ],
+    },
+    {
+      id: "customer-tracing",
+      name: "Trace export to a key owner's own destination, off unless the owner sets one",
+      purpose: "A key's owner can set a tracing destination on the key (their OpenTelemetry collector, Langfuse or Helicone). Each public-lane call made with that key is then sent there: model, provider, token counts, sampling settings, finish reason, latency, cost, receipt id and lane. Prompt and completion text is included only if the owner set include_content. Calls on the attested and unlinkable lanes are never sent.",
+      holds: "The listed fields of recent calls, in a bounded in-memory queue (2,000 calls at most across all keys; more are dropped and counted) until they are delivered or given up.",
+      ttl: "In memory for seconds, or until retries end; kept by the destination the key's owner chose.",
+      requestText: "answer-text",
+      evidence: [
+        ev("src/api/chat.ts", "if (billing.key?.tracing && shouldExportTrace({ lane: p.disc.lane, privateLaneRequest: privateLane, privateRoute }))"),
+        ev("src/services/tracing.ts", "export function shouldExportTrace(o: { lane: string; privateLaneRequest: boolean; privateRoute: boolean }) {"),
+        ev("src/services/tracing.ts", "if (!stored.include_content) {"),
       ],
     },
     {
