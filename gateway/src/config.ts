@@ -1,3 +1,5 @@
+import { networkStatsEnv } from "./network/stats-config.ts";
+import { sealedEnv, guardSealed } from "./agents/sealed/config.ts";
 import { networkPayoutEnv, networkPayoutSettings } from "./network/payout-config.ts";
 import { hostBondEnv, hostBondSettings } from "./network/bond-config.ts";
 import { networkHostsEnv, networkHostsSettings } from "./network/host-config.ts";
@@ -51,10 +53,12 @@ function measurementPublicKey(raw: string | undefined): string | null {
 }
 
 const schema = z.object({
+  ...sealedEnv,
   ...hostBondEnv,
   ...networkWeightEnv,
   ...sanctionsEnv,
   ...networkHostsEnv,
+  ...networkStatsEnv,
   ...networkPayoutEnv,
   RUNTIME_ROLE: z.enum(["all", "api", "worker"]).default("all"),
   WORKER_JOBS: z.string().default(""),
@@ -321,6 +325,7 @@ const schema = z.object({
 
   // Optional Telegram bot (BotFather token, a secret). Without it the bot never starts.
   TELEGRAM_BOT_TOKEN: opt,
+  TELEGRAM_LINKING_ENABLED: bool.default(false),
 
   // ---- $ANMO holder perks: free inference credits (scripts/holder-credits.ts) and live holder tiers.
   // The token is ANMO_TOKEN_ADDRESS / ANMO_TOKEN_SYMBOL above (the $ANMO escrow settings).
@@ -393,6 +398,7 @@ const schema = z.object({
 
   // ---- Transparency log of keys and configurations (C2SP tlog-tiles with signed-note checkpoints and tlog-cosignature
   // witnesses; src/tlog). Off by default: no route is registered and nothing is appended.
+  AGENT_PROFILES_ENABLED: bool.default(false),
   AGENT_POLICY_ENABLED: bool.default(false),
   AGENT_APPROVAL_TTL_S: z.coerce.number().int().min(1).max(86400).default(900),
   NETWORK_POLICY_ENABLED: bool.default(false),
@@ -424,6 +430,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     throw new Error(`Invalid configuration: ${issues}`);
   }
   const e = parsed.data;
+  guardSealed(e);
   if (e.NETWORK_POLICY_ENABLED && !e.TLOG_ENABLED) throw new Error("NETWORK_POLICY_ENABLED needs TLOG_ENABLED.");
   const production = e.ANONYMO_ENV === "production";
   const escrowMode = e.PAYMENTS_MODE === "escrow";
@@ -513,6 +520,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     if (!e.DEV_FAUCET_PRIVATE_KEY) throw new Error("DEV_FAUCET needs DEV_FAUCET_PRIVATE_KEY (a funded local development account).");
   }
   // The bot token is optional and secret (it is part of every Telegram API URL): never echo it.
+  if (e.TELEGRAM_LINKING_ENABLED && (!e.TELEGRAM_BOT_TOKEN || !e.AGENT_POLICY_ENABLED)) throw new Error("TELEGRAM_LINKING_ENABLED requires TELEGRAM_BOT_TOKEN and AGENT_POLICY_ENABLED.");
   if (e.TELEGRAM_BOT_TOKEN && !/^\d{3,20}:[A-Za-z0-9_-]{20,}$/.test(e.TELEGRAM_BOT_TOKEN)) throw new Error("TELEGRAM_BOT_TOKEN must be the token BotFather issued (<id>:<secret>).");
   // The webhook is optional: without it the alert-notifier job only records state. Never echo the URL.
   if (e.ALERT_WEBHOOK_URL) {
@@ -564,6 +572,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     sanctions: sanctionsSettings(e, production),
     e2ee: e2eeSettings(e.E2EE_PASSTHROUGH_ENABLED, e.PROVIDERS_FILE, production, { baseUrl: e.E2EE_GATEWAY_BASE_URL, attestationUrl: e.E2EE_GATEWAY_ATTESTATION_URL }),
     networkHosts: networkHostsSettings(e, production),
+    networkStatsEnabled: e.NETWORK_STATS_ENABLED,
     networkPayouts: networkPayoutSettings(e, production),
     networkWeights: { ...networkWeightSettings(e), ...(e.NETWORK_BONDS_ENABLED ? { bonds: { ...hostBondSettings(e), scope: `${e.CHAIN_ID}:${e.HOST_BOND_ADDRESS?.toLowerCase()}` } } : {}) },
     hostBonds: hostBondSettings(e),
@@ -582,7 +591,9 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     redisUrl: e.REDIS_URL,
     appSecret: e.APP_SECRET ?? "dev-insecure-secret-change-me-dev-insecure",
     adminToken: e.ADMIN_TOKEN,
+    agentProfilesEnabled: e.AGENT_PROFILES_ENABLED,
     agentPolicyEnabled: e.AGENT_POLICY_ENABLED,
+    agentSealedEnabled: e.AGENT_SEALED_ENABLED,
     agentApprovalTtlS: e.AGENT_APPROVAL_TTL_S,
     networkPolicyEnabled: e.NETWORK_POLICY_ENABLED,
     logLevel: e.LOG_LEVEL,
@@ -731,7 +742,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     skills: skillsSettings(e, production),
     limits: { defaultRpm: e.DEFAULT_RPM, defaultTpm: e.DEFAULT_TPM, unauthRpm: e.UNAUTH_RPM, newKeysPerHour: e.NEW_KEYS_PER_HOUR },
     alerts: { webhookUrl: e.ALERT_WEBHOOK_URL, webhookFormat: e.ALERT_WEBHOOK_FORMAT },
-    telegram: { botToken: e.TELEGRAM_BOT_TOKEN },
+    telegram: { botToken: e.TELEGRAM_BOT_TOKEN, linkingEnabled: e.TELEGRAM_LINKING_ENABLED },
     backup: { required: e.BACKUP_REQUIRED, maxAgeHours: e.BACKUP_MAX_AGE_HOURS },
     holders,
     ipx: ipxSettings(e),

@@ -7,12 +7,12 @@ Ready-to-submit listings of Anonymo in the tools people already use. Each folder
 | [`litellm/`](litellm/) | LiteLLM (proxy and SDK) | cost-map entries for 358 models, provider registration, sample `config.yaml` | yes, via `config.yaml` |
 | [`vercel-ai-sdk/`](vercel-ai-sdk/) | Vercel AI SDK community providers | `@anonymo/ai-sdk-provider` package (receipt and cost in `providerMetadata`, attested lane option) | after `npm publish` |
 | [`sillytavern/`](sillytavern/) | SillyTavern "Custom (OpenAI-compatible)" | connection recipe, importable preset | yes |
-| [`mcp-registry/`](mcp-registry/) | Official MCP Registry | `server.json` for `io.github.anonymo-tech/anonymo` (the existing `/mcp` server) | yes, via `claude mcp add` |
-| [`x402-bazaar/`](x402-bazaar/) | x402 Bazaar discovery | discovery items for chat, completions, embeddings; tags `attested`, `tee`, `uncensored-ok` | no: x402 is off on the live router until `X402_PAY_TO` is set |
+| [`mcp-registry/`](mcp-registry/) | Official MCP Registry | `server.json` for `io.github.anonymo-tech/anonymo` (the existing `/mcp` server, including `anonymo_agent_rules` and `anonymo_agent_check`) | yes, via `claude mcp add` |
+| [`x402-bazaar/`](x402-bazaar/) | x402 Bazaar discovery | discovery items for chat, completions, embeddings; tags `attested`, `tee`, `uncensored-ok` | yes: x402 payments for chat and embeddings are switched on at anonymo.tech |
 | [`elizaos/`](elizaos/) | ElizaOS plugin registry | `@anonymo/plugin-anonymo` model provider (text, embeddings, attested lane) | after `npm publish` |
 | [`huggingface/`](huggingface/) | Hugging Face model cards | badge and "Run it on Anonymo" snippet | yes, per model-card PR |
 
-Every listing points at the public router, `https://api-production-70da.up.railway.app/api/v1`. When a custom domain goes live, search this folder for that host and regenerate the LiteLLM files.
+Use `https://anonymo.tech/api/v1` for inference and `https://anonymo.tech/mcp` for MCP. Before submitting a listing, review its endpoint and publication status. The client SDK code is in `packages/client` and `packages/client-py`; npm and PyPI releases are not published yet.
 
 ## Regenerate from the live catalogue
 
@@ -20,7 +20,7 @@ Every listing points at the public router, `https://api-production-70da.up.railw
 bun scripts/gen-integrations.ts
 ```
 
-Rewrites `litellm/` from `GET /api/v1/models` (public, no key). Tested by `test/gen-integrations.test.ts` against a fixture.
+Rewrites `litellm/` from `GET /api/v1/models` (public, no key). The catalogue generator has validation in the repository.
 
 The two TypeScript packages have their own `package.json` and are not part of the router's build or typecheck:
 
