@@ -1,17 +1,21 @@
 "use client";
+import ProofBadge from "./ProofBadge"; // U76: shared evidence labels.
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, api, clearKey, loadKey, saveKey, streamChat, validKey } from "../lib/api";
+import { ApiError, api, clearKey, loadKey, saveKey, validKey } from "../lib/api";
 import { hasWallet, walletApiKey } from "../lib/wallet";
 import { formatMs, formatUsd, receiptHref, estimateTokens } from "../lib/arena";
 import { retryAfterMs } from "../lib/batch";
 import {
-  CAPS, DISCLOSURE_LABEL, SORTS, TOOL_PRESETS,
+  SORTS, TOOL_PRESETS,
   applyChunk, blankReply, buildRequest, capCounts, catalogueCounts, defaultSettings, filterCatalog,
   formatContext, formatPrice, groupByMaker, ignoredSettings, normalizeModel, parseTools, parseSchema, pcm16ToWav, replyFacts,
   routeAsModel, sampleToolResult, supportFor,
 } from "../lib/harness";
+import { MODEL_CAPABILITIES as CAPS } from "../lib/model-capabilities.js"; // Shared catalogue vocabulary.
+import { CapabilityChips, CapabilityGuide } from "./ModelCapabilities";
 import Markdown from "./Markdown";
 import PrivateMode, { ReplyPrivacy, usePrivateMode } from "./harness/PrivateMode";
+import ModelFilters from "./harness/ModelFilters";
 import ImageMode from "./harness/ImageMode";
 import GeneratedImages from "./harness/GeneratedImages";
 import { ImageAttach, ImageNotice, useImageAttachments } from "./harness/ImageAttachments";
@@ -20,8 +24,10 @@ import { ReadAloud, useHarnessVoice } from "./harness/VoiceMode";
 // Composer polish: contextual notices and voice menu.
 import ComposerVoice, { VoiceFeedback } from "./harness/ComposerVoice";
 import AppShell from "./harness/AppShell";
+import Limits, { ReplyApproval, useHarnessLimits } from "./harness/Limits"; // U77: router-enforced chat controls.
 import { Button, CopyButton, Modal } from "./UI";
 import s from "./Harness.module.css";
+import catalogStyles from "./ModelPickerCapabilities.module.css";
 
 const MAX_LANES = 3;
 const FAVS = "anonymo-harness-favs";
@@ -106,13 +112,7 @@ function Slider({ label, value, min, max, step, fallback, onChange }) {
 }
 
 function CapTags({ model }) {
-  const tags = CAPS.filter((c) => model.caps.has(c.key));
-  if (!tags.length) return <span className={s.capTag}>Text</span>;
-  return tags.map((c) => (
-    <span key={c.key} className={s.capTag} data-green={c.key === "attested" || undefined}>
-      {c.label}
-    </span>
-  ));
+  return <CapabilityChips model={model} dark />;
 }
 
 // ---------------------------------------------------------------- model rail
@@ -156,12 +156,14 @@ function Rail({ models, routes, loading, error, onRetry, activeId, onPick, favs,
         </label>
         <div className={s.chips} role="group" aria-label="Filter by capability">
           {CAPS.map((c) => (
-            <button type="button" key={c.key} aria-pressed={caps.includes(c.key)} onClick={() => toggleCap(c.key)} disabled={!caps.includes(c.key) && !counts[c.key]}>
+            <button type="button" key={c.key} aria-pressed={caps.includes(c.key)} title={c.explanation} onClick={() => toggleCap(c.key)} disabled={!caps.includes(c.key) && !counts[c.key]}>
               {c.label}
               <small>{counts[c.key] ?? 0}</small>
             </button>
           ))}
         </div>
+        <ModelFilters caps={caps} counts={counts} onToggle={toggleCap} className={s.chips} />
+        <CapabilityGuide dark />
         <div className={s.railSort}>
           <Segmented label="Sort models" value={prefs.sort} options={SORTS.map((x) => [x.key, x.label])} onChange={(v) => setPrefs({ ...prefs, sort: v })} />
           <button type="button" className={s.groupToggle} aria-pressed={!!prefs.group} onClick={() => setPrefs({ ...prefs, group: !prefs.group })}>
@@ -198,7 +200,7 @@ function Rail({ models, routes, loading, error, onRetry, activeId, onPick, favs,
                 <li key={m.id} className={s.row} data-active={m.id === activeId || undefined}>
                   <button type="button" className={s.pick} onClick={() => onPick(m.id)} aria-current={m.id === activeId || undefined} title={m.id}>
                     <span className={s.rowName}>
-                      {m.attested && <i className={s.att} title="Attested route available" />}
+                      {/* U76: hardware badge comes from CapabilityChips below. */}
                       {m.name}
                     </span>
                     <span className={s.rowMeta}>
@@ -207,6 +209,7 @@ function Rail({ models, routes, loading, error, onRetry, activeId, onPick, favs,
                       {m.outPrice ? " / " + formatPrice(m.outPrice) : ""}
                     </span>
                   </button>
+                  <CapTags model={m} /> {/* U76: check links sit outside the model button. */}
                   {!m.route && (
                     <button type="button" className={s.fav} aria-pressed={favs.includes(m.id)} onClick={() => toggleFav(m.id)} aria-label={(favs.includes(m.id) ? "Remove " : "Add ") + m.name + (favs.includes(m.id) ? " from favourites" : " to favourites")}>
                       <Star on={favs.includes(m.id)} />
@@ -253,11 +256,11 @@ function Palette({ models, onPick, onClose, title, onBrowse }) {
           <input autoFocus placeholder={title} value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={key} role="combobox" aria-expanded="true" aria-controls="palette-list" aria-activedescendant={list[active] ? "pal-" + active : undefined} spellCheck={false} autoComplete="off" />
           <kbd>Esc</kbd>
         </label>
-        <ul id="palette-list" role="listbox" ref={listRef} className={s.paletteList}>
+        <ul id="palette-list" role="listbox" ref={listRef} className={`${s.paletteList} ${catalogStyles.paletteList}`}>
           {list.map((m, i) => (
             <li key={m.id} id={"pal-" + i} role="option" aria-selected={i === active} data-active={i === active || undefined} onMouseMove={() => setActive(i)} onClick={() => onPick(m.id)}>
               <span className={s.palName}>
-                {m.attested && <i className={s.att} />}
+                {/* U76: hardware badge comes from CapabilityChips below. */}
                 {m.name}
                 <small>{m.makerLabel}</small>
               </span>
@@ -413,7 +416,7 @@ function ToolCalls({ msg, awaiting, onSubmit }) {
   );
 }
 
-function Reply({ msg, model, last, busy, onRegenerate, onToolResults, onSignIn, onUseImage, voice }) {
+function Reply({ msg, model, last, busy, onRegenerate, onToolResults, onSignIn, onUseImage, voice, limits }) {
   const facts = replyFacts(msg);
   const waiting = msg.status === "waiting";
   const streaming = msg.status === "streaming" || waiting;
@@ -425,6 +428,7 @@ function Reply({ msg, model, last, busy, onRegenerate, onToolResults, onSignIn, 
         <span>{model?.makerLabel}</span>
         {streaming && <span className={s.live}>{waiting ? "Routing" : "Streaming"}</span>}
       </header>
+      {limits && <ReplyApproval limits={limits} messageId={msg.id} /> /* U77: same approval as Agents. */}
       {msg.reasoning && (
         <details className={s.thinking} open={streaming && !msg.text ? true : undefined}>
           <summary>
@@ -472,11 +476,9 @@ function Reply({ msg, model, last, busy, onRegenerate, onToolResults, onSignIn, 
           <span title="Charged for this call">{facts.cost === null ? "cost pending" : formatUsd(facts.cost)}</span>
           {Number.isFinite(msg.ms) && <span title={msg.ttft != null ? `First token after ${formatMs(msg.ttft)}` : undefined}>{formatMs(msg.ms)}</span>}
           {facts.provider && <span>{facts.provider}</span>}
-          {facts.disclosure && (
-            <span className={facts.disclosure === "attested" ? s.attBadge : s.discl} title="Provider disclosure class, from the signed receipt">
-              {DISCLOSURE_LABEL[facts.disclosure] || facts.disclosure}
-            </span>
-          )}
+          {/* U76: keep provider, usage, cost and receipt inspection beside the shared proof marks. */}
+          <ProofBadge evidence={{ source: "receipt", data: msg.receipt }} dark />
+          {facts.disclosure && <span title="Disclosure recorded in the receipt">{facts.disclosure}</span>}
           {facts.receiptId && (
             <a href={receiptHref(facts.receiptId)} target="_blank" rel="noopener noreferrer" title={facts.receiptId}>
               Receipt ↗
@@ -555,7 +557,7 @@ function UserMsg({ msg, editing, onEdit, onCancel, onSave, busy }) {
 
 // ---------------------------------------------------------------- tools panel
 
-function ToolsPanel({ model, settings, set, open, onClose, compare, system, setSystem }) {
+function ToolsPanel({ model, settings, set, open, onClose, compare, system, setSystem, limitsControl }) {
   const sup = supportFor(model);
   const toolsCheck = settings.tools ? parseTools(settings.toolsText) : {};
   const schemaCheck = settings.format === "schema" ? parseSchema(settings.schema) : {};
@@ -577,7 +579,7 @@ function ToolsPanel({ model, settings, set, open, onClose, compare, system, setS
     if (!list.some((t) => (t.function || t).name === name)) list.push(TOOL_PRESETS[name]);
     set({ tools: true, toolsText: JSON.stringify(list, null, 2) });
   };
-  if (!model) return <aside className={s.toolsPanel} aria-label="Tools" />;
+  if (!model) return <aside className={s.toolsPanel} data-open={open || undefined} aria-label="Tools"><div className={s.toolsHead}><h2>Tools</h2><button type="button" className={s.sheetClose} onClick={onClose}>Done</button></div><div className={s.toolsBody}>{limitsControl}</div></aside>; // U77: limits remain reachable before models load.
   const any = sup.reasoning || sup.web || sup.json || sup.schema || sup.tools || sup.imageOut || sup.audioOut || sup.verbosity;
   return (
     <aside className={s.toolsPanel} data-open={open || undefined} aria-label="Tools">
@@ -593,6 +595,7 @@ function ToolsPanel({ model, settings, set, open, onClose, compare, system, setS
         </button>
       </div>
       <div className={s.toolsBody}>
+        {limitsControl /* U77: dedicated child session; enforcement stays in the router. */}
         <section className={s.sect}>
           <h3>
             <label htmlFor="system-prompt">System prompt</label>
@@ -753,6 +756,7 @@ export default function Harness() {
   const [announce, setAnnounce] = useState("");
   const priv = usePrivateMode(); // private mode: the attested lane only, see harness/PrivateMode.jsx
   const controllers = useRef(new Map());
+  const limits = useHarnessLimits(); // U77: tab-scoped child key and approval state.
   const lanesRef = useRef(lanes);
   lanesRef.current = lanes;
   const settingsRef = useRef(settings);
@@ -790,6 +794,7 @@ export default function Harness() {
 
   const loadAccount = useCallback(async (key) => {
     const [me, credits] = await Promise.all([api("/api/v1/key", { key }), api("/api/v1/credits", { key })]);
+    await limits.connect(key, me.data.hash); // U77: restore limits before accepting chat.
     setAuth({ key, label: me.data?.label || me.data?.name || "Key", balance: credits.data?.available ?? null, tier: null, state: "ok" });
     api("/api/v1/holder", { key })
       .then((r) => r.data?.tier?.name && setAuth((a) => (a.key === key ? { ...a, tier: r.data.tier.name } : a)))
@@ -802,7 +807,8 @@ export default function Harness() {
     const key = authRef.current.key;
     if (key) api("/api/v1/credits", { key }).then((r) => setAuth((a) => (a.key === key ? { ...a, balance: r.data?.available ?? a.balance } : a))).catch(() => {});
   }, []);
-  const signOut = useCallback(() => {
+  const signOut = useCallback(async () => {
+    controllers.current.forEach((c) => c.abort()); try { await limits.signOut(); } catch { return; } // U77: revoke before clearing sign-in.
     clearKey();
     setAuth({ key: "", label: "", balance: null, tier: null, state: "none" });
     setRouteRows([]);
@@ -918,7 +924,8 @@ export default function Harness() {
     };
     patchMsg(laneId, msgId, { notes, imageMode: !!body.modalities?.includes("image") });
     try {
-      await streamChat({
+      await limits.streamChat({ // U77: no parent-key fallback when limits are on.
+        messageId: msgId,
         key,
         body,
         signal: ctl.signal,
@@ -936,11 +943,11 @@ export default function Harness() {
       const stopped = err?.name === "AbortError";
       let message = err?.message || "The route failed.";
       let kind = err?.type || "";
-      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403) && !err.type?.startsWith("agent_") && !limits.state.session) {
         message = "This key was not accepted. Sign in again to keep going.";
         kind = "auth";
         signOut();
-      } else if (err instanceof ApiError && err.status === 402) {
+      } else if (err instanceof ApiError && err.status === 402 && err.type !== "key_budget_exceeded") {
         message = "Your balance is too low for this call. Add funds, then try again.";
         kind = "funds";
       } else if (err instanceof ApiError && err.status === 429) {
@@ -1044,8 +1051,8 @@ export default function Harness() {
   }, [draft]);
 
   const onKey = async (key) => {
-    saveKey(key);
     await loadAccount(key);
+    saveKey(key); // U77: keep the revoking account key until a key change succeeds.
     setSignin(null);
     if (pendingSend.current) {
       pendingSend.current = false;
@@ -1197,7 +1204,7 @@ export default function Harness() {
               </h1>
               <p className={s.lede}>Choose a model at the top, then type below. Every reply shows what it cost, with a signed receipt.</p>
               <p className={s.counts} aria-label="Live catalogue">
-                {raw ? `${counts.models.toLocaleString("en-US")} models from ${counts.makers} makers, live` : "Loading the live catalogue"}
+                {raw ? `${counts.models.toLocaleString("en-US")} chat models from ${counts.makers} makers, live` : "Loading the live catalogue"}
               </p>
               <ul className={s.examples} aria-label="Example prompts">
                 {EXAMPLES.map((ex) => (
@@ -1225,7 +1232,7 @@ export default function Harness() {
                           <code>{m.text}</code>
                         </div>
                       ) : (
-                        <Reply key={m.id} msg={m} model={find(m.model)} last={m.id === lastId} busy={busy} onRegenerate={() => regenerate(l.id)} onToolResults={(r) => toolResults(l.id, r)} onSignIn={() => setSignin("send")} onUseImage={acceptsImages ? addFiles : undefined} voice={voice} />
+                        <Reply key={m.id} msg={m} model={find(m.model)} last={m.id === lastId} busy={busy} onRegenerate={() => regenerate(l.id)} onToolResults={(r) => toolResults(l.id, r)} onSignIn={() => setSignin("send")} onUseImage={acceptsImages ? addFiles : undefined} voice={voice} limits={limits} />
                       ),
                     )}
                   </div>
@@ -1312,7 +1319,7 @@ export default function Harness() {
         )}
       </main>
 
-      <ToolsPanel model={focusModel} settings={settings} set={set} open={sheet === "tools"} onClose={() => setSheet(null)} compare={compare} system={system} setSystem={setSystem} />
+      <ToolsPanel model={focusModel} settings={settings} set={set} open={sheet === "tools"} onClose={() => setSheet(null)} compare={compare} system={system} setSystem={setSystem} limitsControl={<Limits limits={limits} signedIn={auth.state === "ok"} busy={busy} onStop={stop} />} />
       {sheet && <button type="button" className={s.scrim} aria-label="Close panel" onClick={() => setSheet(null)} />}
 
       {palette && (

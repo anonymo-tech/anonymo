@@ -1,3 +1,5 @@
+import { inboxRoutes } from "./api/inbox.ts"; // U78: account inbox.
+import { activityRoutes } from "./api/activity.ts";
 import { networkStatsRoutes } from "./network/stats.ts";
 import { agentProfilesRoutes } from "./api/agent-profiles.ts";
 import { agentSealedRoutes } from "./api/agent-sealed.ts";
@@ -172,6 +174,8 @@ export async function createApp(opts: AppOptions = {}) {
   rerankRoutes(app, ctx);
   modelsRoutes(app, ctx);
   generationRoutes(app, ctx);
+  activityRoutes(app, ctx);
+  inboxRoutes(app, ctx); // U78: account inbox.
   keysRoutes(app, ctx);
   teamsRoutes(app, ctx);
   escrowRoutes(app, ctx);

@@ -21,9 +21,11 @@ export const TASKS = [
   task('encrypted', 'chat', 'Use encrypted chat', 'Follow the device-encryption setup for the attested gateway.', '/docs/#e2ee-phala', 'encrypted, encryption, e2ee'),
   task('history', 'chat', 'Organise your chats', 'Search, pin, rename, export or import chats in the Harness.', '/harness/', 'history, conversations, export, import'),
   task('install', 'chat', 'Install the app', 'Open the Harness and use browser installation on your phone or desktop.', '/harness/', 'pwa, mobile, phone, install'),
-  task('models', 'chat', 'Find models and prices', 'Browse the model catalog, providers and per-token rates.', '/models/', 'catalog, pricing, cost, models'),
+  task('models', 'chat', 'Find models and prices', 'Search one model catalog by capability, provider, context and price.', '/models/', 'catalog, pricing, cost, models, capabilities, images, audio, network'),
 
-  task('dashboard', 'build', 'Manage your API keys', 'Open the dashboard to connect an account and manage keys.', '/dashboard/', 'dashboard, api key, account', true),
+  task('account-activity', 'agents', 'See all your activity', 'Follow calls, approvals, alerts and funds, with receipts and exports.', '/dashboard/#activity', 'activity, history, ledger, receipts, export'),
+  task('inbox', 'build', 'Check your inbox', 'Review pending approvals, alerts, deposits, agreement events and host updates.', '/dashboard/#inbox', 'inbox, notifications, attention'),
+  task('dashboard', 'build', 'Manage your API keys', 'Explore your account, then connect a key to see balances, calls and rules.', '/dashboard/', 'dashboard, api key, account', true),
   task('api', 'build', 'Call the API', 'Read request formats, endpoints and the quickstart.', '/docs/#quickstart', 'api, integration, developer', true),
   task('payments', 'build', 'Choose a way to pay', 'Read how USDG, $ANMO, stock escrow and x402 payments work.', '/docs/#payments', 'payment, usdg, anmo, stock, escrow, x402', true),
   task('tokens', 'build', 'Get private tokens', 'Buy and spend blind tokens; read the payment and transport limits.', '/tokens/', 'private tokens, blind, credits', true),
@@ -44,16 +46,16 @@ export const TASKS = [
   task('evals', 'build', 'Evaluate model answers', 'Open Eval Lab in the dashboard to compare answers against your cases.', '/dashboard/', 'eval, evaluation, rubric, benchmark'),
   task('skills', 'build', 'Inspect a skill', 'Open Skills in the dashboard to read scan reports and installation details.', '/dashboard/', 'skills, scan, install'),
   task('spend', 'build', 'Watch API spending', 'Open Spend Watch in the dashboard to inspect usage and spending controls.', '/dashboard/', 'spend watch, usage, costs'),
-  task('api-receipts', 'build', 'Review your API calls', 'Open Receipts in the dashboard to inspect recorded calls.', '/dashboard/', 'api receipts, calls, history'),
+  task('api-receipts', 'build', 'Review your API calls', 'Open Activity for calls, receipts and account events; Receipts keeps extra tools.', '/dashboard/#activity', 'api receipts, calls, history'),
   task('holders', 'build', 'Inspect $ANMO account benefits', 'Open Holders in the dashboard to inspect balance, tier and credit details.', '/dashboard/', 'holders, tier, balance, anmo'),
   task('settings', 'build', 'Set account preferences', 'Open Settings in the dashboard to manage account preferences.', '/dashboard/', 'settings, account, preferences'),
   task('mcp', 'build', 'Connect agent tools', 'Read the MCP tool interface and connection instructions.', '/docs/#mcp', 'mcp, tools, agent'),
 
   task('rulebook', 'agents', 'Give an agent a budget', 'Set caps, models, lanes, tools and hours for requests through Anonymo.', '/agents/', 'agent, rulebook, budget, limits', true),
   task('sessions', 'agents', 'Give an agent a session', 'Open Agent Sessions in the dashboard to set a session budget and lifetime.', '/dashboard/', 'agent sessions, session, ttl'),
-  task('approvals', 'agents', "Approve an agent’s payment", 'Connect your key on Agents to approve or deny a single-use request.', '/agents/', 'approval, approve, deny, payment', true),
+  task('approvals', 'agents', "Approve an agent’s payment", 'Review how approvals work, then connect a key to approve or deny a request.', '/agents/', 'approval, approve, deny, payment', true),
   task('telegram', 'agents', 'Link Telegram approvals', 'Connect Telegram from Agents for approvals and alerts.', '/agents/', 'telegram, bot, notification'),
-  task('activity', 'agents', 'Review agent activity', 'Select an agent, then Activity & receipts to inspect or export its ledger.', '/agents/', 'activity, ledger, receipts, csv, json'),
+  task('activity', 'agents', 'Review agent activity', 'Open Activity for calls and agent events; Agents keeps the per-agent ledger.', '/dashboard/#activity', 'activity, ledger, receipts, csv, json'),
   task('alerts', 'agents', 'Set agent alerts', 'Configure the alert feed, spend webhook or linked Telegram notifications.', '/agents/', 'alerts, notification, webhook'),
   task('breakers', 'agents', 'Set circuit breakers', 'Configure rulebook breakers that stop subsequent requests through Anonymo.', '/agents/', 'breaker, kill switch, stop, safety'),
   task('autonomy', 'agents', 'Adjust agent autonomy', 'Review progressive autonomy and spending caps for a selected agent.', '/agents/', 'autonomy, spending, caps'),
@@ -90,6 +92,50 @@ export const TASKS = [
 ];
 
 // Tools that live inside a page tab are found through search; menus, the mobile menu and the footer stay short.
-const SEARCH_ONLY = new Set(['history', 'unlinkable', 'proxy', 'registry', 'routing', 'presets', 'characters', 'batches', 'teams', 'tracing', 'playground', 'evals', 'skills', 'spend', 'api-receipts', 'holders', 'settings', 'sessions', 'breakers', 'autonomy', 'profile', 'inventory-log', 'badge', 'proof-time']);
+const SEARCH_ONLY = new Set(['inbox', 'activity', 'history', 'unlinkable', 'proxy', 'registry', 'routing', 'presets', 'characters', 'batches', 'teams', 'tracing', 'playground', 'evals', 'skills', 'spend', 'api-receipts', 'holders', 'settings', 'sessions', 'breakers', 'autonomy', 'profile', 'inventory-log', 'badge', 'proof-time']);
 for (const item of TASKS) item.menu = !SEARCH_ONLY.has(item.id);
+TASKS.push({ ...task('chat-limits', 'chat', 'Limit chat spending', 'Open Harness Tools to cap spending, approve replies and stop chat.', '/harness/', 'limits, budget, spending, approval, stop'), menu: false }); // U77: search-only control.
 export const menuTasks = group => TASKS.filter(item => item.group === group && item.menu);
+
+// Account sections share the task map; existing dashboard hashes remain stable.
+export const ACCOUNT_GROUPS = [
+  { title: 'Home', ids: ['dashboard', 'inbox'] },
+  { title: 'Use', ids: ['playground', 'models', 'routing', 'presets', 'characters', 'evals', 'batches', 'skills'] },
+  { title: 'Agents', ids: ['rulebook', 'sessions', 'directory'] },
+  { title: 'Money', ids: ['account-activity', 'account-payments', 'holders', 'spend', 'api-receipts'] },
+  { title: 'Account', ids: ['account-keys', 'teams', 'providers', 'settings', 'keep'] },
+];
+TASKS.push(task('account-keys', 'build', 'Manage account keys', 'Explore API keys, then connect to create keys and set budgets.', '/dashboard/#api-keys', 'api keys, budget'));
+TASKS.push(task('account-payments', 'build', 'Add funds to your account', 'Explore Payments, then connect to see deposit instructions and your balance.', '/dashboard/#payments', 'balance, deposit'));
+for (const id of ['account-keys', 'account-payments']) TASKS.find(item => item.id === id).menu = false;
+const accountSection = (taskId, title, hash, description, start) => ({ taskId, title, hash, description, start, href: hash ? '/dashboard/#' + hash : TASKS.find(item => item.id === taskId).href });
+export const ACCOUNT_SECTIONS = [
+  accountSection('inbox', 'Inbox', 'inbox', 'Review pending approvals and new alerts, deposits, agreement events and host updates.', 'Connect your key to check items that need your attention.'),
+  accountSection('dashboard', 'Home', 'home', 'See your balance, spending, keys, agents and recent call receipts in one place.', 'Connect your key to see what you own and what needs your attention.'),
+  accountSection('account-activity', 'Activity', 'activity', 'Follow calls, approvals, alerts, deposits and agreements in one list.', 'Connect your key to read visible activity and export a filtered range.'),
+  accountSection('playground', 'Playground', 'playground', 'Send an API request and inspect its answer, cost and receipt.', 'Connect your key, choose a model and send a request.'),
+  accountSection('models', 'Models', 'models', 'Browse models, providers and per-token prices.', 'Connect your key to choose a model for your next call.'),
+  accountSection('routing', 'Saved Routes', 'saved-routes', 'Save model choices, fallbacks and routing preferences for repeat calls.', 'Connect your key to create a saved route.'),
+  accountSection('presets', 'Presets', 'presets', 'Reuse prompts, models and request settings.', 'Connect your key to save a preset.'),
+  accountSection('characters', 'Characters', 'characters', 'Import character cards and choose who can use them.', 'Connect your key to import a card.'),
+  accountSection('evals', 'Eval Lab', 'eval-lab', 'Compare model answers against your own cases.', 'Connect your key to add cases and run a comparison.'),
+  accountSection('batches', 'Batch Studio', 'batch-studio', 'Submit groups of requests and follow their progress.', 'Connect your key to submit a batch.'),
+  accountSection('skills', 'Skills', 'skills', 'Read skill scan reports and installation details.', 'Connect your key to inspect a skill.'),
+  accountSection('rulebook', 'Agents', null, 'Set budgets and rules, stop agents and review requests waiting for approval.', 'Connect a management key or an owner/admin key to manage agents.'),
+  accountSection('sessions', 'Agent Sessions', 'agent-sessions', 'Give an agent a spending budget and a time limit.', 'Connect your key to open a session.'),
+  accountSection('directory', 'Public directory', null, 'Browse opt-in agent profiles and owner-supplied capabilities.', 'Open the public directory to find an agent; no key is needed.'),
+  accountSection('account-payments', 'Payments', 'payments', 'See your balance, deposit instructions and payment options.', 'Connect your key to add funds.'),
+  accountSection('holders', 'Holders', 'holders', 'Inspect your $ANMO balance, tier and credit details.', 'Connect your key to read your account details.'),
+  accountSection('spend', 'Spend Watch', 'spend-watch', 'Inspect spending and configure spending alerts.', 'Connect your key to read usage and set a spending threshold.'),
+  accountSection('api-receipts', 'Receipts', 'receipts', 'Inspect recorded calls, costs and signed receipts.', 'Connect your key to read your call history.'),
+  accountSection('account-keys', 'API keys', 'api-keys', 'Create keys, set budgets and manage access to your account.', 'Connect your key to manage account keys.'),
+  accountSection('teams', 'Teams', 'teams', 'Manage team roles, budgets, keys and invitations.', 'Connect your key to manage a team, or follow your invitation link.'),
+  accountSection('providers', 'Providers', 'providers', 'Inspect provider records, hardware evidence and model availability.', 'Connect your key to inspect providers, or browse the public provider page.'),
+  accountSection('settings', 'Settings', 'settings', 'Export account metadata and read how to connect an app.', 'Connect your key to read your account settings.'),
+  accountSection('keep', 'What we keep', null, 'Inspect storage, logs and where request text or addresses are read.', 'Open What we keep to read the inventory; no key is needed.'),
+];
+
+for (const section of ACCOUNT_SECTIONS) {
+  const item = TASKS.find(task => task.id === section.taskId);
+  if (section.hash && item.href === '/dashboard/') item.href = section.href;
+}
