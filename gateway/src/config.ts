@@ -1,3 +1,5 @@
+import { structuredOutputEnv } from "./structured-output/options.ts"; // V83: opt-in JSON checking.
+import { insightsEnv } from "./insights/config.ts"; // V88: off by default.
 import { networkStatsEnv } from "./network/stats-config.ts";
 import { sealedEnv, guardSealed } from "./agents/sealed/config.ts";
 import { agreementEnv, agreementSettings } from "./agreements/config.ts";
@@ -54,6 +56,8 @@ function measurementPublicKey(raw: string | undefined): string | null {
 }
 
 const schema = z.object({
+  ...structuredOutputEnv, // V83
+  ...insightsEnv, // V88: spend insights.
   ...sealedEnv,
   ...hostBondEnv,
   ...networkWeightEnv,
@@ -79,6 +83,8 @@ const schema = z.object({
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   TRUST_PROXY: bool.default(false), // true behind exactly one trusted reverse proxy that appends X-Forwarded-For
 
+  ROUTE_EXPLAIN_ENABLED: bool.default(false), // V84: route explanations.
+  STATEMENTS_ENABLED: bool.default(false), // V87: read-only signed monthly statements.
   // Receipts
   RECEIPT_SIGNING_KEY: opt,
   RECEIPT_KEY_ROTATION_DAYS: num(7),
@@ -574,12 +580,15 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
   return {
     env: e.ANONYMO_ENV,
     production,
+    routeExplain: e.ROUTE_EXPLAIN_ENABLED, // V84
     hostDashboard: { enabled: e.HOST_DASHBOARD_ENABLED },
     agreements: agreementSettings(e, production),
     sanctions: sanctionsSettings(e, production),
     e2ee: e2eeSettings(e.E2EE_PASSTHROUGH_ENABLED, e.PROVIDERS_FILE, production, { baseUrl: e.E2EE_GATEWAY_BASE_URL, attestationUrl: e.E2EE_GATEWAY_ATTESTATION_URL }),
     networkHosts: networkHostsSettings(e, production),
+    statementsEnabled: e.STATEMENTS_ENABLED, // V87
     networkStatsEnabled: e.NETWORK_STATS_ENABLED,
+    spendInsightsEnabled: e.SPEND_INSIGHTS_ENABLED, // V88: read-only spend insights.
     networkPayouts: networkPayoutSettings(e, production),
     networkWeights: { ...networkWeightSettings(e), ...(e.NETWORK_BONDS_ENABLED ? { bonds: { ...hostBondSettings(e), scope: `${e.CHAIN_ID}:${e.HOST_BOND_ADDRESS?.toLowerCase()}` } } : {}) },
     hostBonds: hostBondSettings(e),
@@ -732,6 +741,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     },
     anthropic: { modelMap: parseModelMap(e.ANTHROPIC_MODEL_MAP) },
     // Off unless enabled. Council members and the judge are billed and receipted like any other call.
+    structuredOutputCheckEnabled: e.STRUCTURED_OUTPUT_CHECK_ENABLED, // V83
     features: { council: e.ANONYMO_FEATURE_COUNCIL },
     council: { models: councilModels, judge: e.ANONYMO_COUNCIL_JUDGE ?? null, mode: e.ANONYMO_COUNCIL_MODE },
     rag: { maxDocuments: e.RAG_MAX_DOCUMENTS, maxBytes: e.RAG_MAX_BYTES, maxChunks: e.RAG_MAX_CHUNKS, maxEmbeddingCalls: e.RAG_MAX_EMBEDDING_CALLS },

@@ -160,6 +160,7 @@
     }
   ],
   "paths": {
+    "/api/v1/statements/{yyyy-mm}": {"get":{"operationId":"getMonthlyStatement","tags":["Statements"],"summary":"Download a signed monthly statement","description":"V87: STATEMENTS_ENABLED defaults false; disabled route returns 404. Management and owner/admin keys see the account; ordinary and session keys see only their own attributed movements labelled scope=key. Exact USDG decimal strings reconcile to the ledger in one snapshot: opening + deposits + refunds - usage - separate fees + other changes = closing. Usage groups reconcile to usage. UTC month; usage by settlement time, calls by generation time. Current month is so_far. Months before account creation and future months return 404. Holds, external payments and embedded usage fees are not added to totals. Canonical payload JSON is signed with the existing receipt Ed25519 key and key_id; verify with published receipt keys. Print the account-shell HTML view for PDF. No new storage.","security":[{"BearerAuth":[]}],"parameters":[{"name":"yyyy-mm","in":"path","required":true,"schema":{"type":"string","pattern":"^[0-9]{4}-(0[1-9]|1[0-2])$"}},{"name":"format","in":"query","schema":{"type":"string","enum":["json"],"default":"json"}}],"responses":{"200":{"description":"Signed statement with Cache-Control: no-store","content":{"application/json":{"schema":{"type":"object","required":["data"],"properties":{"data":{"type":"object","required":["payload","alg","key_id","sig"],"properties":{"alg":{"type":"string","enum":["Ed25519"]},"key_id":{"type":"string"},"sig":{"type":"string","description":"Base64 signature of canonical payload JSON"},"payload":{"type":"object","description":"anonymo.statement.v1: month, currency, UTC bounds, generated_at, account_created_at, scope, key_hash, opening_balance, deposits, refunds, usage, fees, other_changes, closing_balance, calls, usage_by_model, usage_by_key_agent, usage_by_lane, movements_by_kind, reconciliation, limits. Money and calls are decimal strings. Group ids can be null."}}}}}}}},"400":{"$ref":"#/components/responses/BadRequest"},"401":{"$ref":"#/components/responses/Unauthorized"},"404":{"$ref":"#/components/responses/NotFound"}}}},
     "/api/v1/activity": {"get": {"operationId": "listActivity", "summary": "List account activity", "description": "Calls (with receipt ids and verify links), agent approvals and rule decisions, alerts, deposits and balance changes, and agreement events, newest first, in one item shape with exact USDG amounts. A key sees its own activity; management, owner and admin keys see the account within their team boundaries. format=csv returns this page as CSV with X-Next-Cursor when another page exists.", "security": [{"BearerAuth": []}], "parameters": [{"name": "kind", "in": "query", "required": false, "description": "call, approval, alert, deposit, agreement, policy or balance", "schema": {"type": "string"}}, {"name": "key", "in": "query", "required": false, "description": "64-hex key hash to filter by", "schema": {"type": "string"}}, {"name": "model", "in": "query", "required": false, "description": "Model id", "schema": {"type": "string"}}, {"name": "from", "in": "query", "required": false, "description": "ISO 8601 timestamp with timezone, inclusive", "schema": {"type": "string"}}, {"name": "to", "in": "query", "required": false, "description": "ISO 8601 timestamp with timezone, exclusive", "schema": {"type": "string"}}, {"name": "limit", "in": "query", "required": false, "description": "1 to 100, default 50", "schema": {"type": "integer"}}, {"name": "cursor", "in": "query", "required": false, "description": "next_cursor from the previous page", "schema": {"type": "string"}}, {"name": "format", "in": "query", "required": false, "description": "json (default) or csv", "schema": {"type": "string"}}], "responses": {"200": {"description": "OK"}, "400": {"$ref": "#/components/responses/BadRequest"}, "401": {"$ref": "#/components/responses/Unauthorized"}}}},
     "/api/v1/inbox": {"get": {"operationId": "listInbox", "summary": "List items that need attention", "description": "Pending approvals with their expiry, alerts, deposits, agreement events and status updates for hosts the account operates, under the same access rules as /api/v1/activity. Pass since (the seen time the browser keeps) to mark newer items.", "security": [{"BearerAuth": []}], "parameters": [{"name": "since", "in": "query", "required": false, "description": "ISO 8601 seen time, not in the future", "schema": {"type": "string"}}], "responses": {"200": {"description": "OK"}, "400": {"$ref": "#/components/responses/BadRequest"}, "401": {"$ref": "#/components/responses/Unauthorized"}}}},
     "/api/v1/inbox/seen": {"post": {"operationId": "markInboxSeen", "summary": "Return a seen time for the displayed inbox", "description": "Validates the key and returns the seen time to keep in the browser. Nothing is stored on the server.", "security": [{"BearerAuth": []}], "parameters": [{"name": "through", "in": "query", "required": true, "description": "ISO 8601 time of the displayed snapshot, not in the future", "schema": {"type": "string"}}], "responses": {"200": {"description": "OK"}, "400": {"$ref": "#/components/responses/BadRequest"}, "401": {"$ref": "#/components/responses/Unauthorized"}}}},
@@ -1880,6 +1881,8 @@
           "200": {
             "description": "Completion JSON, or SSE events followed by data: [DONE] when stream is true.",
             "headers": {
+              "X-Anonymo-Route": {"$ref":"#/components/headers/RouteExplanation"},
+              "X-Anonymo-Json-Check": {"description":"V83: valid or invalid for JSON responses; pending for streams, or pending; repair-unsupported when repair was requested. Final stream validation is in receipt.structured_output, not a changed header.","schema":{"type":"string","enum":["valid","invalid","pending","pending; repair-unsupported"]}},
               "X-Anonymo-Disclosure": {
                 "$ref": "#/components/headers/Disclosure"
               },
@@ -2005,6 +2008,7 @@
           "200": {
             "description": "Embedding response with usage and signed receipt.",
             "headers": {
+              "X-Anonymo-Route": {"$ref":"#/components/headers/RouteExplanation"},
               "X-Anonymo-Disclosure": {
                 "$ref": "#/components/headers/Disclosure"
               },
@@ -13703,6 +13707,7 @@
       }
     },
     "headers": {
+      "RouteExplanation": {"description":"V84: compact JSON RouteExplanation, on chat/text completions and embeddings when ROUTE_EXPLAIN_ENABLED is true (default false; switched on at anonymo.tech). The signed receipt route claim has the same fields. Streams wait for the serving provider before sending this header and also deliver the claim in the final receipt. Cache and encrypted-chat paths omit it.","schema":{"type":"string"}},
       "Disclosure": {
         "description": "The disclosure class the answering provider was served under: attested (retention declared attested and a fresh TEE attestation), policy (a documented no-retention policy, no legal hold) or vendor-forwarded (anything else). On a stream it is sent only when every provider the request can reach shares one class; the signed receipt always carries it.",
         "schema": {
@@ -15467,6 +15472,9 @@
           }
         }
       },
+      "StructuredOutputOptions": {"type":"object","properties":{"json_check":{"type":"string","enum":["validate","repair"],"description":"V83: Requires STRUCTURED_OUTPUT_CHECK_ENABLED (default false; switched on at anonymo.tech). validate checks the final JSON; repair permits one correction by the same routed model/provider. Both calls are billed normally. Streaming repair validates only. Requires json_object or json_schema and n=1; no council or dual verification. Non-streaming repair requires a bearer API key and bypasses the response cache. Explicit request settings override preset defaults."}}},
+      "StructuredOutputIssue": {"type":"object","required":["path","reason"],"properties":{"path":{"type":"string","description":"JSON Pointer path; empty string is the root."},"reason":{"type":"string"}}},
+      "StructuredOutputResult": {"type":"object","description":"V83: Unsigned response metadata; not written to generation receipts or returned by receipt lookup. Existing batch outputs may retain it with the answer. Original signed payload/sig/v2 stay intact. Top-level usage is for the returned call only; total_cost includes both served calls even if the correction is invalid. Checks do not establish factual accuracy. Supported schema assertions: type (including arrays), nullable, properties, required, additionalProperties, items, enum, const, anyOf, minLength/maxLength, minimum/maximum/exclusiveMinimum/exclusiveMaximum, minItems/maxItems, minProperties/maxProperties, and existing local #/ references via $defs/definitions. Unknown assertions are refused before billing. Limits: 1 MiB answer, 4096 schema nodes, 100000 validation steps, 64 levels, 16 reported errors. Oversized/non-text answers cannot be repaired.","required":["mode","valid","errors","retry_attempted","calls","total_cost"],"properties":{"mode":{"type":"string","enum":["validate","repair"]},"valid":{"type":"boolean"},"errors":{"type":"array","items":{"$ref":"#/components/schemas/StructuredOutputIssue"}},"initial_errors":{"type":"array","items":{"$ref":"#/components/schemas/StructuredOutputIssue"}},"retry_attempted":{"type":"boolean"},"retry_error":{"type":"object","description":"Correction did not return a usable answer. The first charge remains, and a signed correction charge is included even if its attestation was refused after settlement. status when known, reason."},"repair_supported":{"type":"boolean","description":"false for streaming repair; no second call is made."},"note":{"type":"string"},"calls":{"type":"array","minItems":1,"maxItems":2,"items":{"type":"object","required":["attempt","cost","receipt"],"properties":{"attempt":{"type":"integer","minimum":1,"maximum":2},"cost":{"type":"string","description":"Exact USDG charge for this call."},"receipt":{"$ref":"#/components/schemas/Receipt"}}}},"total_cost":{"type":"string","description":"Sum of the served calls' USDG charges."}}},
       "ChatRequest": {
         "type": "object",
         "required": [
@@ -15485,6 +15493,7 @@
           }
         ],
         "properties": {
+          "anonymo": {"$ref":"#/components/schemas/StructuredOutputOptions"},
           "model": {
             "type": "string",
             "description": "Public model ID, optionally with routing suffixes: :nitro sorts providers by throughput (fastest first) and :floor by price (cheapest first), the same as provider.sort throughput and price and winning over it; both only order the providers the other preferences and the lane allow. :free and :private also apply. The reserved ID anonymo/council selects council mode when the router enables it. @route/<slug> calls a saved route and @preset/<name> (or @preset/<name>@<version> to pin one version) calls a preset of the key's account. @character/<id> calls a character: the card is the prompt and models[0], or the character's default model, answers."
@@ -17136,16 +17145,19 @@
           }
         }
       },
+      "RouteExplanation": {"type":"object","additionalProperties":false,"description":"Versioned additive router statement, not an independent selection proof. eligible counts final-plan candidate offers before attempt limits for the serving model; skipped counts its exclusions. Fallback error classes cover earlier attempts, including earlier models, without raw errors or provider identities. No URLs, keys, addresses, content or weights. Both receipt signatures cover route.","required":["v","provider","reason","eligible","skipped","lane","parameters","network_host"],"properties":{"v":{"type":"integer","const":1},"provider":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,96}$"},"reason":{"type":"string","enum":["lowest_price","lowest_latency","highest_throughput","weighted_choice","provider_order","preferred_performance","byok_priority","only_eligible","only_parameter_support","fallback"]},"eligible":{"type":"integer","minimum":1},"skipped":{"type":"object","additionalProperties":false,"properties":{"health":{"type":"integer","minimum":1},"lane":{"type":"integer","minimum":1},"disclosure":{"type":"integer","minimum":1},"attestation":{"type":"integer","minimum":1},"parameters":{"type":"integer","minimum":1},"price":{"type":"integer","minimum":1},"context":{"type":"integer","minimum":1},"preferences":{"type":"integer","minimum":1},"availability":{"type":"integer","minimum":1},"other":{"type":"integer","minimum":1}}},"lane":{"type":"string","enum":["public","attested","unlinkable"]},"parameters":{"type":"array","uniqueItems":true,"items":{"type":"string","enum":["tools","tool_choice","response_format","temperature","seed","max_tokens","stop","top_p","top_k","reasoning","include_reasoning","modalities","audio"]}},"network_host":{"type":"boolean"},"fallback":{"type":"object","additionalProperties":false,"properties":{"http_5xx":{"type":"integer","minimum":1},"timeout":{"type":"integer","minimum":1},"connection":{"type":"integer","minimum":1},"rate_limited":{"type":"integer","minimum":1},"provider_auth":{"type":"integer","minimum":1},"rejected":{"type":"integer","minimum":1},"empty200":{"type":"integer","minimum":1},"unreadable":{"type":"integer","minimum":1},"interrupted":{"type":"integer","minimum":1},"other":{"type":"integer","minimum":1}}}}},
       "Receipt": {
         "type": "object",
         "properties": {
+          "structured_output": {"$ref":"#/components/schemas/StructuredOutputResult"},
           "id": {
             "type": "string"
           },
           "payload": {
             "type": "object",
             "additionalProperties": true,
-            "description": "Signed fields. Among them, disclosure (attested, policy or vendor-forwarded) and lane (public, attested or unlinkable) record how the call was served; attestation_simulated is true when the attestation behind an attested call is a development report. attestation_ref (see AttestationRef) is present on calls made under an attested council or attested dual verification. For a call paid with a blind token, payer is null and nullifier (the SHA-256 of the spent token) and token_key_id are present; nothing names an account. Receipts issued before these fields existed do not carry them."
+            "properties": {"route":{"$ref":"#/components/schemas/RouteExplanation"}},
+            "description": "Signed fields. Optional route is a versioned additive claim when ROUTE_EXPLAIN_ENABLED is true (default false). Among them, disclosure (attested, policy or vendor-forwarded) and lane (public, attested or unlinkable) record how the call was served; attestation_simulated is true when the attestation behind an attested call is a development report. attestation_ref (see AttestationRef) is present on calls made under an attested council or attested dual verification. For a call paid with a blind token, payer is null and nullifier (the SHA-256 of the spent token) and token_key_id are present; nothing names an account. Receipts issued before these fields existed do not carry them."
           },
           "sig": {
             "type": "string"
@@ -17224,6 +17236,7 @@
       "ReceiptClaimsV2": {
         "type": "object",
         "properties": {
+          "route": {"$ref":"#/components/schemas/RouteExplanation"},
           "v": {
             "type": "integer",
             "const": 2
@@ -21946,6 +21959,7 @@
         ],
         "description": "A preset: the routing part of a saved route plus prompt-side defaults. The whole document is at most 64 KB as JSON.",
         "properties": {
+          "anonymo": {"$ref":"#/components/schemas/StructuredOutputOptions"},
           "description": {
             "type": "string",
             "maxLength": 280

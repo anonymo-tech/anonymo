@@ -1,3 +1,6 @@
+import { structuredOutputMiddleware } from "./structured-output/chat.ts"; // V83
+import { statementRoutes } from "./api/statements.ts"; // V87
+import { insightsRoutes } from "./api/insights.ts"; // V88: spend insights.
 import { inboxRoutes } from "./api/inbox.ts"; // U78: account inbox.
 import { activityRoutes } from "./api/activity.ts";
 import { networkStatsRoutes } from "./network/stats.ts";
@@ -143,7 +146,7 @@ export async function createApp(opts: AppOptions = {}) {
   const csp = webBuilt ? siteCsp(webDir) : "frame-ancestors 'none'; object-src 'none'; base-uri 'none'";
   const app = new Hono();
   // The OpenAI-style /v1/* aliases get the same CORS as /api/*, so a browser can read the receipt, lane and policy headers on either.
-  const apiCors = cors({ origin: "*", allowHeaders: ["x-agent-approval", "authorization", "content-type", "x-e2ee-version", "x-client-pub-key", "x-model-pub-key", "x-e2ee-nonce", "x-e2ee-timestamp", "x-pay-with", "x-payment", "x-wallet-auth", "x-anonymo-cache", "x-anonymo-disclosure-max", "x-anonymo-lane", "x-anonymo-lane-downgrade", "http-referer", "x-title", "traceparent", "x-api-key", "anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access"], exposeHeaders: [...EXPOSED_RESPONSE_HEADERS, "x-e2ee-applied", "x-e2ee-version", "x-e2ee-algo", "x-e2ee-receipt-id"] });
+  const apiCors = cors({ origin: "*", allowHeaders: ["x-agent-approval", "authorization", "content-type", "x-e2ee-version", "x-client-pub-key", "x-model-pub-key", "x-e2ee-nonce", "x-e2ee-timestamp", "x-pay-with", "x-payment", "x-wallet-auth", "x-anonymo-cache", "x-anonymo-disclosure-max", "x-anonymo-lane", "x-anonymo-lane-downgrade", "http-referer", "x-title", "traceparent", "x-api-key", "anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access"], exposeHeaders: [...EXPOSED_RESPONSE_HEADERS, ...(cfg.routeExplain ? ["x-anonymo-route"] : []), /* V84 */ ...(cfg.structuredOutputCheckEnabled ? ["x-anonymo-json-check"] : []), /* V83 */ "x-e2ee-applied", "x-e2ee-version", "x-e2ee-algo", "x-e2ee-receipt-id"] });
   app.use("/api/*", apiCors);
   app.use("/v1/*", apiCors);
   app.use("/ollama/*", apiCors);
@@ -167,6 +170,7 @@ export async function createApp(opts: AppOptions = {}) {
   app.use("*", statusMiddleware(ctx)); // public-lane outcomes per API surface for /api/v1/status/slo; private lanes are not counted here
   app.use("*", agentLedgerMiddleware(ctx));
   app.use("*", agentApprovalMiddleware(ctx));
+  structuredOutputMiddleware(app, ctx); // V83: ordinary chat routes bill each call.
   chatRoutes(app, ctx);
   e2eeRoutes(app, ctx);
   embeddingsRoutes(app, ctx);
@@ -175,6 +179,8 @@ export async function createApp(opts: AppOptions = {}) {
   modelsRoutes(app, ctx);
   generationRoutes(app, ctx);
   activityRoutes(app, ctx);
+  statementRoutes(app, ctx); // V87
+  insightsRoutes(app, ctx); // V88: read-only, off by default.
   inboxRoutes(app, ctx); // U78: account inbox.
   keysRoutes(app, ctx);
   teamsRoutes(app, ctx);

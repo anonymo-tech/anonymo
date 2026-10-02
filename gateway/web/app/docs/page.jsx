@@ -1,3 +1,6 @@
+import RouteExplanationDocs from "../../components/RouteExplanationDocs"; // V84
+import StructuredOutputDocs from "../../components/StructuredOutputDocs"; // V83
+import StatementDocs from "../../components/StatementDocs"; // V87
 import AgentProfileDocs from "../../components/AgentProfileDocs";
 import SealedAgentDocs from "../../components/SealedAgentDocs";
 import AgreementsDocs from "../../components/AgreementsDocs";
@@ -817,6 +820,7 @@ export default function Docs() {
           </div>
           <DocsFeatureIndex />
           <AgentRulebookDocs /><AgentBreakersDocs /><AgentAutonomyDocs />
+          <StatementDocs /> {/* V87 */}
           <AgentLedgerDocs /><AgreementsDocs />
           <AgentAlertDocs />
           <AgentApprovalDocs />
@@ -845,6 +849,7 @@ export default function Docs() {
               2,
             )}
           </Code>
+          <StructuredOutputDocs /> {/* V83: opt-in JSON checking. */}
           <h2 id="presets">Presets: config as code, with versions.</h2>
           <p>
             A preset is a saved route with a version history. It holds the same fallback models, provider preferences and sampling defaults as @route/&lt;slug&gt;, plus what a route may not hold: a system_prompt (up to 16,000 characters), a
@@ -1684,6 +1689,7 @@ OK  team team_…  42 entries  3 hourly roots  head 9f2c…`}</Code>
           </p>
           <HostsDocs /><NetworkHostsDocs /><HostBondsDocs />
           <NetworkStatsDocs />
+          <RouteExplanationDocs /> {/* V84 */}
           <h2 id="run-a-provider">Run a provider.</h2>
           <p>
             A model host runs the sidecar in front of its model server, inside a confidential VM. The sidecar hashes the weights at boot and refuses to start unless the digest is on its allow-list, binds its TLS key, receipt key and the image, compose and model digests into an Intel TDX quote, and signs a receipt for every
