@@ -1,3 +1,5 @@
+import { refuseCreditExhaustion, refuseCreditOutage } from "../rush/errors.ts"; // ON3
+import { guardInferenceModels } from "../provisioning/inference.ts"; // ZK6
 import { explainedStream, rememberRoutePlan, routeReceiptFields, routeResponseHeaders } from "../router/explain.ts"; // V84
 import { captureStructuredOutput } from "../structured-output/chat.ts"; // V83
 import { linkNetworkReceipt } from "../network/receipt-link.ts";
@@ -189,6 +191,7 @@ function selectTargets(
     const refusal = disclosureRefusal(disc, resolved.map((r) => r.model.id), excluded, () => resolved.some((r) => plan(r, relaxed).ordered.length > 0));
     if (refusal) throw refusal;
   }
+  if (!targets.length) refuseCreditOutage(ctx.cfg.rush.enabled, excluded); // ON3
   return { targets, excluded };
 }
 
@@ -278,6 +281,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   }
   // Saved route (`model: "@route/<slug>"`, the caller's account only): fills in the fallback models,
   // provider prefs and default params the request leaves unset. Precedence: request > alias > route > key.
+  guardInferenceModels(key, body); // ZK6: scope check before reading account settings.
   const savedRoute = await resolveSavedRoute(ctx.db, key?.accountId ?? wallet?.accountId ?? null, body);
   // Preset (`model: "@preset/<name>[@<version>]"`): a versioned saved route that can also carry a system prompt, tools and a
   // response_format (routing/presets.ts). Same precedence and the same stricter-wins privacy settings as a saved route.
@@ -477,6 +481,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
 }
 
 function allFailed(attempts: Attempt[], last?: { status?: number; errorKind: string; message: string }): ApiError {
+  refuseCreditExhaustion(attempts); // ON3
   const allRejected = attempts.length > 0 && attempts.every((a) => a.error_kind === "rejected");
   const status = allRejected ? (last?.status && last.status >= 400 && last.status < 500 ? last.status : 400) : 502;
   return new ApiError(

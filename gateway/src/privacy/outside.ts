@@ -1,3 +1,5 @@
+import { rushStores } from "./rush.ts"; // ON3
+import { provisioningBodyReader, inferenceModelReader } from "./provisioning.ts"; // ZK6
 import { structuredOutputReader } from "./structured-output.ts"; // V83
 import { statementStores } from "./statements.ts"; // V87
 import { insightsStores } from "./insights.ts"; // V88: read-only aggregates.
@@ -386,6 +388,7 @@ const addressReaders: Touchpoint[] = [
 ];
 
 const bodyReaders: ExternalDoc["bodyReaders"] = [
+  provisioningBodyReader, inferenceModelReader, // ZK6
   structuredOutputReader, // V83
   webhookBodyReader, // V86.
   profileBodyReader,
@@ -513,7 +516,7 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
   {
     file: "src/api/keys.ts",
     carries: "settings",
-    reads: "Key settings (name, budget, limits, allowed models, tracing destination), amounts, BYOK provider keys, team roles and wallet sign-in challenges.",
+    reads: "Key settings (name, budget, limits, allowed models, tracing destination, scope and include_byok_in_limit), amounts, BYOK provider keys, team roles and wallet sign-in challenges.",
     then: "Validated and written to the keys, byok_keys, teams and kv tables as described above.",
     kept: "The settings and, for a BYOK key or a tracing destination, the key or the destination URL and credentials encrypted under APP_SECRET.",
     evidence: [ev("src/api/keys.ts", "const spec = keySpec.parse(await readJson(c));")],
@@ -715,6 +718,7 @@ export const EXTERNAL: ExternalDoc = {
     evidence: [ev("src/lib/util.ts", "(level === \"error\" || level === \"warn\" ? console.error : console.log)(line);"), ev("src/lib/util.ts", "const line = JSON.stringify({ t: new Date().toISOString(), level, msg, ...fields }")],
   },
   otherStores: [
+    ...rushStores, // ON3
     ...webhookStores, // V86.
     ...activityStores,
     ...statementStores, // V87

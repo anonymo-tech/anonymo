@@ -1,3 +1,5 @@
+import { rushEnv, rushSettings } from "./rush/config.ts"; // ON3
+import { zkapiPageEnv } from "./zkapi/page-config.ts"; // ZK10: opt-in static-page origins.
 import { structuredOutputEnv } from "./structured-output/options.ts"; // V83: opt-in JSON checking.
 import { insightsEnv } from "./insights/config.ts"; // V88: off by default.
 import { networkStatsEnv } from "./network/stats-config.ts";
@@ -56,6 +58,9 @@ function measurementPublicKey(raw: string | undefined): string | null {
 }
 
 const schema = z.object({
+  ...zkapiPageEnv, // ZK10
+  ...rushEnv, // ON3
+  DEVELOPER_FIRST_CALL_ENABLED: bool.default(false), // ON2: guidance for GETs to model endpoints.
   ...structuredOutputEnv, // V83
   ...insightsEnv, // V88: spend insights.
   ...sealedEnv,
@@ -65,6 +70,7 @@ const schema = z.object({
   ...sanctionsEnv,
   ...networkHostsEnv,
   ...networkStatsEnv,
+  INFERENCE_KEYS_ENABLED: bool.default(false), // ZK6: minting restricted keys; stored scopes are always enforced.
   WEBHOOK_SIGNING_ENABLED: bool.default(false), // V86: signed account webhooks.
   ...networkPayoutEnv,
   RUNTIME_ROLE: z.enum(["all", "api", "worker"]).default("all"),
@@ -74,6 +80,8 @@ const schema = z.object({
   HOST: z.string().default("127.0.0.1"),
   PORT: int(8787),
   PUBLIC_BASE_URL: z.string().default("http://127.0.0.1:8787"),
+  // Public website address shown to people (e.g. in copy-paste examples); default: PUBLIC_BASE_URL. Not used for receipts or issuers.
+  SITE_URL: z.string().url().optional(),
   // Passkeys for organisation members (WebAuthn). Default: the host and origin of PUBLIC_BASE_URL, where the dashboard is served.
   WEBAUTHN_RP_ID: opt,
   WEBAUTHN_ORIGINS: opt, // comma-separated origins allowed in clientDataJSON
@@ -494,6 +502,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
       const allowed = ["health-flush", "holds-expire", "catalog-refresh", "provider-registry", "health-probes", "canaries", "attestor", "receipts-anchor", "receipt-key-rotation", "settlement", "slasher", "buyback", "chain-indexer", "paywith-aggregator", "escrow-indexer", "spend-watch", "alert-notifier", "telegram-bot", "measurements", "blind-key-rotation", "ipx-oracle", "dayzero", "ohttp-key-rotation", "host-anchor", "tlog", "batches", "skills-mirror", "sanctions-refresh"];
       allowed.push("webhooks"); // V86: bounded event delivery.
       allowed.push("agreement-indexer", "agreement-jury", "agreement-retention");
+      allowed.push("upstream-monitor"); // ON3
       allowed.push("agent-alerts", "agent-policy-retention", "agent-ledger-retention", "network-fee-burn", "host-bond-indexer", "host-slasher");
       if (!names.length || names.some((n) => !allowed.includes(n))) throw new Error("Worker requires an explicit valid WORKER_JOBS list.");
       const keyJobs = { settlement: "settlement", anchoring: "receipts-anchor", slashing: "slasher", buyback: "buyback" };
@@ -582,14 +591,17 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
   return {
     env: e.ANONYMO_ENV,
     production,
+    developerFirstCallEnabled: e.DEVELOPER_FIRST_CALL_ENABLED, // ON2
     routeExplain: e.ROUTE_EXPLAIN_ENABLED, // V84
     hostDashboard: { enabled: e.HOST_DASHBOARD_ENABLED },
     agreements: agreementSettings(e, production),
     sanctions: sanctionsSettings(e, production),
     e2ee: e2eeSettings(e.E2EE_PASSTHROUGH_ENABLED, e.PROVIDERS_FILE, production, { baseUrl: e.E2EE_GATEWAY_BASE_URL, attestationUrl: e.E2EE_GATEWAY_ATTESTATION_URL }),
     networkHosts: networkHostsSettings(e, production),
+    inferenceKeysEnabled: e.INFERENCE_KEYS_ENABLED, // ZK6
     statementsEnabled: e.STATEMENTS_ENABLED, // V87
     networkStatsEnabled: e.NETWORK_STATS_ENABLED,
+    rush: rushSettings(e), // ON3
     spendInsightsEnabled: e.SPEND_INSIGHTS_ENABLED, // V88: read-only spend insights.
     webhookSigningEnabled: e.WEBHOOK_SIGNING_ENABLED, // V86: off preserves existing delivery.
     networkPayouts: networkPayoutSettings(e, production),
@@ -602,6 +614,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     host: e.HOST,
     port: e.PORT,
     publicUrl: e.PUBLIC_BASE_URL.replace(/\/$/, ""),
+    siteUrl: (e.SITE_URL ?? e.PUBLIC_BASE_URL).replace(/\/$/, ""),
     webauthn: {
       rpId: e.WEBAUTHN_RP_ID ?? new URL(e.PUBLIC_BASE_URL).hostname,
       origins: e.WEBAUTHN_ORIGINS ? e.WEBAUTHN_ORIGINS.split(",").map((o) => o.trim().replace(/\/$/, "")).filter(Boolean) : [new URL(e.PUBLIC_BASE_URL).origin],
@@ -703,6 +716,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     },
     hfBaseUrl: e.HF_BASE_URL.replace(/\/$/, ""),
     webDir: e.WEB_DIR,
+    zkapiPageOrigins: e.ZKAPI_PAGE_ORIGINS, // ZK10
     status: {
       targets: { public: e.STATUS_SLO_PUBLIC, attested: e.STATUS_SLO_ATTESTED, unlinkable: e.STATUS_SLO_UNLINKABLE },
       suggestMinRequests: e.STATUS_SUGGEST_MIN_REQUESTS,

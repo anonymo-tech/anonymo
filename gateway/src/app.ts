@@ -1,3 +1,6 @@
+import { initializeUpstreamMonitor } from "./rush/monitor.ts"; // ON3
+import { firstCallRoutes, firstCallCsp } from "./developers/first-call.ts"; // ON2
+import { inferenceScopeMiddleware, keyDefaultsRoutes } from "./provisioning/scope.ts"; // ZK6
 import { structuredOutputMiddleware } from "./structured-output/chat.ts"; // V83
 import { statementRoutes } from "./api/statements.ts"; // V87
 import { insightsRoutes } from "./api/insights.ts"; // V88: spend insights.
@@ -20,6 +23,7 @@ import { hostBondRoutes } from "./network/bonds.ts";
 import { guardHostSlasher } from "./network/bond-config.ts";
 import { configureNetworkRouting } from "./network/routing.ts";
 import { siteCsp } from "./lib/csp.ts";
+import { zkapiHosting } from "./zkapi/hosting.ts"; // ZK10
 import { EXPOSED_RESPONSE_HEADERS, viaOnion } from "./api/common.ts";
 import { onionIngress } from "./onion/ingress.ts";
 import { kv } from "./db/schema.ts";
@@ -142,6 +146,7 @@ export async function createApp(opts: AppOptions = {}) {
   if (cfg.agreements.rulings) await guardAgreementSigners(ctx.chain.client, cfg.agreements.oracle!, cfg.agreements.signerKeys!, cfg.agreements.threshold);
   if (ctx.blind) await ensurePool(ctx);
 
+  await initializeUpstreamMonitor(ctx); // ON3
   const webDir = resolve(cfg.webDir ?? resolve(import.meta.dir, "../web/out"));
   const webBuilt = existsSync(resolve(webDir, "index.html"));
   const csp = webBuilt ? siteCsp(webDir) : "frame-ancestors 'none'; object-src 'none'; base-uri 'none'";
@@ -151,13 +156,14 @@ export async function createApp(opts: AppOptions = {}) {
   app.use("/api/*", apiCors);
   app.use("/v1/*", apiCors);
   app.use("/ollama/*", apiCors);
+  if (webBuilt && cfg.zkapiPageOrigins.length) app.use("*", zkapiHosting(csp, cfg.zkapiPageOrigins)); // ZK10: narrowly scoped static policies.
   app.use("*", async (c, next) => {
     await next();
     c.header("x-content-type-options", "nosniff");
     c.header("referrer-policy", "no-referrer");
     c.header("x-frame-options", "DENY");
     if (c.res.headers.get("content-type")?.includes("text/html")) {
-      c.header("content-security-policy", csp);
+      c.header("content-security-policy", firstCallCsp(c.req.method, c.req.path, cfg.developerFirstCallEnabled) ?? csp); // ON2: retain the script-free endpoint page policy.
       // Tell Tor Browser this page has an onion twin (only on the clearnet site; it does nothing without ONION_ADDRESS).
       if (cfg.onion.address && c.req.method === "GET" && !viaOnion(c, cfg)) {
         const url = new URL(c.req.url);
@@ -169,9 +175,11 @@ export async function createApp(opts: AppOptions = {}) {
 
   app.use("*", onionIngress(cfg)); // onion requests: drop every client address header before any route reads one
   app.use("*", statusMiddleware(ctx)); // public-lane outcomes per API surface for /api/v1/status/slo; private lanes are not counted here
+  app.use("*", inferenceScopeMiddleware(ctx)); // ZK6: deny by default before account middleware.
   app.use("*", agentLedgerMiddleware(ctx));
   app.use("*", agentApprovalMiddleware(ctx));
   structuredOutputMiddleware(app, ctx); // V83: ordinary chat routes bill each call.
+  firstCallRoutes(app, cfg.developerFirstCallEnabled, cfg.siteUrl); // ON2: the public site address, not the router host
   chatRoutes(app, ctx);
   e2eeRoutes(app, ctx);
   embeddingsRoutes(app, ctx);
@@ -183,6 +191,7 @@ export async function createApp(opts: AppOptions = {}) {
   statementRoutes(app, ctx); // V87
   insightsRoutes(app, ctx); // V88: read-only, off by default.
   inboxRoutes(app, ctx); // U78: account inbox.
+  keyDefaultsRoutes(app, ctx); // ZK6: before /keys/:hash.
   keysRoutes(app, ctx);
   teamsRoutes(app, ctx);
   escrowRoutes(app, ctx);
