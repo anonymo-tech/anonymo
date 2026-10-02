@@ -1,6 +1,8 @@
+import GetUsdgDocs from "../../components/GetUsdgDocs"; // ON1
 import RouteExplanationDocs from "../../components/RouteExplanationDocs"; // V84
 import StructuredOutputDocs from "../../components/StructuredOutputDocs"; // V83
 import StatementDocs from "../../components/StatementDocs"; // V87
+import WebhookDocs from "../../components/WebhookDocs"; // V86: optional signed event delivery.
 import AgentProfileDocs from "../../components/AgentProfileDocs";
 import SealedAgentDocs from "../../components/SealedAgentDocs";
 import AgreementsDocs from "../../components/AgreementsDocs";
@@ -822,6 +824,7 @@ export default function Docs() {
           <AgentRulebookDocs /><AgentBreakersDocs /><AgentAutonomyDocs />
           <StatementDocs /> {/* V87 */}
           <AgentLedgerDocs /><AgreementsDocs />
+          <WebhookDocs/> {/* V86. */}
           <AgentAlertDocs />
           <AgentApprovalDocs />
           <AgentCertificateDocs /><AgentProfileDocs /><SealedAgentDocs />
@@ -1165,6 +1168,7 @@ OK  team team_…  42 entries  3 hourly roots  head 9f2c…`}</Code>
           </p>
           <Code label="Claim a royalty: request, then response">{`${claimRequest}\n\n${claimResponse}`}</Code>
           <h2 id="payments">One settlement unit. More ways to pay.</h2>
+          <GetUsdgDocs/> {/* ON1 */}
           <div className="table-wrap">
             <table className="docs-table">
               <thead>
@@ -1195,6 +1199,7 @@ OK  team team_…  42 entries  3 hourly roots  head 9f2c…`}</Code>
           </p>
           <h2 id="x402">x402: pay per call with no account.</h2>
           <p>
+            Per-call payment is not switched on at anonymo.tech yet: calls without a key get 401 there, and GET /api/v1/status shows per_call.configured. 
             Where the router has x402 enabled, any x402 client or agent can pay for a call in USDG on Robinhood Chain (chain id 4663) with no account and no API key. Send the request without credentials: the 402 response is an x402 v1 body
             (x402Version, error, accepts) with one exact-scheme requirement. Sign the USDG authorization it describes, retry the identical request with an X-PAYMENT header, and the router verifies the signature, amount, recipient, time
             window and nonce, relays the transfer (it pays the gas) and serves the call. Chat, completions and embeddings all work this way; GET /api/v1/status reports per_call.x402.configured.
