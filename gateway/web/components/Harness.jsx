@@ -120,6 +120,8 @@ function CapTags({ model }) {
 function Rail({ models, routes, loading, error, onRetry, activeId, onPick, favs, toggleFav, prefs, setPrefs, searchRef, open, onClose }) {
   const [query, setQuery] = useState("");
   const deferred = useDeferredValue(query);
+  const [pickKeys, setPickKeys] = useState("Ctrl Shift K"); // chosen after mount so the pre-rendered page hydrates cleanly
+  useEffect(() => { if (isMac()) setPickKeys("⌘⇧K"); }, []);
   const caps = prefs.caps || [];
   const all = useMemo(() => [...routes, ...models], [routes, models]);
   const list = useMemo(() => filterCatalog(all, { query: deferred, caps, sort: prefs.sort }), [all, deferred, caps, prefs.sort]);
@@ -152,7 +154,7 @@ function Rail({ models, routes, loading, error, onRetry, activeId, onPick, favs,
         <label className={s.search}>
           <span className="sr-only">Search models</span>
           <input ref={searchRef} type="search" placeholder="Search models or makers" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && list[0] && onPick(list[0].id)} spellCheck={false} autoComplete="off" />
-          <kbd aria-hidden="true">{isMac() ? "⌘⇧K" : "Ctrl Shift K"}</kbd>
+          <kbd aria-hidden="true">{pickKeys}</kbd>
         </label>
         <div className={s.chips} role="group" aria-label="Filter by capability">
           {CAPS.map((c) => (
@@ -1078,7 +1080,9 @@ export default function Harness() {
     return -1;
   };
   const promptCost = focusModel ? (estimateTokens(system + draft + lanes[0].messages.map((m) => m.text || "").join(" ")) * focusModel.inPrice) / 1e6 : 0;
-  const mod = isMac() ? "⌘" : "Ctrl";
+  // The page is pre-rendered without a browser: pick the key label after mount so hydration matches.
+  const [mod, setMod] = useState("Ctrl");
+  useEffect(() => setMod(isMac() ? "⌘" : "Ctrl"), []);
 
   return (
     <div className={s.harness} data-harness-app data-compare={compare || undefined}>
@@ -1307,7 +1311,7 @@ export default function Harness() {
           <VoiceFeedback voice={voice} />
           <p className={s.hints}>
             <span>
-              <kbd>{mod} K</kbd> switch model
+              <kbd>{mod} ⇧ K</kbd> switch model · <kbd>{mod} K</kbd> search chats
             </span>
             {focusModel && draft.trim() && <span className={s.est}>Prompt ≈ {formatUsd(promptCost)}</span>}
           </p>
