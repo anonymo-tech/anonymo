@@ -454,7 +454,21 @@ const xPayment = btoa(JSON.stringify({
 // 3. Retry the identical request with X-PAYMENT.
 const paid = await fetch(url, { method: "POST", headers: { ...headers, "X-PAYMENT": xPayment }, body });
 const completion = await paid.json(); // usage + signed receipt; receipt.payload.payment_tx is the settlement
-const settlement = JSON.parse(atob(paid.headers.get("X-PAYMENT-RESPONSE"))); // { success, transaction, network, payer }`;
+const settlement = JSON.parse(atob(paid.headers.get("X-PAYMENT-RESPONSE"))); // { success, transaction, network, payer }
+
+// x402 v2: the same requirement is in the PAYMENT-REQUIRED header (network "eip155:4663", amount). Send
+// btoa(JSON.stringify({ x402Version: 2, resource, accepted, payload: { signature, authorization } })) as
+// PAYMENT-SIGNATURE and read the same settlement from PAYMENT-RESPONSE.`;
+const x402RecoveryExample = `// The paid call timed out, or came back 502, 503 or 504: send the identical request again with the same payment
+// header and the payer's EIP-191 signature. The router sends the kept answer again and never relays the payment twice.
+const message = \`anonymo:x402-recovery:4663:\${account.address.toLowerCase()}:\${authorization.nonce.toLowerCase()}\`;
+const recovered = await fetch(url, {
+  method: "POST",
+  headers: { ...headers, "X-PAYMENT": xPayment, "PAYMENT-RECOVERY": await account.signMessage({ message }) },
+  body, // the identical request
+});
+// 200: the same bytes and the same X-PAYMENT-RESPONSE as the lost answer.
+// 404 payment_recovery_not_found: nothing is kept (error.metadata.settled says whether the payment was settled).`;
 const laneRefusal = `POST /api/v1/chat/completions
 { "model": "<model>", "messages": [...], "provider": { "lane": "attested" } }
 
@@ -1207,8 +1221,9 @@ OK  team team_…  42 entries  3 hourly roots  head 9f2c…`}</Code>
           <p>
             Per-call payment is not switched on at anonymo.tech yet: calls without a key get 401 there, and GET /api/v1/status shows per_call.configured. 
             Where the router has x402 enabled, any x402 client or agent can pay for a call in USDG on Robinhood Chain (chain id 4663) with no account and no API key. Send the request without credentials: the 402 response is an x402 v1 body
-            (x402Version, error, accepts) with one exact-scheme requirement. Sign the USDG authorization it describes, retry the identical request with an X-PAYMENT header, and the router verifies the signature, amount, recipient, time
-            window and nonce, relays the transfer (it pays the gas) and serves the call. Chat, completions and embeddings all work this way; GET /api/v1/status reports per_call.x402.configured.
+            (x402Version, error, accepts) with one exact-scheme requirement, and the same requirement as an x402 v2 PaymentRequired in the PAYMENT-REQUIRED header (base64 JSON). Sign the USDG authorization it describes, retry the identical
+            request with an X-PAYMENT header (v1) or a PAYMENT-SIGNATURE header (v2), and the router verifies the signature, amount, recipient, time window and nonce, relays the transfer (it pays the gas) and serves the call. Chat,
+            completions and embeddings all work this way; GET /api/v1/status reports per_call.x402.configured, and per_call.x402.versions, networks and headers say what it reads and writes.
           </p>
           <ul>
             <li>
@@ -1216,21 +1231,46 @@ OK  team team_…  42 entries  3 hourly roots  head 9f2c…`}</Code>
               carrying USDG’s EIP-712 name and version plus the numeric chainId.
             </li>
             <li>
-              <b>Network name.</b> x402 v1 names chains with lowercase hyphenated strings and has no Robinhood Chain entry, so the requirement says robinhood-chain (and the router also accepts the CAIP-2 name eip155:4663 in the payment). A client that
-              only knows built-in networks needs that name mapped to chain 4663, or a v2 client with an eip155 handler.
+              <b>Network name.</b> x402 v1 names chains with lowercase hyphenated strings and has no Robinhood Chain entry, so the v1 requirement says robinhood-chain; the v2 header uses the CAIP-2 name eip155:4663. A payment may name either. A v1
+              client that only knows built-in networks needs that name mapped to chain 4663, or a v2 client with an eip155 handler.
             </li>
             <li>
-              <b>Response.</b> The paid response carries X-PAYMENT-RESPONSE (base64 JSON with success, transaction, network and payer) and the signed receipt records the same transaction as payment_tx.
+              <b>x402 v2.</b> A v2 PaymentPayload carries x402Version 2, the resource, the requirement it accepted (scheme exact, network eip155:4663, amount in USDG base units, asset, payTo) and the same EIP-3009 authorization and signature
+              under payload. Send it base64-encoded in PAYMENT-SIGNATURE. The router reads X-PAYMENT and PAYMENT-SIGNATURE alike, so a v1 and a v2 client can pay the same router.
+            </li>
+            <li>
+              <b>Response.</b> The paid response carries the settlement (base64 JSON with success, transaction, network and payer) in both X-PAYMENT-RESPONSE and PAYMENT-RESPONSE, and the signed receipt records the same transaction as payment_tx.
+              Its network field names the chain the way the payment did.
             </li>
             <li>
               <b>Change.</b> The whole payment is credited to the paying wallet’s account and the call is charged from it, so anything unused stays there as credit you can spend with X-Wallet-Auth. Paying more than maxAmountRequired is allowed; nothing is refunded on-chain.
             </li>
             <li>
               <b>Rejections.</b> A payment that fails verification gets a 402 whose error is a reason such as invalid_exact_evm_payload_authorization_value (underpaid), invalid_exact_evm_payload_recipient_mismatch, invalid_exact_evm_payload_authorization_nonce_used
-              (replayed) or invalid_exact_evm_payload_signature, together with fresh requirements. Nothing moves on-chain for a rejected payment.
+              (replayed) or invalid_exact_evm_payload_signature, together with fresh requirements in the body and in PAYMENT-REQUIRED. A transfer that fails on-chain is settle_exact_failed, with PAYMENT-RESPONSE success false. Nothing moves
+              on-chain for a rejected payment.
             </li>
           </ul>
           <Code label="x402 client (JavaScript, viem)">{x402Example}</Code>
+          <h3 id="x402-recovery">Payment recovery: a lost answer is never paid for twice</h3>
+          <p>
+            If a paid answer is lost on the way back (a timeout, or a 502, 503 or 504 from something between you and the router), send the identical request again with the same X-PAYMENT or PAYMENT-SIGNATURE and a PAYMENT-RECOVERY header: the
+            payer&rsquo;s EIP-191 (personal_sign) signature of anonymo:x402-recovery:4663:&lt;payer&gt;:&lt;nonce&gt;, with the paying wallet&rsquo;s address and the authorization nonce in lowercase hex. The router sends the answer it kept for
+            that payer and nonce again, byte for byte, with the same settlement headers, and never relays the payment a second time. It works on chat, completions, embeddings, rerank and character chat; through the Responses and Ollama
+            adapters the kept chat answer is converted again. GET /api/v1/status reports per_call.x402.recovery.
+          </p>
+          <ul>
+            <li>
+              <b>Refusals.</b> A signature by anyone but the payer is a 401 invalid_payment_recovery. A different request is a 409 payment_request_mismatch. When nothing is kept, the answer is a 404 payment_recovery_not_found whose metadata.settled
+              says whether the payment was settled; if it was, nothing was charged twice and what the call did not use stays as change on the wallet account. Recovery never settles a payment that was not settled.
+            </li>
+            <li>
+              <b>What is kept, for 24 hours.</b> The answer, sealed with AES-256-GCM under a key derived from the router&rsquo;s secret, the payer, the nonce and the request&rsquo;s hash, in Redis and never in the database; and a row with the payer, the
+              nonce, the SHA-256 of the request and of the answer and the name of the Redis key. The sealed answer expires in Redis after 24 hours, and an hourly expiry deletes older rows. A non-streamed paid call is finished even if you
+              disconnect, so its answer can be recovered; a stream is kept only if it reached its end. Answers over 8 MiB are not kept.
+            </li>
+          </ul>
+          <Code label="Recover a lost x402 answer (JavaScript, viem)">{x402RecoveryExample}</Code>
           <h2 id="receipts">The response is only the beginning.</h2>
           <p>
             Every generation returns normalized usage and a signed receipt with hashes of the request and response (never their content), in two encodings: v1 (JSON, Ed25519) and v2 (a COSE_Sign1 signed EdDSA with the same key, with token

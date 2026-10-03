@@ -23,7 +23,7 @@ import { streamMessages, type StreamSummary } from "../anthropic/stream.ts";
 const PEEK_MS = 4_000;
 
 /** Response headers of a chat call that ride on the Anthropic reply. */
-const FORWARDED = ["x-generation-id", "x-receipt-id", "inference-id", "x-anonymo-lane", "x-anonymo-policy-hash", "x-anonymo-disclosure", "x-anonymo-cache", "x-payment-response", "retry-after", "www-authenticate"];
+const FORWARDED = ["x-generation-id", "x-receipt-id", "inference-id", "x-anonymo-lane", "x-anonymo-policy-hash", "x-anonymo-disclosure", "x-anonymo-cache", "x-payment-response", "payment-response", "retry-after", "www-authenticate"];
 /** Request headers passed to the chat call: routing options, not credentials. */
 const PASSED = ["x-anonymo-lane", "x-anonymo-disclosure-max", "x-anonymo-cache", "x-pay-with", "http-referer", "x-title", "traceparent"];
 /** The statuses Anthropic itself uses. Any other client error is not one an SDK should retry. */
