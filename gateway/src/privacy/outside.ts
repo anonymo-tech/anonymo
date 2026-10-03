@@ -1,9 +1,12 @@
 import { rushStores } from "./rush.ts"; // ON3
+import { toolsBodyReader, toolsRateFamilies, toolsStores } from "./tools.ts"; // v6 T: paid tool market.
+import { feedbackLimit, identityBodyReader, identityStores } from "./identity.ts"; // v6 I
 import { provisioningBodyReader, inferenceModelReader } from "./provisioning.ts"; // ZK6
 import { structuredOutputReader } from "./structured-output.ts"; // V83
 import { statementStores } from "./statements.ts"; // V87
 import { insightsStores } from "./insights.ts"; // V88: read-only aggregates.
 import { webhookBodyReader, webhookStores } from "./webhooks.ts"; // V86: event delivery.
+import { makegoodStores } from "./makegood.ts"; // V6 R: make-good refunds.
 import { inboxStores } from "./inbox.ts"; // U78: account inbox inventory.
 import { activityStores } from "./activity.ts";
 import { profileBodyReader } from "./profiles.ts";
@@ -12,8 +15,10 @@ import { telegramLinkRate, telegramLinkReader } from "./telegram-linking.ts";
 import type { Evidence, ExternalDoc, RedisFamily, Touchpoint } from "./types.ts";
 import { networkJoinStores } from "./network-join.ts";
 import { networkStatsStores } from "./network-stats.ts";
+import { commerceStores } from "./commerce.ts"; // v6 L
 import { juryBodyReaders, agreementContractStores } from "./agreements.ts";
 import { x402RecoveryFamily, x402RecoveryReader } from "./x402-recovery.ts";
+import { facilitatorAddressReader, facilitatorBodyReader, facilitatorRedisFamilies } from "./facilitator.ts"; // v6 F
 
 // Everything the router keeps, or touches, outside Postgres: Redis keys (with their lifetimes and whether they contain a network
 // address), the application log, telemetry, backups and the places in the code that read a request's body or a caller's address.
@@ -45,8 +50,12 @@ function limit(o: { prefix: string; shape: string; purpose: string; holds: Redis
 const ADDRESS_NOTE = "The caller's network address is part of the key. Over Tor the address is replaced by the word onion, so no address is used.";
 
 const redisFamilies: RedisFamily[] = [
+  ...toolsRateFamilies, // v6 T
   limit({ prefix: "agent-certificate:", shape: "agent-certificate:<account id>", purpose: "Record-certificate issuance attempts: five per minute per account, shared across standalone and profile issuance, its keys and router replicas. Contains only the account id and a counter; no certificate pseudonym or claims.", holds: "account", seconds: 60, evidence: [ev("src/api/agent-certificates.ts", "await ctx.limiter.take(`agent-certificate:${key.accountId}`"), ev("src/agents/profiles.ts", "await ctx.limiter.take(`agent-certificate:${key.accountId}`")] }),
+  limit({ prefix: "agent-certificate:", shape: "agent-certificate:<account id>", purpose: "Record-certificate and track-record issuance attempts: five per minute per account, shared across standalone, profile and track-record issuance, its keys and router replicas. Contains only the account id and a counter; no certificate pseudonym, claims or stats.", holds: "account", seconds: 60, evidence: [ev("src/api/agent-certificates.ts", "await ctx.limiter.take(`agent-certificate:${key.accountId}`"), ev("src/agents/profiles.ts", "await ctx.limiter.take(`agent-certificate:${key.accountId}`"), ev("src/identity/track-record.ts", "await ctx.limiter.take(`agent-certificate:${key.accountId}`")] }),
+  feedbackLimit, // v6 I
   telegramLinkRate,
+  ...facilitatorRedisFamilies, // v6 F
   limit({ prefix: "network-host-wallet:", shape: "network-host-wallet:<operator wallet>", purpose: "Wallet-authenticated host signup and credential updates, three per minute per wallet. Links attempts by the public operator wallet.", holds: "wallet", seconds: 60, evidence: [ev("src/api/network-hosts.ts", "await ctx.limiter.take(`network-host-wallet:${auth.wallet}`")] }),
   limit({ prefix: "network-host-address:", shape: "network-host-address:<caller address or onion>", purpose: "Host signup and credential attempts, ten per minute per network address, with the existing scaled shared onion bucket. The raw address is temporarily part of the Redis key.", holds: "address", seconds: 60, evidence: [ev("src/api/network-hosts.ts", "await ctx.limiter.take(`network-host-address:${from.id}`")] }),
   limit({ prefix: "network-waitlist:", shape: "network-waitlist:<minute-keyed address digest or onion>", purpose: "Waitlist POST and DELETE requests, ten per minute per address; onion requests share the existing scaled onion bucket. A secret-keyed HMAC rotates every minute; no raw IP or user agent is stored. The digest still links requests within that minute.", holds: "digest", seconds: 60, evidence: [ev("src/network/waitlist.ts", "await ctx.limiter.take(`network-waitlist:${bucket}`")] }),
@@ -272,6 +281,7 @@ const redisFamilies: RedisFamily[] = [
 ];
 
 const addressReaders: Touchpoint[] = [
+  facilitatorAddressReader, // v6 F
   { file: "src/api/network-hosts.ts", reads: "The caller address bucket on host signup and credential writes.", then: "Counts attempts through the existing per-address limiter; trusted proxy and onion rules apply.", kept: "Raw address in the limiter key for 61 seconds in Redis, or until the memory limiter sweeps; never in the host row or application log.", evidence: [ev("src/api/network-hosts.ts", "const from = addressBucket(c, ctx.cfg);")] },
   { file: "src/network/waitlist.ts", reads: "Address bucket for a waitlist POST or DELETE; onion requests use the shared onion bucket.", then: "A secret-keyed HMAC of the address and current minute is passed to the existing limiter; onion stays the word onion.", kept: "Only a minute-specific keyed digest and counter: 61 seconds in Redis, or up to six minutes without Redis until the memory limiter sweeps old windows. No raw IP or user agent, and no address-derived value in the waitlist table.", evidence: [ev("src/network/waitlist.ts", "const from = addressBucket(c, ctx.cfg);")] },
   { file: "src/api/e2ee.ts", reads: "The address only for encrypted calls without a key outside the Oblivious HTTP gateway; over Tor the fixed onion bucket is used.", then: "Uses the existing blind-ip rate-limit family.", kept: "Only the counter key, for 61 seconds; no address in a generation, receipt or log.", evidence: [ev("src/api/e2ee.ts", "const from = addressBucket(c, ctx.cfg);")] },
@@ -390,11 +400,14 @@ const addressReaders: Touchpoint[] = [
 ];
 
 const bodyReaders: ExternalDoc["bodyReaders"] = [
+  toolsBodyReader, // v6 T
   provisioningBodyReader, inferenceModelReader, // ZK6
   structuredOutputReader, // V83
   webhookBodyReader, // V86.
+  facilitatorBodyReader, // v6 F
   profileBodyReader,
   x402RecoveryReader,
+  identityBodyReader, // v6 I
   ...sealedBodyReaders,
   telegramLinkReader,
   ...juryBodyReaders,
@@ -722,7 +735,10 @@ export const EXTERNAL: ExternalDoc = {
   },
   otherStores: [
     ...rushStores, // ON3
+    ...toolsStores, // v6 T
     ...webhookStores, // V86.
+    ...makegoodStores, // V6 R.
+    ...identityStores, // v6 I
     ...activityStores,
     ...statementStores, // V87
     ...insightsStores, // V88: spend insights.
@@ -730,6 +746,7 @@ export const EXTERNAL: ExternalDoc = {
     { id: "network-routing-evidence", name: "Network host routing evidence in memory", purpose: "When NETWORK_HOSTS_ENABLED is on, routing uses existing signed generation records, health probes and attestation outcomes to limit admitted hosts during probation and exclude unavailable hosts.", holds: "Provider ids, probation deadlines, aggregate attested success and recent outcome counts, fresh canonical active bond base units matched to the host id and operator wallet, probe availability and median latency, the latest attestation failure flag and refresh time. No request text or caller address. Successful network probes also record latency in the existing health table.", ttl: "Rebuilt by health refreshes, including idle flushes; evidence older than 120 seconds is refused. Failed refreshes clear the evidence. Lost when the router instance is released or exits.", requestText: "none", evidence: [ev("src/network/routing.ts", "const states = new WeakMap<HealthView, State>();"), ev("src/network/routing.ts", "state.evidence = new Map();"), ev("src/network/weight-config.ts", "evidenceMaxAgeMs: 120_000")] },
     ...networkJoinStores,
     ...networkStatsStores,
+    ...commerceStores, // v6 L
     ...sealedOtherStores,
     ...agreementContractStores,
     {

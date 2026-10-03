@@ -1,5 +1,11 @@
 import { registerRushJobs } from "../rush/monitor.ts"; // ON3
+import { reconcileToolCalls } from "../tools/call.ts"; // v6 T
+import { runToolCanaries } from "../tools/canary.ts"; // v6 T
+import { runAgentLiveness } from "../identity/liveness.ts"; // v6 I
+import { runAgentIdentity } from "../identity/identity.ts"; // v6 I
 import { runWebhooks } from "../webhooks/worker.ts"; // V86: bounded event delivery.
+import { runMakegoodPayouts } from "./makegood.ts"; // V6 R
+import { pollCommerceTransfers } from "../commerce/funding.ts"; // v6 L
 import { registerAgreementJobs } from "../agreements/jobs.ts";
 import { runNetworkFeeBurn } from "../network/fee-burn.ts";
 import { pollHostBonds } from "../network/bond-indexer.ts";
@@ -36,8 +42,13 @@ export function registerJobs(ctx: Ctx, router?: RouterCall, dispatch?: Dispatch)
   const { cfg, jobs } = ctx;
   registerAgreementJobs(ctx, router);
   registerRushJobs(ctx); // ON3
+  // v6 T: close holds of failed paid tool calls once their authorization expires; probe listed tools with a known answer.
+  if (cfg.tools.enabled) { jobs.register("tools-reconcile", 60_000, () => reconcileToolCalls(ctx)); jobs.register("tools-canary", 3_600_000, () => runToolCanaries(ctx)); }
   if (cfg.hostBonds.enabled) { jobs.register("host-bond-indexer", 5_000, () => pollHostBonds(ctx), { atStart: true }); jobs.register("host-slasher", 60_000, () => runHostSlasher(ctx)); }
   if (cfg.agentPolicyEnabled) jobs.register("agent-alerts", 60_000, () => runAgentAlerts(ctx));
+  // v6 I: a signed probe of each listed agent endpoint (daily); the registrar sends queued ERC-8004 registrations.
+  if (cfg.identity.enabled && cfg.agentProfilesEnabled) jobs.register("agent-liveness", cfg.identity.livenessIntervalMs, () => runAgentLiveness(ctx));
+  if (cfg.identity.enabled && cfg.identity.mode === "registrar" && cfg.identity.registrarKey) jobs.register("agent-identity", 60_000, () => runAgentIdentity(ctx));
   if (cfg.sanctions.enabled) jobs.register("sanctions-refresh", 86_400_000, () => refreshSanctions(ctx), { atStart: true });
   const chainOn = () => ["credits", "callPay", "payWithStock", "providerBond", "receiptAnchor", "royalty", "staking"].some((n) => ctx.chain.address(n as never));
   jobs.register("health-flush", 5_000, () => ctx.health.flush(ctx.db));
@@ -69,6 +80,9 @@ export function registerJobs(ctx: Ctx, router?: RouterCall, dispatch?: Dispatch)
   if (cfg.networkPayouts.burnEnabled) jobs.register("network-fee-burn", 3_600_000, () => runNetworkFeeBurn(ctx));
   jobs.register("chain-indexer", 5_000, async () => (chainOn() ? pollChain(ctx) : { skipped: "no contracts" }), { atStart: true });
   if (cfg.webhookSigningEnabled) jobs.register("webhooks", 60_000, () => runWebhooks(ctx)); // V86.
+  if (cfg.makegood.enabled) jobs.register("makegood-payouts", 3_600_000, () => runMakegoodPayouts(ctx)); // V6 R: refuses without its key.
+  // v6 L: copy public USDG transfers for the commerce ledger's funding-source filter (COMMERCE_FUNDING_FROM_BLOCK).
+  if (cfg.commerce.enabled && cfg.commerce.funding.fromBlock !== null) jobs.register("commerce-transfers", 60_000, () => pollCommerceTransfers(ctx));
   jobs.register("spend-watch", 60_000, () => runSpendWatch(ctx));
   jobs.register("escrow-indexer", 5_000, () => pollEscrow(ctx), { atStart: true });
   jobs.register("paywith-aggregator", 60_000, async () => (ctx.chain.address("payWithStock") ? runPaywithAggregator(ctx) : { skipped: "not configured" }));

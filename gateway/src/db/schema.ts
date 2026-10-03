@@ -1290,3 +1290,9 @@ export { agentProfiles } from "../agents/profile-schema.ts";
 export * from "../agreements/schema.ts";
 
 export { webhookDestinations, webhookDeliveries } from "../webhooks/schema.ts"; // V86: signed destinations.
+export { facilitatorSellers, facilitatorSettlements, sellerGasFloats } from "../facilitator/schema.ts"; // v6 F: hosted x402 facilitator
+export { makegoodRefunds, makegoodPayouts } from "../services/makegood-schema.ts"; // V6 R: make-good refunds.
+
+export { toolListings, toolCalls, toolCanaryRuns } from "../tools/schema.ts"; // v6 T: paid tool market.
+export { agentIdentities, agentFeedback, agentLiveness, agentTrackRecords } from "../identity/schema.ts"; // v6 I: receipt-backed identity and reputation.
+export { commerceTransfers } from "../commerce/schema.ts"; // v6 L: public USDG transfer index for the commerce ledger.

@@ -1,3 +1,4 @@
+import { makegoodStatus, refundReceipt } from "../services/makegood.ts"; // V6 R
 import type { Hono } from "hono";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { encodeFunctionData, keccak256, toBytes, type Hex } from "viem";
@@ -12,6 +13,7 @@ import { readinessMetrics } from "../services/readiness-metrics.ts";
 import { readJson } from "./common.ts";
 import { requireKey } from "./auth.ts";
 import { verifyReceipt, verifyReceiptV2, anchorProof } from "./generation.ts";
+import { identityStatus } from "../identity/status.ts"; // v6 I
 import { COSE_CONTENT_TYPE } from "../receipts/v2.ts";
 import { holdersStatus } from "../holders/tiers.ts";
 import { laneSummary } from "./models.ts";
@@ -20,8 +22,11 @@ import { PayWithStockAbi, erc20Abi } from "../chain/abis.ts";
 import { acceptedTokens, anmoSummary, escrowEnabled } from "../pay/escrow.ts";
 import { X402_VERSIONS, x402Enabled } from "../pay/x402.ts";
 import { RECOVERY_TTL_MS, recoveryMessage } from "../pay/recovery.ts";
+import { facilitatorStatus } from "../facilitator/routes.ts"; // v6 F
+import { toolsStatus } from "../tools/routes.ts"; // v6 T
 import { PRIVATE_LANES, PUBLIC_LANE_ROWS, privateLaneStats } from "../services/private-stats.ts";
 import { labelForReceipt } from "../privacy/resolve.ts";
+import { commerceStatus } from "../commerce/stats.ts"; // v6 L
 
 export { providerApplication } from "../providers/application.ts";
 
@@ -85,6 +90,7 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
   });
   app.get("/api/v1/receipts/:id", async (c) => {
     const [g] = await ctx.db.select().from(generations).where(eq(generations.id, c.req.param("id")));
+    if (!g) { const refund = c.req.query("format") ? null : await refundReceipt(ctx, c.req.param("id")); if (refund) return c.json({ data: refund }); } // V6 R
     if (!g) fail(404, "Receipt not found.", "not_found");
     const format = c.req.query("format");
     if (format === "cose") {
@@ -315,6 +321,8 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
         private_lanes: { lanes: PRIVATE_LANES, stats: "/api/v1/stats", epsilon_spent_today: privateLaneStats(ctx).budget().epsilon_spent_today },
         router: ctx.cfg.publicUrl,
         network: { hosts_open: ctx.cfg.networkHosts.enabled === true, payouts_open: ctx.cfg.networkPayouts.enabled === true, fee_bps: ctx.cfg.networkPayouts.feeBps },
+        // v6 I: ERC-8004 identity, paid feedback and liveness probes; each says whether it is switched on here.
+        identity: identityStatus(ctx),
         env: ctx.cfg.env,
         // The running build (RELEASE_COMMIT; null when unset) and whether its contracts were verified.
         release: {
@@ -351,6 +359,12 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
             recovery: { available: x402Enabled(ctx), header: "PAYMENT-RECOVERY", message: recoveryMessage(ctx.cfg.chain.id, "<payer>", "<nonce>"), ttl_s: RECOVERY_TTL_MS / 1000 },
           },
         },
+        // v6 F: the hosted x402 facilitator for other sellers; `relay.above_floor` is the last reading taken, null before any.
+        facilitator: facilitatorStatus(ctx),
+        // v6 T: paying x402 tools from a key's balance; ready only when the market is on and a buyer wallet is set.
+        tools: toolsStatus(ctx),
+        // v6 L: the honest commerce ledger: whether it is on, which receipt kinds feed it, and whether its filters can work here.
+        commerce: commerceStatus(ctx),
         // $ANMO holder tiers: the token, the tier ladder, and whether tiers apply to requests.
         holders: holdersStatus(ctx),
         telemetry: ctx.telemetry.enabled,
@@ -361,6 +375,7 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
         catalog: { models: ctx.catalog.models.size, providers: ctx.catalog.providers.size },
         // Privacy lanes: how many models and live endpoints can serve each one right now, and the selection weight.
         lanes: laneSummary(ctx),
+        makegood: await makegoodStatus(ctx), // V6 R: make-good refunds, from the refund records.
       },
     });
   });

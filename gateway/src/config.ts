@@ -1,14 +1,18 @@
+import { identityEnv, identitySettings } from "./identity/config.ts"; // v6 I: receipt-backed identity and reputation.
 import { rushEnv, rushSettings } from "./rush/config.ts"; // ON3
+import { toolsEnv, toolsSettings } from "./tools/config.ts"; // v6 T: paid tool market.
 import { zkapiPageEnv } from "./zkapi/page-config.ts"; // ZK10: opt-in static-page origins.
 import { structuredOutputEnv } from "./structured-output/options.ts"; // V83: opt-in JSON checking.
 import { insightsEnv } from "./insights/config.ts"; // V88: off by default.
 import { networkStatsEnv } from "./network/stats-config.ts";
+import { commerceEnv, commerceSettings } from "./commerce/config.ts"; // v6 L: honest commerce ledger.
 import { sealedEnv, guardSealed } from "./agents/sealed/config.ts";
 import { agreementEnv, agreementSettings } from "./agreements/config.ts";
 import { networkPayoutEnv, networkPayoutSettings } from "./network/payout-config.ts";
 import { hostBondEnv, hostBondSettings } from "./network/bond-config.ts";
 import { networkHostsEnv, networkHostsSettings } from "./network/host-config.ts";
 import { sanctionsEnv, sanctionsSettings } from "./network/config.ts";
+import { facilitatorEnv, facilitatorSettings } from "./facilitator/config.ts"; // v6 F: hosted x402 facilitator
 import { e2eeSettings } from "./e2ee/config.ts";
 import { networkWeightEnv, networkWeightSettings } from "./network/weight-config.ts";
 import { createHash, createHmac, createPrivateKey, createPublicKey, type KeyObject } from "node:crypto";
@@ -58,7 +62,9 @@ function measurementPublicKey(raw: string | undefined): string | null {
 }
 
 const schema = z.object({
+  ...identityEnv, // v6 I
   ...zkapiPageEnv, // ZK10
+  ...toolsEnv, // v6 T
   ...rushEnv, // ON3
   DEVELOPER_FIRST_CALL_ENABLED: bool.default(false), // ON2: guidance for GETs to model endpoints.
   ...structuredOutputEnv, // V83
@@ -68,10 +74,14 @@ const schema = z.object({
   ...networkWeightEnv,
   ...agreementEnv,
   ...sanctionsEnv,
+  ...facilitatorEnv, // v6 F
   ...networkHostsEnv,
   ...networkStatsEnv,
+  ...commerceEnv, // v6 L
   INFERENCE_KEYS_ENABLED: bool.default(false), // ZK6: minting restricted keys; stored scopes are always enforced.
   WEBHOOK_SIGNING_ENABLED: bool.default(false), // V86: signed account webhooks.
+  MAKEGOOD_ENABLED: bool.default(false), // V6 R: deterministic make-good refunds.
+  MAKEGOOD_REFUND_PRIVATE_KEY: pk, // V6 R: treasury key for on-chain refunds to per-call payers; worker only, never logged.
   ...networkPayoutEnv,
   RUNTIME_ROLE: z.enum(["all", "api", "worker"]).default("all"),
   WORKER_JOBS: z.string().default(""),
@@ -497,19 +507,27 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     // and the keeper key (a funded chain signer) stays apart from every other signing role.
     if (e.RUNTIME_ROLE === "api" && (e.IPX_ORACLE_PRIVATE_KEY || e.IPX_KEEPER_PRIVATE_KEY)) throw new Error("Public API must not receive the IPX oracle or IPX keeper key; set IPX_ORACLE_PUBLIC_KEY instead.");
     if (e.IPX_KEEPER_PRIVATE_KEY && (escrowMode || Object.values(roleKeys).some(Boolean))) throw new Error("IPX_KEEPER_PRIVATE_KEY must be isolated from every other signing role.");
+    // V6 R: the refund treasury key moves funds, so it lives only on the worker that runs makegood-payouts, alone.
+    if (e.MAKEGOOD_REFUND_PRIVATE_KEY && (e.RUNTIME_ROLE === "api" || Object.values(roleKeys).some(Boolean) || e.IPX_KEEPER_PRIVATE_KEY)) throw new Error("MAKEGOOD_REFUND_PRIVATE_KEY must be isolated on the worker that runs makegood-payouts.");
     if (e.RUNTIME_ROLE === "worker") {
       const names = e.WORKER_JOBS.split(",").map((v) => v.trim()).filter(Boolean);
       const allowed = ["health-flush", "holds-expire", "catalog-refresh", "provider-registry", "health-probes", "canaries", "attestor", "receipts-anchor", "receipt-key-rotation", "settlement", "slasher", "buyback", "chain-indexer", "paywith-aggregator", "escrow-indexer", "spend-watch", "alert-notifier", "telegram-bot", "measurements", "blind-key-rotation", "ipx-oracle", "dayzero", "ohttp-key-rotation", "host-anchor", "tlog", "batches", "skills-mirror", "sanctions-refresh"];
       allowed.push("webhooks"); // V86: bounded event delivery.
+      allowed.push("makegood-payouts"); // V6 R: on-chain make-good refunds.
       allowed.push("agreement-indexer", "agreement-jury", "agreement-retention");
       allowed.push("upstream-monitor"); // ON3
+      allowed.push("tools-reconcile", "tools-canary"); // v6 T: the paid tool market's holds and canary probes.
+      allowed.push("commerce-transfers"); // v6 L: public USDG transfer index.
       allowed.push("agent-alerts", "agent-policy-retention", "agent-ledger-retention", "network-fee-burn", "host-bond-indexer", "host-slasher");
       allowed.push("x402-recovery-expire"); // x402 payment recovery retention
+      allowed.push("agent-liveness", "agent-identity"); // v6 I: daily signed endpoint probes; isolated ERC-8004 registrar.
       if (!names.length || names.some((n) => !allowed.includes(n))) throw new Error("Worker requires an explicit valid WORKER_JOBS list.");
       const keyJobs = { settlement: "settlement", anchoring: "receipts-anchor", slashing: "slasher", buyback: "buyback" };
       if (Object.values(roleKeys).filter(Boolean).length > 1) throw new Error("Privileged worker signing roles must be isolated.");
       if (names.includes("ipx-oracle") && !(e.IPX_ORACLE_ENABLED && e.IPX_ORACLE_PRIVATE_KEY)) throw new Error("The ipx-oracle job needs IPX_ORACLE_ENABLED and IPX_ORACLE_PRIVATE_KEY.");
       if (names.includes("host-anchor") && !e.HOST_ANCHOR_ENABLED) throw new Error("The host-anchor job needs HOST_ANCHOR_ENABLED.");
+      if (names.includes("makegood-payouts") && !(e.MAKEGOOD_ENABLED && e.MAKEGOOD_REFUND_PRIVATE_KEY)) throw new Error("The makegood-payouts job needs MAKEGOOD_ENABLED and MAKEGOOD_REFUND_PRIVATE_KEY.");
+      if (e.MAKEGOOD_REFUND_PRIVATE_KEY && !names.includes("makegood-payouts")) throw new Error("MAKEGOOD_REFUND_PRIVATE_KEY belongs only on the worker that runs makegood-payouts.");
       if (!escrowMode)
         for (const [role, key] of Object.entries(roleKeys)) {
           const enabled = names.includes(keyJobs[role as keyof typeof keyJobs]) || (role === "buyback" && names.includes("network-fee-burn")) || (role === "slashing" && names.includes("host-slasher") && e.NETWORK_SLASHING_ENABLED);
@@ -593,18 +611,23 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     env: e.ANONYMO_ENV,
     production,
     developerFirstCallEnabled: e.DEVELOPER_FIRST_CALL_ENABLED, // ON2
+    identity: identitySettings(e), // v6 I
     routeExplain: e.ROUTE_EXPLAIN_ENABLED, // V84
     hostDashboard: { enabled: e.HOST_DASHBOARD_ENABLED },
     agreements: agreementSettings(e, production),
     sanctions: sanctionsSettings(e, production),
+    facilitator: facilitatorSettings(e, production), // v6 F
     e2ee: e2eeSettings(e.E2EE_PASSTHROUGH_ENABLED, e.PROVIDERS_FILE, production, { baseUrl: e.E2EE_GATEWAY_BASE_URL, attestationUrl: e.E2EE_GATEWAY_ATTESTATION_URL }),
     networkHosts: networkHostsSettings(e, production),
     inferenceKeysEnabled: e.INFERENCE_KEYS_ENABLED, // ZK6
     statementsEnabled: e.STATEMENTS_ENABLED, // V87
     networkStatsEnabled: e.NETWORK_STATS_ENABLED,
+    commerce: commerceSettings(e), // v6 L: off by default.
     rush: rushSettings(e), // ON3
+    tools: toolsSettings(e, production), // v6 T: off unless TOOLS_MARKET_ENABLED.
     spendInsightsEnabled: e.SPEND_INSIGHTS_ENABLED, // V88: read-only spend insights.
     webhookSigningEnabled: e.WEBHOOK_SIGNING_ENABLED, // V86: off preserves existing delivery.
+    makegood: { enabled: e.MAKEGOOD_ENABLED, refundKey: e.MAKEGOOD_REFUND_PRIVATE_KEY as `0x${string}` | undefined }, // V6 R
     networkPayouts: networkPayoutSettings(e, production),
     networkWeights: { ...networkWeightSettings(e), ...(e.NETWORK_BONDS_ENABLED ? { bonds: { ...hostBondSettings(e), scope: `${e.CHAIN_ID}:${e.HOST_BOND_ADDRESS?.toLowerCase()}` } } : {}) },
     hostBonds: hostBondSettings(e),

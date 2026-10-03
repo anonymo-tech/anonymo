@@ -1,4 +1,6 @@
 import { initializeUpstreamMonitor } from "./rush/monitor.ts"; // ON3
+import { facilitatorRoutes } from "./facilitator/routes.ts"; // v6 F: hosted x402 facilitator
+import { toolsRoutes } from "./tools/routes.ts"; // v6 T: paid tool market, off by default.
 import { firstCallRoutes, firstCallCsp } from "./developers/first-call.ts"; // ON2
 import { inferenceScopeMiddleware, keyDefaultsRoutes } from "./provisioning/scope.ts"; // ZK6
 import { structuredOutputMiddleware } from "./structured-output/chat.ts"; // V83
@@ -6,10 +8,13 @@ import { paymentRecovery } from "./pay/recovery.ts";
 import { statementRoutes } from "./api/statements.ts"; // V87
 import { insightsRoutes } from "./api/insights.ts"; // V88: spend insights.
 import { webhookRoutes } from "./webhooks/routes.ts"; // V86: signed destinations.
+import { makegoodRoutes } from "./services/makegood.ts"; // V6 R: make-good refunds.
 import { inboxRoutes } from "./api/inbox.ts"; // U78: account inbox.
 import { activityRoutes } from "./api/activity.ts";
 import { networkStatsRoutes } from "./network/stats.ts";
+import { commerceStatsRoutes } from "./commerce/stats.ts"; // v6 L
 import { agentProfilesRoutes } from "./api/agent-profiles.ts";
+import { identityRoutes } from "./identity/routes.ts"; // v6 I: before the rulebook routes, which 404 without AGENT_POLICY_ENABLED.
 import { agentSealedRoutes } from "./api/agent-sealed.ts";
 import { telegramLinkingRoutes } from "./api/telegram-linking.ts";
 import { guardAgreementSigners } from "./agreements/tally.ts";
@@ -157,6 +162,7 @@ export async function createApp(opts: AppOptions = {}) {
   app.use("/api/*", apiCors);
   app.use("/v1/*", apiCors);
   app.use("/ollama/*", apiCors);
+  app.use("/facilitator/*", apiCors); // v6 F
   if (webBuilt && cfg.zkapiPageOrigins.length) app.use("*", zkapiHosting(csp, cfg.zkapiPageOrigins)); // ZK10: narrowly scoped static policies.
   app.use("*", async (c, next) => {
     await next();
@@ -202,6 +208,7 @@ export async function createApp(opts: AppOptions = {}) {
   characterRoutes(app, ctx);
   memoryRoutes(app, ctx);
   agentProfilesRoutes(app, ctx);
+  identityRoutes(app, ctx); // v6 I
   agentSealedRoutes(app, ctx);
   agentsRoutes(app, ctx);
   agreementsRoutes(app, ctx);
@@ -212,6 +219,7 @@ export async function createApp(opts: AppOptions = {}) {
   agentSessionsRoutes(app, ctx);
   spendRoutes(app, ctx);
   webhookRoutes(app, ctx); // V86.
+  makegoodRoutes(app, ctx); // V6 R.
   holdersRoutes(app, ctx);
   disclosureRoutes(app, ctx);
   ipxRoutes(app, ctx);
@@ -231,18 +239,21 @@ export async function createApp(opts: AppOptions = {}) {
   networkPolicyRoutes(app, ctx);
   statusRoutes(app, ctx);
   skillsRoutes(app, ctx);
+  toolsRoutes(app, ctx); // v6 T: registers nothing unless TOOLS_MARKET_ENABLED.
   networkRoutes(app, ctx);
   publicRoutes(app, ctx);
   networkSanctionsRoutes(app, ctx);
   networkBurnRoutes(app, ctx);
   networkHostRoutes(app, ctx);
   networkStatsRoutes(app, ctx);
+  commerceStatsRoutes(app, ctx); // v6 L: off by default.
   mcpRoutes(app, ctx);
   anthropicRoutes(app, ctx);
   ollamaRoutes(app, ctx);
   responsesRoutes(app, ctx);
   ragRoutes(app, ctx);
   paymasterRoutes(app, ctx);
+  facilitatorRoutes(app, ctx); // v6 F: answers 503 facilitator_disabled until FACILITATOR_ENABLED
   adminRoutes(app, ctx);
   // The website (web/out, a static Next.js export) is served at / when it has been built; otherwise
   // a small built-in page lists models and rankings.

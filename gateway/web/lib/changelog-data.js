@@ -5,6 +5,45 @@
 // Keep old ids and dates stable so bookmarks and feed readers keep working.
 export default [
   {
+    "id": "make-good-refunds",
+    "date": "2026-10-03",
+    "title": "Get a refund by rule when a call fails you",
+    "summary": "Built, and off until an operator switches it on (not yet at anonymo.tech). When a paid call gets no answer, a failover costs more, a stream is cut off, repaired JSON still does not parse or an attested call lacks a fresh attestation, the router refunds by fixed rules with a signed refund receipt. Per-call payers are refunded on-chain.",
+    "links": [
+      {
+        "label": "Open page",
+        "href": "/docs/#make-good-refunds"
+      },
+      {
+        "label": "View commit",
+        "href": "https://github.com/anonymo-tech/anonymo/commit/be5903d14390594b13e4a663c689c70257b3b527"
+      }
+    ],
+    "tags": [
+    "id": "paid-tools",
+    "title": "Pay x402 tools from your Anonymo balance",
+    "summary": "Built, and not switched on at anonymo.tech yet: with TOOLS_MARKET_ENABLED a key can pay any x402 tool priced in USDG on Robinhood Chain. The router pays the seller, charges the price plus its take with a signed tool.call receipt, applies your rulebook's tool limits and probes listed tools daily.",
+        "href": "/tools/"
+        "href": "https://github.com/anonymo-tech/anonymo/commit/d7d9d6cdb4b0bde2905d156e560c1410b45d4d8d"
+      "agents",
+      "build",
+    "id": "receipt-backed-reputation",
+    "title": "Agent reputation only from people who paid",
+    "summary": "Agents can link an ERC-8004 identity on Robinhood Chain, take feedback only from reviewers who paid them through Anonymo, weighted by the amount and fading over time, show a signed daily liveness check, and publish a signed track record with a Merkle proof over their receipts. Built and off by default; not switched on at anonymo.tech yet.",
+        "label": "Read the docs",
+        "href": "/docs/#agent-identity"
+        "href": "https://github.com/anonymo-tech/anonymo/commit/4a573a612a5642110d61038ef7906328e98eccbd"
+    "id": "commerce-ledger",
+    "title": "Read an honest commerce ledger",
+    "summary": "The commerce page counts paid settlements only once their receipts are anchored on Robinhood Chain, removes self-dealing (same owner, round trips within 24 hours, funding links) and shows every filtered figure beside the gross one. A published Dune query recomputes the on-chain part. It is built but not switched on at anonymo.tech yet.",
+        "href": "/commerce/"
+        "label": "Read the methodology",
+        "href": "/docs/#commerce-stats"
+        "href": "https://github.com/anonymo-tech/anonymo/commit/636176d3921b5ed92a8fb944351971d12c2ce24e"
+      "verify"
+    ]
+  },
+  {
     "id": "x402-payment-recovery",
     "date": "2026-10-03",
     "title": "Recover a lost x402 answer without paying twice",
@@ -43,6 +82,26 @@ export default [
     "tags": [
       "agents",
       "build"
+    ]
+  },
+  {
+    "id": "x402-facilitator",
+    "date": "2026-10-03",
+    "title": "Settle x402 payments for your own API on Robinhood Chain",
+    "summary": "A hosted x402 facilitator for USDG on Robinhood Chain: supported, verify and settle for x402 v1 and v2, signed seller listings and a discovery index. USDG goes from the payer straight to the seller; the router only pays gas. Built, but off until an operator sets FACILITATOR_ENABLED; anonymo.tech has not, and /api/v1/status says so.",
+    "links": [
+      {
+        "label": "Open page",
+        "href": "/facilitator/"
+      },
+      {
+        "label": "View commit",
+        "href": "https://github.com/anonymo-tech/anonymo/commit/150899151169e48fe2bb4920d82ff3647e7f3c64"
+      }
+    ],
+    "tags": [
+      "build",
+      "verify"
     ]
   },
   {
