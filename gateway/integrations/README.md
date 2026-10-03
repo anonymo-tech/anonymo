@@ -10,6 +10,7 @@ Ready-to-submit listings of Anonymo in the tools people already use. Each folder
 | [`mcp-registry/`](mcp-registry/) | Official MCP Registry | `server.json` for `io.github.anonymo-tech/anonymo` (the existing `/mcp` server, including `anonymo_agent_rules` and `anonymo_agent_check`) | yes, via `claude mcp add` |
 | [`x402-bazaar/`](x402-bazaar/) | x402 Bazaar discovery | v1 and v2 (`extensions.bazaar`) discovery items for chat, completions, embeddings; tags `attested`, `tee`, `uncensored-ok` | not yet: x402 is built but not switched on at anonymo.tech; it turns on when `X402_PAY_TO` is set |
 | [`elizaos/`](elizaos/) | ElizaOS plugin registry | `@anonymo/plugin-anonymo` model provider (text, embeddings, attested lane) | after `npm publish` |
+| [`robinhood-agents/`](robinhood-agents/) | Any OpenAI-compatible agent, including agents you run on Robinhood (a setup guide; nothing to submit) | base URL and inference-only key steps, three trading rulebooks to import, a decision-receipt helper (TypeScript and Python), per-call market-data tools | yes for the endpoint and rulebooks; decision tags and data tools once a router switches them on |
 | [`huggingface/`](huggingface/) | Hugging Face model cards | badge and "Run it on Anonymo" snippet | yes, per model-card PR |
 | [`dune/`](dune/) | Dune | DuneSQL query that recomputes the commerce ledger (`/commerce`) from public chain data | yes, once the router's addresses are filled in, where Dune indexes Robinhood Chain |
 

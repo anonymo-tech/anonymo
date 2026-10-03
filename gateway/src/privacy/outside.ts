@@ -5,6 +5,7 @@ import { provisioningBodyReader, inferenceModelReader } from "./provisioning.ts"
 import { structuredOutputReader } from "./structured-output.ts"; // V83
 import { statementStores } from "./statements.ts"; // V87
 import { insightsStores } from "./insights.ts"; // V88: read-only aggregates.
+import { dataToolStores } from "./data-tools.ts"; // B: market-data tools and decision tags.
 import { webhookBodyReader, webhookStores } from "./webhooks.ts"; // V86: event delivery.
 import { makegoodStores } from "./makegood.ts"; // V6 R: make-good refunds.
 import { inboxStores } from "./inbox.ts"; // U78: account inbox inventory.
@@ -51,7 +52,6 @@ const ADDRESS_NOTE = "The caller's network address is part of the key. Over Tor 
 
 const redisFamilies: RedisFamily[] = [
   ...toolsRateFamilies, // v6 T
-  limit({ prefix: "agent-certificate:", shape: "agent-certificate:<account id>", purpose: "Record-certificate issuance attempts: five per minute per account, shared across standalone and profile issuance, its keys and router replicas. Contains only the account id and a counter; no certificate pseudonym or claims.", holds: "account", seconds: 60, evidence: [ev("src/api/agent-certificates.ts", "await ctx.limiter.take(`agent-certificate:${key.accountId}`"), ev("src/agents/profiles.ts", "await ctx.limiter.take(`agent-certificate:${key.accountId}`")] }),
   limit({ prefix: "agent-certificate:", shape: "agent-certificate:<account id>", purpose: "Record-certificate and track-record issuance attempts: five per minute per account, shared across standalone, profile and track-record issuance, its keys and router replicas. Contains only the account id and a counter; no certificate pseudonym, claims or stats.", holds: "account", seconds: 60, evidence: [ev("src/api/agent-certificates.ts", "await ctx.limiter.take(`agent-certificate:${key.accountId}`"), ev("src/agents/profiles.ts", "await ctx.limiter.take(`agent-certificate:${key.accountId}`"), ev("src/identity/track-record.ts", "await ctx.limiter.take(`agent-certificate:${key.accountId}`")] }),
   feedbackLimit, // v6 I
   telegramLinkRate,
@@ -742,6 +742,7 @@ export const EXTERNAL: ExternalDoc = {
     ...activityStores,
     ...statementStores, // V87
     ...insightsStores, // V88: spend insights.
+    ...dataToolStores, // B
     ...inboxStores,
     { id: "network-routing-evidence", name: "Network host routing evidence in memory", purpose: "When NETWORK_HOSTS_ENABLED is on, routing uses existing signed generation records, health probes and attestation outcomes to limit admitted hosts during probation and exclude unavailable hosts.", holds: "Provider ids, probation deadlines, aggregate attested success and recent outcome counts, fresh canonical active bond base units matched to the host id and operator wallet, probe availability and median latency, the latest attestation failure flag and refresh time. No request text or caller address. Successful network probes also record latency in the existing health table.", ttl: "Rebuilt by health refreshes, including idle flushes; evidence older than 120 seconds is refused. Failed refreshes clear the evidence. Lost when the router instance is released or exits.", requestText: "none", evidence: [ev("src/network/routing.ts", "const states = new WeakMap<HealthView, State>();"), ev("src/network/routing.ts", "state.evidence = new Map();"), ev("src/network/weight-config.ts", "evidenceMaxAgeMs: 120_000")] },
     ...networkJoinStores,

@@ -1,5 +1,6 @@
 import { makegoodStatus, refundReceipt } from "../services/makegood.ts"; // V6 R
 import type { Hono } from "hono";
+import { dataToolsStatus } from "../data-tools/routes.ts"; // B
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { encodeFunctionData, keccak256, toBytes, type Hex } from "viem";
 import { z } from "zod";
@@ -24,6 +25,7 @@ import { X402_VERSIONS, x402Enabled } from "../pay/x402.ts";
 import { RECOVERY_TTL_MS, recoveryMessage } from "../pay/recovery.ts";
 import { facilitatorStatus } from "../facilitator/routes.ts"; // v6 F
 import { toolsStatus } from "../tools/routes.ts"; // v6 T
+import { agreementsStatus } from "../agreements/status.ts";
 import { PRIVATE_LANES, PUBLIC_LANE_ROWS, privateLaneStats } from "../services/private-stats.ts";
 import { labelForReceipt } from "../privacy/resolve.ts";
 import { commerceStatus } from "../commerce/stats.ts"; // v6 L
@@ -365,9 +367,15 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
         tools: toolsStatus(ctx),
         // v6 L: the honest commerce ledger: whether it is on, which receipt kinds feed it, and whether its filters can work here.
         commerce: commerceStatus(ctx),
+        // Agent agreements: the contracts this router indexes, and whether the isolated jury worker is posting rulings
+        // (its fresh heartbeat after matching the oracle's jury on chain; the API itself never holds the signer keys).
+        agreements: await agreementsStatus(ctx),
         // $ANMO holder tiers: the token, the tier ladder, and whether tiers apply to requests.
         holders: holdersStatus(ctx),
         telemetry: ctx.telemetry.enabled,
+        // B: per-call market-data tools and decision tags in receipts; both off unless switched on.
+        data_tools: dataToolsStatus(ctx),
+        decision_tags: { enabled: ctx.cfg.decisionTagsEnabled, header: "X-Anonymo-Decision-Tag" },
         // The onion service that reaches this router over Tor (null when none is configured). Clients that reach it hide
         // their network address from the router; requests carry no address here, so limits for unkeyed calls are shared.
         onion: ctx.cfg.onion.address ? { address: ctx.cfg.onion.address, url: `http://${ctx.cfg.onion.address}` } : null,

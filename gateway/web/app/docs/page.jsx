@@ -31,6 +31,7 @@ import AgentRulebookDocs from "../../components/AgentRulebookDocs";
 import AgentBreakersDocs from "../../components/AgentBreakersDocs";
 import AgentCertificateDocs from "../../components/AgentCertificateDocs";
 import AgentApprovalDocs from "../../components/AgentApprovalDocs";
+import TradingAgentDocs from "../../components/TradingAgentDocs"; // B
 import { API_BASE } from "../../lib/api";
 import { QUICKSTART, QUICKSTART_FLAGS } from "../../lib/providers";
 import OnionAddress from "../../components/OnionAddress";
@@ -60,7 +61,7 @@ const receipt = {
     key_id: "ab214b090f5922fe",
     alg: "Ed25519",
     payload: { v: 1, model: "…", provider: "…", tokens: { prompt: 120, completion: 64 }, cost: "0.00003248", mode: "prepaid", request_sha256: "…", response_sha256: "…" },
-    anchor_hint: "Anchored on chain 4663 within the hour; GET /api/v1/generation?id=… returns the merkle proof.",
+    anchor_hint: "Rooted within the hour; GET /api/v1/receipts/gen-1790461071-M1D5SJxd7YpD5A/proof returns the merkle path.",
     paid_with: { token: "NVDA", raw_units: "<units>", fair_price: "<18-decimal USD>", swap_tx: "<tx once swapped>" },
   },
 };
@@ -856,6 +857,7 @@ export default function Docs() {
           <ToolsMarketDocs /> {/* v6 T */}
           <AgentAlertDocs />
           <AgentApprovalDocs />
+          <TradingAgentDocs /> {/* B */}
           <AgentCertificateDocs /><AgentProfileDocs /><AgentIdentityDocs /><SealedAgentDocs />
           <h2 id="quickstart">Make your first API call.</h2> {/* ON2 */}
           <FirstCallDocs /> {/* ON2 */}

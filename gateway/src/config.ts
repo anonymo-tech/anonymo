@@ -1,9 +1,12 @@
 import { identityEnv, identitySettings } from "./identity/config.ts"; // v6 I: receipt-backed identity and reputation.
+import { accountRuntimeSchema } from "./paymaster/account-policy.ts";
 import { rushEnv, rushSettings } from "./rush/config.ts"; // ON3
 import { toolsEnv, toolsSettings } from "./tools/config.ts"; // v6 T: paid tool market.
 import { zkapiPageEnv } from "./zkapi/page-config.ts"; // ZK10: opt-in static-page origins.
 import { structuredOutputEnv } from "./structured-output/options.ts"; // V83: opt-in JSON checking.
 import { insightsEnv } from "./insights/config.ts"; // V88: off by default.
+import { dataToolsEnv, dataToolsSettings } from "./data-tools/config.ts"; // B: off by default.
+import { decisionTagEnv } from "./receipts/decision-tag.ts"; // B: off by default.
 import { networkStatsEnv } from "./network/stats-config.ts";
 import { commerceEnv, commerceSettings } from "./commerce/config.ts"; // v6 L: honest commerce ledger.
 import { sealedEnv, guardSealed } from "./agents/sealed/config.ts";
@@ -69,6 +72,8 @@ const schema = z.object({
   DEVELOPER_FIRST_CALL_ENABLED: bool.default(false), // ON2: guidance for GETs to model endpoints.
   ...structuredOutputEnv, // V83
   ...insightsEnv, // V88: spend insights.
+  ...dataToolsEnv, // B: per-call market-data tools.
+  ...decisionTagEnv, // B: X-Anonymo-Decision-Tag in receipts.
   ...sealedEnv,
   ...hostBondEnv,
   ...networkWeightEnv,
@@ -141,6 +146,7 @@ const schema = z.object({
   SETTLEMENT_PRIVATE_KEY: pk,
   ANCHORER_PRIVATE_KEY: pk,
   PAYMASTER_SIGNER_KEY: pk,
+  PAYMASTER_ACCOUNT_RUNTIMES: z.string().default("[]").transform(raw => accountRuntimeSchema.parse(JSON.parse(raw))),
   SLASHER_PRIVATE_KEY: pk,
   KEEPER_PRIVATE_KEY: pk,
   // Local development only: POST /api/v1/dev/faucet mints mock USDG and deposits it to the caller's key,
@@ -626,6 +632,8 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     rush: rushSettings(e), // ON3
     tools: toolsSettings(e, production), // v6 T: off unless TOOLS_MARKET_ENABLED.
     spendInsightsEnabled: e.SPEND_INSIGHTS_ENABLED, // V88: read-only spend insights.
+    dataTools: dataToolsSettings(e), // B
+    decisionTagsEnabled: e.DECISION_TAGS_ENABLED, // B
     webhookSigningEnabled: e.WEBHOOK_SIGNING_ENABLED, // V86: off preserves existing delivery.
     makegood: { enabled: e.MAKEGOOD_ENABLED, refundKey: e.MAKEGOOD_REFUND_PRIVATE_KEY as `0x${string}` | undefined }, // V6 R
     networkPayouts: networkPayoutSettings(e, production),
@@ -682,6 +690,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
       settlementKey: e.SETTLEMENT_PRIVATE_KEY as `0x${string}` | undefined,
       anchorerKey: e.ANCHORER_PRIVATE_KEY as `0x${string}` | undefined,
       paymasterSignerKey: e.PAYMASTER_SIGNER_KEY as `0x${string}` | undefined,
+      paymasterAccountRuntimes: e.PAYMASTER_ACCOUNT_RUNTIMES,
       slasherKey: e.SLASHER_PRIVATE_KEY as `0x${string}` | undefined,
       keeperKey: e.KEEPER_PRIVATE_KEY as `0x${string}` | undefined,
       ipxKeeperKey: e.IPX_KEEPER_PRIVATE_KEY as `0x${string}` | undefined,
@@ -1472,6 +1481,9 @@ function contractPathGuards(e: Env, production: boolean, escrowMode: boolean) {
   const observedBlock = String(report.observed?.blockNumber);
   if (Number(report.observed?.chainId) !== e.CHAIN_ID || !/^\d+$/.test(observedBlock) || BigInt(observedBlock) < BigInt(String(manifest.blockNumber)))
     refuseReport("was not read from this chain after the deployment block.");
+  const proof = checks.find((c) => c.id === "contracts.source_equivalence");
+  if (proof?.status !== "pass" || proof.evidence?.sourceRevision !== report.verifierRevision || !Array.isArray(proof.evidence?.mismatches) || proof.evidence.mismatches.length)
+    refuseReport("does not prove the audited runtime build and immutable values.");
   // Bind the report to this manifest: the verifier found runtime bytecode at every manifest address.
   const bytecode = checks.find((c) => c.id === "contracts.bytecode_present");
   const found: Record<string, { address?: unknown; present?: unknown }> = bytecode?.status === "pass" && bytecode.evidence && typeof bytecode.evidence === "object" ? bytecode.evidence : {};

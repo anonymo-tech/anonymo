@@ -38,3 +38,39 @@ groups:
         labels: { severity: critical }
         annotations:
           summary: Anonymo scrape succeeded without readiness evidence
+  - name: anonymo-chain
+    rules:
+      # Activate the anonymo-chain scrape target only after its public policy is reviewed.
+      - alert: AnonymoChainMonitorFailed
+        expr: up{job="anonymo-chain"} == 0 or anonymo_chain_monitor_ok{job="anonymo-chain"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: Finalized-chain incident monitoring is unavailable
+      - alert: AnonymoAuthorityChanged
+        expr: anonymo_chain_authority_changed{job="anonymo-chain"} == 1 or anonymo_chain_owner_mismatch{job="anonymo-chain"} == 1
+        labels: { severity: critical }
+        annotations:
+          summary: Contract authority changed or differs from the reviewed owner policy
+      - alert: AnonymoPauseChanged
+        expr: anonymo_chain_pause_changed{job="anonymo-chain"} == 1
+        labels: { severity: warning }
+        annotations:
+          summary: A contract pause policy changed; verify the incident and preserve exits
+      - alert: AnonymoLargeOutflow
+        expr: anonymo_chain_outflow_over_limit{job="anonymo-chain"} == 1
+        labels: { severity: critical }
+        annotations:
+          summary: Token outflow exceeds the reviewed observation-window threshold
+      - alert: AnonymoKeeperUnderfunded
+        expr: anonymo_chain_keeper_underfunded{job="anonymo-chain"} == 1
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: A chain keeper has less native gas funding than the reviewed minimum
+      - alert: AnonymoChainMetricsMissing
+        expr: up{job="anonymo-chain"} == 1 unless on(job, instance) anonymo_chain_monitor_ok{job="anonymo-chain"}
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: Chain scrape succeeded without finalized-chain monitoring evidence

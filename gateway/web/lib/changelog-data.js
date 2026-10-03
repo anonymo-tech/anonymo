@@ -5,6 +5,71 @@
 // Keep old ids and dates stable so bookmarks and feed readers keep working.
 export default [
   {
+    "id": "docs-match-status",
+    "date": "2026-10-03",
+    "title": "Status reports agreements, and the docs follow status",
+    "summary": "GET /api/v1/status now reports agreements: the contracts, the start block and whether the isolated jury worker is posting rulings. A docs check compares the README, whitepaper, /docs and this changelog with status on every change and fails when they call a switched-off feature live; x402 now reads as built and switching on when configured.",
+    "links": [
+      {
+        "label": "Open page",
+        "href": "/docs/#agreements"
+      },
+      {
+        "label": "View commit",
+        "href": "https://github.com/anonymo-tech/anonymo/commit/3ff57a887d610e9bd0d46888cbb8963e2f6adb74"
+      },
+      {
+        "label": "View commit",
+        "href": "https://github.com/anonymo-tech/anonymo/commit/66275f3cf59fcac0d78fc811b04b48698a88e911"
+      }
+    ],
+    "tags": [
+      "agents",
+      "verify",
+      "fix"
+    ]
+  },
+  {
+    "id": "trading-agents",
+    "date": "2026-10-03",
+    "title": "Run trading agents under rulebooks, with decision receipts",
+    "summary": "Works with any OpenAI-compatible agent, including agents you run on Robinhood. Three trading starter rulebooks: fixed models, a daily model budget, and ask first after 60 calls an hour. Decision tags that sign an order intent's hash into each receipt, and per-call Stock Token prices and multiplier status, are built and stay off until a router switches them on.",
+    "links": [
+      {
+        "label": "Read the docs",
+        "href": "/docs/#trading-agents"
+      },
+      {
+        "label": "View commit",
+        "href": "https://github.com/anonymo-tech/anonymo/commit/50bd07c77ad4d60f9b42e9cea80df348de18db91"
+      }
+    ],
+    "tags": [
+      "agents",
+      "verify"
+    ]
+  },
+  {
+    "id": "x402-facilitator",
+    "date": "2026-10-03",
+    "title": "Settle x402 payments for your own API on Robinhood Chain",
+    "summary": "A hosted x402 facilitator for USDG on Robinhood Chain: supported, verify and settle for x402 v1 and v2, signed seller listings and a discovery index. USDG goes from the payer straight to the seller; the router only pays gas. Built, but off until an operator sets FACILITATOR_ENABLED; anonymo.tech has not, and /api/v1/status says so.",
+    "links": [
+      {
+        "label": "Open page",
+        "href": "/facilitator/"
+      },
+      {
+        "label": "View commit",
+        "href": "https://github.com/anonymo-tech/anonymo/commit/150899151169e48fe2bb4920d82ff3647e7f3c64"
+      }
+    ],
+    "tags": [
+      "build",
+      "verify"
+    ]
+  },
+  {
     "id": "make-good-refunds",
     "date": "2026-10-03",
     "title": "Get a refund by rule when a call fails you",
@@ -20,26 +85,72 @@ export default [
       }
     ],
     "tags": [
+      "build",
+      "verify"
+    ]
+  },
+  {
     "id": "paid-tools",
+    "date": "2026-10-03",
     "title": "Pay x402 tools from your Anonymo balance",
     "summary": "Built, and not switched on at anonymo.tech yet: with TOOLS_MARKET_ENABLED a key can pay any x402 tool priced in USDG on Robinhood Chain. The router pays the seller, charges the price plus its take with a signed tool.call receipt, applies your rulebook's tool limits and probes listed tools daily.",
+    "links": [
+      {
+        "label": "Open page",
         "href": "/tools/"
+      },
+      {
+        "label": "View commit",
         "href": "https://github.com/anonymo-tech/anonymo/commit/d7d9d6cdb4b0bde2905d156e560c1410b45d4d8d"
+      }
+    ],
+    "tags": [
       "agents",
       "build",
+      "verify"
+    ]
+  },
+  {
     "id": "receipt-backed-reputation",
+    "date": "2026-10-03",
     "title": "Agent reputation only from people who paid",
     "summary": "Agents can link an ERC-8004 identity on Robinhood Chain, take feedback only from reviewers who paid them through Anonymo, weighted by the amount and fading over time, show a signed daily liveness check, and publish a signed track record with a Merkle proof over their receipts. Built and off by default; not switched on at anonymo.tech yet.",
+    "links": [
+      {
         "label": "Read the docs",
         "href": "/docs/#agent-identity"
+      },
+      {
+        "label": "View commit",
         "href": "https://github.com/anonymo-tech/anonymo/commit/4a573a612a5642110d61038ef7906328e98eccbd"
+      }
+    ],
+    "tags": [
+      "agents",
+      "verify"
+    ]
+  },
+  {
     "id": "commerce-ledger",
+    "date": "2026-10-03",
     "title": "Read an honest commerce ledger",
     "summary": "The commerce page counts paid settlements only once their receipts are anchored on Robinhood Chain, removes self-dealing (same owner, round trips within 24 hours, funding links) and shows every filtered figure beside the gross one. A published Dune query recomputes the on-chain part. It is built but not switched on at anonymo.tech yet.",
+    "links": [
+      {
+        "label": "Open page",
         "href": "/commerce/"
+      },
+      {
         "label": "Read the methodology",
         "href": "/docs/#commerce-stats"
+      },
+      {
+        "label": "View commit",
         "href": "https://github.com/anonymo-tech/anonymo/commit/636176d3921b5ed92a8fb944351971d12c2ce24e"
+      }
+    ],
+    "tags": [
+      "agents",
       "verify"
     ]
   },
@@ -82,26 +193,6 @@ export default [
     "tags": [
       "agents",
       "build"
-    ]
-  },
-  {
-    "id": "x402-facilitator",
-    "date": "2026-10-03",
-    "title": "Settle x402 payments for your own API on Robinhood Chain",
-    "summary": "A hosted x402 facilitator for USDG on Robinhood Chain: supported, verify and settle for x402 v1 and v2, signed seller listings and a discovery index. USDG goes from the payer straight to the seller; the router only pays gas. Built, but off until an operator sets FACILITATOR_ENABLED; anonymo.tech has not, and /api/v1/status says so.",
-    "links": [
-      {
-        "label": "Open page",
-        "href": "/facilitator/"
-      },
-      {
-        "label": "View commit",
-        "href": "https://github.com/anonymo-tech/anonymo/commit/150899151169e48fe2bb4920d82ff3647e7f3c64"
-      }
-    ],
-    "tags": [
-      "build",
-      "verify"
     ]
   },
   {
