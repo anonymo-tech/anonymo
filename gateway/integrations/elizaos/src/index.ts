@@ -6,7 +6,7 @@
 // Every answer carries a signed receipt id, logged at debug level so an operator can verify a call later.
 import { type GenerateTextParams, type IAgentRuntime, type Plugin, type TextEmbeddingParams, logger, ModelType } from "@elizaos/core";
 
-export const ANONYMO_BASE_URL = "https://api-production-70da.up.railway.app/api/v1";
+export const ANONYMO_BASE_URL = "https://anonymo.tech/api/v1";
 const DEFAULTS = {
   ANONYMO_SMALL_MODEL: "meta-llama/llama-3.3-70b-instruct",
   ANONYMO_LARGE_MODEL: "deepseek/deepseek-v3.2",

@@ -59,11 +59,13 @@ import { generationRoutes } from "./api/generation.ts";
 import { keysRoutes } from "./api/keys.ts";
 import { teamsRoutes } from "./api/teams.ts";
 import { escrowRoutes } from "./api/escrow.ts";
+import { depositRoutes } from "./api/deposits.ts"; // V97B
 import { savedRoutesRoutes } from "./api/saved-routes.ts";
 import { presetsRoutes } from "./api/presets.ts";
 import { characterRoutes } from "./api/characters.ts";
 import { memoryRoutes } from "./api/memory.ts";
 import { agentCertificatesRoutes } from "./api/agent-certificates.ts";
+import { guardRoutes } from "./api/guard.ts"; // V98
 import { agentsRoutes } from "./api/agents.ts";
 import { agentApprovalMiddleware, agentApprovalsRoutes } from "./api/agent-approvals.ts";
 import { agentSessionsRoutes } from "./api/agent-sessions.ts";
@@ -207,6 +209,7 @@ export async function createApp(opts: AppOptions = {}) {
   keysRoutes(app, ctx);
   teamsRoutes(app, ctx);
   escrowRoutes(app, ctx);
+  depositRoutes(app, ctx); // V97B: account-owned deposit progress, both lanes.
   savedRoutesRoutes(app, ctx);
   presetsRoutes(app, ctx);
   characterRoutes(app, ctx);
@@ -215,6 +218,7 @@ export async function createApp(opts: AppOptions = {}) {
   identityRoutes(app, ctx); // v6 I
   agentSealedRoutes(app, ctx);
   agentsRoutes(app, ctx);
+  guardRoutes(app, ctx); // V98
   agreementsRoutes(app, ctx);
   agentCertificatesRoutes(app, ctx);
   agentLedgerRoutes(app, ctx);

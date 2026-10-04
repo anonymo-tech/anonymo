@@ -1,3 +1,4 @@
+import { fastCreditKvNotes } from "../fast-credit.ts";
 import { rushKvNotes } from "../rush.ts"; // ON3
 import { telegramLinkNotes } from "../telegram-linking.ts";
 import type { TableDoc } from "../types.ts";
@@ -156,6 +157,7 @@ export const operationTables: Record<string, TableDoc> = {
     retention:
       "Per key family: a wallet sign-in or team challenge is deleted when used and any older than 10 minutes is deleted when the next challenge is made; a team invite is deleted when used and expired ones when the next invite is made; a Telegram user's row is deleted by /forget; other families are overwritten in place.",
     notes: [
+      ...fastCreditKvNotes,
       ...telegramLinkNotes,
       ...rushKvNotes, // ON3
       "agent-alerts:<account id>: newest 100 metadata-only owner alerts per account, visible for up to 90 days; expired feed, denial and dedupe metadata is purged on the next alert write or enabled worker cleanup, while inactive account rows remain until operator deletion; threshold cooldowns, denial counts with up to 10,000 recent timestamps and random transaction batch markers per key (10-minute rolling retention on writes/cleanup), timestamps, key hashes, selected channels, delivery attempts, destination rule ids or Telegram ids and per-account delivery rate/lease state. No prompt, answer, intent, kill reason, webhook URL or API key is copied. Existing Spend Watch destinations are decrypted for guarded egress; existing Telegram principal links are decrypted and permission-checked before delivery. Email has no account destination. Delivery is at-least-once; a crash after sending can repeat an attempt.",
@@ -167,7 +169,7 @@ export const operationTables: Record<string, TableDoc> = {
       "agreement-jury:heartbeat: written by the isolated agreement-jury worker each pass after its signer keys matched the DisputeOracle's jury on chain: the escrow and oracle addresses, threshold, the jury signers' public addresses and the time. GET /api/v1/status reads it to report whether automatic rulings are on. Overwritten in place; no evidence, verdict or key material.",
       "tls-pin:<provider>, aci-gateway:<provider>, aci-gpu:<model>, attest-policy:<provider>, attest-allow:<provider>, static-models-pending:<provider>, apply-token:<application id>: facts about providers (pinned certificate keys, verified gateway keysets, operator allow-lists, a pending model list, and the SHA-256 of an application token).",
       "paywith-allowance:<chain key hash>, paywith-intent:<chain key hash>, paywith-commitment:<commitment>: a signed pay-with allowance (wallet address and signature), the wallet and token a key holder registered for pay-with, and the swap a usage commitment belongs to.",
-      "escrow:checkpoints, spent_settled:<epoch>, margin_unsent, holder-credits-run:<period>:<time>, ipx-oracle:*: chain cursors and settlement bookkeeping.",
+      "escrow:checkpoints, spent_settled:<epoch>, margin_unsent, holder-credits-run:<period>:<time>, ipx-oracle:*: chain cursors and settlement bookkeeping. margin_unsent retains accumulated protocol margin and provider-side fees in pico-USD; settlement reports the rounded USDG amount without transferring or clearing it.",
     ],
     columns: {
       key: "The key, a family name plus an identifier (see the families above).",

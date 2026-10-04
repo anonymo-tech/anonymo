@@ -9,6 +9,7 @@ Not on npm yet. Install from this repo:
 ```sh
 bun add ./sdks/langchain-js @langchain/core     # or: npm install ./sdks/langchain-js @langchain/core
 export ANONYMO_API_KEY=sk-ar-v1-...
+export ANONYMO_BASE_URL=https://anonymo.tech/api/v1
 ```
 
 ## Use
@@ -33,7 +34,7 @@ Any id from `GET /api/v1/models` works as the model, including the `:nitro`, `:f
 | Option | Default | What it does |
 | --- | --- | --- |
 | `apiKey` | `ANONYMO_API_KEY` | Your Anonymo key. Construction fails with a clear message when neither is set. |
-| `baseURL` | `ANONYMO_BASE_URL`, then `https://api-production-70da.up.railway.app/api/v1` | Router URL including `/api/v1`. |
+| `baseURL` | `ANONYMO_BASE_URL`, then the built-in router URL | Router URL including `/api/v1`; set it to `https://anonymo.tech/api/v1`. |
 | `lane` | none (public) | `"public"`, `"attested"` or `"unlinkable"`. |
 | `disclosure` | none (any) | Disclosure ceiling: `"any"`, `"policy"` or `"none"`. |
 | `provider` | none | Routing preferences for the body: `only`, `order`, `allow_fallbacks`, and `lane` / `disclosure`. |

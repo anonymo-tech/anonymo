@@ -1,3 +1,5 @@
+import { planBalanceAlerts, deliveredBalanceTime } from "../rush/balance-alerts.ts"; // ON5
+import { fastCreditAlertChecks } from "../pay/fast-credit-state.ts"; // V97
 import { upstreamAlertChecks } from "../rush/monitor.ts"; // ON3
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
@@ -21,7 +23,7 @@ const LEASE_MS = 55_000;
 const CHECK_NAME = /^[a-z][a-z0-9_-]{0,63}$/;
 
 export type AlertFormat = "ntfy" | "slack" | "discord" | "json";
-export type CheckState = { ok: boolean; since: string; firing: boolean; notified: "ok" | "failing" };
+export type CheckState = { ok: boolean; since: string; firing: boolean; notified: "ok" | "failing"; delivered_at?: string };
 export type AlertState = { v: 1; evaluated_at: string; checks: Record<string, CheckState> };
 export type Transition = { check: string; state: "failing" | "recovered" | "test"; since: string };
 export type AlertMessage = { kind: "alert" | "test"; environment: string; at: string; transitions: Transition[] };
@@ -43,7 +45,7 @@ function parseState(value: unknown): AlertState | null {
   for (const [name, c] of Object.entries(state.checks)) {
     if (!CHECK_NAME.test(name) && name !== "unnamed_check") continue;
     if (!c || typeof c.ok !== "boolean" || typeof c.since !== "string" || !Number.isFinite(Date.parse(c.since))) continue;
-    checks[name] = { ok: c.ok, since: c.since, firing: c.firing === true, notified: c.notified === "failing" ? "failing" : "ok" };
+    checks[name] = { ok: c.ok, since: c.since, firing: c.firing === true, notified: c.notified === "failing" ? "failing" : "ok", ...(typeof c.delivered_at === "string" && Number.isFinite(Date.parse(c.delivered_at)) ? { delivered_at: c.delivered_at } : {}) };
   }
   return { v: 1, evaluated_at: typeof state.evaluated_at === "string" ? state.evaluated_at : new Date(0).toISOString(), checks };
 }
@@ -66,13 +68,14 @@ export function planAlerts(prev: AlertState | null | undefined, observed: Record
     if (!(name in obs) && notified === "ok") continue; // Forget checks that disappeared quietly.
     checks[name] = { ok, since, firing, notified };
   }
-  return { state: { v: 1 as const, evaluated_at: at, checks }, transitions };
+  const state = { v: 1 as const, evaluated_at: at, checks }; planBalanceAlerts(state, transitions, prev, obs, now); // ON5
+  return { state, transitions };
 }
 
 export function markDelivered(state: AlertState, transitions: Transition[]) {
   for (const t of transitions) {
     const c = state.checks[t.check];
-    if (c && t.state !== "test") c.notified = t.state === "failing" ? "failing" : "ok";
+    if (c && t.state !== "test") { c.notified = t.state === "failing" ? "failing" : "ok"; deliveredBalanceTime(c, t.check, state.evaluated_at); } // ON5
   }
   return state;
 }
@@ -143,7 +146,7 @@ async function releaseLease(ctx: Ctx, holder: string) {
 }
 
 async function evaluateReadiness(ctx: Ctx) {
-  return { ...(await readiness(ctx)).checks, ...await upstreamAlertChecks(ctx) }; // ON3
+  return { ...(await readiness(ctx)).checks, ...await upstreamAlertChecks(ctx), ...await fastCreditAlertChecks(ctx) }; // ON3
 }
 
 export type NotifierOptions = { now?: () => number; evaluate?: (ctx: Ctx) => Promise<Record<string, boolean>>; fetch?: typeof fetch; sustainMs?: number };

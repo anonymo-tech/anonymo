@@ -1,4 +1,5 @@
 import { rpcEnv, rpcSettings } from "./chain/rpc-config.ts"; // RPC1: private transport settings.
+import { fastCreditEnv, fastCreditSettings } from "./pay/fast-credit-config.ts"; // V97
 import { identityEnv, identitySettings } from "./identity/config.ts"; // v6 I: receipt-backed identity and reputation.
 import { accountRuntimeSchema } from "./paymaster/account-policy.ts";
 import { rushEnv, rushSettings } from "./rush/config.ts"; // ON3
@@ -22,6 +23,7 @@ import { networkWeightEnv, networkWeightSettings } from "./network/weight-config
 import { createHash, createHmac, createPrivateKey, createPublicKey, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { requireNetworkBurnEvidence } from "./network/burn-verification.ts";
 import { z } from "zod";
 import { usdToPico } from "./lib/money.ts";
 import { parseOnionAddress, parseOnionSecrets } from "./lib/onion.ts";
@@ -66,6 +68,7 @@ function measurementPublicKey(raw: string | undefined): string | null {
 }
 
 const schema = z.object({
+  ...fastCreditEnv, // V97
   ...identityEnv, // v6 I
   ...zkapiPageEnv, // ZK10
   ...toolsEnv, // v6 T
@@ -141,7 +144,6 @@ const schema = z.object({
   PROVIDER_BOND_ADDRESS: addr,
   RECEIPT_ANCHOR_ADDRESS: addr,
   ROYALTY_ADDRESS: addr,
-  ANMO_STAKING_ADDRESS: addr,
   PAYMASTER_ADDRESS: addr,
   CALLPAY_TREASURY: addr,
   ROUTER_PRIVATE_KEY: pk,
@@ -348,7 +350,6 @@ const schema = z.object({
   RELEASE_COMMIT: opt, // git commit of the running build, shown at GET /api/v1/status
   DEPLOYMENT_MANIFEST: opt, // the anonymo.deployments/v1 manifest of the configured contracts: a file path or inline JSON
   DEPLOYMENT_VERIFICATION: opt, // the passing scripts/verify-deployment.ts report for that manifest: a file path or inline JSON
-  BUYBACK_ORACLE_ADDRESS: addr, // the reviewed buyback-floor oracle AnmoStaking uses; production refuses buybacks without it
   PAYWITH_DELEGATION_ACCEPTED: bool.default(false),
   PAYWITH_MAX_DAILY_CAP_USD: opt, // largest daily cap (USD at the fair price) the API will build a PayWithStock session for
 
@@ -435,6 +436,7 @@ const schema = z.object({
   // witnesses; src/tlog). Off by default: no route is registered and nothing is appended.
   AGENT_PROFILES_ENABLED: bool.default(false),
   AGENT_POLICY_ENABLED: bool.default(false),
+  AGENT_GUARD_ENABLED: bool.default(false), // V98
   AGENT_APPROVAL_TTL_S: z.coerce.number().int().min(1).max(86400).default(900),
   NETWORK_POLICY_ENABLED: bool.default(false),
   TLOG_ENABLED: bool.default(false),
@@ -477,7 +479,6 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     PROVIDER_BOND_ADDRESS: e.PROVIDER_BOND_ADDRESS,
     RECEIPT_ANCHOR_ADDRESS: e.RECEIPT_ANCHOR_ADDRESS,
     ROYALTY_ADDRESS: e.ROYALTY_ADDRESS,
-    ANMO_STAKING_ADDRESS: e.ANMO_STAKING_ADDRESS,
     PAYMASTER_ADDRESS: e.PAYMASTER_ADDRESS,
   };
   if (escrowMode) {
@@ -507,7 +508,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
         if (!value || /^0x0{40}$/.test(value)) throw new Error(`${name} is required in production.`);
     if (e.RUNTIME_ROLE === "api" && !escrowMode && !e.ROUTER_PRIVATE_KEY) throw new Error("Public API requires the restricted router signing role for enabled per-call payments.");
     if (e.PAYMASTER_ADDRESS && e.RUNTIME_ROLE === "api" && !e.PAYMASTER_SIGNER_KEY) throw new Error("Configured paymaster requires its signing role.");
-    const roleKeys = { settlement: e.SETTLEMENT_PRIVATE_KEY, anchoring: e.ANCHORER_PRIVATE_KEY, slashing: e.SLASHER_PRIVATE_KEY, buyback: e.KEEPER_PRIVATE_KEY };
+    const roleKeys = { settlement: e.SETTLEMENT_PRIVATE_KEY, anchoring: e.ANCHORER_PRIVATE_KEY, slashing: e.SLASHER_PRIVATE_KEY, keeper: e.KEEPER_PRIVATE_KEY };
     if (e.RUNTIME_ROLE === "api" && Object.values(roleKeys).some(Boolean)) throw new Error("Public API must not receive settlement, anchoring, slashing or keeper signing keys.");
     // Escrow mode has no contracts, so no job signs anything: receipts stay signed locally ("local"
     // anchors) and settlement, slashing and buybacks are inert. No signing key belongs anywhere.
@@ -520,7 +521,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     if (e.MAKEGOOD_REFUND_PRIVATE_KEY && (e.RUNTIME_ROLE === "api" || Object.values(roleKeys).some(Boolean) || e.IPX_KEEPER_PRIVATE_KEY)) throw new Error("MAKEGOOD_REFUND_PRIVATE_KEY must be isolated on the worker that runs makegood-payouts.");
     if (e.RUNTIME_ROLE === "worker") {
       const names = e.WORKER_JOBS.split(",").map((v) => v.trim()).filter(Boolean);
-      const allowed = ["health-flush", "holds-expire", "catalog-refresh", "provider-registry", "health-probes", "canaries", "attestor", "receipts-anchor", "receipt-key-rotation", "settlement", "slasher", "buyback", "chain-indexer", "paywith-aggregator", "escrow-indexer", "spend-watch", "alert-notifier", "telegram-bot", "measurements", "blind-key-rotation", "ipx-oracle", "dayzero", "ohttp-key-rotation", "host-anchor", "tlog", "batches", "skills-mirror", "sanctions-refresh"];
+      const allowed = ["health-flush", "holds-expire", "catalog-refresh", "provider-registry", "health-probes", "canaries", "attestor", "receipts-anchor", "receipt-key-rotation", "settlement", "slasher", "chain-indexer", "paywith-aggregator", "escrow-indexer", "spend-watch", "alert-notifier", "telegram-bot", "measurements", "blind-key-rotation", "ipx-oracle", "dayzero", "ohttp-key-rotation", "host-anchor", "tlog", "batches", "skills-mirror", "sanctions-refresh"];
       allowed.push("webhooks"); // V86: bounded event delivery.
       allowed.push("makegood-payouts"); // V6 R: on-chain make-good refunds.
       allowed.push("agreement-indexer", "agreement-jury", "agreement-retention");
@@ -531,7 +532,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
       allowed.push("x402-recovery-expire"); // x402 payment recovery retention
       allowed.push("agent-liveness", "agent-identity"); // v6 I: daily signed endpoint probes; isolated ERC-8004 registrar.
       if (!names.length || names.some((n) => !allowed.includes(n))) throw new Error("Worker requires an explicit valid WORKER_JOBS list.");
-      const keyJobs = { settlement: "settlement", anchoring: "receipts-anchor", slashing: "slasher", buyback: "buyback" };
+      const keyJobs = { settlement: "settlement", anchoring: "receipts-anchor", slashing: "slasher", keeper: "network-fee-burn" };
       if (Object.values(roleKeys).filter(Boolean).length > 1) throw new Error("Privileged worker signing roles must be isolated.");
       if (names.includes("ipx-oracle") && !(e.IPX_ORACLE_ENABLED && e.IPX_ORACLE_PRIVATE_KEY)) throw new Error("The ipx-oracle job needs IPX_ORACLE_ENABLED and IPX_ORACLE_PRIVATE_KEY.");
       if (names.includes("host-anchor") && !e.HOST_ANCHOR_ENABLED) throw new Error("The host-anchor job needs HOST_ANCHOR_ENABLED.");
@@ -539,7 +540,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
       if (e.MAKEGOOD_REFUND_PRIVATE_KEY && !names.includes("makegood-payouts")) throw new Error("MAKEGOOD_REFUND_PRIVATE_KEY belongs only on the worker that runs makegood-payouts.");
       if (!escrowMode)
         for (const [role, key] of Object.entries(roleKeys)) {
-          const enabled = names.includes(keyJobs[role as keyof typeof keyJobs]) || (role === "buyback" && names.includes("network-fee-burn")) || (role === "slashing" && names.includes("host-slasher") && e.NETWORK_SLASHING_ENABLED);
+          const enabled = names.includes(keyJobs[role as keyof typeof keyJobs]) || (role === "slashing" && names.includes("host-slasher") && e.NETWORK_SLASHING_ENABLED);
           if (enabled !== !!key) throw new Error(`Worker ${role} job and signing-key configuration must match.`);
         }
     }
@@ -554,7 +555,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     if (e.MEASUREMENTS_ENABLED && !e.REKOR_URL.startsWith("https://")) throw new Error("REKOR_URL must be https in production.");
     if (verifierNames.includes("phala") && !e.PHALA_VERIFIER_URL.startsWith("https://")) throw new Error("PHALA_VERIFIER_URL must be https in production.");
   }
-  // Contract-path guards: verified deployment (H-02), buyback oracle (M-05), PayWithStock delegation (M-06).
+  // Contract-path guards: verified deployment (H-02), network burn oracle (M-05), PayWithStock delegation (M-06).
   const contractPath = contractPathGuards(e, production, escrowMode);
   if (e.DEV_FAUCET) {
     if (production) throw new Error("DEV_FAUCET must be false in production.");
@@ -570,6 +571,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
   // The bot token is optional and secret (it is part of every Telegram API URL): never echo it.
   // The API only issues and checks link codes; every Telegram message is sent by the process that runs the bot and
   // alert jobs, so only roles that run jobs need the bot token.
+  if (e.AGENT_GUARD_ENABLED && !e.AGENT_POLICY_ENABLED) throw new Error("AGENT_GUARD_ENABLED requires AGENT_POLICY_ENABLED."); // V98
   if (e.TELEGRAM_LINKING_ENABLED && !e.AGENT_POLICY_ENABLED) throw new Error("TELEGRAM_LINKING_ENABLED requires AGENT_POLICY_ENABLED.");
   if (e.TELEGRAM_LINKING_ENABLED && e.RUNTIME_ROLE !== "api" && !e.TELEGRAM_BOT_TOKEN) throw new Error("TELEGRAM_LINKING_ENABLED requires TELEGRAM_BOT_TOKEN on the worker (or a combined role).");
   if (e.TELEGRAM_BOT_TOKEN && !/^\d{3,20}:[A-Za-z0-9_-]{20,}$/.test(e.TELEGRAM_BOT_TOKEN)) throw new Error("TELEGRAM_BOT_TOKEN must be the token BotFather issued (<id>:<secret>).");
@@ -617,6 +619,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
   const anmoEscrow = anmoEscrowConfig(e, lower);
   const holders = holderSettings(e, anmoEscrow);
   return {
+    fastCredit: fastCreditSettings(e), // V97
     env: e.ANONYMO_ENV,
     production,
     developerFirstCallEnabled: e.DEVELOPER_FIRST_CALL_ENABLED, // ON2
@@ -660,6 +663,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     adminToken: e.ADMIN_TOKEN,
     agentProfilesEnabled: e.AGENT_PROFILES_ENABLED,
     agentPolicyEnabled: e.AGENT_POLICY_ENABLED,
+    agentGuardEnabled: e.AGENT_GUARD_ENABLED, // V98
     agentSealedEnabled: e.AGENT_SEALED_ENABLED,
     agentApprovalTtlS: e.AGENT_APPROVAL_TTL_S,
     networkPolicyEnabled: e.NETWORK_POLICY_ENABLED,
@@ -687,7 +691,6 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
       providerBond: e.PROVIDER_BOND_ADDRESS as `0x${string}` | undefined,
       receiptAnchor: e.RECEIPT_ANCHOR_ADDRESS as `0x${string}` | undefined,
       royalty: e.ROYALTY_ADDRESS as `0x${string}` | undefined,
-      staking: e.ANMO_STAKING_ADDRESS as `0x${string}` | undefined,
       paymaster: e.PAYMASTER_ADDRESS as `0x${string}` | undefined,
       callPayTreasury: e.CALLPAY_TREASURY as `0x${string}` | undefined,
       routerKey: e.ROUTER_PRIVATE_KEY as `0x${string}` | undefined,
@@ -745,7 +748,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     canaries: { intervalMs: e.CANARY_INTERVAL_MS, enabled: e.CANARIES, shadowDays: e.SHADOW_DAYS },
     buyback: {
       legs: e.ANMO_POOL_LEGS ? (JSON.parse(e.ANMO_POOL_LEGS) as import("./chain/twap.ts").Leg[]) : null,
-      oracle: e.BUYBACK_ORACLE_ADDRESS && !/^0x0{40}$/.test(e.BUYBACK_ORACLE_ADDRESS) ? (e.BUYBACK_ORACLE_ADDRESS.toLowerCase() as `0x${string}`) : null,
+      oracle: e.NETWORK_FEE_BURN_ORACLE_ADDRESS ? (e.NETWORK_FEE_BURN_ORACLE_ADDRESS.toLowerCase() as `0x${string}`) : null,
       twapMinutes: e.BUYBACK_TWAP_MINUTES,
       maxDeviation: e.BUYBACK_MAX_DEVIATION,
       slippageBps: e.BUYBACK_SLIPPAGE_BPS,
@@ -1301,8 +1304,8 @@ export type PaywithToken = { symbol: string; address: string; decimals: number; 
 export type EscrowToken = PaywithToken & { feed: string };
 
 // ---- Pay with $ANMO in escrow ------------------------------------------------------------------
-// ANMO has no Chainlink feed, so escrow prices it with the off-chain v4 TWAP the buyback keeper already
-// uses (ANMO_POOL_LEGS). The legs must chain from the ANMO token to USDG, or ANMO deposits could be
+// ANMO has no Chainlink feed, so escrow prices it with the off-chain v4 TWAP that also
+// supports network fee quotes (ANMO_POOL_LEGS). The legs must chain from the ANMO token to USDG, or ANMO deposits could be
 // priced in the wrong unit; a leg may set `minLiquidity` (raw v4 liquidity) so a thin pool gives no price.
 export type AnmoEscrow = {
   address: `0x${string}`;
@@ -1359,8 +1362,6 @@ function anmoEscrowConfig(e: Env, stockAddresses: string[]): AnmoEscrow | null {
 //   and whenever ownership or roles change. A disposable fixture whose public origin is on a reserved
 //   TLD (.example, .invalid, .test, .localhost; RFC 2606/6761) cannot serve real users or wallet
 //   sign-in; it may run without a manifest and reports deployment status "fixture".
-// M-05: buybacks stay off until BUYBACK_ORACLE_ADDRESS names the reviewed buyback-floor oracle, and
-//   (with a verified deployment) that oracle is the one AnmoStaking reads on-chain.
 // M-06: every PayWithStock charge needs the session wallet's EIP-712 signature, either for that charge
 //   or as a bounded allowance (<= 7 days, <= $5 per charge, tied to a usage commitment). Within an
 //   allowance the router still chooses when to charge, so production requires an explicit
@@ -1386,8 +1387,8 @@ const MANIFEST_CONTRACTS = {
   PROVIDER_BOND_ADDRESS: "providerBond",
   RECEIPT_ANCHOR_ADDRESS: "receiptAnchor",
   ROYALTY_ADDRESS: "royalty",
-  ANMO_STAKING_ADDRESS: "anmoStaking",
   PAYMASTER_ADDRESS: "paymaster",
+  NETWORK_FEE_BURN_ADDRESS: "networkFeeBurn", // ST1: optional independent executor evidence.
 } as const;
 const sameAddress = (a: unknown, b: unknown) =>
   typeof a === "string" && typeof b === "string" && /^0x[0-9a-fA-F]{40}$/.test(a) && !/^0x0{40}$/.test(a) && a.toLowerCase() === b.toLowerCase();
@@ -1419,17 +1420,6 @@ function contractPathGuards(e: Env, production: boolean, escrowMode: boolean) {
   const deployment: DeploymentStatus = { status: escrowMode || !configured.length ? "none" : "unverified", manifestSha256: null, manifestBlock: null, verifiedAtBlock: null, verifierRevision: null };
   const result = { releaseCommit, maxDailyCapUsd, deployment };
   if (!production) return result;
-
-  // M-05: no buyback job or keeper key without an explicit, reviewed buyback-floor oracle.
-  const jobs = e.RUNTIME_ROLE === "worker" ? e.WORKER_JOBS.split(",").map((n) => n.trim()) : [];
-  const buybacks = jobs.includes("buyback") || !!e.KEEPER_PRIVATE_KEY;
-  if (buybacks) {
-    if (escrowMode) throw new Error("Buybacks need the Anonymo contracts; PAYMENTS_MODE=escrow must not run the buyback job.");
-    if (!e.BUYBACK_ORACLE_ADDRESS || /^0x0{40}$/.test(e.BUYBACK_ORACLE_ADDRESS))
-      throw new Error("Buybacks stay disabled until BUYBACK_ORACLE_ADDRESS names the reviewed buyback-floor oracle; otherwise remove the buyback job and KEEPER_PRIVATE_KEY.");
-    // The floor is that on-chain oracle's quote; ANMO_POOL_LEGS only adds an optional off-chain second opinion.
-    if (!e.ANMO_STAKING_ADDRESS) throw new Error("Buybacks require ANMO_STAKING_ADDRESS.");
-  }
 
   // M-06: PayWithStock delegates router spending up to each session's daily cap.
   if (e.PAYWITHSTOCK_ADDRESS) {
@@ -1495,12 +1485,7 @@ function contractPathGuards(e: Env, production: boolean, escrowMode: boolean) {
     if (typeof address === "string" && /^0x0{40}$/.test(address)) continue;
     if (!sameAddress(found[key]?.address, address) || found[key]?.present !== true) refuseReport(`did not verify the manifest's ${key} contract.`);
   }
-  if (buybacks) {
-    const oracle = checks.find((c) => c.id === "buybacks.oracle");
-    const oracleCode = checks.find((c) => c.id === "buybacks.oracle_code_present");
-    if (!sameAddress(oracle?.evidence, e.BUYBACK_ORACLE_ADDRESS) || oracleCode?.status !== "pass")
-      throw new Error("BUYBACK_ORACLE_ADDRESS must be the buyback-floor oracle AnmoStaking reads on-chain, as recorded by DEPLOYMENT_VERIFICATION.");
-  }
+  requireNetworkBurnEvidence(e, checks); // ST1: retain reviewed-oracle startup guard for the planned burn.
   Object.assign(deployment, { status: "verified", manifestSha256: sha256, manifestBlock: Number(manifest.blockNumber), verifiedAtBlock: observedBlock, verifierRevision: String(report.verifierRevision) });
   return result;
 }

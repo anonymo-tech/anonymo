@@ -33,7 +33,7 @@ import anonymo "github.com/anonymo-tech/anonymo/sdks/go"
 ## Quick start
 
 ```go
-c := anonymo.NewClient() // reads ANONYMO_API_KEY and ANONYMO_BASE_URL
+c := anonymo.NewClient(anonymo.WithBaseURL("https://anonymo.tech")) // reads ANONYMO_API_KEY
 
 res, err := c.Chat(ctx, anonymo.ChatRequest{
 	Model:    "meta-llama/llama-3.3-70b-instruct",
@@ -51,7 +51,7 @@ Client options:
 | Option | Default |
 | --- | --- |
 | `WithAPIKey(key)` | `ANONYMO_API_KEY` |
-| `WithBaseURL(url)` | `ANONYMO_BASE_URL`, then `https://api-production-70da.up.railway.app` |
+| `WithBaseURL(url)` | `ANONYMO_BASE_URL`, then the built-in router URL; set `WithBaseURL("https://anonymo.tech")` |
 | `WithHTTPClient(*http.Client)` | `http.DefaultClient` |
 | `WithLane(lane)` | none |
 | `WithDisclosure(ceiling)` | none |

@@ -7,7 +7,7 @@ Hugging Face model cards have no field for third-party inference routers, so the
 The badge renders as `Run on | Anonymo` in Anonymo's ink and signal green:
 
 ```markdown
-[![Run on Anonymo](https://img.shields.io/badge/Run%20on-Anonymo-1fe15a?labelColor=0b0c0b)](https://api-production-70da.up.railway.app/models)
+[![Run on Anonymo](https://img.shields.io/badge/Run%20on-Anonymo-1fe15a?labelColor=0b0c0b)](https://anonymo.tech/models)
 ```
 
 ## For model authors

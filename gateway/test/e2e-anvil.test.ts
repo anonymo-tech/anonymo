@@ -101,7 +101,6 @@ describe.skipIf(!RUN)("E2E on anvil with the real contracts", () => {
         PROVIDER_BOND_ADDRESS: C.providerBond,
         RECEIPT_ANCHOR_ADDRESS: C.receiptAnchor,
         ROYALTY_ADDRESS: C.royalty,
-        ANMO_STAKING_ADDRESS: C.anmoStaking,
         PAYMASTER_ADDRESS: C.paymaster,
         CALLPAY_TREASURY: dep.roles.callPayTreasury,
         ROUTER_PRIVATE_KEY: PK.router,

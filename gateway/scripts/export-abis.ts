@@ -21,7 +21,6 @@ const contracts: Record<string, [string, string]> = {
   ReceiptAnchor: ["ReceiptAnchor.sol", "ReceiptAnchor"],
   MeasurementRegistry: ["MeasurementRegistry.sol", "MeasurementRegistry"],
   Royalty: ["Royalty.sol", "Royalty"],
-  AnmoStaking: ["AnmoStaking.sol", "AnmoStaking"],
   AnmoToken: ["AnmoToken.sol", "AnmoToken"],
   AnmoPaymaster: ["AnmoPaymaster.sol", "AnmoPaymaster"],
   UniswapV3Adapter: ["UniswapV3Adapter.sol", "UniswapV3Adapter"],

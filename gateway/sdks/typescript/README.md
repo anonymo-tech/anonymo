@@ -17,7 +17,7 @@ npm install /path/to/Anonymo/sdks/typescript
 ```sh
 export ANONYMO_API_KEY=sk-ar-v1-...
 # optional, defaults to the public router
-export ANONYMO_BASE_URL=https://api-production-70da.up.railway.app
+export ANONYMO_BASE_URL=https://anonymo.tech
 ```
 
 ## Chat
