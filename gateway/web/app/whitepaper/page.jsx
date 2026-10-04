@@ -3,7 +3,7 @@ import { loadWhitepaper } from "../../lib/whitepaper";
 import s from "./whitepaper.module.css";
 
 export const metadata = {
-  title: "Anonymo Whitepaper — Anonymo",
+  title: "Whitepaper — Anonymo",
   description: "The Anonymo router, SEAL evidence, privacy paths, host network and agent controls: implementation, activation and honest limits.",
 };
 

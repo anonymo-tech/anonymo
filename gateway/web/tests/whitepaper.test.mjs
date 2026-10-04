@@ -40,7 +40,7 @@ hook.deregister();
 const html = renderToStaticMarkup(createElement(WhitepaperPage));
 
 test("whitepaper page renders the full root document with the long-form frame", () => {
-  assert.equal(metadata.title, "Anonymo Whitepaper — Anonymo");
+  assert.equal(metadata.title, "Whitepaper — Anonymo");
   assert.match(html, /<h1>Anonymo Whitepaper<\/h1>/);
   assert.match(html, /side-layout/);
   assert.match(html, /On this page/);

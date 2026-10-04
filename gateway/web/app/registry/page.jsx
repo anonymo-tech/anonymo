@@ -1,7 +1,7 @@
 import PageFrame from "../../components/PageFrame";
 import { RegistryList } from "../../components/Registry";
 
-export const metadata = { title: "Anonymo registry", description: "Every endpoint that attests through the router, the software measurements it verified over time, and an embeddable badge for each." };
+export const metadata = { title: "Registry — Anonymo", description: "Every endpoint that attests through the router, the software measurements it verified over time, and an embeddable badge for each." };
 
 export default function RegistryPage() {
   return (
