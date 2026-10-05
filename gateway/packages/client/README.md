@@ -34,4 +34,21 @@ Dry runs send no prompt, record no policy event, and reserve no budget. A later 
 
 The operator must enable `AGENT_POLICY_ENABLED` (default false); disabled routes return 404. Switched on at anonymo.tech. Rulebook reads and checks remain available when the key is stopped. Anonymo's router reads ordinary chat text in memory; these methods do not alter that path.
 
-These methods call `GET /api/v1/agents/me` and `POST /api/v1/agents/check`. Manage rulebooks, single-use approvals, activity, alerts and certificates on [/agents](https://anonymo.tech/agents/); see the [agent API documentation](https://anonymo.tech/docs/#agent-rulebook).
+Before saving a rulebook change, an owner or admin key can replay the draft on a key's recorded activity: `await client.agent.replay(keyHash, policy, { days: 7 })` returns how many calls and Agent Guard checks from those days would have been allowed, refused (`denied`) or sent to ask first (`asked`), `by_reason`, up to 20 `examples` beside what happened at the time, `stopped_at` when the draft would have stopped the key, `truncated` past 5,000, and `notes` for what the record cannot tell. Nothing is saved, charged or changed. Exported as `AgentReplay`.
+
+### Pay another agent
+
+Anonymo never holds the money. The agent's rulebook decides first; your own wallet then sends USDG on Robinhood Chain straight to the recipient; the router checks that transfer and signs a receipt.
+
+```ts
+const asked = await client.agent.pay({ to: profileIdOrWallet, amount_usd: "20" });
+if (asked.decision === "allow" && asked.payment) {
+  const txHash = await sendFromYourWallet(asked.payment.transfer_call); // your wallet signs and sends it
+  const paid = await client.agent.confirmPay(asked.decision_id, txHash);
+  console.log(paid.status, paid.receipt); // "seen" until final; call confirmPay again to read it later
+}
+```
+
+`pay()` returns Agent Guard's decision for action `pay.agent` (allow, deny or approval_required with `approval_id` and `poll`); send `approval_id` with the same fields once approved. `confirmPay()` fails with the router's reason when the transfer is missing, short, from a wallet not linked to the account, or to another wallet. Verify `receipt` at `POST /api/v1/receipts/verify`. The operator must enable `AGENT_PAY_ENABLED` (default false), which needs `AGENT_GUARD_ENABLED`; while off the routes return 404. Not switched on at anonymo.tech yet.
+
+These methods call `GET /api/v1/agents/me`, `POST /api/v1/agents/check`, `POST /api/v1/agents/:key_hash/replay`, `POST /api/v1/agents/pay` and `POST /api/v1/agents/pay/:decision_id/confirm`. Manage rulebooks, single-use approvals, activity, alerts and certificates on [/agents](https://anonymo.tech/agents/); see the [agent API documentation](https://anonymo.tech/docs/#agent-rulebook).
