@@ -1,3 +1,5 @@
+import { hardeningMiddleware, originLockMiddleware } from "./hardening/middleware.ts"; // HD1
+import { internalEnv } from "./hardening/client.ts"; // HD1
 import { initializeUpstreamMonitor } from "./rush/monitor.ts"; // ON3
 import { facilitatorRoutes } from "./facilitator/routes.ts"; // v6 F: hosted x402 facilitator
 import { toolsRoutes } from "./tools/routes.ts"; // v6 T: paid tool market, off by default.
@@ -6,6 +8,7 @@ import { inferenceScopeMiddleware, keyDefaultsRoutes } from "./provisioning/scop
 import { structuredOutputMiddleware } from "./structured-output/chat.ts"; // V83
 import { paymentRecovery } from "./pay/recovery.ts";
 import { statementRoutes } from "./api/statements.ts"; // V87
+import { proofPackRoutes } from "./api/proof-pack.ts"; // U100
 import { insightsRoutes } from "./api/insights.ts"; // V88: spend insights.
 import { webhookRoutes } from "./webhooks/routes.ts"; // V86: signed destinations.
 import { makegoodRoutes } from "./services/makegood.ts"; // V6 R: make-good refunds.
@@ -163,6 +166,7 @@ export async function createApp(opts: AppOptions = {}) {
   const webBuilt = existsSync(resolve(webDir, "index.html"));
   const csp = webBuilt ? siteCsp(webDir) : "frame-ancestors 'none'; object-src 'none'; base-uri 'none'";
   const app = new Hono();
+  app.use("*", originLockMiddleware(ctx)); // HD1: authenticate ingress before CORS, including preflights.
   // The OpenAI-style /v1/* aliases get the same CORS as /api/*, so a browser can read the receipt, lane and policy headers on either.
   const apiCors = cors({ origin: "*", allowHeaders: ["x-agent-approval", "authorization", "content-type", "x-e2ee-version", "x-client-pub-key", "x-model-pub-key", "x-e2ee-nonce", "x-e2ee-timestamp", "x-pay-with", "x-payment", "payment-signature", "payment-recovery", "x-wallet-auth", "x-anonymo-cache", "x-anonymo-disclosure-max", "x-anonymo-lane", "x-anonymo-lane-downgrade", "http-referer", "x-title", "traceparent", "x-api-key", "anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access"], exposeHeaders: [...EXPOSED_RESPONSE_HEADERS, ...(cfg.routeExplain ? ["x-anonymo-route"] : []), /* V84 */ ...(cfg.structuredOutputCheckEnabled ? ["x-anonymo-json-check"] : []), /* V83 */ "x-e2ee-applied", "x-e2ee-version", "x-e2ee-algo", "x-e2ee-receipt-id"] });
   app.use("/api/*", apiCors);
@@ -186,6 +190,7 @@ export async function createApp(opts: AppOptions = {}) {
     if (cfg.production) c.header("strict-transport-security", "max-age=31536000; includeSubDomains");
   });
 
+  app.use("*", hardeningMiddleware(ctx)); // HD1: after CORS/security headers, before every body reader.
   app.use("*", onionIngress(cfg)); // onion requests: drop every client address header before any route reads one
   app.use("*", statusMiddleware(ctx)); // public-lane outcomes per API surface for /api/v1/status/slo; private lanes are not counted here
   app.use("*", inferenceScopeMiddleware(ctx)); // ZK6: deny by default before account middleware.
@@ -203,6 +208,7 @@ export async function createApp(opts: AppOptions = {}) {
   generationRoutes(app, ctx);
   activityRoutes(app, ctx);
   statementRoutes(app, ctx); // V87
+  proofPackRoutes(app, ctx); // U100
   insightsRoutes(app, ctx); // V88: read-only, off by default.
   inboxRoutes(app, ctx); // U78: account inbox.
   keyDefaultsRoutes(app, ctx); // ZK6: before /keys/:hash.
@@ -303,7 +309,7 @@ export async function createApp(opts: AppOptions = {}) {
   });
 
   // Batch lines are dispatched in process with a marker in `env` that no network request can carry (router/batch-line.ts).
-  registerJobs(ctx, (path, init) => app.request(path, init), (path, init, env) => app.request(path, init, env as never));
+  registerJobs(ctx, (path, init) => app.request(path, init, internalEnv()), (path, init, env) => app.request(path, init, internalEnv(env) as never));
   if (opts.startJobs ?? cfg.workers.enabled) await ctx.jobs.start();
 
   // Passive health belongs to each API replica, not the shared registry worker's memory.

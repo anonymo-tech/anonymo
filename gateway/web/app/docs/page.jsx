@@ -1,3 +1,4 @@
+import RouterLimits from "../../components/RouterLimits"; // HD1
 import AgentGuardDocs from "../../components/AgentGuardDocs"; // V98
 import FastCreditDocs from '../../components/FastCreditDocs'; // V97
 import KeyProvisioningDocs from "../../components/KeyProvisioningDocs"; // ZK6
@@ -9,6 +10,7 @@ import FirstCallDocs from "../../components/FirstCallDocs"; // ON2
 import RouteExplanationDocs from "../../components/RouteExplanationDocs"; // V84
 import StructuredOutputDocs from "../../components/StructuredOutputDocs"; // V83
 import StatementDocs from "../../components/StatementDocs"; // V87
+import ProofPackDocs from "../../components/ProofPackDocs"; // U100
 import WebhookDocs from "../../components/WebhookDocs"; // V86: optional signed event delivery.
 import MakeGoodDocs from "../../components/MakeGoodDocs"; // V6 R: make-good refunds.
 import AgentProfileDocs from "../../components/AgentProfileDocs";
@@ -31,6 +33,8 @@ import AgentAutonomyDocs from "../../components/AgentAutonomyDocs";
 import AgentAlertDocs from "../../components/AgentAlertDocs";
 import AgentRulebookDocs from "../../components/AgentRulebookDocs";
 import SpendingLimitsDocs from "../../components/SpendingLimitsDocs";
+import DefaultRouteDocs from "../../components/DefaultRouteDocs";
+import StarterSetupsDocs from "../../components/StarterSetupsDocs"; // U103
 import AgentBreakersDocs from "../../components/AgentBreakersDocs";
 import AgentCertificateDocs from "../../components/AgentCertificateDocs";
 import AgentApprovalDocs from "../../components/AgentApprovalDocs";
@@ -852,8 +856,8 @@ export default function Docs() {
           <KeyProvisioningDocs /> {/* ZK6 */}
           <ZkapiDocs /> {/* ZK9 */}
           <FacilitatorDocs /> {/* v6 F */}
-          <SpendingLimitsDocs /><AgentRulebookDocs /><AgentBreakersDocs /><AgentAutonomyDocs />
-          <StatementDocs /> {/* V87 */}
+          <SpendingLimitsDocs /><DefaultRouteDocs /><StarterSetupsDocs /><AgentRulebookDocs /><AgentBreakersDocs /><AgentAutonomyDocs />
+          <StatementDocs /> {/* V87 */}<ProofPackDocs /> {/* U100 */}
           <MakeGoodDocs /> {/* V6 R */}
           <AgentLedgerDocs /><AgreementsDocs />
           <WebhookDocs/> {/* V86. */}
@@ -1816,7 +1820,8 @@ OK  team team_…  42 entries  3 hourly roots  head 9f2c…`}</Code>
               </tbody>
             </table>
           </div>
-          <h2 id="limits">Limits and guarantees.</h2>
+          <RouterLimits /> {/* HD1 */}
+          <h2>Limits and guarantees.</h2>
           <p>
             Each call holds its worst-case cost before routing and settles the metered usage after, so a key never goes past its balance or budget. Keys have a per-minute request limit, and optional token-per-minute limits; n and best_of are capped at 16. If every
             provider fails, nothing is charged. A cancelled stream is billed only for what was generated.

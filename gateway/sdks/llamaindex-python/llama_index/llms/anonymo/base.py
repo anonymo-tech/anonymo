@@ -10,7 +10,7 @@ from llama_index.core.base.llms.types import ChatMessage, ChatResponse, ChatResp
 from llama_index.core.bridge.pydantic import Field
 from llama_index.llms.openai_like import OpenAILike
 
-ANONYMO_BASE_URL = "https://api-production-70da.up.railway.app/api/v1"
+ANONYMO_BASE_URL = "https://anonymo.tech/api/v1"
 """The public Anonymo router. Point `api_base` (or ANONYMO_BASE_URL) elsewhere to use a self-hosted router."""
 
 Lane = Literal["public", "attested", "unlinkable"]

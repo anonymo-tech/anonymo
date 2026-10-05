@@ -7,6 +7,8 @@ import { api } from '../../lib/api';
 import { LANES } from '../../lib/agents';
 import { GUARD_LIMIT } from '../../lib/agent-guard';
 import { LIMIT_CAPS, GUARD_CAPS, LIMIT_WORDS as W, guardForm } from '../../lib/spending-limits';
+import RouteDefault from './RouteDefault'; // U101
+import StarterSetups from './StarterSetups'; // U103
 import st from './SpendingLimits.module.css';
 
 export function LimitField({ id, label, children, help }) {
@@ -36,10 +38,12 @@ export function StopResume({ id, stop, disabled }) {
   </fieldset>;
 }
 
-export default function SpendingLimits({ id, value, onChange, disabled = false, compact = false, scope = false, guard = false, stop, children }) {
+// U103: `setups` names the editor (chat, key or agents) for Start from a setup, which fills only the values that editor shows.
+export default function SpendingLimits({ id, value, onChange, disabled = false, compact = false, scope = false, guard = false, setups = null, stop, children }) {
   const set = patch => onChange({ ...value, ...patch });
   const g = value.guard, setGuard = patch => set({ guard: { ...g, ...patch } });
   return <div className={st.limits + (compact ? ' ' + st.compact : '')}>
+    {setups && <StarterSetups id={id} view={setups} value={value} onChange={onChange} guard={guard} disabled={disabled}/>}
     <fieldset disabled={disabled} className={st.group}><legend>{W.caps}</legend>
       <div className={st.grid}>{LIMIT_CAPS.map(([k, label]) => <Field key={k} id={`${id}-${k}`} label={label}>{money(`${id}-${k}`, value.caps?.[k], v => set({ caps: { ...value.caps, [k]: v } }))}</Field>)}</div>
       <p className="help-text">{W.capsHelp}</p>
@@ -55,6 +59,7 @@ export default function SpendingLimits({ id, value, onChange, disabled = false, 
       <div className={st.checks}>{LANES.map(lane => <label className="check-label" key={lane}><input type="checkbox" disabled={!value.restrictLanes} checked={value.lanes.includes(lane)} onChange={e => set({ lanes: e.target.checked ? [...value.lanes, lane] : value.lanes.filter(l => l !== lane) })}/>{lane}</label>)}</div>
       <p className="help-text">{W.lanesHelp}</p>
     </fieldset>}
+    {scope && <RouteDefault id={id} value={value.routeDefault} onChange={v => set({ routeDefault: v })} restrictLanes={!!value.restrictLanes} lanes={value.lanes} disabled={disabled}/>} {/* U101: next to the lanes */}
     {guard && <fieldset disabled={disabled} className={st.group}><legend>{W.guard}</legend><p className="help-text">{GUARD_LIMIT}</p>
       <label className="check-label"><input type="checkbox" checked={!!g} onChange={e => set({ guard: e.target.checked ? guardForm(null) : null })}/>Use action rules</label>
       {g ? <>

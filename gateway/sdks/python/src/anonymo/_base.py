@@ -17,7 +17,7 @@ from .lanes import DISCLOSURE_HEADER, LANE_HEADER, check_disclosure, check_lane,
 from .receipts import decode_receipt_v2, parse_key_set
 from .types import AnonymoMeta, APIResponse, DataList
 
-DEFAULT_BASE_URL = "https://api-production-70da.up.railway.app"
+DEFAULT_BASE_URL = "https://anonymo.tech"
 API_PREFIX = "/api/v1"
 RECEIPT_KEYS_PATH = "/.well-known/anonymo-receipt-keys.json"
 DEFAULT_TIMEOUT = 120.0

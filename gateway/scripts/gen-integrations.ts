@@ -13,7 +13,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { stringify } from "yaml";
 
-export const DEFAULT_ROUTER = "https://api-production-70da.up.railway.app";
+export const DEFAULT_ROUTER = "https://anonymo.tech";
 export const LITELLM_PROVIDER = "anonymo";
 
 /** The fields of a /api/v1/models entry this generator reads. */
