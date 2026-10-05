@@ -4,7 +4,7 @@
 
 The server has eight tools: `list_models`, `list_attested_models`, `chat` (optionally on the attested lane), `verify_provider`, `get_receipt`, `verify_receipt`, `anonymo_agent_rules` and `anonymo_agent_check`. `chat` and both agent tools need an API key.
 
-`anonymo_agent_rules` reads the calling key’s own and inherited rulebooks, remaining caps and kill state. `anonymo_agent_check` evaluates an intent without sending a prompt, reserving budget or recording a policy event. Check before expensive calls; never retry a denial unchanged. A later call is evaluated again. These rules are enforced by the router for requests through Anonymo only. `AGENT_POLICY_ENABLED` defaults to false for self-hosters; switched on at anonymo.tech. Ordinary chat exposes text to router memory; the separate encrypted-chat adapter forwards ciphertext.
+`anonymo_agent_rules` reads the calling key’s own and inherited rulebooks, remaining caps and stop state. `anonymo_agent_check` evaluates an intent without sending a prompt, reserving budget or recording a policy event. Check before expensive calls; never retry a denial unchanged. A later call is evaluated again. These rules are enforced by the router for requests through Anonymo only. `AGENT_POLICY_ENABLED` defaults to false for self-hosters; switched on at anonymo.tech. Ordinary chat exposes text to router memory; the separate encrypted-chat adapter forwards ciphertext.
 
 `server.json` validates against the registry schema it names (`2025-12-11`). Nothing is published yet.
 
