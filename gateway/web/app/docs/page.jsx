@@ -850,7 +850,7 @@ export default function Docs() {
           </nav>
         <article className="page-body prose">
           <div className="note" data-reveal>
-            The router serves this site, so your base URL is this site’s address followed by /api/v1. Create a key in the dashboard, deposit USDG to it and call it from any OpenAI- or OpenRouter-compatible client.
+            The router serves this site, so your base URL is this site’s address followed by /api/v1. Create a key in the dashboard, add funds (the add-funds card lists the tokens this router accepts) and call it from any OpenAI- or OpenRouter-compatible client.
           </div>
           <DocsFeatureIndex />
           <KeyProvisioningDocs /> {/* ZK6 */}
@@ -1759,7 +1759,7 @@ OK  team team_…  42 entries  3 hourly roots  head 9f2c…`}</Code>
             </a>{" "}
             shows what the router has recorded for a provider (/verify/?p=&lt;provider id&gt;), the privacy label of a receipt id (/verify/?r=&lt;receipt id&gt;) and checks a pasted receipt in your browser. It reads the router’s record only; use an SDK to check the provider itself.
           </p>
-          <HostsDocs /><NetworkHostsDocs /><HostBondsDocs />
+          <HostsDocs /><NetworkHostsDocs /><HostBondsDocs /><NetworkPayoutDocs />
           <NetworkStatsDocs />
           <CommerceStatsDocs /> {/* v6 L */}
           <RouteExplanationDocs /> {/* V84 */}
@@ -1848,7 +1848,6 @@ OK  team team_…  42 entries  3 hourly roots  head 9f2c…`}</Code>
           </div>
         </article>
         </div>
-      <NetworkPayoutDocs />
       </main>
     </PageFrame>
   );

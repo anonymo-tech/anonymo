@@ -149,7 +149,7 @@ describe("paying with $ANMO through escrow", () => {
     expect(bySymbol.ANMO).toMatchObject({ address: ANMO, price_source: "twap", price_usd: 0.5, credit_usd_per_token: 0.5, haircut_bps: 0, max_usd_per_deposit: 250 });
     expect(bySymbol.NVDA).toMatchObject({ price_source: "chainlink", price_usd: 180, credit_usd_per_token: 174.6, haircut_bps: 300, max_usd_per_deposit: null });
     const status = (await (await h.request("/api/v1/status")).json()).data;
-    expect(status.escrow).toEqual({ enabled: true, tokens: ["NVDA", "ANMO"], haircut_bps: 300, anmo: info.anmo });
+    expect(status.escrow).toEqual({ enabled: true, tokens: ["NVDA", "ANMO"], haircut_bps: 300, anmo: info.anmo, usdg: { enabled: false, haircut_bps: null, max_usd_per_deposit: null } });
   });
 
   test("a decimals mismatch for ANMO stops the watcher before anything is recorded or credited", async () => {
