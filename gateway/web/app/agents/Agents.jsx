@@ -10,7 +10,6 @@ import { api } from '../../lib/api';
 import { DAYS, LIMITS, FEATURE_OFF, capBars, reasonText, decisionText, intentSummary, eventsPage, confirmKill, errorState, utcTime } from '../../lib/agents';
 import { LIMIT_WORDS as W, limitsFromRulebook, rulebookFromLimits } from '../../lib/spending-limits';
 import SpendingLimits, { LimitGroup, useAgentGuard } from '../../components/limits/SpendingLimits';
-import ReplayResult, { ReplayButton, useRuleReplay } from '../../components/limits/ReplayRules'; // Replay your rules
 import s from './agents.module.css';
 import Approvals from './Approvals';
 import { BreakersForm, TrippedBadge } from './Breakers';
@@ -19,7 +18,6 @@ import Alerts from './Alerts';
 import AlertFields from './AlertFields';
 import StarterSetups from '../../components/limits/StarterSetups'; // U103: one entry point for starting values, in place of the V85 and V98 starter lists.
 import RequestCheck from './RequestCheck'; // V85: check the selected agent’s rules.
-import PayAgent from './PayAgent'; // Pay another agent: the rulebook decides, your own wallet sends, Anonymo checks and signs.
 import { agentLink, focusSelector } from '../../lib/site-actions'; // U106: ⌘K links here to an agent's spending limits or default route.
 
 function Field({ label, id, children }) {
@@ -33,17 +31,15 @@ function Spend({ agent }) {
 }
 
 // U102: the shared spending limits editor, plus the rulebook's other rules and, where it applies, Agent Guard's actions.
-function RulebookForm({ policy, onSave, onRemove, busy, hasPolicy, guard, stop, request, keyHash }) {
+function RulebookForm({ policy, onSave, onRemove, busy, hasPolicy, guard, stop }) {
   const [form, setForm] = useState(() => limitsFromRulebook(policy));
   const [errors, setErrors] = useState([]);
   const [json, setJson] = useState(false);
   const set = (name, value) => setForm(f => ({ ...f, [name]: value }));
   const windowSet = (index, patch) => setForm(f => ({ ...f, windows: f.windows.map((w, i) => i === index ? { ...w, ...patch } : w) }));
   const built = rulebookFromLimits(form);
-  const replay = useRuleReplay(request, keyHash);
-  const replaySetup = () => { replay.run(rulebookFromLimits(form)); replay.reveal(); };
   return <form onSubmit={e => { e.preventDefault(); setErrors(built.errors); if (!built.errors.length) onSave(built.policy); }}>
-    <SpendingLimits id="rulebook" value={form} onChange={setForm} disabled={busy} setups="agents" scope guard={guard || policy?.actions !== undefined} stop={stop} onReplay={replaySetup}>
+    <SpendingLimits id="rulebook" value={form} onChange={setForm} disabled={busy} setups="agents" scope guard={guard || policy?.actions !== undefined} stop={stop}>
       <LimitGroup title="More rules" disabled={busy}>
         <div className="two-fields"><Field label="Maximum output tokens" id="max_output_tokens"><input id="max_output_tokens" type="number" min="1" max={LIMITS.tokens} step="1" value={form.caps.max_output_tokens} onChange={e => set('caps',{ ...form.caps,max_output_tokens:e.target.value })}/></Field>
         <Field label="Ask me first after calls per hour" id="approval-calls"><input id="approval-calls" type="number" step="1" min="1" max="1000000" value={form.approvalCalls ?? ''} onChange={e => set('approvalCalls',e.target.value)}/></Field></div>
@@ -56,8 +52,7 @@ function RulebookForm({ policy, onSave, onRemove, busy, hasPolicy, guard, stop, 
       <BreakersForm values={form.breakers} onChange={values => set('breakers', values)} busy={busy}/>
       <AlertFields value={form.alerts} onChange={value => set('alerts',value)} disabled={busy}/>
     </SpendingLimits>
-    <Errors errors={errors}/><div className="button-row"><Button type="submit" disabled={busy}>{W.save}</Button><ReplayButton replay={replay} disabled={busy} onRun={() => replay.run(built)}/>{hasPolicy && <Button type="button" secondary disabled={busy} onClick={() => { if (window.confirm('Remove these spending limits? Their rules will no longer apply.')) onRemove(); }}>{W.remove}</Button>}<button type="button" className="text-button" aria-expanded={json} onClick={() => setJson(!json)}>{json ? 'Hide JSON' : 'View JSON'}</button></div>
-    <ReplayResult id="replay-rules" replay={replay} current={built.policy}/>
+    <Errors errors={errors}/><div className="button-row"><Button type="submit" disabled={busy}>{W.save}</Button>{hasPolicy && <Button type="button" secondary disabled={busy} onClick={() => { if (window.confirm('Remove these spending limits? Their rules will no longer apply.')) onRemove(); }}>{W.remove}</Button>}<button type="button" className="text-button" aria-expanded={json} onClick={() => setJson(!json)}>{json ? 'Hide JSON' : 'View JSON'}</button></div>
     {json && <><Errors errors={built.errors}/><pre className={s.json}>{JSON.stringify(built.policy,null,2)}</pre></>}
   </form>;
 }
@@ -99,7 +94,7 @@ function AgentDetail({ agent, request, refreshList, refreshVersion, onError, gua
       <TrippedBadge record={record} agent={agent}/>
       <span className={s.hash}>Key {agent.key_hash}</span><Spend agent={agent}/><p className={s.hash}>Policy SHA {record?.sha256 || agent.policy_sha256 || 'None'}</p>
       {notice && <p role="status">{notice}</p>}{busy && <p role="status">Reading or updating rulebook…</p>}{readError && <><p role="alert">{readError}</p><Button secondary disabled={busy} onClick={() => setRevision(r => r+1)}>Read rulebook again</Button></>}
-      {record && <><h3>{W.title}</h3><RulebookForm key={revision} policy={policy} hasPolicy={!!policy} busy={busy} guard={guard} stop={stop} request={request} keyHash={agent.key_hash} onSave={body => mutate(() => request(path+'/policy',{ method:'PUT',body }))} onRemove={() => mutate(() => request(path+'/policy',{ method:'DELETE' }))}/></>}
+      {record && <><h3>{W.title}</h3><RulebookForm key={revision} policy={policy} hasPolicy={!!policy} busy={busy} guard={guard} stop={stop} onSave={body => mutate(() => request(path+'/policy',{ method:'PUT',body }))} onRemove={() => mutate(() => request(path+'/policy',{ method:'DELETE' }))}/></>}
       <p className="help-text">{W.scopeOnly}</p>
     </section>
     <section className="control-panel"><h2>Event log</h2><p className="help-text">Newest first, 50 per page. These intents contain model, lane, estimated cost and tools; no prompt or response text is shown.</p>
@@ -151,9 +146,7 @@ export default function Agents() {
   }, [loaded, agent?.key_hash]);
   return <AccountShell publicContent current="Agents" apiKey={key} onConnect={value => { setKey(value); setAgents([]); setSelected(''); setOff(false); setError(''); }} onDisconnect={() => { setKey(''); setAgents([]); setSelected(''); setLoaded(false); setOff(false); setError(''); }}><div className={s.body}>
     {!(key && !off && agent) && <StarterSetups id="setup-preview" view="agents" guard={guard}/>} {/* U103: a preview until an agent is selected; then Start from a setup sits in its Spending limits. */}
-    {!(key && !off && agent) && <p id="replay-rules" className="note">Select an agent after connecting to replay its spending limits on the last 7 days before you save them. Nothing is saved.</p>} {/* Replay your rules: beside Save once an agent is selected */}
     <div id="request-check">{key && !off && agent ? <RequestCheck key={key+selected} agent={agent} refreshVersion={revision}/> : <p className="note">Select an agent after connecting to check a request against its rules without spending.</p>}</div> {/* V85 */}
-    <PayAgent agent={key && !off ? agent : null}/>
     {error && <p className="note" role="alert">{error}</p>}
     {off ? <section className="empty" role="status"><h2>{FEATURE_OFF}</h2><p>This router is not serving agent rulebooks.</p></section> : <>
       {key && <section aria-label="Agent keys"><div className={s.heading}><h2>Agent keys</h2><button className="text-button" disabled={busy} onClick={() => setRevision(r => r+1)}>Refresh</button></div>{busy && <p role="status">Reading agent keys…</p>}{loaded && !agents.length && <div className="empty"><p>No agent keys returned for this account.</p><a className="inline-link" href="/dashboard/#api-keys">Manage API keys</a></div>}<div className={s.list}>{agents.map(a => <div key={a.key_hash}><button className={s.agent} aria-pressed={selected === a.key_hash} onClick={() => { setSelected(a.key_hash); setError(''); }}><div className={s.heading}><strong>{a.name || 'Unnamed agent'}</strong><span className={s.badges}><span className="badge">Rulebook {a.has_policy ? 'on' : 'off'}</span>{a.killed && <span className="badge dark">Stopped</span>}</span></div><span className={s.hash}>Policy SHA {a.policy_sha256 ? a.policy_sha256.slice(0,12) : 'None'}</span><Spend agent={a}/></button><SealedBadge sealed={a.sealed}/></div>)}</div></section>}

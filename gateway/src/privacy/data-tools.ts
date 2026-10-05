@@ -19,7 +19,7 @@ export const dataToolStores: ExternalDoc["otherStores"] = [
   {
     id: "decision-tags",
     name: "Decision tags in signed receipts",
-    purpose: "When DECISION_TAGS_ENABLED is on, a chat or completion call may send X-Anonymo-Decision-Tag: a SHA-256 digest the caller computed, for example of an order intent. The router signs it into that call's v1 and v2 receipts as decision_tag, so the caller can later show which model answered before a decision. A malformed tag is refused before anything is charged, and the unlinkable lane refuses a tag because a reused tag joins calls together. An Agent Guard decision whose details_sha256 equals a tag names the same agent's tagged calls as informed_by, and a proof pack lists the tags its receipts carry; both read the stored receipts and store nothing new.",
+    purpose: "When DECISION_TAGS_ENABLED is on, a chat or completion call may send X-Anonymo-Decision-Tag: a SHA-256 digest the caller computed, for example of an order intent. The router signs it into that call's v1 and v2 receipts as decision_tag, so the caller can later show which model answered before a decision. A malformed tag is refused before anything is charged, and the unlinkable lane refuses a tag because a reused tag joins calls together.",
     holds: "The 64-hex digest as sent, inside the generation's stored receipt and receipt_v2. Never the intent itself, which the router never receives.",
     ttl: "Kept with the generation record and its receipt, under their existing retention.",
     requestText: "hashes",
@@ -27,7 +27,6 @@ export const dataToolStores: ExternalDoc["otherStores"] = [
       { file: "src/receipts/decision-tag.ts", contains: 'export const DECISION_TAG_HEADER = "x-anonymo-decision-tag";' },
       { file: "src/receipts/decision-tag.ts", contains: 'if (tag && lane === "unlinkable")' },
       { file: "src/api/chat.ts", contains: "...decisionTagFields(decisionTagOf(ctx.cfg.decisionTagsEnabled, p.c, p.disc.lane))" },
-      { file: "src/agents/guard-links.ts", contains: "and g.receipt->>'decision_tag' = ${tag}" },
     ],
   },
 ];

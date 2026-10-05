@@ -70,7 +70,6 @@ import { characterRoutes } from "./api/characters.ts";
 import { memoryRoutes } from "./api/memory.ts";
 import { agentCertificatesRoutes } from "./api/agent-certificates.ts";
 import { guardRoutes } from "./api/guard.ts"; // V98
-import { agentPayRoutes } from "./api/agent-pay.ts"; // Pay another agent
 import { agentsRoutes } from "./api/agents.ts";
 import { agentApprovalMiddleware, agentApprovalsRoutes } from "./api/agent-approvals.ts";
 import { agentSessionsRoutes } from "./api/agent-sessions.ts";
@@ -170,7 +169,7 @@ export async function createApp(opts: AppOptions = {}) {
   const app = new Hono();
   app.use("*", originLockMiddleware(ctx)); // HD1: authenticate ingress before CORS, including preflights.
   // The OpenAI-style /v1/* aliases get the same CORS as /api/*, so a browser can read the receipt, lane and policy headers on either.
-  const apiCors = cors({ origin: "*", allowHeaders: ["x-agent-approval", "authorization", "content-type", "x-e2ee-version", "x-client-pub-key", "x-model-pub-key", "x-e2ee-nonce", "x-e2ee-timestamp", "x-pay-with", "x-payment", "payment-signature", "payment-recovery", "x-wallet-auth", "x-anonymo-cache", "x-anonymo-disclosure-max", "x-anonymo-lane", "x-anonymo-lane-downgrade", "x-anonymo-decision-tag", "http-referer", "x-title", "traceparent", "x-api-key", "anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access"], exposeHeaders: [...EXPOSED_RESPONSE_HEADERS, ...(cfg.routeExplain ? ["x-anonymo-route"] : []), /* V84 */ ...(cfg.structuredOutputCheckEnabled ? ["x-anonymo-json-check"] : []), /* V83 */ "x-e2ee-applied", "x-e2ee-version", "x-e2ee-algo", "x-e2ee-receipt-id"] });
+  const apiCors = cors({ origin: "*", allowHeaders: ["x-agent-approval", "authorization", "content-type", "x-e2ee-version", "x-client-pub-key", "x-model-pub-key", "x-e2ee-nonce", "x-e2ee-timestamp", "x-pay-with", "x-payment", "payment-signature", "payment-recovery", "x-wallet-auth", "x-anonymo-cache", "x-anonymo-disclosure-max", "x-anonymo-lane", "x-anonymo-lane-downgrade", "http-referer", "x-title", "traceparent", "x-api-key", "anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access"], exposeHeaders: [...EXPOSED_RESPONSE_HEADERS, ...(cfg.routeExplain ? ["x-anonymo-route"] : []), /* V84 */ ...(cfg.structuredOutputCheckEnabled ? ["x-anonymo-json-check"] : []), /* V83 */ "x-e2ee-applied", "x-e2ee-version", "x-e2ee-algo", "x-e2ee-receipt-id"] });
   app.use("/api/*", apiCors);
   app.use("/v1/*", apiCors);
   app.use("/ollama/*", apiCors);
@@ -228,7 +227,6 @@ export async function createApp(opts: AppOptions = {}) {
   agentSealedRoutes(app, ctx);
   agentsRoutes(app, ctx);
   guardRoutes(app, ctx); // V98
-  agentPayRoutes(app, ctx); // Pay another agent (AGENT_PAY_ENABLED)
   agreementsRoutes(app, ctx);
   agentCertificatesRoutes(app, ctx);
   agentLedgerRoutes(app, ctx);

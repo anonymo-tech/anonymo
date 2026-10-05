@@ -16,7 +16,6 @@ import { requireKey } from "./auth.ts";
 import { verifyReceipt, verifyReceiptV2, anchorProof } from "./generation.ts";
 import { identityStatus } from "../identity/status.ts"; // v6 I
 import { COSE_CONTENT_TYPE } from "../receipts/v2.ts";
-import { decisionTagCheck, expectedDecisionTag } from "../receipts/decision-tag.ts"; // B
 import { holdersStatus } from "../holders/tiers.ts";
 import { laneSummary } from "./models.ts";
 import { allowanceProposal, allowanceView, chargeProposals, fairPrice, forgetAllowance, openDebt, rawToPico, saveAllowance, signCharge, statement, typedDataJson } from "../pay/paywith.ts";
@@ -65,17 +64,12 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
     // v2: a COSE_Sign1 (base64), optionally with the hashes, the streamed event data and an anchor proof to check.
     if (raw && typeof raw === "object" && typeof (raw as { cose?: unknown }).cose === "string") {
       const b = z
-        .object({ cose: z.string().max(16_384), request_sha256: z.string().optional(), response_sha256: z.string().optional(), chunks: z.array(z.string()).max(100_000).optional(), anchor: anchorInput, decision_tag: expectedDecisionTag.optional() })
+        .object({ cose: z.string().max(16_384), request_sha256: z.string().optional(), response_sha256: z.string().optional(), chunks: z.array(z.string()).max(100_000).optional(), anchor: anchorInput })
         .parse(raw);
-      const v = await verifyReceiptV2(ctx, b);
-      const tag = decisionTagCheck(v.claims?.decision_tag, b.decision_tag); // B
-      return c.json({ data: { ...v, ...tag, valid: v.valid && tag.decision_tag_valid !== false } });
+      return c.json({ data: await verifyReceiptV2(ctx, b) });
     }
-    const b = z.object({ payload: z.record(z.string(), z.unknown()), sig: z.string(), key_id: z.string(), anchor: anchorInput, decision_tag: expectedDecisionTag.optional() }).parse(raw);
-    const v = await verifyReceipt(ctx, b);
-    // B: the signed decision tag, and whether it is the order hash the caller computed. A mismatch makes the result invalid.
-    const tag = decisionTagCheck(b.payload.decision_tag, b.decision_tag);
-    return c.json({ data: { ...v, ...tag, valid: v.valid && tag.decision_tag_valid !== false } });
+    const b = z.object({ payload: z.record(z.string(), z.unknown()), sig: z.string(), key_id: z.string(), anchor: anchorInput }).parse(raw);
+    return c.json({ data: await verifyReceipt(ctx, b) });
   });
   // The anchor path for a receipt once its hour has been rooted. `anchored` is true only when the root was posted to
   // ReceiptAnchor on chain; without a configured chain the root is kept off chain (status "local") and says so.
@@ -355,8 +349,6 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
         // and whether USDG is credited 1:1 (usdg.enabled; its haircut and per-deposit limit are null while off).
         escrow: { enabled: escrowEnabled(ctx), tokens: escrowEnabled(ctx) ? acceptedTokens(ctx).map((t) => t.symbol) : [], haircut_bps: ctx.cfg.escrow.haircutBps, anmo: anmoSummary(ctx), usdg: usdgSummary(ctx) },
         ...(ctx.cfg.agentGuardEnabled ? { agent_guard: { enabled: true } } : {}), // V98: preserve status bytes while off
-        // Pay another agent: Agent Guard decides, the payer's wallet sends USDG straight to the recipient, the router verifies it.
-        agent_pay: { enabled: ctx.cfg.agentPayEnabled },
         per_call: {
           configured: !!ctx.cfg.chain.callPay || x402Enabled(ctx),
           max_usd: ctx.cfg.fees.perCallMaxUsd,
