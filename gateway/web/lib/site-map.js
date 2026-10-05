@@ -100,7 +100,7 @@ const SEARCH_ONLY = new Set([
   'agent-guard', // V98
   'json-check', /* V83 */ 'inbox', 'activity', 'history', 'unlinkable', 'proxy', 'registry', 'routing', 'presets', 'characters', 'batches', 'teams', 'tracing', 'playground', 'evals', 'skills', 'spend', 'api-receipts', 'holders', 'settings', 'sessions', 'breakers', 'autonomy', 'profile', 'inventory-log', 'badge', 'proof-time']);
 SEARCH_ONLY.add('payments'); SEARCH_ONLY.add('get-usdg'); // ON1: funding joins Build; payment reference stays searchable.
-TASKS.push(task('get-usdg', 'build', 'Get USDG', 'Read how to get USDG onto Robinhood Chain before adding funds.', '/docs/#get-usdg', 'usdg, bridge, buy, chain, funding')); // ON1
+TASKS.push(task('get-usdg', 'build', 'Get USDG', 'How to get USDG on Robinhood Chain. USDG deposits are not switched on here yet.', '/docs/#get-usdg', 'usdg, bridge, buy, chain')); // ON1
 SEARCH_ONLY.add('spec'); // V80: keep Build at nine menu tools; spec stays searchable.
 SEARCH_ONLY.add('zkapi'); // ZK9: search-only Sepolia pilot.
 TASKS.push(task('facilitator', 'build', 'Settle x402 payments for your API', 'Verify and settle USDG payments on Robinhood Chain; the router only pays gas.', '/facilitator/', 'x402, facilitator, seller, settle, bazaar, discovery, usdg')); // v6 F
@@ -110,9 +110,11 @@ for (const item of TASKS) item.menu = !SEARCH_ONLY.has(item.id);
 TASKS.push({ ...task('paid-tools', 'build', 'Browse paid tools', 'List x402 tools a key can pay from its balance, with their canary state.', '/tools/', 'tools, x402, paid, mcp, canary'), menu: false }); // v6 T: search-only until switched on.
 TASKS.push({ ...task('chat-limits', 'chat', 'Limit chat spending', 'Open Tools in Chat to cap spending, approve replies and stop chat.', '/harness/', 'limits, budget, spending, approval, stop'), menu: false }); // U77: search-only control.
 TASKS.push({ ...task('starter-setups', 'agents', 'Start from a setup', 'Fill spending limits from a ready-made setup, review it, then save.', '/agents/#starter-setups', 'starter, setup, template, budget, rules, chatbot, trading, batch, proven hardware'), menu: false }); // U103: replaces V85's rulebook templates; /agents/#rulebook-templates lands on the same place.
+TASKS.push({ ...task('replay-rules', 'agents', 'Replay a rulebook on last week', 'See what draft rules would have allowed, asked or refused over the last 7 days.', '/agents/#replay-rules', 'replay, rules, rulebook, draft, last week, spending limits, try'), menu: false }); // Replay your rules: search-only.
 TASKS.push({ ...task('request-check', 'agents', 'Check a request against your rules', 'Check agent rules without spending: allow, approval required or deny.', '/agents/#request-check', 'check, try, request, rules'), menu: false }); // V85: search-only.
 TASKS.push({ ...task('prompt-library', 'chat', 'Save and reuse prompts', 'Keep named prompts in this browser and fill in variables before using them.', '/harness/#prompt-library', 'prompts, library, templates, favourites'), menu: false }); // V81: search-only, keeps menus short.
 TASKS.push({ ...task('why-this-route', 'learn', 'Understand a route', 'See why each reply went to its provider, and what that explanation does not show.', '/docs/#why-this-route', 'route explanation, provider, routing, fallback'), menu: false }); // V84: search only.
+TASKS.push({ ...task('lane-report', 'verify', 'See where your calls ran', 'Calls and spend by lane, the share on proven hardware and each provider’s evidence.', '/dashboard/#statements', 'lane, lanes, lane report, attested, unlinkable, public, proven hardware, where, evidence'), menu: false }); // Lane report: search-only, on Statements.
 TASKS.push({ ...task('insights', 'build', 'See where your money goes', 'See spend by model, key and lane, and the same abilities for less.', '/dashboard/#insights', 'spend, insights, cost, model, key, agent, lane'), menu: false }); // V88: search-only.
 export const menuTasks = group => TASKS.filter(item => item.group === group && item.menu);
 
@@ -171,6 +173,7 @@ for (const section of ACCOUNT_SECTIONS) {
 }
 
 TASKS.push({ ...task('operations', 'build', 'Inspect service operations', 'Use the service operator token to inspect monitoring availability and daily counts.', '/admin/', 'operator, upstream, balance, counts'), menu: false }); // ON3: search-only.
+TASKS.push({ ...task('auto-topup', 'agents', 'Refill a key’s budget from your credits', 'Top up a key automatically from your credits when it runs low, within a weekly limit.', '/dashboard/#api-keys', 'auto top-up, top up a key automatically, refill, budget, credits, agent, key, weekly'), menu: false }); // U107: search-only.
 TASKS.push({ ...task('key-management', 'build', 'Read key provisioning options', 'Read capped-key fields, pagination and inference-only keys.', '/docs/#key-management', 'key, provisioning, scope, inference, management'), menu: false }); // ZK6: search only.
 TASKS.push({ ...task('labs', 'learn', 'See Labs: built but switched off', 'Features built but switched off or in a pilot, each state read live from status.', '/labs/', 'labs, experimental, switched off, pilot, flags, x402, zkapi, host bonds'), menu: true }); // U104: last in Learn.
 

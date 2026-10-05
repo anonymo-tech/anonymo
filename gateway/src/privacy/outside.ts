@@ -8,6 +8,7 @@ import { provisioningBodyReader, inferenceModelReader } from "./provisioning.ts"
 import { structuredOutputReader } from "./structured-output.ts"; // V83
 import { statementStores } from "./statements.ts"; // V87
 import { proofPackLimit, proofPackStores } from "./proof-pack.ts"; // U100
+import { laneReportLimit, laneReportStores } from "./lane-report.ts"; // Lane report
 import { insightsStores } from "./insights.ts"; // V88: read-only aggregates.
 import { dataToolStores } from "./data-tools.ts"; // B: market-data tools and decision tags.
 import { webhookBodyReader, webhookStores } from "./webhooks.ts"; // V86: event delivery.
@@ -58,8 +59,10 @@ const redisFamilies: RedisFamily[] = [
   anonymousRateFamily, // HD1
   ...toolsRateFamilies, // v6 T
   limit({ prefix: "agent-certificate:", shape: "agent-certificate:<account id>", purpose: "Record-certificate and track-record issuance attempts: five per minute per account, shared across standalone, profile and track-record issuance, its keys and router replicas. Contains only the account id and a counter; no certificate pseudonym, claims or stats.", holds: "account", seconds: 60, evidence: [ev("src/api/agent-certificates.ts", "await ctx.limiter.take(`agent-certificate:${key.accountId}`"), ev("src/agents/profiles.ts", "await ctx.limiter.take(`agent-certificate:${key.accountId}`"), ev("src/identity/track-record.ts", "await ctx.limiter.take(`agent-certificate:${key.accountId}`")] }),
+  limit({ prefix: "agent-replay:", shape: "agent-replay:<caller key hash>", purpose: "Rulebook replays (POST /api/v1/agents/:key_hash/replay), ten per minute per calling key. Contains only the caller's key hash and a counter; no draft, call or result.", holds: "key-hash", seconds: 60, evidence: [ev("src/api/agents.ts", "await ctx.limiter.take(`agent-replay:${caller.keyHash}`")] }),
   feedbackLimit, // v6 I
   proofPackLimit, // U100
+  laneReportLimit, // Lane report
   telegramLinkRate,
   ...facilitatorRedisFamilies, // v6 F
   limit({ prefix: "network-host-wallet:", shape: "network-host-wallet:<operator wallet>", purpose: "Wallet-authenticated host signup and credential updates, three per minute per wallet. Links attempts by the public operator wallet.", holds: "wallet", seconds: 60, evidence: [ev("src/api/network-hosts.ts", "await ctx.limiter.take(`network-host-wallet:${auth.wallet}`")] }),
@@ -423,7 +426,7 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
   ...juryBodyReaders,
   { file: "src/agreements/routes.ts", carries: "prompt-or-answer", reads: "Bounded party evidence text or JSON, or a strict create-agreement preparation with payee wallet, milestone USDG amounts, terms hash and future deadline.", then: "Requires an authenticated wallet-linked account matching the indexed payer/payee. Caps streams without trusting Content-Length. Preparation checks inherited rulebooks and returns unsigned calldata; jury calls use the attested chat path with a configured API key, or the optional internal provider transport.", kept: "Evidence hash and APP_SECRET-encrypted content in agreement_evidence, up to 32 items per party. Jury statement stores per-model answer reasons, receipt references and a signed ruling; reasons can quote evidence. Router reads evidence in memory. Parties can read both parties evidence through the API. Resolution plus 30 days by default permits deletion; a fresh-index retention job removes evidence and jury rows. No new Redis family, log field or caller-address reader.", evidence: [ev("src/agreements/routes.ts", "const reader = c.req.raw.body?.getReader();")] },
   { file: "src/api/agent-certificates.ts", carries: "settings", reads: "Bounded record claim identifiers for issuance; a signed certificate supplied by body or query for public verification.", then: "Checks retained generation counts and rulebook events, signs true claims with a fresh random pseudonym, or checks certificate signature and expiry. The router knows the authenticated issuing key.", kept: "No certificate, pseudonym, claims, query or body is persisted. Only an account issuance limiter counter and the reused public receipt signing key log entry are kept; no prompt fields are accepted.", evidence: [ev("src/api/agent-certificates.ts", "bodySchema.parse(await readJson(c))")] },
-  { file: "src/api/agents.ts", carries: "settings", reads: "A strict bounded rulebook, a kill reason or a metadata-only Intent for a dry run.", then: "Requires the same owner/admin permissions as editing the target key. Evaluates dry runs deterministically without event writes or kill changes.", kept: "Current rulebooks and optional principal-written kill reasons in agent_policies; decision metadata and changes in agent_policy_events. Dry runs keep nothing. No prompt or answer fields are accepted.", evidence: [ev("src/api/agents.ts", "agentPolicySchema.parse(await readJson(c))")] },
+  { file: "src/api/agents.ts", carries: "settings", reads: "A strict bounded rulebook, a kill reason, a metadata-only Intent for a dry run, or a draft rulebook and a number of days (1 to 7) to replay.", then: "Requires the same owner/admin permissions as editing the target key. Evaluates dry runs deterministically without event writes or kill changes. A replay reads that key's recorded calls (model, lane, cost, tokens and time from generations, plus the linked rulebook events) and its Agent Guard checks in a read-only transaction, and evaluates the draft against them.", kept: "Current rulebooks and optional principal-written kill reasons in agent_policies; decision metadata and changes in agent_policy_events. Dry runs and replays keep nothing. No prompt or answer fields are accepted.", evidence: [ev("src/api/agents.ts", "agentPolicySchema.parse(await readJson(c))")] },
   { file: "src/agents/enforce.ts", carries: "settings", reads: "Declared tool and function names from the inference body already parsed by the router.", then: "Projects only identifiers into the rulebook Intent, alongside the resolved model, lane, token bound and cost reservation.", kept: "Only Intent metadata and fixed decision reasons in agent_policy_events. Never arguments, descriptions, prompt or answer text; no new Redis key family or log field.", evidence: [ev("src/agents/enforce.ts", "export function declaredTools")] },
   { file: "src/api/network-hosts.ts", carries: "settings", reads: "Up to 8 KiB of host signup JSON or an operator-generated sidecar credential, with an existing wallet signature over the canonical JSON hash.", then: "Strictly validates signup fields, verifies the wallet and performs attestation, policy and sanctions checks. Credentials are accepted only for the recovered operator wallet.", kept: "Provider name, endpoint, operator and payout wallets, requested model IDs, optional contact, status and refusal reasons. Credential stored only in existing AES-GCM api_key_enc. The router sees it in memory. No whole-body log or signature column.", evidence: [ev("src/api/network-hosts.ts", "const reader = c.req.raw.body?.getReader();")] },
   { file: "src/network/waitlist.ts", carries: "settings", reads: "At most 4 KiB of JSON: waitlist fields or a deletion code.", then: "Validated strictly; a filled honeypot is discarded. The deletion code is hashed for an atomic delete.", kept: "Only sign-up fields, optional contact, id, deletion digest and time in network_waitlist. No raw deletion code, body log, IP or user agent. Free text is readable by the owner; public stats return counts only.", evidence: [ev("src/network/waitlist.ts", "const reader = c.req.raw.body?.getReader();")] },
@@ -542,7 +545,7 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
   {
     file: "src/api/keys.ts",
     carries: "settings",
-    reads: "Key settings (name, budget, limits, allowed models, tracing destination, scope and include_byok_in_limit), amounts, BYOK provider keys, team roles and wallet sign-in challenges.",
+    reads: "Key settings (name, budget, limits, allowed models, tracing destination, scope, include_byok_in_limit and the auto top-up amounts), amounts, BYOK provider keys, team roles and wallet sign-in challenges.",
     then: "Validated and written to the keys, byok_keys, teams and kv tables as described above.",
     kept: "The settings and, for a BYOK key or a tracing destination, the key or the destination URL and credentials encrypted under APP_SECRET.",
     evidence: [ev("src/api/keys.ts", "const spec = keySpec.parse(await readJson(c));")],
@@ -754,6 +757,7 @@ export const EXTERNAL: ExternalDoc = {
     ...activityStores,
     ...statementStores, // V87
     ...proofPackStores, // U100
+    ...laneReportStores, // Lane report
     ...insightsStores, // V88: spend insights.
     ...dataToolStores, // B
     ...inboxStores,

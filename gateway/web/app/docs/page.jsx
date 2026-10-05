@@ -11,6 +11,7 @@ import RouteExplanationDocs from "../../components/RouteExplanationDocs"; // V84
 import StructuredOutputDocs from "../../components/StructuredOutputDocs"; // V83
 import StatementDocs from "../../components/StatementDocs"; // V87
 import ProofPackDocs from "../../components/ProofPackDocs"; // U100
+import LaneReportDocs from "../../components/LaneReportDocs"; // Lane report
 import WebhookDocs from "../../components/WebhookDocs"; // V86: optional signed event delivery.
 import MakeGoodDocs from "../../components/MakeGoodDocs"; // V6 R: make-good refunds.
 import AgentProfileDocs from "../../components/AgentProfileDocs";
@@ -33,6 +34,8 @@ import AgentAutonomyDocs from "../../components/AgentAutonomyDocs";
 import AgentAlertDocs from "../../components/AgentAlertDocs";
 import AgentRulebookDocs from "../../components/AgentRulebookDocs";
 import SpendingLimitsDocs from "../../components/SpendingLimitsDocs";
+import AutoTopupDocs from "../../components/AutoTopupDocs"; // U113
+import ReplayRulesDocs from "../../components/ReplayRulesDocs";
 import DefaultRouteDocs from "../../components/DefaultRouteDocs";
 import StarterSetupsDocs from "../../components/StarterSetupsDocs"; // U103
 import AgentBreakersDocs from "../../components/AgentBreakersDocs";
@@ -807,7 +810,7 @@ export default function Docs() {
             <br />
             Keep the request.
           </h1>
-          <p>Route calls to any model, pay in USDG or with a Stock Token, and verify every receipt.</p>
+          <p>Route calls to any model, pay with $ANMO or a Stock Token, and verify every receipt.</p>
         </div>
         <div className="side-layout">
           <nav className="side-nav" aria-label="Documentation sections" data-reveal="fade">
@@ -856,8 +859,8 @@ export default function Docs() {
           <KeyProvisioningDocs /> {/* ZK6 */}
           <ZkapiDocs /> {/* ZK9 */}
           <FacilitatorDocs /> {/* v6 F */}
-          <SpendingLimitsDocs /><DefaultRouteDocs /><StarterSetupsDocs /><AgentRulebookDocs /><AgentBreakersDocs /><AgentAutonomyDocs />
-          <StatementDocs /> {/* V87 */}<ProofPackDocs /> {/* U100 */}
+          <SpendingLimitsDocs /><DefaultRouteDocs /><StarterSetupsDocs /><AutoTopupDocs /><ReplayRulesDocs /><AgentRulebookDocs /><AgentBreakersDocs /><AgentAutonomyDocs />
+          <StatementDocs /> {/* V87 */}<ProofPackDocs /> {/* U100 */}<LaneReportDocs /> {/* Lane report */}
           <MakeGoodDocs /> {/* V6 R */}
           <AgentLedgerDocs /><AgreementsDocs />
           <WebhookDocs/> {/* V86. */}
