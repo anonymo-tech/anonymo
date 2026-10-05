@@ -26,6 +26,7 @@ export type { CertificateInfo } from "./x509.js";
 export { HPKE_MEDIA_TYPE, sealedPost } from "./hpke.js";
 export type { HpkeExchange, HpkeHook, SealedPostOptions } from "./hpke.js";
 export { routingHeaders, withRouting } from "./options.js";
+export { DECISION_TAG_HEADER, checkDecisionTag, decisionTag, receiptDecisionTag, withDecisionTag } from "./decision-tag.js";
 export { TLOG_KINDS, TransparencyError, TransparencyLog, SplitViewDetected, bindingsDigest, blindIssuerKeyDigest, ohttpKeyConfigDigest, receiptKeyDigest, verifyConsistency as verifyTlogConsistency, verifyInclusion as verifyTlogInclusion, verifyRekorInclusion } from "./tlog.js";
 export type { CheckpointStore, LoggedKey, RekorAnchor, RekorAnchorOptions, TlogKind, TransparencyOptions } from "./tlog.js";
 export { defaultP256Verify, type P256Verifier } from "./ecdsa.js";
@@ -38,7 +39,8 @@ export { e2eeChat, E2EE_SUITE } from "./e2ee.js";
 export type { E2eeCompletion, E2eeChatBody, E2eeOptions, E2eeAttestationVerifier } from "./e2ee.js";
 
 export { AgentPolicyDenied, AgentKilled, AgentApprovalRequired } from "./agent-errors.js";
-export type { AgentPolicy, AgentLane, AgentRouteDefault, AgentIntent, AgentReason, AgentDecision, AgentRemaining, AgentRulebook } from "./agent.js";
+export type { AgentPolicy, AgentLane, AgentRouteDefault, AgentIntent, AgentReason, AgentDecision, AgentRemaining, AgentRulebook, AgentReplay, AgentReplayExample, AgentPayInput, AgentPayDecision, AgentPayInstructions, AgentPayment, AgentPaymentStatus, AgentSignedDecision } from "./agent.js";
+export type { Playbook, PlaybookChange, PlaybookFollowResult } from "./playbooks.js";
 
 export { verifyRecordCertificate, isRecordCertificate, RECORD_CERTIFICATE_NOTICE } from "./record-certificate.js";
 export type { RecordCertificate, RecordClaim } from "./record-certificate.js";

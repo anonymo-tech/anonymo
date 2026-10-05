@@ -1,5 +1,6 @@
 import RouterLimits from "../../components/RouterLimits"; // HD1
 import AgentGuardDocs from "../../components/AgentGuardDocs"; // V98
+import AgentPayDocs from "../../components/AgentPayDocs"; // Pay another agent
 import FastCreditDocs from '../../components/FastCreditDocs'; // V97
 import KeyProvisioningDocs from "../../components/KeyProvisioningDocs"; // ZK6
 import FacilitatorDocs from "../../components/FacilitatorDocs"; // v6 F: hosted x402 facilitator.
@@ -35,12 +36,15 @@ import AgentAlertDocs from "../../components/AgentAlertDocs";
 import AgentRulebookDocs from "../../components/AgentRulebookDocs";
 import SpendingLimitsDocs from "../../components/SpendingLimitsDocs";
 import AutoTopupDocs from "../../components/AutoTopupDocs"; // U113
+import ReplayRulesDocs from "../../components/ReplayRulesDocs";
+import PlaybooksDocs from "../../components/PlaybooksDocs"; // U115
 import DefaultRouteDocs from "../../components/DefaultRouteDocs";
 import StarterSetupsDocs from "../../components/StarterSetupsDocs"; // U103
 import AgentBreakersDocs from "../../components/AgentBreakersDocs";
 import AgentCertificateDocs from "../../components/AgentCertificateDocs";
 import AgentApprovalDocs from "../../components/AgentApprovalDocs";
 import TradingAgentDocs from "../../components/TradingAgentDocs"; // B
+import DecisionTagDocs from "../../components/DecisionTagDocs"; // B: decision tags
 import { API_BASE } from "../../lib/api";
 import { QUICKSTART, QUICKSTART_FLAGS } from "../../lib/providers";
 import OnionAddress from "../../components/OnionAddress";
@@ -858,7 +862,7 @@ export default function Docs() {
           <KeyProvisioningDocs /> {/* ZK6 */}
           <ZkapiDocs /> {/* ZK9 */}
           <FacilitatorDocs /> {/* v6 F */}
-          <SpendingLimitsDocs /><DefaultRouteDocs /><StarterSetupsDocs /><AutoTopupDocs /><AgentRulebookDocs /><AgentBreakersDocs /><AgentAutonomyDocs />
+          <SpendingLimitsDocs /><DefaultRouteDocs /><StarterSetupsDocs /><AutoTopupDocs /><ReplayRulesDocs /><PlaybooksDocs /><AgentRulebookDocs /><AgentBreakersDocs /><AgentAutonomyDocs />
           <StatementDocs /> {/* V87 */}<ProofPackDocs /> {/* U100 */}<LaneReportDocs /> {/* Lane report */}
           <MakeGoodDocs /> {/* V6 R */}
           <AgentLedgerDocs /><AgreementsDocs />
@@ -867,7 +871,9 @@ export default function Docs() {
           <AgentAlertDocs />
           <AgentApprovalDocs />
           <AgentGuardDocs /> {/* V98 */}
+          <AgentPayDocs /> {/* Pay another agent */}
           <TradingAgentDocs /> {/* B */}
+          <DecisionTagDocs /> {/* B: decision tags */}
           <AgentCertificateDocs /><AgentProfileDocs /><AgentIdentityDocs /><SealedAgentDocs />
           <h2 id="quickstart">Make your first API call.</h2> {/* ON2 */}
           <FirstCallDocs /> {/* ON2 */}

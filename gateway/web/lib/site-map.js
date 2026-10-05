@@ -110,14 +110,18 @@ for (const item of TASKS) item.menu = !SEARCH_ONLY.has(item.id);
 TASKS.push({ ...task('paid-tools', 'build', 'Browse paid tools', 'List x402 tools a key can pay from its balance, with their canary state.', '/tools/', 'tools, x402, paid, mcp, canary'), menu: false }); // v6 T: search-only until switched on.
 TASKS.push({ ...task('chat-limits', 'chat', 'Limit chat spending', 'Open Tools in Chat to cap spending, approve replies and stop chat.', '/harness/', 'limits, budget, spending, approval, stop'), menu: false }); // U77: search-only control.
 TASKS.push({ ...task('starter-setups', 'agents', 'Start from a setup', 'Fill spending limits from a ready-made setup, review it, then save.', '/agents/#starter-setups', 'starter, setup, template, budget, rules, chatbot, trading, batch, proven hardware'), menu: false }); // U103: replaces V85's rulebook templates; /agents/#rulebook-templates lands on the same place.
+TASKS.push({ ...task('replay-rules', 'agents', 'Replay a rulebook on last week', 'See what draft rules would have allowed, asked or refused over the last 7 days.', '/agents/#replay-rules', 'replay, rules, rulebook, draft, last week, spending limits, try'), menu: false }); // Replay your rules: search-only.
+TASKS.push({ ...task('pay-agent', 'agents', 'Pay another agent', 'Your rulebook decides, your wallet sends USDG, Anonymo checks it and signs a receipt.', '/agents/#pay-agent', 'pay, payment, send, agent, usdg, wallet, receipt'), menu: false }); // Pay another agent: search-only until switched on.
 TASKS.push({ ...task('request-check', 'agents', 'Check a request against your rules', 'Check agent rules without spending: allow, approval required or deny.', '/agents/#request-check', 'check, try, request, rules'), menu: false }); // V85: search-only.
 TASKS.push({ ...task('prompt-library', 'chat', 'Save and reuse prompts', 'Keep named prompts in this browser and fill in variables before using them.', '/harness/#prompt-library', 'prompts, library, templates, favourites'), menu: false }); // V81: search-only, keeps menus short.
 TASKS.push({ ...task('why-this-route', 'learn', 'Understand a route', 'See why each reply went to its provider, and what that explanation does not show.', '/docs/#why-this-route', 'route explanation, provider, routing, fallback'), menu: false }); // V84: search only.
+TASKS.push({ ...task('decision-tags', 'verify', 'Tie an order to the model call behind it', 'Sign an order’s hash into a call’s receipt and check it later.', '/docs/#decision-tags', 'decision tag, decision receipt, order, trade, hash, agent guard, informed by'), menu: false }); // B: search-only until switched on.
 TASKS.push({ ...task('lane-report', 'verify', 'See where your calls ran', 'Calls and spend by lane, the share on proven hardware and each provider’s evidence.', '/dashboard/#statements', 'lane, lanes, lane report, attested, unlinkable, public, proven hardware, where, evidence'), menu: false }); // Lane report: search-only, on Statements.
 TASKS.push({ ...task('insights', 'build', 'See where your money goes', 'See spend by model, key and lane, and the same abilities for less.', '/dashboard/#insights', 'spend, insights, cost, model, key, agent, lane'), menu: false }); // V88: search-only.
 export const menuTasks = group => TASKS.filter(item => item.group === group && item.menu);
 
 TASKS.push({ ...task('webhooks', 'build', 'Manage webhook destinations', 'Inspect signing availability, event subscriptions and delivery history.', '/dashboard/webhooks/', 'webhooks, events, signature'), menu: false }); // V86: search-only account tool.
+TASKS.push({ ...task('playbooks', 'agents', 'Share one rulebook across agents', 'Keep one playbook of rules that many agents and keys follow, and change it once.', '/dashboard/#playbooks', 'playbook, shared rules, rulebook, team, agents, keys, limits'), menu: false }); // U115: search-only; the Agents menu is full.
 TASKS.push({ ...task('commerce', 'verify', 'Read the commerce ledger', 'See anchored settlements without self-dealing, beside the gross figures.', '/commerce/', 'commerce, settlements, volume, self-dealing, dune'), menu: false }); // v6 L: search-only.
 
 // Account sections share the task map; existing dashboard hashes remain stable.
@@ -125,7 +129,7 @@ TASKS.push({ ...task('commerce', 'verify', 'Read the commerce ledger', 'See anch
 export const ACCOUNT_GROUPS = [
   { id: 'overview', title: 'Overview', ids: ['dashboard', 'inbox', 'account-activity', 'insights'] },
   { id: 'build', title: 'Build', ids: ['playground', 'models', 'routing', 'presets', 'characters', 'evals', 'batches', 'skills', 'providers'] },
-  { id: 'keys', title: 'Keys & limits', ids: ['account-keys', 'rulebook', 'sessions', 'spend', 'teams', 'directory'] },
+  { id: 'keys', title: 'Keys & limits', ids: ['account-keys', 'rulebook', 'playbooks', 'sessions', 'spend', 'teams', 'directory'] },
   { id: 'billing', title: 'Billing', ids: ['account-payments', 'api-receipts', 'statements', 'holders'] },
   { id: 'settings', title: 'Settings', ids: ['settings', 'account-export', 'webhooks', 'keep'] },
 ];
@@ -149,6 +153,7 @@ export const ACCOUNT_SECTIONS = [
   accountSection('batches', 'Batch Studio', 'batch-studio', 'Submit groups of requests and follow their progress.', 'Connect your key to submit a batch.'),
   accountSection('skills', 'Skills', 'skills', 'Read skill scan reports and installation details.', 'Connect your key to inspect a skill.'),
   accountSection('rulebook', 'Agents', null, 'Set budgets and rules, stop agents and review requests waiting for approval.', 'Connect a management key or an owner/admin key to manage agents.'),
+  accountSection('playbooks', 'Playbooks', 'playbooks', 'Keep one set of rules that many agents and keys follow, and change it once.', 'Connect a management key or a team owner/admin key to manage playbooks.'), // U115
   accountSection('sessions', 'Agent Sessions', 'agent-sessions', 'Give an agent a spending budget and a time limit.', 'Connect your key to open a session.'),
   accountSection('directory', 'Public directory', null, 'Browse opt-in agent profiles and owner-supplied capabilities.', 'Open the public directory to find an agent; no key is needed.'),
   accountSection('account-payments', 'Payments', 'payments', 'See your balance, deposit instructions and payment options.', 'Connect your key to add funds.'),

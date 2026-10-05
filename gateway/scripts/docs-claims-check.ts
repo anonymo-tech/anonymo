@@ -42,6 +42,7 @@ const flag = (name: string) => (_: Status, config: Record<string, boolean>) => (
 
 export const CAPABILITIES: Capability[] = [
   { id: "agent-guard", label: "Agent Guard", field: "agent_guard.enabled", on: field("agent_guard.enabled"), mention: /\bagent guard\b/i },
+  { id: "agent-pay", label: "paying another agent", field: "agent_pay.enabled", on: field("agent_pay.enabled"), mention: /\bpay(?:ing|s)? another agent\b/i },
   { id: "x402", label: "x402 per-call payments", field: "per_call.x402.configured", on: field("per_call.x402.configured"), mention: /\bx402\b(?! (?:facilitator|tools?)\b)/i },
   { id: "facilitator", label: "hosted x402 facilitator", field: "facilitator.enabled", on: field("facilitator.enabled"), mention: /\bfacilitator\b/i },
   { id: "tools", label: "paying x402 tools from a balance", field: "tools.ready", on: field("tools.ready"), mention: /\bx402 tools?\b|\btool market\b|\bpaid tools?\b/i },
@@ -76,6 +77,7 @@ export const CAPABILITIES: Capability[] = [
   { id: "host-anchor", label: "per-host receipt anchoring", field: "jobs[host-anchor]", on: job("host-anchor"), mention: /\bper-host receipt anchoring\b|\banchored per host\b/i },
   { id: "onchain-anchor", label: "receipt roots anchored on chain", field: "chain.contracts.receiptAnchor", on: (s) => { const c = get(s, "chain.contracts"); return c && typeof c === "object" ? !!(c as Record<string, unknown>).receiptAnchor : undefined; }, mention: /\banchored on[- ]chain\b|\banchored on chain \d+\b|\bon-chain anchor(?:ing|ed)?\b/i },
   { id: "batches", label: "Batch API", field: "jobs[batches]", on: job("batches"), mention: /\bBatch API\b/i },
+  { id: "decision-tags", label: "decision tags in receipts", field: "decision_tags.enabled", on: field("decision_tags.enabled"), mention: /\bdecision tags?\b|\bX-Anonymo-Decision-Tag\b/i },
 ];
 
 /** Words that make a clause a claim that something is on now. */

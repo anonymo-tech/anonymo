@@ -65,3 +65,69 @@ def test_absent_approval_metadata_and_disabled_routes():
         with pytest.raises(AnonymoError) as caught:
             Anonymo("https://router.test", http=http).agent.rules()
         assert type(caught.value) is AnonymoError and caught.value.status == 404
+
+
+def test_replay_posts_the_draft_to_the_key_and_returns_data_unchanged():
+    policy = {"version": 1, "models": {"deny": ["beta/*"]}, "caps": {"per_day_usd": 5}, "on_breach": "deny"}
+    result = {"window": {"from": "2026-09-21T00:00:00.000Z", "to": "2026-09-28T00:00:00.000Z", "days": 7}, "evaluated": 2, "allowed": 1, "denied": 1, "asked": 0,
+              "by_reason": {"model_not_allowed": 1}, "actual": {"allowed": 2, "denied": 0, "asked": 0, "not_recorded": 0}, "changed": 1, "examples": [], "truncated": False, "notes": []}
+    bodies = []
+
+    def handler(req):
+        assert req.method == "POST"
+        assert req.url.raw_path == b"/api/v1/agents/hash%2Fone/replay"
+        assert req.headers["authorization"] == "Bearer key"
+        bodies.append(json.loads(req.content))
+        return httpx.Response(200, json={"data": result})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        c = Anonymo("https://router.test", "key", http=http)
+        assert c.agent.replay("hash/one", policy) == result
+        assert c.agent.replay("hash/one", policy, days=2) == result
+    assert bodies == [{"policy": policy}, {"policy": policy, "days": 2}]
+
+
+def test_replay_refusals_surface_as_errors():
+    def handler(req):
+        return httpx.Response(429, json={"error": {"type": "rate_limited", "message": "Too many replays from this key. Try again within a minute."}})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        c = Anonymo("https://router.test", "key", http=http)
+        with pytest.raises(AnonymoError) as e:
+            c.agent.replay("hash", {"version": 1, "models": {}, "caps": {}, "on_breach": "deny"})
+    assert e.value.status == 429
+
+def test_pay_and_confirm_pay_send_the_agent_key_and_return_data_unchanged():
+    decision = {"decision": "allow", "reasons": [], "decision_id": "decision-1", "policy_sha256": "digest", "payment": {"status": "awaiting_transfer", "amount_units": "20000000"}}
+    payment = {"decision_id": "decision-1", "status": "seen", "status_text": "Seen, waiting for finality", "receipt": {"payload": {"type": "anonymo.agent.payment.v1"}, "sig": "sig", "key_id": "kid"}}
+    tx = "0x" + "1" * 64
+    calls = []
+
+    def handler(req):
+        calls.append(req)
+        assert req.headers["authorization"] == "Bearer key"
+        assert req.method == "POST"
+        if req.url.raw_path.decode().endswith("/confirm"):
+            assert req.url.raw_path.decode() == "/api/v1/agents/pay/decision%2F1/confirm"
+            assert json.loads(req.content) == {"tx_hash": tx}
+            return httpx.Response(200, json={"data": payment})
+        assert req.url.path == "/api/v1/agents/pay"
+        assert json.loads(req.content) == {"to": "profile-id", "amount_usd": "20", "approval_id": "approval-1"}
+        return httpx.Response(200, json={"data": decision})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        c = Anonymo("https://router.test", "key", http=http)
+        assert c.agent.pay("profile-id", "20", approval_id="approval-1") == decision
+        assert c.agent.confirm_pay("decision/1", tx) == payment
+    assert len(calls) == 2
+
+
+def test_confirm_pay_surfaces_the_router_reason():
+    def handler(req):
+        return httpx.Response(403, json={"error": {"type": "pay_wallet_not_linked", "message": "Not linked."}})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        c = Anonymo("https://router.test", "key", http=http)
+        with pytest.raises(AnonymoError) as caught:
+            c.agent.confirm_pay("decision-1", "0x" + "1" * 64)
+    assert caught.value.status == 403 and caught.value.code == "pay_wallet_not_linked" and str(caught.value) == "Not linked."
