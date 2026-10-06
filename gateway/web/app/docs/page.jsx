@@ -1,4 +1,6 @@
 import DepositCountdownDocs from "../../components/DepositCountdownDocs"; // B123
+import ModelAlternativesDocs from "../../components/ModelAlternativesDocs"; // B121
+import RunwayDocs from "../../components/RunwayDocs"; // B119
 import RouterLimits from "../../components/RouterLimits"; // HD1
 import AgentGuardDocs from "../../components/AgentGuardDocs"; // V98
 import WeeklySummaryDocs from "../../components/WeeklySummaryDocs"; // B120
@@ -41,7 +43,9 @@ import SpendingLimitsDocs from "../../components/SpendingLimitsDocs";
 import AutoTopupDocs from "../../components/AutoTopupDocs"; // U113
 import ReplayRulesDocs from "../../components/ReplayRulesDocs";
 import PlaybooksDocs from "../../components/PlaybooksDocs"; // U115
+import StopUntilDocs from "../../components/StopUntilDocs"; // B117
 import DefaultRouteDocs from "../../components/DefaultRouteDocs";
+import RulebookWordsDocs from "../../components/RulebookWordsDocs"; // B124
 import StarterSetupsDocs from "../../components/StarterSetupsDocs"; // U103
 import AgentBreakersDocs from "../../components/AgentBreakersDocs";
 import AgentCertificateDocs from "../../components/AgentCertificateDocs";
@@ -864,11 +868,12 @@ export default function Docs() {
           </div>
           <DocsFeatureIndex />
           <DepositCountdownDocs /> {/* B123 */}
+          <DocsFeatureIndex /><RunwayDocs /> {/* B119 */}
           <KeyProvisioningDocs /> {/* ZK6 */}
           <UnusedKeysDocs /> {/* B125 */}
           <ZkapiDocs /> {/* ZK9 */}
           <FacilitatorDocs /> {/* v6 F */}
-          <SpendingLimitsDocs /><DefaultRouteDocs /><StarterSetupsDocs /><AutoTopupDocs /><ReplayRulesDocs /><PlaybooksDocs /><AgentRulebookDocs /><AgentBreakersDocs /><AgentAutonomyDocs />
+          <SpendingLimitsDocs /><DefaultRouteDocs /><StarterSetupsDocs /><AutoTopupDocs /><ReplayRulesDocs /><PlaybooksDocs /><StopUntilDocs /><RulebookWordsDocs /><AgentRulebookDocs /><AgentBreakersDocs /><AgentAutonomyDocs /> {/* B117 B124 */}
           <StatementDocs /> {/* V87 */}<ProofPackDocs /> {/* U100 */}<LaneReportDocs /> {/* Lane report */}
           <MakeGoodDocs /> {/* V6 R */}
           <AgentLedgerDocs /><AgreementsDocs />
@@ -1308,6 +1313,7 @@ OK  team team_…  42 entries  3 hourly roots  head 9f2c…`}</Code>
             </li>
           </ul>
           <Code label="Recover a lost x402 answer (JavaScript, viem)">{x402RecoveryExample}</Code>
+          <ModelAlternativesDocs /> {/* B121 */}
           <h2 id="receipts">The response is only the beginning.</h2>
           <p>
             Every generation returns normalized usage and a signed receipt with hashes of the request and response (never their content), in two encodings: v1 (JSON, Ed25519) and v2 (a COSE_Sign1 signed EdDSA with the same key, with token

@@ -373,6 +373,7 @@ const schema = z.object({
 
   // Optional Telegram bot (BotFather token, a secret). Without it the bot never starts.
   TELEGRAM_BOT_TOKEN: opt,
+  LOW_BALANCE_ALERTS_ENABLED: bool.default(false), // B119
   TELEGRAM_LINKING_ENABLED: bool.default(false),
   WEEKLY_SUMMARY_ENABLED: bool.default(false), // B120
 
@@ -449,6 +450,7 @@ const schema = z.object({
   // witnesses; src/tlog). Off by default: no route is registered and nothing is appended.
   AGENT_PROFILES_ENABLED: bool.default(false),
   AGENT_POLICY_ENABLED: bool.default(false),
+  AGENT_RULEBOOK_WORDS_ENABLED: bool.default(false), // B124: Telegram wording only
   AGENT_GUARD_ENABLED: bool.default(false), // V98
   // Pay another agent: Agent Guard decides, the paying wallet sends USDG straight to the recipient, the router checks the
   // transfer on chain and signs a receipt. Anonymo never holds the money. Off by default; needs AGENT_GUARD_ENABLED.
@@ -540,6 +542,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
       const allowed = ["health-flush", "holds-expire", "catalog-refresh", "provider-registry", "health-probes", "canaries", "attestor", "receipts-anchor", "receipt-key-rotation", "settlement", "slasher", "chain-indexer", "paywith-aggregator", "escrow-indexer", "spend-watch", "alert-notifier", "telegram-bot", "measurements", "blind-key-rotation", "ipx-oracle", "dayzero", "ohttp-key-rotation", "host-anchor", "tlog", "batches", "skills-mirror", "sanctions-refresh"];
       allowed.push("weekly-summary"); // B120
       allowed.push("deposit-pings"); // B123
+      allowed.push("low-balance-alerts"); // B119
       allowed.push("webhooks"); // V86: bounded event delivery.
       allowed.push("makegood-payouts"); // V6 R: on-chain make-good refunds.
       allowed.push("agreement-indexer", "agreement-jury", "agreement-retention");
@@ -676,6 +679,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     host: e.HOST,
     port: e.PORT,
     publicUrl: e.PUBLIC_BASE_URL.replace(/\/$/, ""),
+    lowBalanceAlertsEnabled: e.LOW_BALANCE_ALERTS_ENABLED, // B119
     siteUrl: (e.SITE_URL ?? e.PUBLIC_BASE_URL).replace(/\/$/, ""),
     webauthn: {
       rpId: e.WEBAUTHN_RP_ID ?? new URL(e.PUBLIC_BASE_URL).hostname,
@@ -687,6 +691,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     adminToken: e.ADMIN_TOKEN,
     agentProfilesEnabled: e.AGENT_PROFILES_ENABLED,
     agentPolicyEnabled: e.AGENT_POLICY_ENABLED,
+    agentRulebookWordsEnabled: e.AGENT_RULEBOOK_WORDS_ENABLED, // B124
     agentGuardEnabled: e.AGENT_GUARD_ENABLED, // V98
     agentPayEnabled: e.AGENT_PAY_ENABLED,
     agentSealedEnabled: e.AGENT_SEALED_ENABLED,

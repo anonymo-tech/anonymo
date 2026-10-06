@@ -383,7 +383,7 @@ export function errorType(status: number): string {
 }
 
 export function errorBody(status: number, message: string, requestId: string, anonymo?: Json): Json {
-  return { type: "error", error: { type: errorType(status), message }, request_id: requestId, ...(anonymo && Object.keys(anonymo).length ? { anonymo } : {}) };
+  return { type: "error", error: { type: errorType(status), message }, request_id: requestId, ...(anonymo && Object.keys(anonymo).length ? { anonymo } : {}), ...(Array.isArray(anonymo?.suggested_models) ? { suggested_models: anonymo.suggested_models } : {}) /* B121 */ };
 }
 
 /** What the caller should know about the router's own error beyond the Anthropic type: its stable type and metadata, and the receipt of a billed refusal. */

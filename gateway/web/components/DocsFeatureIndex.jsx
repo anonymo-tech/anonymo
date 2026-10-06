@@ -2,6 +2,9 @@ const sections = [
   ["unused-keys", "Review unused keys"], // B125
   ["proof-pack", "Proof pack"], // B122
   ["deposit-countdown", "Deposit countdown and credit notices"], // B123
+  ["errors", "Similar models when a model is unavailable"], // B121
+  ["stop-until", "Stop for a while"], // B117
+  ["balance-runway", "Balance runway and alerts"], // B119
   ["spending-limits", "Spending limits"],
   ["default-route", "Default route"],
   ["lane-report", "Lane report"],
@@ -9,6 +12,7 @@ const sections = [
   ["auto-topup", "Auto top-up"],
   ["replay-rules", "Replay your rules"],
   ["playbooks", "Playbooks"],
+  ["rulebook-words", "Rulebooks in plain English"], // B124
   ["agent-rulebook", "Agent rulebook"],
   ["agent-approvals", "Ask-first approvals"],
   ["approve-and-allow", "Allow this next time"], // B118

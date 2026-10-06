@@ -8,7 +8,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '../../components/UI';
 import { api } from '../../lib/api';
 import { DAYS, LIMITS, FEATURE_OFF, capBars, reasonText, decisionText, intentSummary, eventsPage, confirmKill, errorState, utcTime } from '../../lib/agents';
+import { stoppedLabel } from '../../lib/stop-until'; // B117
 import { LIMIT_WORDS as W, limitsFromRulebook, rulebookFromLimits } from '../../lib/spending-limits';
+import RulebookCard from '../../components/limits/RulebookSentences'; // B124
 import SpendingLimits, { LimitGroup, useAgentGuard } from '../../components/limits/SpendingLimits';
 import ReplayResult, { ReplayButton, useRuleReplay } from '../../components/limits/ReplayRules'; // Replay your rules
 import s from './agents.module.css';
@@ -39,7 +41,6 @@ function RulebookForm({ policy, onSave, onRemove, busy: working, locked = false,
   const busy = working || locked;
   const [form, setForm] = useState(() => limitsFromRulebook(policy));
   const [errors, setErrors] = useState([]);
-  const [json, setJson] = useState(false);
   const set = (name, value) => setForm(f => ({ ...f, [name]: value }));
   const windowSet = (index, patch) => setForm(f => ({ ...f, windows: f.windows.map((w, i) => i === index ? { ...w, ...patch } : w) }));
   const built = rulebookFromLimits(form);
@@ -59,9 +60,8 @@ function RulebookForm({ policy, onSave, onRemove, busy: working, locked = false,
       <BreakersForm values={form.breakers} onChange={values => set('breakers', values)} busy={busy}/>
       <AlertFields value={form.alerts} onChange={value => set('alerts',value)} disabled={busy}/>
     </SpendingLimits>
-    <Errors errors={errors}/><div className="button-row">{!locked && <Button type="submit" disabled={busy}>{W.save}</Button>}<ReplayButton replay={replay} disabled={working} onRun={() => replay.run(built)}/>{hasPolicy && !locked && <Button type="button" secondary disabled={busy} onClick={() => { if (window.confirm('Remove these spending limits? Their rules will no longer apply.')) onRemove(); }}>{W.remove}</Button>}<button type="button" className="text-button" aria-expanded={json} onClick={() => setJson(!json)}>{json ? 'Hide JSON' : 'View JSON'}</button></div>
+    <Errors errors={errors}/><div className="button-row">{!locked && <Button type="submit" disabled={busy}>{W.save}</Button>}<ReplayButton replay={replay} disabled={working} onRun={() => replay.run(built)}/>{hasPolicy && !locked && <Button type="button" secondary disabled={busy} onClick={() => { if (window.confirm('Remove these spending limits? Their rules will no longer apply.')) onRemove(); }}>{W.remove}</Button>}</div>
     <ReplayResult id="replay-rules" replay={replay} current={built.policy}/>
-    {json && <><Errors errors={built.errors}/><pre className={s.json}>{JSON.stringify(built.policy,null,2)}</pre></>}
   </form>;
 }
 
@@ -93,17 +93,17 @@ function AgentDetail({ agent, request, refreshList, refreshVersion, onError, gua
   };
   const killed = record?.killed ?? agent.killed;
   const policy = record?.policy ?? record?.spec ?? (record?.version === 1 && record?.models ? record : null);
-  const stop = { stopped: !!record?.killed, ready: !!policy, busy, reason: true,
+  const stop = { stopped: !!record?.killed, until: record?.stopped_until, ready: !!policy, busy, reason: true, // B117
     detail: record?.killed ? `Since ${utcTime(record.killed_at)}. Reason: ${record.killed_reason || 'Not recorded'}.` : null,
-    onStop: reason => mutate(() => confirmKill(agent,reason,message => window.confirm(message),request)),
+    onStop: (reason, until) => mutate(() => confirmKill(agent,reason,message => window.confirm(message),request,until)), // B117
     onResume: () => mutate(() => request(path+'/resume',{ method:'POST' })) };
   return <>
-    <section className="control-panel"><div className={s.heading}><h2>{agent.name || 'Unnamed agent'}</h2><span className={'badge'+(killed ? ' dark' : '')}>{killed ? 'Stopped' : 'Running'}</span></div>
+    <section className="control-panel"><div className={s.heading}><h2>{agent.name || 'Unnamed agent'}</h2><span className={'badge'+(killed ? ' dark' : '')}>{killed ? stoppedLabel(record?.stopped_until ?? agent.stopped_until) : 'Running'}</span></div>
       <TrippedBadge record={record} agent={agent}/>
       <span className={s.hash}>Key {agent.key_hash}</span><Spend agent={agent}/><p className={s.hash}>Policy SHA {record?.sha256 || agent.policy_sha256 || 'None'}</p>
       {notice && <p role="status">{notice}</p>}{busy && <p role="status">Reading or updating rulebook…</p>}{readError && <><p role="alert">{readError}</p><Button secondary disabled={busy} onClick={() => setRevision(r => r+1)}>Read rulebook again</Button></>}
       <FollowPlaybook id="rulebook" keyHash={agent.key_hash} playbook={agent.playbook ?? null} request={request} disabled={busy} onChanged={() => { setNotice('Updated.'); refreshList(); setRevision(r => r+1); }}/>
-      {record && <><h3>{W.title}</h3><RulebookForm key={revision} policy={policy} hasPolicy={!!policy} busy={busy} locked={!!agent.playbook} guard={guard} stop={stop} request={request} keyHash={agent.key_hash} onSave={body => mutate(() => request(path+'/policy',{ method:'PUT',body }))} onRemove={() => mutate(() => request(path+'/policy',{ method:'DELETE' }))}/></>}
+      {record && <><h3>{W.title}</h3><RulebookCard policy={policy} inherited={(agent.policies ?? []).filter(p => p.inherited)} stop={stop} busy={busy}><RulebookForm key={revision} policy={policy} hasPolicy={!!policy} busy={busy} locked={!!agent.playbook} guard={guard} request={request} keyHash={agent.key_hash} onSave={body => mutate(() => request(path+'/policy',{ method:'PUT',body }))} onRemove={() => mutate(() => request(path+'/policy',{ method:'DELETE' }))}/></RulebookCard></>} {/* B124 */}
       <p className="help-text">{W.scopeOnly}</p>
     </section>
     <section className="control-panel"><h2>Event log</h2><p className="help-text">Newest first, 50 per page. These intents contain model, lane, estimated cost and tools; no prompt or response text is shown.</p>
@@ -146,7 +146,7 @@ export default function Agents() {
     linked.current = null;
     const selector = agent?.key_hash === link.agent && focusSelector(link.focus, 'rulebook'); if (!selector) return;
     const ready = () => { const el = document.querySelector(selector); return el && !el.matches(':disabled') ? el : null; };
-    const go = el => { el.scrollIntoView({ block: 'center' }); el.focus({ preventScroll: true }); };
+    const go = el => { const editor = el.closest('details'); if (editor) editor.open = true; /* B124 */ el.scrollIntoView({ block: 'center' }); el.focus({ preventScroll: true }); };
     const found = ready(); if (found) return void go(found);
     const watch = new MutationObserver(() => { const el = ready(); if (el) { stop(); go(el); } });
     const timer = setTimeout(() => watch.disconnect(), 15000); const stop = () => { watch.disconnect(); clearTimeout(timer); };
@@ -160,7 +160,7 @@ export default function Agents() {
     <PayAgent agent={key && !off ? agent : null}/>
     {error && <p className="note" role="alert">{error}</p>}
     {off ? <section className="empty" role="status"><h2>{FEATURE_OFF}</h2><p>This router is not serving agent rulebooks.</p></section> : <>
-      {key && <section aria-label="Agent keys"><div className={s.heading}><h2>Agent keys</h2><button className="text-button" disabled={busy} onClick={() => setRevision(r => r+1)}>Refresh</button></div>{busy && <p role="status">Reading agent keys…</p>}{loaded && !agents.length && <div className="empty"><p>No agent keys returned for this account.</p><a className="inline-link" href="/dashboard/#api-keys">Manage API keys</a></div>}<div className={s.list}>{agents.map(a => <div key={a.key_hash}><button className={s.agent} aria-pressed={selected === a.key_hash} onClick={() => { setSelected(a.key_hash); setError(''); }}><div className={s.heading}><strong>{a.name || 'Unnamed agent'}</strong><span className={s.badges}><span className="badge">Rulebook {a.has_policy ? 'on' : 'off'}</span>{a.playbook && <span className="badge">Playbook {a.playbook.name}</span>}{a.killed && <span className="badge dark">Stopped</span>}</span></div><span className={s.hash}>Policy SHA {a.policy_sha256 ? a.policy_sha256.slice(0,12) : 'None'}</span><Spend agent={a}/></button><SealedBadge sealed={a.sealed}/></div>)}</div></section>}
+      {key && <section aria-label="Agent keys"><div className={s.heading}><h2>Agent keys</h2><button className="text-button" disabled={busy} onClick={() => setRevision(r => r+1)}>Refresh</button></div>{busy && <p role="status">Reading agent keys…</p>}{loaded && !agents.length && <div className="empty"><p>No agent keys returned for this account.</p><a className="inline-link" href="/dashboard/#api-keys">Manage API keys</a></div>}<div className={s.list}>{agents.map(a => <div key={a.key_hash}><button className={s.agent} aria-pressed={selected === a.key_hash} onClick={() => { setSelected(a.key_hash); setError(''); }}><div className={s.heading}><strong>{a.name || 'Unnamed agent'}</strong><span className={s.badges}><span className="badge">Rulebook {a.has_policy ? 'on' : 'off'}</span>{a.playbook && <span className="badge">Playbook {a.playbook.name}</span>}{a.killed && <span className="badge dark">{stoppedLabel(a.stopped_until)}</span>}</span></div><span className={s.hash}>Policy SHA {a.policy_sha256 ? a.policy_sha256.slice(0,12) : 'None'}</span><Spend agent={a}/></button><SealedBadge sealed={a.sealed}/></div>)}</div></section>}
       {key && <TelegramLink key={key} principalKey={key}/>}
       {key && <section id="approvals"><Approvals key={key} request={request} agents={agents} onError={onError}/></section>}
       {key && agent && <Autonomy agent={agent}/> }
