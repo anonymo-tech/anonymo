@@ -107,6 +107,7 @@ TASKS.push(task('facilitator', 'build', 'Settle x402 payments for your API', 'Ve
 SEARCH_ONLY.add('facilitator'); // v6 F: off until switched on, so search-only.
 SEARCH_ONLY.add('make-good'); TASKS.push(task('make-good', 'build', 'Read make-good refund rules', 'See when a failed, cut-off or rerouted call is refunded, with a signed refund receipt.', '/docs/#make-good-refunds', 'refund, make good, failover, truncated, receipt')); // V6 R
 for (const item of TASKS) item.menu = !SEARCH_ONLY.has(item.id);
+TASKS.push({ ...task('weekly-summary', 'agents', 'Weekly Telegram summary', 'Read about weekly agent spend, approvals and Stops in Telegram; not switched on yet.', '/docs/#weekly-summary', 'telegram, weekly, summary'), menu: false }); // B120
 TASKS.push({ ...task('paid-tools', 'build', 'Browse paid tools', 'List x402 tools a key can pay from its balance, with their canary state.', '/tools/', 'tools, x402, paid, mcp, canary'), menu: false }); // v6 T: search-only until switched on.
 TASKS.push({ ...task('chat-limits', 'chat', 'Limit chat spending', 'Open Tools in Chat to cap spending, approve replies and stop chat.', '/harness/', 'limits, budget, spending, approval, stop'), menu: false }); // U77: search-only control.
 TASKS.push({ ...task('starter-setups', 'agents', 'Start from a setup', 'Fill spending limits from a ready-made setup, review it, then save.', '/agents/#starter-setups', 'starter, setup, template, budget, rules, chatbot, trading, batch, proven hardware'), menu: false }); // U103: replaces V85's rulebook templates; /agents/#rulebook-templates lands on the same place.
@@ -179,6 +180,7 @@ for (const section of ACCOUNT_SECTIONS) {
 TASKS.push({ ...task('operations', 'build', 'Inspect service operations', 'Use the service operator token to inspect monitoring availability and daily counts.', '/admin/', 'operator, upstream, balance, counts'), menu: false }); // ON3: search-only.
 TASKS.push({ ...task('auto-topup', 'agents', 'Refill a key’s budget from your credits', 'Top up a key automatically from your credits when it runs low, within a weekly limit.', '/dashboard/#api-keys', 'auto top-up, top up a key automatically, refill, budget, credits, agent, key, weekly'), menu: false }); // U107: search-only.
 TASKS.push({ ...task('key-management', 'build', 'Read key provisioning options', 'Read capped-key fields, pagination and inference-only keys.', '/docs/#key-management', 'key, provisioning, scope, inference, management'), menu: false }); // ZK6: search only.
+TASKS.push({ ...task('unused-keys', 'build', 'Review unused keys', 'Review keys unused for 30 days and switch off those you no longer need.', '/dashboard/#api-keys', 'unused keys, last used, cleanup, switch off, 30 days, management keys'), menu: false }); // B125
 TASKS.push({ ...task('labs', 'learn', 'See Labs: built but switched off', 'Features built but switched off or in a pilot, each state read live from status.', '/labs/', 'labs, experimental, switched off, pilot, flags, x402, zkapi, host bonds'), menu: true }); // U104: last in Learn.
 
 // U106: things ⌘K can do. Each names the task whose page does it, so search, menus and actions share this one map.
@@ -195,3 +197,7 @@ export const ACTIONS = [
   action('chat-model', 'chat', 'Switch Chat model', 'Choose a model, then open Chat with it selected.', 'model, switch, change, choose, pick, chat, llm', { pick: 'model' }),
   action('default-route', 'rulebook', 'Set default route', 'Choose a key or agent, then set the route for requests that name no lane.', 'route, routing, default, lane, change', { signIn: true, pick: 'agent', focus: 'route' }),
 ];
+
+TASKS.push({ ...task('approve-and-allow', 'agents', 'Allow this next time', 'Review and raise an agent’s ask-first amount while approving one request.', '/docs/#approve-and-allow', 'approve, approval, ask first, amount, threshold, allow next time'), menu: false }); // B118
+TASKS.push({ ...task('proof-pack-check', 'verify', 'Check a proof pack', 'Check receipts, statements and lane totals in your browser. Your file is never uploaded.', '/verify/#v-proof-pack', 'proof pack, file, receipts, statements, signatures, lane report'), menu: false }); // B122
+TASKS.push(task('deposit-countdown', 'build', 'Follow a deposit', 'Read about finality estimates and optional credit notices.', '/docs/#deposit-countdown', 'deposit, countdown, finality, credited, telegram')); // B123

@@ -1,8 +1,11 @@
+import DepositCountdownDocs from "../../components/DepositCountdownDocs"; // B123
 import RouterLimits from "../../components/RouterLimits"; // HD1
 import AgentGuardDocs from "../../components/AgentGuardDocs"; // V98
+import WeeklySummaryDocs from "../../components/WeeklySummaryDocs"; // B120
 import AgentPayDocs from "../../components/AgentPayDocs"; // Pay another agent
 import FastCreditDocs from '../../components/FastCreditDocs'; // V97
 import KeyProvisioningDocs from "../../components/KeyProvisioningDocs"; // ZK6
+import UnusedKeysDocs from "../../components/UnusedKeysDocs"; // B125
 import FacilitatorDocs from "../../components/FacilitatorDocs"; // v6 F: hosted x402 facilitator.
 import ToolsMarketDocs from "../../components/ToolsMarketDocs"; // v6 T: paid x402 tools.
 import ZkapiDocs from "../../components/ZkapiDocs"; // ZK9: Sepolia browser payment.
@@ -42,6 +45,7 @@ import DefaultRouteDocs from "../../components/DefaultRouteDocs";
 import StarterSetupsDocs from "../../components/StarterSetupsDocs"; // U103
 import AgentBreakersDocs from "../../components/AgentBreakersDocs";
 import AgentCertificateDocs from "../../components/AgentCertificateDocs";
+import ApproveAndAllowDocs from "../../components/ApproveAndAllowDocs"; // B118
 import AgentApprovalDocs from "../../components/AgentApprovalDocs";
 import TradingAgentDocs from "../../components/TradingAgentDocs"; // B
 import DecisionTagDocs from "../../components/DecisionTagDocs"; // B: decision tags
@@ -859,7 +863,9 @@ export default function Docs() {
             The router serves this site, so your base URL is this site’s address followed by /api/v1. Create a key in the dashboard, add funds (the add-funds card lists the tokens this router accepts) and call it from any OpenAI- or OpenRouter-compatible client.
           </div>
           <DocsFeatureIndex />
+          <DepositCountdownDocs /> {/* B123 */}
           <KeyProvisioningDocs /> {/* ZK6 */}
+          <UnusedKeysDocs /> {/* B125 */}
           <ZkapiDocs /> {/* ZK9 */}
           <FacilitatorDocs /> {/* v6 F */}
           <SpendingLimitsDocs /><DefaultRouteDocs /><StarterSetupsDocs /><AutoTopupDocs /><ReplayRulesDocs /><PlaybooksDocs /><AgentRulebookDocs /><AgentBreakersDocs /><AgentAutonomyDocs />
@@ -870,7 +876,9 @@ export default function Docs() {
           <ToolsMarketDocs /> {/* v6 T */}
           <AgentAlertDocs />
           <AgentApprovalDocs />
+          <ApproveAndAllowDocs /> {/* B118 */}
           <AgentGuardDocs /> {/* V98 */}
+          <WeeklySummaryDocs /> {/* B120 */}
           <AgentPayDocs /> {/* Pay another agent */}
           <TradingAgentDocs /> {/* B */}
           <DecisionTagDocs /> {/* B: decision tags */}

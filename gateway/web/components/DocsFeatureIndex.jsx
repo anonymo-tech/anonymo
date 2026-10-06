@@ -1,4 +1,7 @@
 const sections = [
+  ["unused-keys", "Review unused keys"], // B125
+  ["proof-pack", "Proof pack"], // B122
+  ["deposit-countdown", "Deposit countdown and credit notices"], // B123
   ["spending-limits", "Spending limits"],
   ["default-route", "Default route"],
   ["lane-report", "Lane report"],
@@ -8,6 +11,7 @@ const sections = [
   ["playbooks", "Playbooks"],
   ["agent-rulebook", "Agent rulebook"],
   ["agent-approvals", "Ask-first approvals"],
+  ["approve-and-allow", "Allow this next time"], // B118
   ["agent-pay", "Pay another agent"],
   ["trading-agents", "Trading agents"],
   ["decision-tags", "Decision tags"],
@@ -15,6 +19,7 @@ const sections = [
   ["agent-autonomy", "Progressive autonomy"],
   ["agent-ledger", "Activity & receipts"],
   ["agent-alerts", "Agent alerts"],
+  ["weekly-summary", "Weekly Telegram summary"], // B120
   ["agent-certificates", "Track-record certificates"],
   ["agent-profiles", "Public profiles & directory"],
   ["agent-identity", "Identity, paid reputation & liveness"],

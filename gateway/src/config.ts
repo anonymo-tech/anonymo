@@ -1,3 +1,4 @@
+import { depositPingsEnv } from "./pay/deposit-pings-config.ts"; // B123
 import { hardeningEnv, hardeningSettings } from "./hardening/config.ts"; // HD1
 import { rpcEnv, rpcSettings } from "./chain/rpc-config.ts"; // RPC1: private transport settings.
 import { fastCreditEnv, fastCreditSettings } from "./pay/fast-credit-config.ts"; // V97
@@ -71,6 +72,7 @@ function measurementPublicKey(raw: string | undefined): string | null {
 const schema = z.object({
   ...hardeningEnv, // HD1
   ...fastCreditEnv, // V97
+  ...depositPingsEnv, // B123
   ...identityEnv, // v6 I
   ...zkapiPageEnv, // ZK10
   ...toolsEnv, // v6 T
@@ -101,7 +103,7 @@ const schema = z.object({
   HOST: z.string().default("127.0.0.1"),
   PORT: int(8787),
   PUBLIC_BASE_URL: z.string().default("http://127.0.0.1:8787"),
-  // Public website address shown to people (e.g. in copy-paste examples); default: PUBLIC_BASE_URL. Not used for receipts or issuers.
+  // B116: address shown in links people open; default: PUBLIC_BASE_URL. Signed receipt issuers stay unchanged.
   SITE_URL: z.string().url().optional(),
   // Passkeys for organisation members (WebAuthn). Default: the host and origin of PUBLIC_BASE_URL, where the dashboard is served.
   WEBAUTHN_RP_ID: opt,
@@ -372,6 +374,7 @@ const schema = z.object({
   // Optional Telegram bot (BotFather token, a secret). Without it the bot never starts.
   TELEGRAM_BOT_TOKEN: opt,
   TELEGRAM_LINKING_ENABLED: bool.default(false),
+  WEEKLY_SUMMARY_ENABLED: bool.default(false), // B120
 
   // ---- $ANMO holder perks: free inference credits (scripts/holder-credits.ts) and live holder tiers.
   // The token is ANMO_TOKEN_ADDRESS / ANMO_TOKEN_SYMBOL above (the $ANMO escrow settings).
@@ -535,6 +538,8 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     if (e.RUNTIME_ROLE === "worker") {
       const names = e.WORKER_JOBS.split(",").map((v) => v.trim()).filter(Boolean);
       const allowed = ["health-flush", "holds-expire", "catalog-refresh", "provider-registry", "health-probes", "canaries", "attestor", "receipts-anchor", "receipt-key-rotation", "settlement", "slasher", "chain-indexer", "paywith-aggregator", "escrow-indexer", "spend-watch", "alert-notifier", "telegram-bot", "measurements", "blind-key-rotation", "ipx-oracle", "dayzero", "ohttp-key-rotation", "host-anchor", "tlog", "batches", "skills-mirror", "sanctions-refresh"];
+      allowed.push("weekly-summary"); // B120
+      allowed.push("deposit-pings"); // B123
       allowed.push("webhooks"); // V86: bounded event delivery.
       allowed.push("makegood-payouts"); // V6 R: on-chain make-good refunds.
       allowed.push("agreement-indexer", "agreement-jury", "agreement-retention");
@@ -589,6 +594,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
   if (e.AGENT_PAY_ENABLED && !e.AGENT_GUARD_ENABLED) throw new Error("AGENT_PAY_ENABLED requires AGENT_GUARD_ENABLED.");
   if (e.AGENT_PAY_ENABLED && (!e.USDG_ADDRESS || /^0x0{40}$/.test(e.USDG_ADDRESS))) throw new Error("AGENT_PAY_ENABLED requires USDG_ADDRESS.");
   if (e.TELEGRAM_LINKING_ENABLED && !e.AGENT_POLICY_ENABLED) throw new Error("TELEGRAM_LINKING_ENABLED requires AGENT_POLICY_ENABLED.");
+  if (e.WEEKLY_SUMMARY_ENABLED && !e.TELEGRAM_LINKING_ENABLED) throw new Error("WEEKLY_SUMMARY_ENABLED requires TELEGRAM_LINKING_ENABLED."); // B120
   if (e.TELEGRAM_LINKING_ENABLED && e.RUNTIME_ROLE !== "api" && !e.TELEGRAM_BOT_TOKEN) throw new Error("TELEGRAM_LINKING_ENABLED requires TELEGRAM_BOT_TOKEN on the worker (or a combined role).");
   if (e.TELEGRAM_BOT_TOKEN && !/^\d{3,20}:[A-Za-z0-9_-]{20,}$/.test(e.TELEGRAM_BOT_TOKEN)) throw new Error("TELEGRAM_BOT_TOKEN must be the token BotFather issued (<id>:<secret>).");
   // The webhook is optional: without it the alert-notifier job only records state. Never echo the URL.
@@ -637,6 +643,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
   const holders = holderSettings(e, anmoEscrow);
   return {
     fastCredit: fastCreditSettings(e), // V97
+    depositPingsEnabled: e.DEPOSIT_PINGS_ENABLED, // B123
     env: e.ANONYMO_ENV,
     production,
     developerFirstCallEnabled: e.DEVELOPER_FIRST_CALL_ENABLED, // ON2
@@ -837,6 +844,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     limits: { defaultRpm: e.DEFAULT_RPM, defaultTpm: e.DEFAULT_TPM, unauthRpm: e.UNAUTH_RPM, newKeysPerHour: e.NEW_KEYS_PER_HOUR },
     alerts: { webhookUrl: e.ALERT_WEBHOOK_URL, webhookFormat: e.ALERT_WEBHOOK_FORMAT },
     telegram: { botToken: e.TELEGRAM_BOT_TOKEN, linkingEnabled: e.TELEGRAM_LINKING_ENABLED },
+    weeklySummaryEnabled: e.WEEKLY_SUMMARY_ENABLED, // B120
     backup: { required: e.BACKUP_REQUIRED, maxAgeHours: e.BACKUP_MAX_AGE_HOURS },
     holders,
     ipx: ipxSettings(e),
