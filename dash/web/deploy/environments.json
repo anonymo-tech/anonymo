@@ -1,0 +1,70 @@
+{
+  "schema": "conclave-deploy-environments-v1",
+  "notes": "Names only: this file never holds a value, host, project reference or secret. Values live in the operator's private environment and in Wrangler secrets.",
+  "environments": {
+    "staging": {
+      "expectedCluster": "devnet",
+      "production": false,
+      "databaseSchema": "conclave",
+      "workerName": "REPLACE_WITH_STAGING_WORKER_NAME",
+      "requiredEnvironment": {
+        "worker": [
+          "CONCLAVE_MODE",
+          "CONCLAVE_APP_ORIGIN",
+          "CONCLAVE_DATABASE_URL",
+          "CONCLAVE_DATA_KEYS",
+          "CONCLAVE_ACTIVE_DATA_KEY",
+          "GATEWAY_API_KEY",
+          "GATEWAY_API_ORIGIN",
+          "GATEWAY_EVIDENCE_ORIGINS",
+          "CONCLAVE_INFERENCE_ENABLED",
+          "CONCLAVE_SOLANA_CLUSTER",
+          "CONCLAVE_SOLANA_RPC_URL",
+          "CONCLAVE_TREASURY_WALLET",
+          "CONCLAVE_TREASURY_TOKEN_ACCOUNT",
+          "CONCLAVE_MAX_DEPOSIT_USD6",
+          "CONCLAVE_HOLD_BUFFER_BPS",
+          "CONCLAVE_MAX_ACCOUNT_OVERAGE_USD6"
+        ],
+        "operator": [
+          "CONCLAVE_MIGRATION_DATABASE_URL",
+          "CONCLAVE_TEST_DATABASE_URL",
+          "CLOUDFLARE_API_TOKEN",
+          "CLOUDFLARE_ACCOUNT_ID"
+        ]
+      }
+    },
+    "production": {
+      "expectedCluster": "mainnet-beta",
+      "production": true,
+      "databaseSchema": "conclave",
+      "workerName": "REPLACE_WITH_PRODUCTION_WORKER_NAME",
+      "requiredEnvironment": {
+        "worker": [
+          "CONCLAVE_MODE",
+          "CONCLAVE_APP_ORIGIN",
+          "CONCLAVE_DATABASE_URL",
+          "CONCLAVE_DATA_KEYS",
+          "CONCLAVE_ACTIVE_DATA_KEY",
+          "GATEWAY_API_KEY",
+          "GATEWAY_API_ORIGIN",
+          "GATEWAY_EVIDENCE_ORIGINS",
+          "CONCLAVE_INFERENCE_ENABLED",
+          "CONCLAVE_SOLANA_CLUSTER",
+          "CONCLAVE_SOLANA_RPC_URL",
+          "CONCLAVE_TREASURY_WALLET",
+          "CONCLAVE_TREASURY_TOKEN_ACCOUNT",
+          "CONCLAVE_MAX_DEPOSIT_USD6",
+          "CONCLAVE_HOLD_BUFFER_BPS",
+          "CONCLAVE_MAX_ACCOUNT_OVERAGE_USD6"
+        ],
+        "operator": [
+          "CONCLAVE_MIGRATION_DATABASE_URL",
+          "CONCLAVE_TEST_DATABASE_URL",
+          "CLOUDFLARE_API_TOKEN",
+          "CLOUDFLARE_ACCOUNT_ID"
+        ]
+      }
+    }
+  }
+}
