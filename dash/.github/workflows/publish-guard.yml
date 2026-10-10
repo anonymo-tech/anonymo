@@ -1,0 +1,35 @@
+name: publish-guard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check all reachable history
+        env:
+          TZ: UTC
+        run: python3 scripts/publish-guard.py --public-ci history HEAD
+      - name: Check private release exclusions
+        if: github.event.repository.private && github.event_name == 'push'
+        env:
+          TZ: UTC
+          PUBLISH_DENYLIST: ${{ secrets.PUBLISH_DENYLIST }}
+          PUBLISH_DENYPATHS: ${{ secrets.PUBLISH_DENYPATHS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' "$PUBLISH_DENYLIST" > .git/info/publish-denylist
+          printf '%s\n' "$PUBLISH_DENYPATHS" > .git/info/publish-denypaths
+          python3 scripts/publish-guard.py history HEAD

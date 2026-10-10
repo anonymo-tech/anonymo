@@ -1,0 +1,57 @@
+Conclave Source-Available License
+
+Copyright (c) 2026 Conclave contributors. All rights reserved.
+
+This is a source-available license. The software is published so that it can be read and audited. It is not open-source software, and no right is granted except those listed below.
+
+1. Definitions
+
+"Software" means the source code, documentation, schemas, scripts and other files in this repository, in source or built form. "You" means the person or organization using the Software.
+
+2. Permitted use
+
+Subject to these terms, you may:
+
+a. view and download the Software;
+
+b. read, analyze and test the Software for the purpose of security review, audit or research, including reporting what you find to the maintainers; and
+
+c. build and run unmodified or locally patched copies on your own machine, with synthetic data and without real funds or production credentials, for the sole purpose of evaluating the Software.
+
+3. Restrictions
+
+Without prior written permission from the copyright holders, you may not:
+
+a. redistribute, publish, sublicense, sell, lease or otherwise make the Software or any part of it available to others, in source or built form, except that you may quote short excerpts in a security report or review;
+
+b. modify the Software for distribution, or distribute any modified version or derivative work;
+
+c. use the Software, or anything derived from it, for any commercial purpose, including offering it or a service based on it to third parties, or operating it with real user funds or real user data;
+
+d. remove or alter copyright, license or attribution notices; or
+
+e. use the names, logos or trademarks of the project or its contributors to endorse or promote any product.
+
+4. Third-party material
+
+Third-party components, fonts, artwork and trademarks remain subject to their own terms, which are listed in THIRD-PARTY-NOTICES.md. Nothing in this license changes those terms.
+
+5. Contributions
+
+Anything you intentionally submit to the project may be used, modified and relicensed by the copyright holders under any terms, including these.
+
+6. Termination
+
+These permissions end automatically if you breach this license. Sections 3 to 8 survive termination.
+
+7. No warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, SECURITY OR ACCURACY. THE SOFTWARE HAS NOT BEEN INDEPENDENTLY AUDITED. NOTHING IN THE SOFTWARE OR ITS DOCUMENTATION IS FINANCIAL, LEGAL OR INVESTMENT ADVICE.
+
+8. Limitation of liability
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OF OR OTHER DEALINGS IN THE SOFTWARE.
+
+9. Changes to this license
+
+The copyright holders may grant broader permissions, including under a different license, at any time. A broader grant applies only from the time it is published.
