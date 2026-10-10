@@ -1,0 +1,102 @@
+name: mirror-to-public
+
+on:
+  workflow_run:
+    workflows: [publish-guard, release-checks]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: mirror-to-public
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    if: github.event.repository.private && vars.CONCLAVE_SOURCE_REPOSITORY == github.repository && vars.PUBLICATION_ENABLED == 'true' && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-latest
+    env:
+      TZ: UTC
+    steps:
+      - name: Require exact current main and both checks
+        id: checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          sha="${RUN_SHA:-$current}"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] && [ "$sha" = "$current" ] || exit 1
+          for workflow in publish-guard.yml release-checks.yml; do
+            result=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$sha&event=push&per_page=1" --jq '.workflow_runs[0] | [.head_sha, .head_branch, .event, .conclusion] | @tsv')
+            expected=$(printf '%s\tmain\tpush\tsuccess' "$sha")
+            [ "$result" = "$expected" ] || { echo 'Release checks are pending or failed.'; exit 1; }
+          done
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Trusted private operations branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ops
+          path: ops
+          persist-credentials: false
+      - name: Exact checked source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ steps.checks.outputs.sha }}
+          path: src
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Trusted scan of every public object
+        working-directory: src
+        env:
+          DENYLIST: ${{ secrets.PUBLISH_DENYLIST }}
+          DENYPATHS: ${{ secrets.PUBLISH_DENYPATHS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' "$DENYLIST" > .git/info/publish-denylist
+          printf '%s\n' "$DENYPATHS" > .git/info/publish-denypaths
+          python3 ../ops/guard/publish-guard.py history HEAD
+      - name: Check public inventory and fast-forward ancestry
+        working-directory: src
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APPROVED_SHA: ${{ steps.checks.outputs.sha }}
+        run: |
+          set -euo pipefail
+          [ "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$APPROVED_SHA" ] || exit 1
+          public_url=https://github.com/ConclaveSOL/Conclave.git
+          refs=$(git -c credential.helper= ls-remote "$public_url" 'refs/heads/*' 'refs/tags/*')
+          if [ -n "$refs" ]; then
+            [ "$(printf '%s\n' "$refs" | wc -l | tr -d ' ')" = 1 ] || exit 1
+            [ "$(printf '%s\n' "$refs" | cut -f2)" = refs/heads/main ] || exit 1
+            git -c credential.helper= fetch --no-tags "$public_url" refs/heads/main
+            git merge-base --is-ancestor FETCH_HEAD "$APPROVED_SHA" || { echo 'Public history cannot be rewritten.'; exit 1; }
+          fi
+      - name: Inspect App-only rules, revoke inspection token, issue public writer
+        id: bot
+        env:
+          CONCLAVE_BOT_CONFIG: ${{ vars.CONCLAVE_BOT_CONFIG }}
+          CONCLAVE_BOT_KEY: ${{ secrets.CONCLAVE_BOT_KEY }}
+        run: node ops/bot/bot-token.mjs --github-output
+      - name: Fast-forward only public main
+        working-directory: src
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOT_TOKEN: ${{ steps.bot.outputs.token }}
+          APPROVED_SHA: ${{ steps.checks.outputs.sha }}
+        run: |
+          set -euo pipefail
+          [ "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$APPROVED_SHA" ] || exit 1
+          public_url=https://github.com/ConclaveSOL/Conclave.git
+          git -c credential.helper= -c credential.useHttpPath=true -c 'credential.helper=!f() { printf "username=x-access-token\npassword=%s\n" "$BOT_TOKEN"; }; f' push "$public_url" "$APPROVED_SHA:refs/heads/main"
+      - name: Revoke App token
+        if: always() && steps.bot.outputs.token != ''
+        env:
+          BOT_TOKEN: ${{ steps.bot.outputs.token }}
+        run: node ops/bot/bot-token.mjs --revoke
