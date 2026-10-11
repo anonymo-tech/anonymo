@@ -15,9 +15,9 @@ IDENTITY = b"Conclave Contributor <contributor@conclave.invalid>"
 PRIVATE_PATH = re.compile(
     r"(^|/)(internal|node_modules|dist|build|coverage|__pycache__|\.git|\.data|\.cache|\.next|\.vinext|\.wrangler|\.vercel|\.claude|\.codex|\.openai|\.cursor|\.windsurf|\.aider|\.opencode)(/|$)"
     r"|(^|/)(AGENTS|CLAUDE|GEMINI|copilot-instructions)\.md$|(^|/)(\.env|\.dev\.vars)($|\.)"
-    r"|^(INVARIANTS|OPERATIONS|SECURITY)\.md$|^web/server/(?:.*/)?FORMAT\.md$|^web/deploy/README\.md$"
+    r"|^(INVARIANTS|OPERATIONS|SECURITY)\.md$|^(?:web/)?server/(?:.*/)?FORMAT\.md$|^(?:web/)?deploy/README\.md$"
     r"|\.(pem|key|p12|pfx|keystore|pdf|zip|7z|tar|gz|log|pyc|pyo)$"
-    r"|(^|/)id_(rsa|ecdsa|ed25519)(\.|$)|^web/(docs|handoff|evidence|preview)/"
+    r"|(^|/)id_(rsa|ecdsa|ed25519)(\.|$)|^(?:web/)?(docs|handoff|evidence|preview)/"
     r"|(^|/)(manifest[^/]*|.*(?:handoff|provenance|prompts?)[^/]*)$",
     re.IGNORECASE,
 )
@@ -111,7 +111,10 @@ class Guard:
 
     def path(self, path):
         self.content(path.encode(), "path", source_path=path)
-        if PRIVATE_PATH.search(path) or any(pattern.search(path) for pattern in self.denypaths):
+        # Keep private path policies effective after flattening the application,
+        # while still inspecting old web/ trees exactly as they were published.
+        policy_paths = (path,) if path.lower().startswith("web/") else (path, "web/" + path)
+        if PRIVATE_PATH.search(path) or any(pattern.search(value) for pattern in self.denypaths for value in policy_paths):
             self.fail("path", "private or unsupported file path")
         if any(ord(char) < 32 for char in path):
             self.fail("path", "control characters in filename")

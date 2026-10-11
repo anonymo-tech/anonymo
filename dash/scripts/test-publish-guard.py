@@ -25,7 +25,7 @@ class PublicationTests(unittest.TestCase):
                     "GIT_COMMITTER_DATE": "2026-10-01T12:00:00+0000"}
         self.run_cmd("git", "init", "-q", "-b", "main")
         self.write(".git/info/publish-denylist", "private-fixture-marker\n")
-        self.write("web/safe.txt", "safe fixture\n")
+        self.write("safe.txt", "safe fixture\n")
         self.run_cmd("git", "add", ".")
 
     def tearDown(self):
@@ -65,38 +65,38 @@ class PublicationTests(unittest.TestCase):
         self.guard("--public-ci", "staged")
 
     def test_full_index_not_just_added_lines(self):
-        self.write("web/safe.txt", "private-fixture-marker")
+        self.write("safe.txt", "private-fixture-marker")
         self.commit()
-        self.write("web/other.txt", "safe")
+        self.write("other.txt", "safe")
         self.run_cmd("git", "add", ".")
         self.guard("staged", blocked=True)
 
     def test_deleted_private_content_in_history(self):
-        self.write("web/safe.txt", "private-fixture-marker")
+        self.write("safe.txt", "private-fixture-marker")
         self.commit()
-        self.write("web/safe.txt", "clean")
+        self.write("safe.txt", "clean")
         self.commit()
         self.guard("history", "HEAD", blocked=True)
 
     def test_binary_utf16_denylist_without_logging_match(self):
-        self.write("web/sample.bin", "private-fixture-marker".encode("utf-16-le"))
+        self.write("sample.bin", "private-fixture-marker".encode("utf-16-le"))
         self.run_cmd("git", "add", ".")
         result = self.guard("staged", blocked=True)
         self.assertNotIn(b"private-fixture-marker", result.stderr)
 
     def test_secret_and_personal_path(self):
         for data in [b"ghp_" + b"a" * 36, ("/" + "Users" + "/fixture/project").encode()]:
-            self.write("web/sample.bin", data)
+            self.write("sample.bin", data)
             self.run_cmd("git", "add", ".")
             self.guard("staged", blocked=True)
 
     def test_short_handle_in_text_and_binary_metadata(self):
         self.write(".git/info/publish-denylist", "xyz\n")
         for data in [b"contact xyz here", b"\0creator=xyz\0"]:
-            self.write("web/sample.bin", data)
+            self.write("sample.bin", data)
             self.run_cmd("git", "add", ".")
             self.guard("staged", blocked=True)
-        self.write("web/sample.bin", b"\0\x01xyz\x02\0")
+        self.write("sample.bin", b"\0\x01xyz\x02\0")
         self.run_cmd("git", "add", ".")
         self.guard("staged")
 
@@ -105,13 +105,13 @@ class PublicationTests(unittest.TestCase):
         self.run_cmd("git", "add", ".")
         self.guard("staged", blocked=True)
         self.run_cmd("git", "rm", "--cached", "internal/private.txt")
-        (self.root / "web/link").symlink_to("safe.txt")
-        self.run_cmd("git", "add", "web/link")
+        (self.root / "link").symlink_to("safe.txt")
+        self.run_cmd("git", "add", "link")
         self.guard("staged", blocked=True)
 
     def test_forced_build_outputs_and_tool_state(self):
-        for path in ("web/dist/private.json", "web/.dev.vars", "web/.dev.vars.production", "web/.vercel/project.json",
-                     "web/config.pyo", "web/.cache/local.json"):
+        for path in ("dist/private.json", ".dev.vars", ".dev.vars.production", ".vercel/project.json",
+                     "config.pyo", ".cache/local.json"):
             self.write(path, "private fixture")
             self.run_cmd("git", "add", path)
             self.guard("staged", blocked=True)
@@ -122,9 +122,9 @@ class PublicationTests(unittest.TestCase):
         self.guard("message", "message", blocked=True)
 
     def test_private_terms_have_no_source_path_exceptions(self):
-        for path in ("web/server/gateway/index.ts", "web/scripts/check-gateway.mjs", "web/deploy/deploy.mjs",
-                     "web/deploy/environments.json", ".github/workflows/release-checks.yml", "README.md",
-                     "scripts/publish-guard.py", "scripts/test-publish-guard.py", "web/public/licenses/example.txt"):
+        for path in ("server/gateway/index.ts", "scripts/check-gateway.mjs", "deploy/deploy.mjs",
+                     "deploy/environments.json", ".github/workflows/release-checks.yml", "README.md",
+                     "scripts/publish-guard.py", "scripts/test-publish-guard.py", "public/licenses/example.txt"):
             self.write(path, "private-fixture-marker")
             self.run_cmd("git", "add", path)
             self.guard("staged", blocked=True)
@@ -133,31 +133,31 @@ class PublicationTests(unittest.TestCase):
     def test_substring_terms_cover_embedded_identifiers_paths_and_messages(self):
         self.write(".git/info/publish-denylist", "substring:xyz\nprivate-fixture-marker\n")
         for data in ("XYZ", "PREFIX_XYZ_KEY", "ExampleXyzClient", "https://api.xyz.invalid/path"):
-            self.write("web/sample.ts", data)
-            self.run_cmd("git", "add", "web/sample.ts")
+            self.write("sample.ts", data)
+            self.run_cmd("git", "add", "sample.ts")
             result = self.guard("staged", blocked=True)
             self.assertNotIn(b"xyz", result.stderr.lower())
-        self.write("web/sample.ts", "safe")
-        self.run_cmd("git", "add", "web/sample.ts")
-        self.write("web/xyzClient.ts", "safe")
-        self.run_cmd("git", "add", "web/xyzClient.ts")
+        self.write("sample.ts", "safe")
+        self.run_cmd("git", "add", "sample.ts")
+        self.write("xyzClient.ts", "safe")
+        self.run_cmd("git", "add", "xyzClient.ts")
         self.guard("staged", blocked=True)
-        self.run_cmd("git", "rm", "--cached", "web/xyzClient.ts")
+        self.run_cmd("git", "rm", "--cached", "xyzClient.ts")
         self.write("message", "Change prefixXyzSuffix")
         self.guard("message", "message", blocked=True)
-        self.write("web/sample.ts", "private-fixture-marker")
-        self.run_cmd("git", "add", "web/sample.ts")
+        self.write("sample.ts", "private-fixture-marker")
+        self.run_cmd("git", "add", "sample.ts")
         self.guard("staged", blocked=True)
 
     def test_substring_terms_cover_metadata_but_not_compressed_packets(self):
         self.write(".git/info/publish-denylist", "substring:xyz\n")
         for data in (b"\0creator=prefixXYZsuffix\0", "prefixXyzSuffix".encode("utf-16-le"),
                      "prefixXyzSuffix".encode("utf-16-be")):
-            self.write("web/sample.bin", data)
-            self.run_cmd("git", "add", "web/sample.bin")
+            self.write("sample.bin", data)
+            self.run_cmd("git", "add", "sample.bin")
             self.guard("staged", blocked=True)
-        self.write("web/sample.bin", b"\0\x01xyz\x02\0")
-        self.run_cmd("git", "add", "web/sample.bin")
+        self.write("sample.bin", b"\0\x01xyz\x02\0")
+        self.run_cmd("git", "add", "sample.bin")
         self.guard("staged")
 
     def test_substring_terms_cannot_be_empty_or_hidden_in_old_trees(self):
@@ -165,51 +165,94 @@ class PublicationTests(unittest.TestCase):
         self.guard("staged", blocked=True)
         self.guard("--public-ci", "staged", blocked=True)
         self.write(".git/info/publish-denylist", "substring:xyz\n")
-        self.write("web/sample.ts", "ExampleXyzClient")
+        self.write("sample.ts", "ExampleXyzClient")
         self.commit()
-        self.write("web/sample.ts", "clean")
+        self.write("sample.ts", "clean")
         self.commit()
         self.guard("staged")
         self.guard("history", "HEAD", blocked=True)
 
     def test_authoring_fingerprints_have_no_product_exception(self):
         for tool in ("Claude", "ChatGPT", "Codex", "Cursor", "Windsurf", "Aider", "GitHub Copilot"):
-            self.write("web/server/product.ts", "Generated " + "with " + tool + "\n")
-            self.run_cmd("git", "add", "web/server/product.ts")
+            self.write("server/product.ts", "Generated " + "with " + tool + "\n")
+            self.run_cmd("git", "add", "server/product.ts")
             self.guard("staged", blocked=True)
         for suffix in ("code", "Code"):
-            self.write("web/server/product.ts", '"generator": "Claude ' + suffix + '"')
-            self.run_cmd("git", "add", "web/server/product.ts")
+            self.write("server/product.ts", '"generator": "Claude ' + suffix + '"')
+            self.run_cmd("git", "add", "server/product.ts")
             self.guard("staged", blocked=True)
-        self.write("web/server/product.ts", "Claude is an available model.\n")
-        self.run_cmd("git", "add", "web/server/product.ts")
-        self.write("web/app/docs/page.tsx", "Claude " + "Code is a supported integration; its name belongs to its owner.\n")
-        self.run_cmd("git", "add", "web/app/docs/page.tsx")
+        self.write("server/product.ts", "Claude is an available model.\n")
+        self.run_cmd("git", "add", "server/product.ts")
+        self.write("app/docs/page.tsx", "Claude " + "Code is a supported integration; its name belongs to its owner.\n")
+        self.run_cmd("git", "add", "app/docs/page.tsx")
         self.guard("staged")
 
     def test_build_documents_and_tool_files_stay_private(self):
-        for path in ("INVARIANTS.md", "OPERATIONS.md", "SECURITY.md", "web/server/receipts/FORMAT.md",
-                     "web/deploy/README.md", "web/.env.example", ".cursor/rules/fixture.md",
+        for path in ("INVARIANTS.md", "OPERATIONS.md", "SECURITY.md", "server/receipts/FORMAT.md",
+                     "deploy/README.md", ".env.example", ".cursor/rules/fixture.md",
                      "GEMINI.md", ".github/copilot-instructions.md"):
             self.write(path, "safe fixture")
             self.run_cmd("git", "add", path)
             self.guard("staged", blocked=True)
             self.run_cmd("git", "rm", "--cached", path)
-        self.write("web/app/docs/page.tsx", "export const productHelp = true;\n")
-        self.write("web/public/licenses/example-LICENSE.txt", "Required third-party attribution.\n")
-        self.run_cmd("git", "add", "web/app/docs/page.tsx", "web/public/licenses/example-LICENSE.txt")
+        self.write("app/docs/page.tsx", "export const productHelp = true;\n")
+        self.write("public/licenses/example-LICENSE.txt", "Required third-party attribution.\n")
+        self.run_cmd("git", "add", "app/docs/page.tsx", "public/licenses/example-LICENSE.txt")
+        self.guard("staged")
+
+    def test_both_layouts_block_private_handoffs_and_preserve_product_docs(self):
+        # Earlier published commits retain their web/ prefix. The same exclusions
+        # apply to those trees and to the current root layout during full scans.
+        for prefix in ("", "web/"):
+            for suffix in ("server/FORMAT.md", "server/receipts/FORMAT.md", "deploy/README.md",
+                           "docs/notes.md", "handoff/notes.md", "evidence/notes.md", "preview/notes.md",
+                           ".env.example", "dist/private.json", ".dev.vars.production"):
+                path = prefix + suffix
+                self.write(path, "safe fixture")
+                self.run_cmd("git", "add", path)
+                self.guard("staged", blocked=True)
+                self.run_cmd("git", "rm", "--cached", path)
+            for suffix in ("app/docs/page.tsx", "public/licenses/example-LICENSE.txt", "server/service.ts"):
+                path = prefix + suffix
+                self.write(path, "Public product content.")
+                self.run_cmd("git", "add", path)
+            self.guard("staged")
+
+    def test_root_move_keeps_historical_content_under_full_scan(self):
+        self.write("web/server/service.ts", "Public service fixture.")
+        self.commit()
+        (self.root / "server").mkdir()
+        self.run_cmd("git", "mv", "web/server/service.ts", "server/service.ts")
+        self.commit()
+        self.guard("history", "HEAD")
+        self.write("server/service.ts", "private-fixture-marker")
+        self.commit()
+        self.write("server/service.ts", "Public service fixture.")
+        self.commit()
+        self.guard("staged")
+        self.guard("history", "HEAD", blocked=True)
+
+    def test_private_legacy_path_policy_still_blocks_flattened_paths(self):
+        self.write(".git/info/publish-denypaths", r"^web/server/local-state\.json$" + "\n")
+        for path in ("server/local-state.json", "web/server/local-state.json"):
+            self.write(path, "safe fixture")
+            self.run_cmd("git", "add", path)
+            self.guard("staged", blocked=True)
+            self.run_cmd("git", "rm", "--cached", path)
+        self.write("server/service.ts", "Public service fixture.")
+        self.run_cmd("git", "add", "server/service.ts")
         self.guard("staged")
 
     def test_merge_parent_and_merge_only_content(self):
         self.commit()
         self.run_cmd("git", "switch", "-qc", "feature")
-        self.write("web/feature.txt", "safe feature")
+        self.write("feature.txt", "safe feature")
         self.commit(env={"GIT_AUTHOR_NAME": "Alternate Contributor"})
         self.run_cmd("git", "switch", "-q", "main")
-        self.write("web/main.txt", "safe main")
+        self.write("main.txt", "safe main")
         self.commit()
         self.run_cmd("git", "merge", "--no-commit", "--no-ff", "feature")
-        self.write("web/merged.txt", "private-fixture-marker")
+        self.write("merged.txt", "private-fixture-marker")
         self.commit()
         self.guard("history", "HEAD", blocked=True)
 
@@ -239,18 +282,18 @@ class PublicationTests(unittest.TestCase):
 
     def test_png_and_mp4_metadata(self):
         chunk = lambda kind, data: struct.pack(">I", len(data)) + kind + data + b"\0" * 4
-        self.write("web/image.png", b"\x89PNG\r\n\x1a\n" + chunk(b"tEXt", b"Creator\0fixture") + chunk(b"IEND", b""))
+        self.write("image.png", b"\x89PNG\r\n\x1a\n" + chunk(b"tEXt", b"Creator\0fixture") + chunk(b"IEND", b""))
         self.run_cmd("git", "add", ".")
         self.guard("staged", blocked=True)
-        self.run_cmd("git", "rm", "--cached", "web/image.png")
-        self.write("web/film.mp4", struct.pack(">I4s", 8, b"udta"))
-        self.run_cmd("git", "add", "web/film.mp4")
+        self.run_cmd("git", "rm", "--cached", "image.png")
+        self.write("film.mp4", struct.pack(">I4s", 8, b"udta"))
+        self.run_cmd("git", "add", "film.mp4")
         self.guard("staged", blocked=True)
 
     def test_svg_embedded_metadata(self):
         chunk = lambda kind, data: struct.pack(">I", len(data)) + kind + data + b"\0" * 4
         image = b"\x89PNG\r\n\x1a\n" + chunk(b"tEXt", b"Creator\0fixture") + chunk(b"IEND", b"")
-        self.write("web/image.svg", '<svg xmlns="http://www.w3.org/2000/svg"><image href="data:image/png;base64,'
+        self.write("image.svg", '<svg xmlns="http://www.w3.org/2000/svg"><image href="data:image/png;base64,'
                    + base64.b64encode(image).decode() + '"/></svg>')
         self.run_cmd("git", "add", ".")
         self.guard("staged", blocked=True)

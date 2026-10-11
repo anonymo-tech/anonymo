@@ -31,10 +31,51 @@
 **/.claude/
 **/.codex/
 **/.openai/
-/web/docs/
-/web/evidence/
-/web/handoff/
-/web/preview/
-/web/MANIFEST*
+/docs/
+/evidence/
+/handoff/
+/preview/
+/MANIFEST*
 **/.audit-grade/
 **/.solidity-auditor/
+
+# Application-local exclusions.
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js / vinext
+/.next/
+/.vinext/
+/out/
+next-env.d.ts
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# local environment and Wrangler secrets
+.env*
+.dev.vars*
+
+# build output and local tool state
+.vercel
+/dist/
+/.wrangler/
+/tmp/
+*.tsbuildinfo

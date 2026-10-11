@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="web/public/readme/cover.svg" alt="Conclave — See what one model misses. Seven model families, up to four perspectives, your judgment." width="100%">
+<img src="public/readme/cover.svg" alt="Conclave — See what one model misses. Seven model families, up to four perspectives, your judgment." width="100%">
 
 ### Many great minds. One common ground.
 
@@ -12,16 +12,16 @@ Compare their answers, follow the disagreement, and decide for yourself.
 **A multi-model AI workspace built for Solana.**
 
 [![Release checks](https://github.com/ConclaveSOL/Conclave/actions/workflows/release-checks.yml/badge.svg)](https://github.com/ConclaveSOL/Conclave/actions/workflows/release-checks.yml)
-[![Source available](web/public/readme/badge-source.svg)](LICENSE)
-[![React 19](web/public/readme/badge-react.svg)](web/package.json)
-[![TypeScript](web/public/readme/badge-typescript.svg)](web/tsconfig.json)
-[![Solana](web/public/readme/badge-solana.svg)](#your-wallet-your-account)
+[![Source available](public/readme/badge-source.svg)](LICENSE)
+[![React 19](public/readme/badge-react.svg)](package.json)
+[![TypeScript](public/readme/badge-typescript.svg)](tsconfig.json)
+[![Solana](public/readme/badge-solana.svg)](#your-wallet-your-account)
 
 [**Explore the workspace**](#the-workspace) · [**Meet the models**](#the-models) · [**Run locally**](#quick-start) · [**Under the hood**](#architecture) · [**FAQ**](#faq)
 
 <br>
 
-<img src="web/public/readme/landing.webp" alt="Conclave's halftone horse artwork and scarlet typography: Many great minds. One common ground." width="100%">
+<img src="public/readme/landing.webp" alt="Conclave's halftone horse artwork and scarlet typography: Many great minds. One common ground." width="100%">
 
 <sub>Independent minds. Common ground. The final word is yours.</sub>
 
@@ -38,34 +38,34 @@ Choose a model for a focused conversation, or ask up to four at once. Read the a
 <table>
 <tr>
 <td width="33%" valign="top">
-<img src="web/public/brand/icons/dashboard-chat-halftone-v2.webp" width="64" alt="Chat icon"><br>
+<img src="public/brand/icons/dashboard-chat-halftone-v2.webp" width="64" alt="Chat icon"><br>
 <strong>One room. Different minds.</strong><br>
 Seven model families in a single interface. A focused answer when you need one; several perspectives when you need more.
 </td>
 <td width="33%" valign="top">
-<img src="web/public/brand/icons/dashboard-branch-halftone-v2.webp" width="64" alt="Branching perspectives icon"><br>
+<img src="public/brand/icons/dashboard-branch-halftone-v2.webp" width="64" alt="Branching perspectives icon"><br>
 <strong>Keep the disagreement.</strong><br>
 Compare up to four responses and continue the useful threads. Agreement is a signal, not proof that an answer is right.
 </td>
 <td width="33%" valign="top">
-<img src="web/public/brand/icons/dashboard-route-halftone-v2.webp" width="64" alt="Model routing icon"><br>
+<img src="public/brand/icons/dashboard-route-halftone-v2.webp" width="64" alt="Model routing icon"><br>
 <strong>Choose your route.</strong><br>
 Pick models directly, use @mentions, or let Auto compare exact quotes across eligible routes in service mode.
 </td>
 </tr>
 <tr>
 <td width="33%" valign="top">
-<img src="web/public/brand/icons/conclave-key-halftone-v1.png" width="64" alt="Account key icon"><br>
+<img src="public/brand/icons/conclave-key-halftone-v1.png" width="64" alt="Account key icon"><br>
 <strong>Your wallet. Your account.</strong><br>
 Wallet or passkey sign-in when configured. A wallet proves identity with a message, not a payment transaction.
 </td>
 <td width="33%" valign="top">
-<img src="web/public/brand/icons/conclave-coins-halftone-v1.png" width="64" alt="Usage credits icon"><br>
+<img src="public/brand/icons/conclave-coins-halftone-v1.png" width="64" alt="Usage credits icon"><br>
 <strong>Know the cost first.</strong><br>
 A bounded quote, an explicit approval, and a visible 5% platform fee. Unused reserved credit is released after settlement.
 </td>
 <td width="33%" valign="top">
-<img src="web/public/brand/icons/conclave-scroll-halftone-v1.png" width="64" alt="Usage record icon"><br>
+<img src="public/brand/icons/conclave-scroll-halftone-v1.png" width="64" alt="Usage record icon"><br>
 <strong>Leave an inspectable trail.</strong><br>
 Exact integer billing, a double-entry ledger, and signed usage receipts in the service implementation.
 </td>
@@ -100,7 +100,7 @@ Exact integer billing, a double-entry ledger, and signed usage receipts in the s
 
 ## A room for better questions
 
-<img src="web/public/readme/chat.webp" alt="Actual local preview: a Conclave conversation with model tabs, a sample Claude answer, a comparison control, and the follow-up composer." width="100%">
+<img src="public/readme/chat.webp" alt="Actual local preview: a Conclave conversation with model tabs, a sample Claude answer, a comparison control, and the follow-up composer." width="100%">
 
 <sub>Actual local-preview screenshot. Prepared example content; no live model call or charge.</sub>
 
@@ -120,13 +120,13 @@ These are ways to use multi-model conversation, not guarantees of model quality 
 
 <div align="center">
 
-<img src="web/public/brand/providers/claude.svg" height="36" width="40" alt="Claude">&nbsp;&nbsp;&nbsp;
-<img src="web/public/brand/providers/openai.svg" height="36" width="40" alt="OpenAI">&nbsp;&nbsp;&nbsp;
-<img src="web/public/brand/providers/gemini.svg" height="36" width="40" alt="Gemini">&nbsp;&nbsp;&nbsp;
+<img src="public/brand/providers/claude.svg" height="36" width="40" alt="Claude">&nbsp;&nbsp;&nbsp;
+<img src="public/brand/providers/openai.svg" height="36" width="40" alt="OpenAI">&nbsp;&nbsp;&nbsp;
+<img src="public/brand/providers/gemini.svg" height="36" width="40" alt="Gemini">&nbsp;&nbsp;&nbsp;
 <strong>𝕏</strong>&nbsp;&nbsp;&nbsp;
-<img src="web/public/brand/providers/deepseek.svg" height="36" width="40" alt="DeepSeek">&nbsp;&nbsp;&nbsp;
-<img src="web/public/brand/providers/qwen.svg" height="36" width="40" alt="Qwen">&nbsp;&nbsp;&nbsp;
-<img src="web/public/brand/providers/meta.svg" height="36" width="40" alt="Meta">
+<img src="public/brand/providers/deepseek.svg" height="36" width="40" alt="DeepSeek">&nbsp;&nbsp;&nbsp;
+<img src="public/brand/providers/qwen.svg" height="36" width="40" alt="Qwen">&nbsp;&nbsp;&nbsp;
+<img src="public/brand/providers/meta.svg" height="36" width="40" alt="Meta">
 
 **Claude · GPT · Gemini · Grok · DeepSeek · Qwen · Llama**
 
@@ -136,17 +136,17 @@ The preview introduces seven model families. The service uses reviewed, configur
 
 | Family | Maker | In the workspace |
 | --- | --- | --- |
-| <img src="web/public/brand/providers/claude.svg" width="20" alt=""> **Claude** | Anthropic | Choose from the picker or use `@claude`. |
-| <img src="web/public/brand/providers/openai.svg" width="20" alt=""> **GPT** | OpenAI | Read a focused response or add another perspective. |
-| <img src="web/public/brand/providers/gemini.svg" width="20" alt=""> **Gemini** | Google | Compare an answer without leaving the conversation. |
+| <img src="public/brand/providers/claude.svg" width="20" alt=""> **Claude** | Anthropic | Choose from the picker or use `@claude`. |
+| <img src="public/brand/providers/openai.svg" width="20" alt=""> **GPT** | OpenAI | Read a focused response or add another perspective. |
+| <img src="public/brand/providers/gemini.svg" width="20" alt=""> **Gemini** | Google | Compare an answer without leaving the conversation. |
 | **𝕏 Grok** | xAI | Include another model family in your selection. |
-| <img src="web/public/brand/providers/deepseek.svg" width="20" alt=""> **DeepSeek** | DeepSeek | Explore a different response to the same question. |
-| <img src="web/public/brand/providers/qwen.svg" width="20" alt=""> **Qwen** | Alibaba Cloud | Select an open-model family through a configured hosted route. |
-| <img src="web/public/brand/providers/meta.svg" width="20" alt=""> **Llama** | Meta | Add another open-model family to the conversation. |
+| <img src="public/brand/providers/deepseek.svg" width="20" alt=""> **DeepSeek** | DeepSeek | Explore a different response to the same question. |
+| <img src="public/brand/providers/qwen.svg" width="20" alt=""> **Qwen** | Alibaba Cloud | Select an open-model family through a configured hosted route. |
+| <img src="public/brand/providers/meta.svg" width="20" alt=""> **Llama** | Meta | Add another open-model family to the conversation. |
 
 <sub>Names and logos identify their owners. They imply no affiliation, endorsement, or direct integration agreement. “Open model” does not mean local or private execution. See [third-party notices](THIRD-PARTY-NOTICES.md).</sub>
 
-<img src="web/public/readme/models.webp" alt="Actual preview model picker showing seven model families and a maximum of four selected models." width="100%">
+<img src="public/readme/models.webp" alt="Actual preview model picker showing seven model families and a maximum of four selected models." width="100%">
 
 <sub>Local-preview picker. Sample privacy labels are illustrative; they do not establish a live route's guarantees.</sub>
 
@@ -154,7 +154,7 @@ The preview introduces seven model families. The service uses reviewed, configur
 
 ## See the differences side by side
 
-<img src="web/public/readme/compare.webp" alt="Conclave comparing prepared Claude and Gemini answers side by side, with each model's response kept separate." width="100%">
+<img src="public/readme/compare.webp" alt="Conclave comparing prepared Claude and Gemini answers side by side, with each model's response kept separate." width="100%">
 
 <sub>Two prepared sample responses to the same launch-planning question.</sub>
 
@@ -202,16 +202,16 @@ Auto is a price comparison across the supplied eligible routes, **not a quality 
 
 Emails, URLs, code, and blockquotes stay literal when parsing mentions. Unknown plain handles remain text; the braced form is the explicit way to address an exact model ID.
 
-Explore the implementation: [model selection](web/lib/model-routing.ts) · [Auto routing](web/server/routes/auto-routing.ts) · [route registry](web/server/routes/route-registry.ts).
+Explore the implementation: [model selection](lib/model-routing.ts) · [Auto routing](server/routes/auto-routing.ts) · [route registry](server/routes/route-registry.ts).
 
 <a id="your-wallet-your-account"></a>
 
 ## Your wallet, your account
 
 <p align="center">
-<img src="web/public/brand/icons/conclave-key-halftone-v1.png" width="130" alt="Conclave halftone key">
+<img src="public/brand/icons/conclave-key-halftone-v1.png" width="130" alt="Conclave halftone key">
 &nbsp;&nbsp;&nbsp;&nbsp;
-<img src="web/public/brand/providers/solana.svg" width="64" height="64" alt="Solana">
+<img src="public/brand/providers/solana.svg" width="64" height="64" alt="Solana">
 </p>
 
 The identity implementation supports a **Solana wallet** or a **passkey**, when enabled for the service's origin. No email/password account flow is required.
@@ -224,13 +224,13 @@ The identity implementation supports a **Solana wallet** or a **passkey**, when 
 
 Recovery depends on an already enrolled wallet or synced passkey. Support cannot recover an account after every enrolled credential is lost. In the local preview, account controls explain their unavailable state and never simulate a successful sign-in.
 
-Explore the implementation: [wallet authentication](web/server/auth/wallet.ts) · [passkeys](web/server/auth/passkey.ts) · [account security](web/server/auth/security.ts).
+Explore the implementation: [wallet authentication](server/auth/wallet.ts) · [passkeys](server/auth/passkey.ts) · [account security](server/auth/security.ts).
 
 <a id="clear-accounts"></a>
 
 ## Pay for the thought. See every line.
 
-<img src="web/public/readme/billing.svg" alt="Illustrative billing: quote 0.02 dollars, reserve that maximum, settle 0.0105 dollars including the fee, and release 0.0095 dollars." width="100%">
+<img src="public/readme/billing.svg" alt="Illustrative billing: quote 0.02 dollars, reserve that maximum, settle 0.0105 dollars including the fee, and release 0.0095 dollars." width="100%">
 
 The service uses prepaid usage credit and exact integer micro-dollars. Every request starts with a quote that includes a **5% platform fee** on model usage. Approval reserves the maximum; verified usage determines the captured amount.
 
@@ -243,13 +243,13 @@ A capture cannot exceed its hold. An ambiguous provider outcome keeps its hold f
 
 Credits are operator-held prepaid usage balances, not escrow or an on-chain claim. USDC deposits and unused-credit refunds are outside the current public MVP. Signed receipts attest the operator's statements; on-chain anchoring is not available in this release.
 
-Explore the implementation: [money arithmetic](web/server/ledger/money.ts) · [platform fee](web/server/ledger/platform-fee.ts) · [ledger](web/server/ledger/ledger.ts) · [reconciliation](web/server/ledger/reconciliation.ts) · [receipt verification](web/server/receipts/verification.ts).
+Explore the implementation: [money arithmetic](server/ledger/money.ts) · [platform fee](server/ledger/platform-fee.ts) · [ledger](server/ledger/ledger.ts) · [reconciliation](server/ledger/reconciliation.ts) · [receipt verification](server/receipts/verification.ts).
 
 <a id="privacy-in-plain-language"></a>
 
 ## Know what leaves the room
 
-<p align="center"><img src="web/public/brand/icons/conclave-gauntlet-halftone-v1.png" width="160" alt="Conclave halftone armored gauntlet"></p>
+<p align="center"><img src="public/brand/icons/conclave-gauntlet-halftone-v1.png" width="160" alt="Conclave halftone armored gauntlet"></p>
 
 Privacy should be understandable before you type. Standard service requests travel through **one model gateway and its upstream model providers**. Those processors receive the prompt and answer in plaintext.
 
@@ -261,7 +261,7 @@ Privacy should be understandable before you type. Standard service requests trav
 | **Model execution** | Hosted inference. Choosing an open-model family does not run it on your device. |
 | **Future privacy features** | Sealed execution, end-to-end encrypted inference, and public privacy/guard workflows are not current MVP guarantees. |
 
-Do not infer a privacy promise from a provider logo, a sample label, or model agreement. The public field guide is implemented in [`web/app/docs`](web/app/docs/page.tsx).
+Do not infer a privacy promise from a provider logo, a sample label, or model agreement. The public field guide is implemented in [`app/docs`](app/docs/page.tsx).
 
 <a id="quick-start"></a>
 
@@ -269,16 +269,16 @@ Do not infer a privacy promise from a provider logo, a sample label, or model ag
 
 **Start with the local preview. No provider account, wallet, key, or payment is needed.**
 
-Use Node.js 24, matching CI, and the pnpm version pinned in [`web/package.json`](web/package.json).
+Use Node.js 24, matching CI, and the pnpm version pinned in [`package.json`](package.json).
 
 ```sh
 git clone https://github.com/ConclaveSOL/Conclave.git
-cd Conclave/web
+cd Conclave
 pnpm install --frozen-lockfile
 pnpm dev --port 3000
 ```
 
-Already have the source? Start at `cd web` from the repository root. The clone command requires access to the repository.
+Already have the source? Run the commands from the repository root. The clone command requires access to the repository.
 
 Open **[localhost:3000](http://localhost:3000)** for the landing page, **[/dashboard](http://localhost:3000/dashboard)** for the workspace, and **[/docs](http://localhost:3000/docs)** for the field guide.
 
@@ -292,7 +292,7 @@ Open **[localhost:3000](http://localhost:3000)** for the landing page, **[/dashb
 
 ### Preview the production build locally
 
-Run from `web/`:
+Run from the repository root:
 
 ```sh
 pnpm build
@@ -319,12 +319,12 @@ Missing configuration fails closed. A feature flag is not a readiness check, and
 
 Implementation entry points:
 
-- [`web/server/core/config.ts`](web/server/core/config.ts): service configuration.
-- [`web/server/db/migrations`](web/server/db/migrations): ordered schema migrations.
-- [`web/scripts/configure-routes.mjs`](web/scripts/configure-routes.mjs): reviewed inference routes.
-- [`web/scripts/run-worker.mjs`](web/scripts/run-worker.mjs): the separate inference worker.
-- [`web/scripts/run-receipts.mjs`](web/scripts/run-receipts.mjs): receipt processing.
-- [`web/scripts/check-readiness.mjs`](web/scripts/check-readiness.mjs): readiness checks.
+- [`server/core/config.ts`](server/core/config.ts): service configuration.
+- [`server/db/migrations`](server/db/migrations): ordered schema migrations.
+- [`scripts/configure-routes.mjs`](scripts/configure-routes.mjs): reviewed inference routes.
+- [`scripts/run-worker.mjs`](scripts/run-worker.mjs): the separate inference worker.
+- [`scripts/run-receipts.mjs`](scripts/run-receipts.mjs): receipt processing.
+- [`scripts/check-readiness.mjs`](scripts/check-readiness.mjs): readiness checks.
 
 The [license](LICENSE) permits local evaluation with synthetic data and without real funds or production credentials. It does not grant permission to operate or redistribute a production service.
 
@@ -336,19 +336,19 @@ The [license](LICENSE) permits local evaluation with synthetic data and without 
 
 ## Under the hood
 
-<img src="web/public/readme/architecture.svg" alt="Conclave's browser, web API, PostgreSQL database, inference worker, and model gateway, with server-side credentials and approved jobs." width="100%">
+<img src="public/readme/architecture.svg" alt="Conclave's browser, web API, PostgreSQL database, inference worker, and model gateway, with server-side credentials and approved jobs." width="100%">
 
 The interface is built with **React 19, TypeScript, Vinext, and Vite**, with a Cloudflare Worker build. PostgreSQL holds service data and the append-only double-entry ledger. Separate Node processes handle inference jobs and receipt processing.
 
 | Layer | Responsibility | Read the code |
 | --- | --- | --- |
-| **Workspace** | Conversations, model selection, comparisons, account interfaces. | [Dashboard components](web/components/dashboard) |
-| **Browser clients** | Typed requests, owned workspace data, explicit review and approval. | [Client modules](web/lib/client) |
-| **API** | Authentication, authorization, quotes, request creation, and event delivery. | [API handlers](web/app/api) · [Service routes](web/server/routes) |
-| **Ledger** | Exact money arithmetic, reserves, captures, releases, reconciliation. | [Ledger modules](web/server/ledger) |
-| **Inference worker** | Leased execution of approved jobs. | [Call worker](web/server/routes/call-worker.ts) |
-| **Receipts** | Canonical signed statements and verification against a trusted signer. | [Receipt modules](web/server/receipts) |
-| **Database** | Schema constraints, append-only records, role boundaries. | [Migrations](web/server/db/migrations) |
+| **Workspace** | Conversations, model selection, comparisons, account interfaces. | [Dashboard components](components/dashboard) |
+| **Browser clients** | Typed requests, owned workspace data, explicit review and approval. | [Client modules](lib/client) |
+| **API** | Authentication, authorization, quotes, request creation, and event delivery. | [API handlers](app/api) · [Service routes](server/routes) |
+| **Ledger** | Exact money arithmetic, reserves, captures, releases, reconciliation. | [Ledger modules](server/ledger) |
+| **Inference worker** | Leased execution of approved jobs. | [Call worker](server/routes/call-worker.ts) |
+| **Receipts** | Canonical signed statements and verification against a trusted signer. | [Receipt modules](server/receipts) |
+| **Database** | Schema constraints, append-only records, role boundaries. | [Migrations](server/db/migrations) |
 
 A receipt cannot establish trust in its own signing key. Verification needs a separately trusted signer. Likewise, encryption at rest protects stored content but does not hide a request from its processing providers.
 
@@ -358,7 +358,7 @@ A receipt cannot establish trust in its own signing key. Verification needs a se
 
 The repository includes frontend checks, service tests, database integration suites, money property tests, and a randomized ledger invariant model. The workflow is defined in [release checks](.github/workflows/release-checks.yml); its badge reports the actual workflow state.
 
-Start with the interface checks from `web/`:
+Start with the interface checks from the repository root:
 
 ```sh
 pnpm typecheck
@@ -383,7 +383,7 @@ pnpm test:runtime
 pnpm test:runtime --bundle
 ```
 
-`lint:portable` omits the native type-aware lint engine; use it together with `typecheck`. The bundled runtime check follows a successful production build. The full suite and operator commands are listed in [`web/package.json`](web/package.json).
+`lint:portable` omits the native type-aware lint engine; use it together with `typecheck`. The bundled runtime check follows a successful production build. The full suite and operator commands are listed in [`package.json`](package.json).
 
 </details>
 
@@ -410,16 +410,16 @@ The software has **not been independently audited**. Automated checks and source
 ```text
 Conclave/
 ├── README.md                  The product and developer introduction
-├── web/
-│   ├── app/                   Pages, API handlers, and styles
-│   ├── components/            Landing page and workspace interfaces
-│   ├── lib/                   Browser clients and shared utilities
-│   ├── server/                Auth, routes, ledger, jobs, and receipts
-│   │   └── db/migrations/     Ordered database migrations
-│   ├── scripts/               Checks, test suites, and operator commands
-│   ├── deploy/                Deployment implementation
-│   └── public/                Fonts, brand icons, artwork, and media
-│       └── readme/            README diagrams and preview screenshots
+├── package.json               Dependencies and development commands
+├── app/                       Pages, API handlers, and styles
+├── components/                Landing page and workspace interfaces
+├── lib/                       Browser clients and shared utilities
+├── server/                    Auth, routes, ledger, jobs, and receipts
+│   └── db/migrations/          Ordered database migrations
+├── scripts/                   Checks, test suites, and operator commands
+├── deploy/                    Deployment implementation
+├── public/                    Fonts, brand icons, artwork, and media
+│   └── readme/                README diagrams and preview screenshots
 ├── .github/workflows/         Continuous verification
 └── .githooks/                 Publication checks
 ```
@@ -516,13 +516,13 @@ For local changes, run the checks relevant to the affected behavior. UI changes 
 
 <div align="center">
 
-<img src="web/public/brand/conclave-horse-black.png" width="110" alt="Conclave horse emblem">
+<img src="public/brand/conclave-horse-black.png" width="110" alt="Conclave horse emblem">
 
 ### Another mind. An unexpected angle.
 
 **Bring your next great question.**
 
-[Run the preview](#quick-start) · [Explore the code](web) · [Read the license](LICENSE)
+[Run the preview](#quick-start) · [Explore the code](.) · [Read the license](LICENSE)
 
 <sub>Built for people who want a second opinion before they trust the first one.</sub>
 

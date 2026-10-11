@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const webDirectory = fileURLToPath(new URL('../', import.meta.url));
+const projectDirectory = fileURLToPath(new URL('../', import.meta.url));
 const node = ['node', '--experimental-strip-types'];
 const modes = ['plan', 'dry-run', 'confirm'];
 const baseVariables = [
@@ -259,7 +259,7 @@ function git(args, cwd) {
 
 function copySource(root, mirror) {
   const files = git(
-    ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', 'web'],
+    ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
     root,
   )
     .split('\0')
@@ -289,11 +289,11 @@ function execute(command, cwd, env) {
 
 async function run(options) {
   const environments = JSON.parse(
-    readFileSync(join(webDirectory, 'deploy/environments.json'), 'utf8'),
+    readFileSync(join(projectDirectory, 'deploy/environments.json'), 'utf8'),
   ).environments;
-  const scripts = JSON.parse(readFileSync(join(webDirectory, 'package.json'), 'utf8')).scripts;
+  const scripts = JSON.parse(readFileSync(join(projectDirectory, 'package.json'), 'utf8')).scripts;
   const databaseFiles = databaseSuiteFiles(
-    readFileSync(join(webDirectory, 'scripts/check-database.mjs'), 'utf8'),
+    readFileSync(join(projectDirectory, 'scripts/check-database.mjs'), 'utf8'),
   );
   const environment = environments[options.environment];
   const plan = buildPlan(options, {
@@ -338,7 +338,7 @@ async function run(options) {
     deployed: false,
     steps: [],
   };
-  let root, mirror, mirrorWeb;
+  let root, mirror;
   let ok = true;
   try {
     for (const step of plan) {
@@ -357,32 +357,31 @@ async function run(options) {
         for (const problem of problems) process.stderr.write(`${problem}\n`);
         passed = problems.length === 0;
       } else if (step.id === 'source') {
-        root = git(['rev-parse', '--show-toplevel'], webDirectory).trim();
+        root = git(['rev-parse', '--show-toplevel'], projectDirectory).trim();
         manifest.gitCommit = git(['rev-parse', 'HEAD'], root).trim();
-        manifest.dirty = git(['status', '--porcelain', '--', 'web'], root).trim() !== '';
+        manifest.dirty = git(['status', '--porcelain'], root).trim() !== '';
         if (manifest.dirty && !options.allowDirty) {
           process.stderr.write(
             options.mode === 'confirm'
-              ? 'The web tree has uncommitted changes; commit them before deploying.\n'
-              : 'The web tree has uncommitted changes; pass --allow-dirty to rehearse with them.\n',
+              ? 'The source tree has uncommitted changes; commit them before deploying.\n'
+              : 'The source tree has uncommitted changes; pass --allow-dirty to rehearse with them.\n',
           );
           passed = false;
         }
       } else if (step.id === 'mirror') {
         mirror = mkdtempSync(join(tmpdir(), 'conclave-deploy-'));
-        mirrorWeb = join(mirror, 'web');
         copySource(root, mirror);
         manifest.pnpm = spawnSync('pnpm', ['--version'], { encoding: 'utf8' }).stdout.trim();
       } else if (step.id === 'digest') {
-        const config = join(mirrorWeb, 'dist/server/wrangler.json');
+        const config = join(mirror, 'dist/server/wrangler.json');
         manifest.wranglerConfigSha256 = sha256(readFileSync(config));
-        const digest = treeDigest(join(mirrorWeb, 'dist'));
+        const digest = treeDigest(join(mirror, 'dist'));
         manifest.buildOutputSha256 = digest.sha256;
         manifest.buildOutputFiles = digest.files;
       } else {
         const env = stepEnvironment(step.env, process.env);
         for (const command of step.commands) {
-          if (!execute(command, mirrorWeb, env)) {
+          if (!execute(command, mirror, env)) {
             process.stderr.write(`Step ${step.id} failed: ${command.join(' ')}\n`);
             passed = false;
             break;
