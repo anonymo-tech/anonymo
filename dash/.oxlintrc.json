@@ -23,6 +23,7 @@
     "typeCheck": true
   },
   "ignorePatterns": [
+    "internal/**",
     "tmp/**",
     ".next/**",
     ".vinext/**",

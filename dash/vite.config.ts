@@ -21,7 +21,7 @@ export default defineConfig(async () => {
     css: { postcss: { plugins: [tailwindcss()] } },
     server: {
       watch: {
-        ignored: ["**/tmp/**", "**/dist/**"],
+        ignored: ["**/internal/**", "**/tmp/**", "**/dist/**"],
       },
     },
     plugins: [
