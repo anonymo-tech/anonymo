@@ -32,6 +32,7 @@ import {
 import { ProviderIcon, type AnswerActions } from './answer-card';
 import { ChatThread, type ChatTurnPreference } from './chat-thread';
 import { WorkspacePages } from './workspace-pages';
+import { featureOn, type FeatureName } from './feature-switches';
 import { StudioPage, STUDIO_MODELS } from './studio-page';
 import {
   useStudioSession,
@@ -81,15 +82,28 @@ const tools = [
 type Tool = (typeof tools)[number];
 
 /**
- * MVP surface gate. Only the dashboard views and tool dialogs listed here have
- * entry points: dock and menu buttons, deep links and in-chat actions. Hidden
- * surfaces keep their code; add an id back to re-enable it. Account sign-in
- * (`identity`) and `settings` stay because Chat depends on them.
+ * MVP surface gate. Chat, account sign-in (`identity`) and `settings` are always
+ * visible because Chat depends on them. Every other view and tool dialog belongs
+ * to a feature and appears only when that feature's switch is on (see
+ * `feature-switches.ts`). Hidden surfaces keep their code and lose their entry
+ * points: dock and menu buttons, deep links and in-chat actions.
  */
+const FEATURE_SURFACES: Record<FeatureName, readonly (View | Tool)[]> = {
+  projects: ['rooms'],
+  canvas: ['canvas'],
+  library: ['library'],
+  decisions: ['decisions'],
+  help: ['help'],
+  routes: ['routes'],
+  purse: ['purse'],
+};
 const MVP_VISIBLE_VIEWS: readonly (View | Tool)[] = [
   'chat',
   'identity',
   'settings',
+  ...(Object.keys(FEATURE_SURFACES) as FeatureName[])
+    .filter(featureOn)
+    .flatMap((name) => FEATURE_SURFACES[name]),
 ];
 const DEFAULT_VIEW: View = 'chat';
 const isVisible = (id: View | Tool) => MVP_VISIBLE_VIEWS.includes(id);
