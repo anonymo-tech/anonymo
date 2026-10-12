@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { MotionIcon } from './motion-icon';
 import { LiveDepositPanel } from './live-deposit-panel';
+import { featureOn } from './feature-switches';
 import {
   createAccountRecordsClient,
   formatAccountUsd6,
@@ -56,7 +57,12 @@ export function LivePurse({
     controller.current = abort;
     loading.current = true;
     const client = createAccountRecordsClient(owner, abort.signal);
-    void Promise.all([client.ledger(), client.receipts()])
+    void Promise.all([
+      client.ledger(),
+      featureOn('receipts')
+        ? client.receipts()
+        : Promise.resolve({ receipts: [], nextCursor: null }),
+    ])
       .then(([ledger, signed]) => {
         if (abort.signal.aborted) return;
         setEntries(ledger.entries);
@@ -290,59 +296,61 @@ export function LivePurse({
           </button>
         )}
       </section>
-      <section className="cp-ledger" aria-label="Signed receipts">
-        <div className="cp-ledger-heading">
-          <h2>Receipts</h2>
-          <span>Signed records</span>
-        </div>
-        <p className="cp-fineprint">
-          These receipts have not been anchored on Solana. Verify signatures
-          with a separately trusted signer key; downloading a receipt does not
-          verify its signature.
-        </p>
-        {receipts.map((receipt) => (
-          <div className="cp-ledger-columns" key={receipt.id}>
-            <span>
-              {utc(receipt.issuedAt)} UTC
-              <br />
-              <small>
-                {receipt.kind === 'media' ? 'Studio · ' : 'Chat · '}
-                {receipt.state === 'signed_pending_batch'
-                  ? 'Awaiting hourly batch'
-                  : 'Awaiting Solana anchor'}
-              </small>
-            </span>
+      {featureOn('receipts') && (
+        <section className="cp-ledger" aria-label="Signed receipts">
+          <div className="cp-ledger-heading">
+            <h2>Receipts</h2>
+            <span>Signed records</span>
+          </div>
+          <p className="cp-fineprint">
+            These receipts have not been anchored on Solana. Verify signatures
+            with a separately trusted signer key; downloading a receipt does not
+            verify its signature.
+          </p>
+          {receipts.map((receipt) => (
+            <div className="cp-ledger-columns" key={receipt.id}>
+              <span>
+                {utc(receipt.issuedAt)} UTC
+                <br />
+                <small>
+                  {receipt.kind === 'media' ? 'Studio · ' : 'Chat · '}
+                  {receipt.state === 'signed_pending_batch'
+                    ? 'Awaiting hourly batch'
+                    : 'Awaiting Solana anchor'}
+                </small>
+              </span>
+              <button
+                className="cp-text-button"
+                type="button"
+                disabled={busy}
+                onClick={() => void download(receipt.id)}
+              >
+                <MotionIcon name="download" size={18} /> Download receipt
+              </button>
+              <span>{formatAccountUsd6(receipt.actualUsd6)} USD</span>
+            </div>
+          ))}
+          {!receipts.length && (
+            <p className="cp-fineprint">
+              {!owner
+                ? 'Sign in to view receipts.'
+                : busy
+                  ? 'Loading receipts…'
+                  : 'No signed receipts available. Unrevealed blind comparison receipts stay hidden until you reveal their model names.'}
+            </p>
+          )}
+          {receiptCursor && (
             <button
               className="cp-text-button"
               type="button"
               disabled={busy}
-              onClick={() => void download(receipt.id)}
+              onClick={() => void more('receipts')}
             >
-              <MotionIcon name="download" size={18} /> Download receipt
+              Load more receipts
             </button>
-            <span>{formatAccountUsd6(receipt.actualUsd6)} USD</span>
-          </div>
-        ))}
-        {!receipts.length && (
-          <p className="cp-fineprint">
-            {!owner
-              ? 'Sign in to view receipts.'
-              : busy
-                ? 'Loading receipts…'
-                : 'No signed receipts available. Unrevealed blind comparison receipts stay hidden until you reveal their model names.'}
-          </p>
-        )}
-        {receiptCursor && (
-          <button
-            className="cp-text-button"
-            type="button"
-            disabled={busy}
-            onClick={() => void more('receipts')}
-          >
-            Load more receipts
-          </button>
-        )}
-      </section>
+          )}
+        </section>
+      )}
     </section>
   );
 }

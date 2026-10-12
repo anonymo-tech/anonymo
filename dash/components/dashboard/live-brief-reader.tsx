@@ -1,6 +1,7 @@
 import { BriefSynthesisResult } from './brief-synthesis-result';
 import type { BriefDocument } from '../../lib/brief-document';
 import { formatAccountUsd6 } from '../../lib/client/account-records';
+import { featureOn } from './feature-switches';
 
 export function LiveBriefReader({ document }: { document: BriefDocument }) {
   return (
@@ -13,7 +14,7 @@ export function LiveBriefReader({ document }: { document: BriefDocument }) {
         overflowWrap: 'anywhere',
       }}
     >
-      {document.synthesis && (
+      {featureOn('synthesis') && document.synthesis && (
         <section>
           <h3 style={{ fontSize: 14, marginBottom: 8 }}>
             Selected generated analysis

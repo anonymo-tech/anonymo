@@ -12,6 +12,13 @@ export const FEATURE_SWITCHES = {
   help: false,
   routes: false,
   purse: false,
+  receipts: false,
+  crosscheck: false,
+  synthesis: false,
+  explainer: false,
+  studio: false,
+  chapters: false,
+  agents: false,
 } satisfies Record<string, boolean>;
 
 export type FeatureName = keyof typeof FEATURE_SWITCHES;

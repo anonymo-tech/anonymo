@@ -20,6 +20,7 @@ import { LivePurse, type PurseAccount } from './live-purse';
 import { LiveBriefEditor } from './live-brief-editor';
 import { LiveBriefReader } from './live-brief-reader';
 import { LiveBriefSynthesis } from './live-brief-synthesis';
+import { featureOn } from './feature-switches';
 import { renderBriefPrintHtml } from '../../lib/brief-document';
 import '@/app/dashboard/workspace-pages.css';
 
@@ -416,14 +417,17 @@ function BriefPreview({
         ) : (
           <pre>{brief.body}</pre>
         )}
-        {accountId && onRefreshBrief && brief.live?.document && (
-          <LiveBriefSynthesis
-            brief={brief}
-            accountId={accountId}
-            visible={visible}
-            onRefreshBrief={onRefreshBrief}
-          />
-        )}
+        {featureOn('synthesis') &&
+          accountId &&
+          onRefreshBrief &&
+          brief.live?.document && (
+            <LiveBriefSynthesis
+              brief={brief}
+              accountId={accountId}
+              visible={visible}
+              onRefreshBrief={onRefreshBrief}
+            />
+          )}
       </div>
       <div className="cp-preview-footer">
         {brief.live?.document && (

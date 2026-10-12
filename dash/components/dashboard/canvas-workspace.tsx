@@ -96,6 +96,13 @@ const FEATURE_SURFACES: Record<FeatureName, readonly (View | Tool)[]> = {
   help: ['help'],
   routes: ['routes'],
   purse: ['purse'],
+  receipts: [],
+  crosscheck: ['crosscheck'],
+  synthesis: [],
+  explainer: ['explainer'],
+  studio: ['studio'],
+  chapters: ['chapters'],
+  agents: ['agents'],
 };
 const MVP_VISIBLE_VIEWS: readonly (View | Tool)[] = [
   'chat',
