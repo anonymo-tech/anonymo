@@ -19,6 +19,7 @@ export const FEATURE_SWITCHES = {
   studio: false,
   chapters: false,
   agents: false,
+  connections: false,
 } satisfies Record<string, boolean>;
 
 export type FeatureName = keyof typeof FEATURE_SWITCHES;
