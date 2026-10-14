@@ -1,3 +1,6 @@
+"use client";
+
+import { useT } from '@/lib/i18n';
 import Link from "@/components/site-link";
 import { ArrowUpRight, ArrowUp } from "lucide-react";
 import { Flourish, Ornament } from "./ornament";
@@ -41,6 +44,7 @@ function ClosingSeal({ className = "" }: { className?: string }) {
 }
 
 function OpenPortal() {
+  const t = useT();
   return (
     <div className="cl-open-portal">
       <svg
@@ -83,31 +87,32 @@ function OpenPortal() {
           />
         </g>
       </svg>
-      <span className="cl-portal-top-note">A DIFFERENT PERSPECTIVE AWAITS</span>
+      <span className="cl-portal-top-note">{t("A DIFFERENT PERSPECTIVE AWAITS")}</span>
       <Link
         href="/dashboard"
         className="cl-portal-entry"
-        aria-label="Enter Conclave — open the chat"
+        aria-label={t("Enter Conclave — open the chat")}
       >
         <span className="cl-portal-ring" aria-hidden="true" />
         <span
           className="cl-portal-ring cl-portal-ring-inner"
           aria-hidden="true"
         />
-        <span className="cl-portal-entry-kicker">THE DOOR IS OPEN</span>
+        <span className="cl-portal-entry-kicker">{t("THE DOOR IS OPEN")}</span>
         <span className="cl-portal-entry-title">
-          Step
-          <br />
-          <em>inside.</em>
+          {t.rich("Step{line}{inside}", {
+            line: <br />,
+            inside: <em>{t("inside.")}</em>,
+          })}
         </span>
         <span className="cl-portal-arrow">
           <ArrowUpRight size={29} strokeWidth={1.2} />
         </span>
       </Link>
       <span className="cl-portal-bottom-note">
-        ENTER CONCLAVE <span>↗</span>
+        {t("ENTER CONCLAVE")} <span>↗</span>
       </span>
-      <span className="cl-portal-side-note">MANY MINDS / YOUR JUDGMENT</span>
+      <span className="cl-portal-side-note">{t("MANY MINDS / YOUR JUDGMENT")}</span>
     </div>
   );
 }
@@ -146,6 +151,7 @@ const footerGroups = [
 ];
 
 export function Closing() {
+  const t = useT();
   return (
     <div className="conclave-closing">
       <section
@@ -154,53 +160,54 @@ export function Closing() {
         aria-labelledby="cl-invitation-title"
       >
         <div className="cl-closing-index">
-          <span>09 / AN OPEN INVITATION</span>
-          <span>THE LAST WORD IS YOURS.</span>
+          <span>{t("09 / AN OPEN INVITATION")}</span>
+          <span>{t("THE LAST WORD IS YOURS.")}</span>
         </div>
         <div className="cl-invitation-layout">
           <div className="cl-invitation-copy">
             <div className="cl-invitation-marginalia">
-              <span>ONE QUESTION CAN CHANGE THE ROOM.</span>
+              <span>{t("ONE QUESTION CAN CHANGE THE ROOM.")}</span>
               <Ornament />
             </div>
             <h2 id="cl-invitation-title">
-              Bring your
-              <br />
-              <span>next</span> <em>great</em>
-              <br />
-              <em>question.</em>
+              {t.rich("Bring your{line1}{next} {great}{line2}{question}", {
+                line1: <br />,
+                next: <span>{t("next")}</span>,
+                great: <em>{t("great")}</em>,
+                line2: <br />,
+                question: <em>{t("question.")}</em>,
+              })}
             </h2>
             <div className="cl-invitation-note">
               <span className="cl-note-mark" aria-hidden="true">
                 ✳
               </span>
               <p>
-                Another mind. An unexpected angle.
-                <br />A little more room for possibility.
+                {t.rich("Another mind. An unexpected angle.{line}A little more room for possibility.", { line: <br /> })}
               </p>
             </div>
             <Link href="/docs" className="cl-closing-guide">
-              GET TO KNOW THE ROOM <ArrowUpRight size={16} />
+              {t("GET TO KNOW THE ROOM")} <ArrowUpRight size={16} />
             </Link>
           </div>
           <OpenPortal />
         </div>
         <div className="cl-invitation-baseline">
-          <span>FOR PEOPLE WHO REFUSE THE FIRST ANSWER.</span>
+          <span>{t("FOR PEOPLE WHO REFUSE THE FIRST ANSWER.")}</span>
           <span className="cl-baseline-star" aria-hidden="true">
             ✦
           </span>
-          <span>OPEN THE CHAT. SEVEN MODELS, ONE ROOM.</span>
+          <span>{t("OPEN THE CHAT. SEVEN MODELS, ONE ROOM.")}</span>
         </div>
       </section>
 
-      <footer className="cl-footer" role="contentinfo" aria-label="Conclave footer">
+      <footer className="cl-footer" role="contentinfo" aria-label={t("Conclave footer")}>
         <div className="cl-footer-prelude">
           <span>
-            INDEPENDENT MINDS. <em>COMMON GROUND.</em>
+            {t.rich("INDEPENDENT MINDS. {ground}", { ground: <em>{t("COMMON GROUND.")}</em> })}
           </span>
           <Link href="#top" className="cl-back-top">
-            <span>BACK TO THE BEGINNING</span>
+            <span>{t("BACK TO THE BEGINNING")}</span>
             <ArrowUp size={19} strokeWidth={1.2} />
           </Link>
         </div>
@@ -210,22 +217,22 @@ export function Closing() {
           <div className="cl-footer-emblem">
             <ClosingSeal />
             <p>
-              EVERY MODEL.
+              {t("EVERY MODEL.")}
               <br />
-              ONE ROOM.
+              {t("ONE ROOM.")}
               <br />
-              <span>YOUR JUDGMENT.</span>
+              <span>{t("YOUR JUDGMENT.")}</span>
             </p>
-            <span className="cl-footer-edition">EST. 2026 / VOL. 001</span>
+            <span className="cl-footer-edition">{t("EST. 2026 / VOL. 001")}</span>
           </div>
-          <nav className="cl-footer-navigation" aria-label="Explore Conclave">
+          <nav className="cl-footer-navigation" aria-label={t("Explore Conclave")}>
             {footerGroups.map((group) => (
               <div className="cl-footer-navgroup" key={group.number}>
                 <span className="cl-footer-nav-index">{group.number} /</span>
-                <h3>{group.title}</h3>
+                <h3>{t(group.title)}</h3>
                 {group.links.map(([label, href]) => (
                   <Link href={href} key={label}>
-                    <span>{label}</span>
+                    <span>{t(label)}</span>
                     <ArrowUpRight size={14} strokeWidth={1.2} />
                   </Link>
                 ))}
@@ -233,18 +240,16 @@ export function Closing() {
             ))}
           </nav>
           <div className="cl-footer-edition-note">
-            <span>A NOTE ON THIS EDITION</span>
+            <span>{t("A NOTE ON THIS EDITION")}</span>
             <p>
-              An early release. Seven live models through one provider.
-              <br />
-              Prepaid credits today; USDC deposits are planned.
+              {t.rich("An early release. Seven live models through one provider.{line}Prepaid credits today; USDC deposits are planned.", { line: <br /> })}
             </p>
             <Ornament />
           </div>
         </div>
         <div className="cl-footer-signature" aria-label="Conclave">
           <span className="cl-signature-small">
-            A ROOM FOR EVERY PERSPECTIVE.
+            {t("A ROOM FOR EVERY PERSPECTIVE.")}
           </span>
           <div className="cl-footer-wordmark" aria-hidden="true">
             <Wordmark uppercase /><sup>®</sup>
@@ -258,9 +263,9 @@ export function Closing() {
         <div className="cl-footer-colophon">
           <span>© 2026 CONCLAVE</span>
           <span>
-            MANY MINDS. <span aria-hidden="true">✦</span> ONE COMMON GROUND.
+            {t.rich("MANY MINDS. {star} ONE COMMON GROUND.", { star: <span aria-hidden="true">✦</span> })}
           </span>
-          <span>SOLANA / WORLDWIDE</span>
+          <span>{t("SOLANA / WORLDWIDE")}</span>
         </div>
       </footer>
     </div>

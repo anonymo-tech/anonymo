@@ -1,5 +1,7 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
+
 import {
   useCallback,
   useEffect,
@@ -68,6 +70,7 @@ function SynthesisPanel({
   onRefreshBrief,
   document: sourceDocument,
 }: Props & { document: BriefDocument }) {
+  const t = useT();
   const [scope] = useState(() => ({
     briefId: brief.id,
     projectId: brief.roomId,
@@ -315,19 +318,20 @@ function SynthesisPanel({
   if (invalidSession)
     return (
       <output className="cp-fineprint">
-        Your session changed. Reopen this Brief after signing in.
+        {t('Your session changed. Reopen this Brief after signing in.')}
       </output>
     );
   return (
     <section
-      aria-label="Generate Brief analysis"
+      aria-label={t('Generate Brief analysis')}
       style={{ display: 'grid', gap: 16, marginTop: 24 }}
     >
-      <h3 style={{ fontSize: 14 }}>Generated analysis</h3>
+      <h3 style={{ fontSize: 14 }}>{t('Generated analysis')}</h3>
       <p className="cp-fineprint">
-        Summarize the {scope.document.evidence.length} saved responses and
-        compare their positions. The saved questions, answers, and source labels
-        are sent; your decision and notes stay separate.
+        {t(
+          'Summarize the {count} saved responses and compare their positions. The saved questions, answers, and source labels are sent; your decision and notes stay separate.',
+          { count: scope.document.evidence.length },
+        )}
       </p>
       <button
         type="button"
@@ -335,22 +339,23 @@ function SynthesisPanel({
         disabled={busy}
         onClick={() => void refresh()}
       >
-        Read saved analysis requests
+        {t('Read saved analysis requests')}
       </button>
       {error && (
         <p role="alert" className="cp-fineprint">
-          {error}
+          {t(error)}
         </p>
       )}
       {!loaded && (
         <output className="cp-fineprint">
-          Read saved requests before creating an analysis.
+          {t('Read saved requests before creating an analysis.')}
         </output>
       )}
       {loaded && !capability?.configured && (
         <p className="cp-fineprint">
-          Generation is unavailable. Previously saved requests and results
-          remain readable.
+          {t(
+            'Generation is unavailable. Previously saved requests and results remain readable.',
+          )}
         </p>
       )}
       {loaded && capability?.configured && (
@@ -362,24 +367,27 @@ function SynthesisPanel({
           }}
         >
           <label>
-            Analysis model
+            {t('Analysis model')}
             <select
               value={routeId}
               disabled={busy || !!uncertain}
               onChange={(event) => setRouteId(event.target.value)}
             >
               {routes.length === 0 && (
-                <option value="">No reviewed routes available</option>
+                <option value="">{t('No reviewed routes available')}</option>
               )}
               {routes.map((route) => (
                 <option key={route.versionId} value={route.versionId}>
-                  {route.modelId} · route {route.versionId.slice(0, 8)}
+                  {t('{model} · route {route}', {
+                    model: route.modelId,
+                    route: route.versionId.slice(0, 8),
+                  })}
                 </option>
               ))}
             </select>
           </label>
           <label>
-            Maximum output tokens
+            {t('Maximum output tokens')}
             <input
               type="number"
               min={1}
@@ -391,7 +399,9 @@ function SynthesisPanel({
           </label>
           {chosenRoute && (
             <p className="cp-fineprint">
-              Standard processing: {chosenRoute.card.retentionDisclosure}
+              {t('Standard processing: {disclosure}', {
+                disclosure: t(chosenRoute.card.retentionDisclosure),
+              })}
             </p>
           )}
           <button
@@ -408,11 +418,11 @@ function SynthesisPanel({
               maxTokens > tokenLimit
             }
           >
-            Get an exact quote
+            {t('Get an exact quote')}
           </button>
           {(pending || unexpired) && (
             <p className="cp-fineprint">
-              Review the saved request below before creating another.
+              {t('Review the saved request below before creating another.')}
             </p>
           )}
         </form>
@@ -420,8 +430,9 @@ function SynthesisPanel({
       {uncertain && (
         <div aria-live="polite">
           <p>
-            Approval may have completed. Keep this saved request and its
-            original approval key.
+            {t(
+              'Approval may have completed. Keep this saved request and its original approval key.',
+            )}
           </p>
           <button
             type="button"
@@ -429,7 +440,7 @@ function SynthesisPanel({
             disabled={busy}
             onClick={() => void read(uncertain)}
           >
-            Read saved approval status
+            {t('Read saved approval status')}
           </button>
           <button
             type="button"
@@ -437,47 +448,51 @@ function SynthesisPanel({
             disabled={busy}
             onClick={() => void approve(uncertain)}
           >
-            Recover the same approval
+            {t('Recover the same approval')}
           </button>
         </div>
       )}
       {focused && (
         <div style={{ display: 'grid', gap: 12 }}>
           <h4>
-            {focused.quote.modelId} · {stateLabel[focused.state]}
+            {focused.quote.modelId} · {t(stateLabel[focused.state])}
           </h4>
           <dl className="ct-facts">
             <div>
-              <dt>Analysis maximum</dt>
+              <dt>{t('Analysis maximum')}</dt>
               <dd>{usd(focused.quote.maximumUsd6)}</dd>
             </div>
             <div>
-              <dt>Analysis charge</dt>
+              <dt>{t('Analysis charge')}</dt>
               <dd>
                 {focused.billing?.actualUsd6 == null
-                  ? 'Not settled'
+                  ? t('Not settled')
                   : usd(focused.billing.actualUsd6)}
               </dd>
             </div>
             <div>
-              <dt>Route</dt>
+              <dt>{t('Route')}</dt>
               <dd>{focused.quote.routeVersionId}</dd>
             </div>
             <div>
-              <dt>Created</dt>
+              <dt>{t('Created')}</dt>
               <dd>{utc(focused.createdAt)}</dd>
             </div>
           </dl>
           <p className="cp-fineprint">
-            This charge is separate from the original responses.{' '}
-            {focused.quote.card.retentionDisclosure}
+            {t('This charge is separate from the original responses.')}{' '}
+            {t(focused.quote.card.retentionDisclosure)}
           </p>
           {focused.state === 'quoted' && (
             <>
               <p className="cp-fineprint">
-                Quote expires {utc(focused.quote.expiresAt)}. Maximum{' '}
-                {focused.quote.maxOutputTokens} output tokens. Your saved source
-                evidence is fixed for this request.
+                {t(
+                  'Quote expires {expires}. Maximum {tokens} output tokens. Your saved source evidence is fixed for this request.',
+                  {
+                    expires: utc(focused.quote.expiresAt),
+                    tokens: focused.quote.maxOutputTokens,
+                  },
+                )}
               </p>
               <button
                 type="button"
@@ -491,7 +506,9 @@ function SynthesisPanel({
                 }
                 onClick={() => void approve(focused)}
               >
-                Approve up to {usd(focused.quote.maximumUsd6)}
+                {t('Approve up to {amount}', {
+                  amount: usd(focused.quote.maximumUsd6),
+                })}
               </button>
             </>
           )}
@@ -507,7 +524,7 @@ function SynthesisPanel({
                 })
               }
             >
-              Validate saved output · no new model request
+              {t('Validate saved output · no new model request')}
             </button>
           )}
           {['queued', 'running', 'reconciliation_pending'].includes(
@@ -525,14 +542,14 @@ function SynthesisPanel({
                 })
               }
             >
-              Request cancellation
+              {t('Request cancellation')}
             </button>
           )}
           {focused.state === 'invalid' && (
             <p className="cp-fineprint">
-              The output could not be used as a sourced analysis. Any confirmed
-              provider charge is retained; no automatic replacement is
-              requested.
+              {t(
+                'The output could not be used as a sourced analysis. Any confirmed provider charge is retained; no automatic replacement is requested.',
+              )}
             </p>
           )}
           {focused.result?.analysis && (
@@ -550,8 +567,8 @@ function SynthesisPanel({
                 onClick={() => void select(focused.id)}
               >
                 {focused.id === selectedId
-                  ? 'Included in this Brief'
-                  : 'Use this analysis in the Brief'}
+                  ? t('Included in this Brief')
+                  : t('Use this analysis in the Brief')}
               </button>
             </>
           )}
@@ -564,12 +581,14 @@ function SynthesisPanel({
           disabled={busy}
           onClick={() => void select(null)}
         >
-          Remove generated analysis from the Brief
+          {t('Remove generated analysis from the Brief')}
         </button>
       )}
       {runs.length > 0 && (
         <details>
-          <summary>Analysis request history ({runs.length})</summary>
+          <summary>
+            {t('Analysis request history ({count})', { count: runs.length })}
+          </summary>
           <ul>
             {runs.map((run) => (
               <li key={run.id}>
@@ -579,7 +598,7 @@ function SynthesisPanel({
                   disabled={busy}
                   onClick={() => void read(run)}
                 >
-                  {run.quote.modelId} · {stateLabel[run.state]} ·{' '}
+                  {run.quote.modelId} · {t(stateLabel[run.state])} ·{' '}
                   {utc(run.createdAt)}
                 </button>
               </li>
@@ -600,7 +619,7 @@ function SynthesisPanel({
                 })
               }
             >
-              Load older requests
+              {t('Load older requests')}
             </button>
           )}
         </details>

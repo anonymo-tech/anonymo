@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import bs58 from 'bs58';
+import { walletChoices } from '../components/dashboard/wallet-options.ts';
 import {
   connectIdentityWallet,
   getAccountSession,
@@ -20,6 +21,40 @@ import {
 } from '../server/auth/wallet.ts';
 
 const origin = 'https://conclave.test';
+
+void test('wallet picker resolves installed brands and preserves other compatible wallets', () => {
+  const installed = [
+    'Phantom',
+    'Solflare',
+    'Backpack',
+    'MetaMask',
+    'Trust',
+    'OKX',
+  ].map((name) => ({ name, icon: 'data:image/png;base64,dGVzdA==' }));
+  const extra = {
+    name: 'Another compatible wallet',
+    icon: 'data:image/png;base64,dGVzdA==',
+  };
+  const options = walletChoices([...installed, extra]);
+  assert.equal(options.length, 7);
+  for (let i = 0; i < installed.length; i++)
+    assert.equal(options[i].wallet, installed[i]);
+  assert.equal(options[6].wallet, extra);
+  assert.equal(options[6].logo, extra.icon);
+  assert.equal(walletChoices([]).filter((option) => option.wallet).length, 0);
+});
+
+void test('wallet picker uses local brand assets and rejects remote or executable image sources', () => {
+  const brand = { name: 'Phantom', icon: 'https://untrusted.example/track' };
+  assert.equal(walletChoices([brand])[0].logo, '/brand/wallets/phantom.svg');
+  for (const icon of [
+    'https://untrusted.example/track',
+    'javascript:alert(1)',
+    'data:text/html;base64,dGVzdA==',
+  ]) {
+    assert.equal(walletChoices([{ name: 'Other wallet', icon }])[6].logo, null);
+  }
+});
 const { publicKey, privateKey } = generateKeyPairSync('ed25519');
 const publicBytes = new Uint8Array(
   Buffer.from(publicKey.export({ format: 'jwk' }).x, 'base64url'),

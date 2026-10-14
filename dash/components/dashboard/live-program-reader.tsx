@@ -1,5 +1,7 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
+
 import {
   useEffect,
   useId,
@@ -54,6 +56,7 @@ export function LiveProgramReader({
   accountId: string | null;
   controlRef?: Ref<ProgramReaderControl>;
 }) {
+  const t = useT();
   const fieldId = useId();
   const [draft, setDraft] = useState({ accountId, value: '' });
   const [response, setResponse] = useState<{
@@ -161,11 +164,14 @@ export function LiveProgramReader({
   return (
     <>
       <p className="ct-intro">
-        Read a Solana program’s loader state and a bounded deployment history
-        through the configured network’s RPC.
+        {t(
+          'Read a Solana program’s loader state and a bounded deployment history through the configured network’s RPC.',
+        )}
       </p>
       {!accountId && (
-        <p className="ct-note">Sign in through Account to inspect a program.</p>
+        <p className="ct-note">
+          {t('Sign in through Account to inspect a program.')}
+        </p>
       )}
       <form
         className="cw-simple-form"
@@ -174,7 +180,7 @@ export function LiveProgramReader({
           void inspect();
         }}
       >
-        <label htmlFor={fieldId}>Program address</label>
+        <label htmlFor={fieldId}>{t('Program address')}</label>
         <input
           id={fieldId}
           name="program-address"
@@ -191,11 +197,12 @@ export function LiveProgramReader({
             setResponse(null);
             setNotice(null);
           }}
-          placeholder="Paste a Solana program address"
+          placeholder={t('Paste a Solana program address')}
         />
         <p id={`${fieldId}-help`} className="ct-note">
-          Paste only the public program address. It will be sent to the
-          configured RPC service. Never enter a private key or recovery phrase.
+          {t(
+            'Paste only the public program address. It will be sent to the configured RPC service. Never enter a private key or recovery phrase.',
+          )}
         </p>
         <div>
           <button
@@ -205,11 +212,11 @@ export function LiveProgramReader({
             disabled={!accountId || pending || !address.trim()}
           >
             <MotionIcon name="search" size={18} />
-            {pending ? 'Reading program…' : 'Inspect program'}
+            {pending ? t('Reading program…') : t('Inspect program')}
           </button>
           {pending && (
             <button className="ct-button" type="button" onClick={cancelRead}>
-              Cancel read
+              {t('Cancel read')}
             </button>
           )}
         </div>
@@ -217,17 +224,17 @@ export function LiveProgramReader({
       {error && (
         <output className="ct-note">
           <Info size={15} aria-hidden="true" />
-          <span>{error}</span>
+          <span>{t(error)}</span>
         </output>
       )}
       {program && (
         <>
           <section
             className="ct-detail ct-example"
-            aria-label="Program state and warnings"
+            aria-label={t('Program state and warnings')}
           >
-            <span className="ct-eyebrow">Finalized RPC snapshot</span>
-            <h3>{statusNames[program.status]}</h3>
+            <span className="ct-eyebrow">{t('Finalized RPC snapshot')}</span>
+            <h3>{t(statusNames[program.status])}</h3>
             {program.warnings
               .filter((warning) => warning.code !== 'HISTORY_BOUNDED')
               .map((warning) => (
@@ -240,138 +247,150 @@ export function LiveProgramReader({
                   <div>
                     <strong>
                       {warning.severity === 'warning'
-                        ? 'Warning'
-                        : 'Information'}
+                        ? t('Warning')
+                        : t('Information')}
                     </strong>
-                    <p>{warning.message}</p>
+                    <p>{t(warning.message)}</p>
                   </div>
                 </div>
               ))}
           </section>
           <section
             className="ct-detail ct-example"
-            aria-label="Program account record"
+            aria-label={t('Program account record')}
           >
             <div className="ct-detail-heading">
-              <h3>Program account</h3>
-              <span className="ct-status ct-status-neutral">Read only</span>
+              <h3>{t('Program account')}</h3>
+              <span className="ct-status ct-status-neutral">
+                {t('Read only')}
+              </span>
             </div>
             <dl className="ct-facts">
               <div>
-                <dt>Network</dt>
+                <dt>{t('Network')}</dt>
                 <dd>
                   {program.cluster === 'devnet'
-                    ? 'Devnet · test network'
-                    : 'Mainnet beta'}
+                    ? t('Devnet · test network')
+                    : t('Mainnet beta')}
                 </dd>
               </div>
               <div>
-                <dt>Program address</dt>
+                <dt>{t('Program address')}</dt>
                 <dd className="ct-code">{program.address}</dd>
               </div>
               <div>
-                <dt>Loader</dt>
+                <dt>{t('Loader')}</dt>
                 <dd>
                   {program.loader === null
-                    ? 'Unavailable'
-                    : loaderNames[program.loader]}
+                    ? t('Unavailable')
+                    : t(loaderNames[program.loader])}
                 </dd>
               </div>
               {program.owner && (
                 <div>
-                  <dt>Owner program</dt>
+                  <dt>{t('Owner program')}</dt>
                   <dd className="ct-code">{program.owner}</dd>
                 </div>
               )}
               <div>
-                <dt>Finalized context slot</dt>
+                <dt>{t('Finalized context slot')}</dt>
                 <dd>{program.contextSlot}</dd>
               </div>
               <div>
-                <dt>Upgradeability</dt>
+                <dt>{t('Upgradeability')}</dt>
                 <dd>
                   {program.mutability === 'upgradeable'
-                    ? 'Upgradeable under this loader'
+                    ? t('Upgradeable under this loader')
                     : program.mutability === 'immutable'
-                      ? 'Immutable under this loader’s rules'
-                      : 'Not established'}
+                      ? t('Immutable under this loader’s rules')
+                      : t('Not established')}
                 </dd>
               </div>
               <div>
-                <dt>Current upgrade authority</dt>
+                <dt>{t('Current upgrade authority')}</dt>
                 <dd className="ct-code">
                   {program.authority.status === 'present'
                     ? program.authority.address
                     : program.authority.status === 'none'
-                      ? 'None in the recognized loader state'
-                      : 'Not established'}
+                      ? t('None in the recognized loader state')
+                      : t('Not established')}
                 </dd>
               </div>
               <div>
-                <dt>Latest deployment slot in account state</dt>
+                <dt>{t('Latest deployment slot in account state')}</dt>
                 <dd>
                   {program.lastDeploymentSlot ??
-                    'Not available from this state'}
+                    t('Not available from this state')}
                 </dd>
               </div>
               {program.loaderStateSlot !== null && (
                 <div>
-                  <dt>Loader state slot</dt>
+                  <dt>{t('Loader state slot')}</dt>
                   <dd>
                     {program.loaderStateSlot}
                     {program.status === 'retracted'
-                      ? ' · retracted state, not a deployment date'
+                      ? t(' · retracted state, not a deployment date')
                       : ''}
                   </dd>
                 </div>
               )}
               {program.programDataAddress && (
                 <div>
-                  <dt>ProgramData account</dt>
+                  <dt>{t('ProgramData account')}</dt>
                   <dd className="ct-code">{program.programDataAddress}</dd>
                 </div>
               )}
               {program.nextVersionAddress && (
                 <div>
-                  <dt>Next version address · not inspected</dt>
+                  <dt>{t('Next version address · not inspected')}</dt>
                   <dd className="ct-code">{program.nextVersionAddress}</dd>
                 </div>
               )}
             </dl>
             {program.status === 'finalized' && (
               <p className="ct-note">
-                Loader v4 code finalization is a program state. It is separate
-                from the network finality of this RPC snapshot.
+                {t(
+                  'Loader v4 code finalization is a program state. It is separate from the network finality of this RPC snapshot.',
+                )}
               </p>
             )}
           </section>
           <section
             className="ct-detail ct-example"
-            aria-label="Observed program deployment history"
+            aria-label={t('Observed program deployment history')}
           >
-            <h3>Observed deployments and upgrades</h3>
+            <h3>{t('Observed deployments and upgrades')}</h3>
             {program.history.status === 'not-scanned' ? (
-              <p>History was not scanned for this account state.</p>
+              <p>{t('History was not scanned for this account state.')}</p>
             ) : (
               <>
                 <p className="ct-note">
-                  {
+                  {t(
                     program.warnings.find(
                       (warning) => warning.code === 'HISTORY_BOUNDED',
-                    )?.message
-                  }
+                    )?.message ?? '',
+                  )}
                 </p>
                 <p className="ct-note">
-                  {program.history.scannedSignatures} signatures scanned ·{' '}
-                  {program.history.verifiedTransactions} transactions checked ·{' '}
-                  {program.history.unavailableTransactions} unavailable
+                  {t(
+                    '{signatures} signatures scanned · {transactions} transactions checked · {unavailable} unavailable',
+                    {
+                      signatures: program.history.scannedSignatures,
+                      transactions: program.history.verifiedTransactions,
+                      unavailable: program.history.unavailableTransactions,
+                    },
+                  )}
                 </p>
                 {program.history.events.length === 0 &&
                   program.history.status === 'bounded' && (
                     <p>
                       {program.loader === 'v4'
-                        ? 'Deployment events were not interpreted because the historical loader version is unverified.'
-                        : 'No matching deployment or upgrade events were found within these checked records.'}
+                        ? t(
+                            'Deployment events were not interpreted because the historical loader version is unverified.',
+                          )
+                        : t(
+                            'No matching deployment or upgrade events were found within these checked records.',
+                          )}
                     </p>
                   )}
                 {program.history.events.map((event) => (
@@ -380,23 +399,26 @@ export function LiveProgramReader({
                     key={`${event.signature}:${event.instruction}`}
                   >
                     <summary>
-                      {eventNames[event.kind]} · slot {event.slot}
+                      {t('{event} · slot {slot}', {
+                        event: t(eventNames[event.kind]),
+                        slot: event.slot,
+                      })}
                     </summary>
                     <dl className="ct-facts">
                       <div>
-                        <dt>Time</dt>
-                        <dd>{utcTime(event.blockTime)}</dd>
+                        <dt>{t('Time')}</dt>
+                        <dd>{t(utcTime(event.blockTime))}</dd>
                       </div>
                       <div>
-                        <dt>Loader</dt>
-                        <dd>{loaderNames[event.loader]}</dd>
+                        <dt>{t('Loader')}</dt>
+                        <dd>{t(loaderNames[event.loader])}</dd>
                       </div>
                       <div>
-                        <dt>Transaction signature</dt>
+                        <dt>{t('Transaction signature')}</dt>
                         <dd className="ct-code">{event.signature}</dd>
                       </div>
                       <div>
-                        <dt>Instruction</dt>
+                        <dt>{t('Instruction')}</dt>
                         <dd>{event.instruction}</dd>
                       </div>
                     </dl>

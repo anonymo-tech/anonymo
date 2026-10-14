@@ -1,5 +1,6 @@
 'use client';
 
+import { useT, type Translator } from '@/lib/i18n';
 import { useEffect, useState } from 'react';
 import type {
   ContextOmission,
@@ -15,14 +16,38 @@ import { MotionIcon } from './motion-icon';
 import { ROUTING_TASK_LABELS } from '../../lib/model-routing';
 
 const omissionLabels: Record<ContextOmission, [string, string]> = {
-  otherModel: ['answered by a different model', 'answered by a different model'],
-  inProgress: ['reply still generating', 'replies still generating'],
-  stopping: ['stopped reply not yet settled', 'stopped replies not yet settled'],
-  unsettled: ['reply whose cost is not yet settled', 'replies whose cost is not yet settled'],
-  unfinished: ['reply that did not complete', 'replies that did not complete'],
-  notLoaded: ['reply not fully loaded', 'replies not fully loaded'],
-  blind: ['unrevealed blind comparison', 'unrevealed blind comparisons'],
-  sizeLimit: ['beyond the context size limit', 'beyond the context size limit'],
+  otherModel: [
+    '{count} answered by a different model',
+    '{count} answered by a different model',
+  ],
+  inProgress: [
+    '{count} reply still generating',
+    '{count} replies still generating',
+  ],
+  stopping: [
+    '{count} stopped reply not yet settled',
+    '{count} stopped replies not yet settled',
+  ],
+  unsettled: [
+    '{count} reply whose cost is not yet settled',
+    '{count} replies whose cost is not yet settled',
+  ],
+  unfinished: [
+    '{count} reply that did not complete',
+    '{count} replies that did not complete',
+  ],
+  notLoaded: [
+    '{count} reply not fully loaded',
+    '{count} replies not fully loaded',
+  ],
+  blind: [
+    '{count} unrevealed blind comparison',
+    '{count} unrevealed blind comparisons',
+  ],
+  sizeLimit: [
+    '{count} beyond the context size limit',
+    '{count} beyond the context size limit',
+  ],
 };
 const omissionOrder: ContextOmission[] = [
   'otherModel',
@@ -35,12 +60,19 @@ const omissionOrder: ContextOmission[] = [
   'sizeLimit',
 ];
 
-function omissionSummary(reasons: Partial<Record<ContextOmission, number>>) {
+function omissionSummary(
+  reasons: Partial<Record<ContextOmission, number>>,
+  t: Translator,
+) {
   const parts = omissionOrder.flatMap((reason) => {
     const count = reasons[reason] ?? 0;
-    return count ? [`${count} ${omissionLabels[reason][count === 1 ? 0 : 1]}`] : [];
+    return count
+      ? [t(omissionLabels[reason][count === 1 ? 0 : 1], { count })]
+      : [];
   });
-  return parts.length ? ` (${parts.join(', ')})` : '';
+  return parts.length
+    ? t(' ({reasons})', { reasons: parts.join(t(', ')) })
+    : '';
 }
 
 function ReservationCap({
@@ -50,11 +82,12 @@ function ReservationCap({
   budgetUsd6: string;
   availableUsd6: string | null;
 }) {
+  const t = useT();
   const cap = effectiveReservationCap(budgetUsd6, availableUsd6);
   return (
     <>
       {formatFriendlyUsd6(cap.usd6)}
-      {cap.limitedByBalance && ' · your available balance'}
+      {cap.limitedByBalance && t(' · your available balance')}
     </>
   );
 }
@@ -75,6 +108,7 @@ export function LiveRequestReview({
   onApprove: () => void;
   onDismiss: () => void;
 }) {
+  const t = useT();
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -84,69 +118,116 @@ export function LiveRequestReview({
   const expired = Date.parse(review.expiresAt) <= now;
   const fee = quotePlatformFeeTotals(review.quotes);
   const single = review.quotes.length === 1;
+  const routingReason =
+    review.routing?.mode === 'auto' ? review.routing.recommendation.reason : '';
+  const suppliedReason =
+    /^Lowest maximum quoted cost among (\d+) reviewed, compatible supplied candidates for (general questions|code|reasoning|writing|long context)\. Each price includes its full supplied conversation context; this is not a model quality ranking\.$/.exec(
+      routingReason,
+    );
   return (
     <div className="ct-tools cw-simple-form cw-request-review">
       <p className="ct-intro">
         {uncertain
-          ? 'The last submission was interrupted. Recover this same request using its original request key; this will not create a second comparison.'
-          : `Review where this question goes and the maximum amount reserved before ${single ? 'the model runs' : 'any model runs'}.`}
+          ? t(
+              'The last submission was interrupted. Recover this same request using its original request key; this will not create a second comparison.',
+            )
+          : single
+            ? t(
+                'Review where this question goes and the maximum amount reserved before the model runs.',
+              )
+            : t(
+                'Review where this question goes and the maximum amount reserved before any model runs.',
+              )}
       </p>
-      <section className="ct-detail" aria-label="Request summary">
+      <section className="ct-detail" aria-label={t('Request summary')}>
         <div className="ct-detail-heading">
           <h3>
             {review.blind
-              ? 'Blind comparison'
+              ? t('Blind comparison')
               : single
-                ? 'Your question'
-                : 'Model comparison'}
+                ? t('Your question')
+                : t('Model comparison')}
           </h3>
           <span className="ct-status">
-            {review.quotes.length} {single ? 'model' : 'models'}
+            {single
+              ? t('{count} model', { count: review.quotes.length })
+              : t('{count} models', { count: review.quotes.length })}
           </span>
         </div>
         <p className="ct-note">
           {single
-            ? 'The question below and the included prior exchanges are sent. Attached files are not included.'
-            : 'The question below and each model’s included prior exchanges are sent. Attached files are not included. Context counts are listed per model.'}
+            ? t(
+                'The question below and the included prior exchanges are sent. Attached files are not included.',
+              )
+            : t(
+                'The question below and each model’s included prior exchanges are sent. Attached files are not included. Context counts are listed per model.',
+              )}
         </p>
         <p className="ct-code">{review.prompt}</p>
         <dl className="ct-facts">
           <div>
-            <dt>Maximum reservation</dt>
+            <dt>{t('Maximum reservation')}</dt>
             <dd>{formatUsd6(review.maximumUsd6)}</dd>
           </div>
           {fee && (
             <div>
-              <dt>Platform fee</dt>
-              <dd>{`Includes up to ${formatUsd6(fee.platformFeeMaximumUsd6)} platform fee · ${formatUsd6(fee.burnReserveMaximumUsd6)} to the platform-token burn reserve`}</dd>
+              <dt>{t('Platform fee')}</dt>
+              <dd>
+                {t(
+                  'Includes up to {fee} platform fee · {reserve} to the platform-token burn reserve',
+                  {
+                    fee: formatUsd6(fee.platformFeeMaximumUsd6),
+                    reserve: formatUsd6(fee.burnReserveMaximumUsd6),
+                  },
+                )}
+              </dd>
             </div>
           )}
           <div>
-            <dt>Privacy route</dt>
+            <dt>{t('Privacy route')}</dt>
             <dd>
-              Standard · The inference gateway and the model provider receive the question in
-              plaintext.
+              {t(
+                'Standard · The inference gateway and the model provider receive the question in plaintext.',
+              )}
             </dd>
           </div>
           <div>
-            <dt>Quote</dt>
+            <dt>{t('Quote')}</dt>
             <dd>
               {uncertain
-                ? 'Original request retained for recovery'
+                ? t('Original request retained for recovery')
                 : expired
-                  ? 'Expired — request a new quote'
-                  : `Expires ${new Date(review.expiresAt).toISOString().slice(11, 19)} UTC`}
+                  ? t('Expired — request a new quote')
+                  : t('Expires {time} UTC', {
+                      time: new Date(review.expiresAt)
+                        .toISOString()
+                        .slice(11, 19),
+                    })}
             </dd>
           </div>
         </dl>
       </section>
       {review.routing?.mode === 'auto' && (
-        <section className="ct-detail" aria-label="Automatic routing decision">
-          <h3>Auto · {ROUTING_TASK_LABELS[review.routing.task]}</h3>
-          <p className="ct-note">{review.routing.recommendation.reason}</p>
+        <section
+          className="ct-detail"
+          aria-label={t('Automatic routing decision')}
+        >
+          <h3>
+            {t('Auto · {task}', {
+              task: t(ROUTING_TASK_LABELS[review.routing.task]),
+            })}
+          </h3>
+          <p className="ct-note">
+            {suppliedReason
+              ? t(
+                  'Lowest maximum quoted cost among {count} reviewed, compatible supplied candidates for {task}. Each price includes its full supplied conversation context; this is not a model quality ranking.',
+                  { count: suppliedReason[1], task: t(suppliedReason[2]) },
+                )
+              : t(routingReason)}
+          </p>
           <dl className="ct-facts">
             <div>
-              <dt>Reservation budget</dt>
+              <dt>{t('Reservation budget')}</dt>
               <dd>
                 <ReservationCap
                   budgetUsd6={review.routing.budgetUsd6}
@@ -155,73 +236,100 @@ export function LiveRequestReview({
               </dd>
             </div>
             <div>
-              <dt>Output ceiling</dt>
-              <dd>{review.routing.maxOutputTokens} tokens</dd>
+              <dt>{t('Output ceiling')}</dt>
+              <dd>
+                {t('{count} tokens', { count: review.routing.maxOutputTokens })}
+              </dd>
             </div>
           </dl>
         </section>
       )}
       {review.routing?.mode === 'mentions' && (
         <p className="ct-note">
-          Model mentions: {review.routing.mentions.join(', ')}.
+          {t('Model mentions: {mentions}.', {
+            mentions: review.routing.mentions.join(', '),
+          })}
           {review.routing.overridesAuto
-            ? ' These choices override Auto’s route choice for this question; its reservation budget still applies.'
-            : ' These choices override the picker for this question.'}{' '}
-          Routing markers are removed from the question shown above.
-          {review.routing.budgetUsd6 && (
-            <>
-              {' '}
-              Reservation budget:{' '}
-              <ReservationCap
-                budgetUsd6={review.routing.budgetUsd6}
-                availableUsd6={availableUsd6}
-              />
-              .
-            </>
-          )}
+            ? t(
+                ' These choices override Auto’s route choice for this question; its reservation budget still applies.',
+              )
+            : t(' These choices override the picker for this question.')}{' '}
+          {t('Routing markers are removed from the question shown above.')}
+          {review.routing.budgetUsd6 &&
+            t.rich(' Reservation budget: {budget}.', {
+              budget: (
+                <ReservationCap
+                  budgetUsd6={review.routing.budgetUsd6}
+                  availableUsd6={availableUsd6}
+                />
+              ),
+            })}
         </p>
       )}
       {review.contexts.map((context, index) => (
         <p className="ct-note" key={`${context.family}:${index}`}>
-          {review.quotes[index]?.modelId ?? context.family}:{' '}
-          {context.includedExchanges} previous{' '}
-          {context.includedExchanges === 1 ? 'exchange' : 'exchanges'} included
+          {context.includedExchanges === 1
+            ? t('{model}: {count} previous exchange included', {
+                model: review.quotes[index]?.modelId ?? context.family,
+                count: context.includedExchanges,
+              })
+            : t('{model}: {count} previous exchanges included', {
+                model: review.quotes[index]?.modelId ?? context.family,
+                count: context.includedExchanges,
+              })}
           {context.omittedExchanges > 0 &&
-            `; ${context.omittedExchanges} loaded project ${context.omittedExchanges === 1 ? 'turn' : 'turns'} left out${omissionSummary(context.omittedReasons ?? {})}`}
-          .
+            (context.omittedExchanges === 1
+              ? t('; {count} loaded project turn left out{reasons}', {
+                  count: context.omittedExchanges,
+                  reasons: omissionSummary(context.omittedReasons ?? {}, t),
+                })
+              : t('; {count} loaded project turns left out{reasons}', {
+                  count: context.omittedExchanges,
+                  reasons: omissionSummary(context.omittedReasons ?? {}, t),
+                }))}
+          {t('.')}
           {context.olderHistoryNotLoaded &&
-            ' Additional older history has not been loaded and is not included.'}
+            t(
+              ' Additional older history has not been loaded and is not included.',
+            )}
         </p>
       ))}
       {review.quotes.map((quote) => (
         <details className="ct-detail" key={quote.id}>
           <summary>
-            {quote.modelId} · maximum {formatUsd6(quote.maximumUsd6)}
+            {t('{model} · maximum {amount}', {
+              model: quote.modelId,
+              amount: formatUsd6(quote.maximumUsd6),
+            })}
           </summary>
           <dl className="ct-facts">
             <div>
-              <dt>Route level</dt>
-              <dd>{quote.card.level}</dd>
+              <dt>{t('Route level')}</dt>
+              <dd>{t(quote.card.level)}</dd>
             </div>
             <div>
-              <dt>Retention</dt>
-              <dd>{quote.card.retentionDisclosure}</dd>
+              <dt>{t('Retention')}</dt>
+              <dd>{t(quote.card.retentionDisclosure)}</dd>
             </div>
             <div>
-              <dt>Training use</dt>
-              <dd>{quote.card.trainingUse.replaceAll('_', ' ')}</dd>
+              <dt>{t('Training use')}</dt>
+              <dd>{t(quote.card.trainingUse.replaceAll('_', ' '))}</dd>
             </div>
             <div>
-              <dt>Pricing markup</dt>
-              <dd>{quote.markupBps / 100}% included in the maximum</dd>
+              <dt>{t('Pricing markup')}</dt>
+              <dd>
+                {t('{percent}% included in the maximum', {
+                  percent: quote.markupBps / 100,
+                })}
+              </dd>
             </div>
             <div>
-              <dt>Evidence checked</dt>
+              <dt>{t('Evidence checked')}</dt>
               <dd>{quote.card.evidenceDate}</dd>
             </div>
             {review.routing?.mode === 'auto' && quote.card.routing && (
               <div>
-                <dt>Task review</dt>
+                <dt>{t('Task review')}</dt>
                 <dd>{quote.card.routing.reviewedAt}</dd>
               </div>
             )}
@@ -233,8 +341,9 @@ export function LiveRequestReview({
               target="_blank"
               rel="noreferrer"
             >
-              Read task review evidence <MotionIcon name="open" size={18} />
-              <span className="ct-sr-only"> (opens in a new tab)</span>
+              {t('Read task review evidence')}{' '}
+              <MotionIcon name="open" size={18} />
+              <span className="ct-sr-only">{t(' (opens in a new tab)')}</span>
             </a>
           )}
           {quote.card.evidenceUrl.startsWith('https://') && (
@@ -244,18 +353,18 @@ export function LiveRequestReview({
               target="_blank"
               rel="noreferrer"
             >
-              Read route evidence <MotionIcon name="open" size={18} />
-              <span className="ct-sr-only"> (opens in a new tab)</span>
+              {t('Read route evidence')} <MotionIcon name="open" size={18} />
+              <span className="ct-sr-only">{t(' (opens in a new tab)')}</span>
             </a>
           )}
         </details>
       ))}
       <p className="ct-note">
-        The reserved maximum is a hold against your balance. Verified usage
-        determines settlement. Cancellation may still incur usage already
-        dispatched; an uncertain provider result can remain held for review.
+        {t(
+          'The reserved maximum is a hold against your balance. Verified usage determines settlement. Cancellation may still incur usage already dispatched; an uncertain provider result can remain held for review.',
+        )}
       </p>
-      {error && <output className="ct-note">{error}</output>}
+      {error && <output className="ct-note">{t(error)}</output>}
       <div className="ct-footer">
         <button
           className="ct-button"
@@ -263,7 +372,7 @@ export function LiveRequestReview({
           onClick={onDismiss}
           disabled={busy || uncertain}
         >
-          Dismiss
+          {t('Dismiss')}
         </button>
         <button
           className="ct-button ct-button-primary"
@@ -272,10 +381,12 @@ export function LiveRequestReview({
           disabled={busy || (!uncertain && expired)}
         >
           {busy
-            ? 'Checking saved request…'
+            ? t('Checking saved request…')
             : uncertain
-              ? 'Recover this request'
-              : `Reserve up to ${formatUsd6(review.maximumUsd6)} and send`}
+              ? t('Recover this request')
+              : t('Reserve up to {amount} and send', {
+                  amount: formatUsd6(review.maximumUsd6),
+                })}
         </button>
       </div>
     </div>

@@ -1,5 +1,6 @@
 "use client";
 
+import { useT } from '@/lib/i18n';
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import {
   seekUiMorph,
@@ -75,12 +76,15 @@ function CouncilPanels({
   frame: UiMorphFrame;
   prefix: string;
 }) {
+  const t = useT();
+  const experiment = t("Start with one{line}clear experiment.", { line: "\n" }).split("\n");
+  const risks = t("Find the risks{line}before you commit.", { line: "\n" }).split("\n");
   return (
     <>
       <Panel id="prompt" frame={frame} prefix={prefix}>
         <path className="morph-stroke" d="M43 111v14m-7-7h14" />
         <text x="65" y="122" className="morph-strong" fontSize="14">
-          A second perspective?
+          {t("A second perspective?")}
         </text>
         <circle cx="300" cy="118" r="17" className="morph-ink" />
         <Arrow x={294} y={112} paper />
@@ -114,7 +118,7 @@ function CouncilPanels({
           </clipPath>
         </defs>
         <text x="42" y="74" className="morph-title">
-          Choose your council.
+          {t("Choose your council.")}
         </text>
         <rect
           x="39"
@@ -134,20 +138,20 @@ function CouncilPanels({
           className="morph-ink"
         />
         <text x="84" y="112" textAnchor="middle">
-          Reason
+          {t("Reason")}
         </text>
         <text x="172" y="112" textAnchor="middle">
-          Question
+          {t("Question")}
         </text>
         <text x="262" y="112" textAnchor="middle" className="morph-strong">
-          Compare
+          {t("Compare")}
         </text>
         <g clipPath={`url(#${prefix}-tab-selection)`}>
           <text x="84" y="112" textAnchor="middle" className="morph-paper">
-            Reason
+            {t("Reason")}
           </text>
           <text x="172" y="112" textAnchor="middle" className="morph-paper">
-            Question
+            {t("Question")}
           </text>
           <text
             x="262"
@@ -155,18 +159,18 @@ function CouncilPanels({
             textAnchor="middle"
             className="morph-paper morph-strong"
           >
-            Compare
+            {t("Compare")}
           </text>
         </g>
         <circle cx="47" cy="150" r="4" className="morph-red" />
         <text x="60" y="154" className="morph-muted">
-          One question. Different minds.
+          {t("One question. Different minds.")}
         </text>
         <path d="M42 170h266" className="morph-rule" />
       </Panel>
       <Panel id="compare" frame={frame} prefix={prefix}>
         <text x="31" y="55" className="morph-title">
-          Two ways to see it.
+          {t("Two ways to see it.")}
         </text>
         <rect
           x="270"
@@ -182,7 +186,7 @@ function CouncilPanels({
           textAnchor="middle"
           className="morph-paper morph-small"
         >
-          Blind
+          {t("Blind")}
         </text>
         <path d="M30 72h289M175 83v103" className="morph-rule" />
         <circle cx="42" cy="94" r="9" className="morph-ink" />
@@ -195,7 +199,7 @@ function CouncilPanels({
           A
         </text>
         <text x="58" y="98" className="morph-small morph-muted">
-          Perspective A
+          {t("Perspective A")}
         </text>
         <circle cx="197" cy="94" r="9" className="morph-red" />
         <text
@@ -207,31 +211,31 @@ function CouncilPanels({
           B
         </text>
         <text x="213" y="98" className="morph-small morph-muted">
-          Perspective B
+          {t("Perspective B")}
         </text>
         <text x="32" y="128" className="morph-large">
-          Build fast.
+          {t("Build fast.")}
         </text>
         <text x="187" y="128" className="morph-large">
-          Check first.
+          {t("Check first.")}
         </text>
         <text x="32" y="151">
-          Start with one
+          {experiment[0]}
         </text>
         <text x="32" y="167">
-          clear experiment.
+          {experiment[1]}
         </text>
         <text x="187" y="151">
-          Find the risks
+          {risks[0]}
         </text>
         <text x="187" y="167">
-          before you commit.
+          {risks[1]}
         </text>
         <path d="M32 185h120M187 185h130" className="morph-rule" />
       </Panel>
       <Panel id="vote" frame={frame} prefix={prefix}>
         <text x="44" y="66" className="morph-title">
-          Which answer holds?
+          {t("Which answer holds?")}
         </text>
         <rect
           x="42"
@@ -242,7 +246,7 @@ function CouncilPanels({
           className="morph-inset"
         />
         <text x="56" y="105">
-          A / The practical case
+          {t("A / The practical case")}
         </text>
         <circle cx="286" cy="100" r="7" fill="none" className="morph-rule" />
         <rect
@@ -254,7 +258,7 @@ function CouncilPanels({
           className="morph-ink"
         />
         <text x="56" y="150" className="morph-paper">
-          B / The critical perspective
+          {t("B / The critical perspective")}
         </text>
         <circle
           cx="286"
@@ -268,7 +272,7 @@ function CouncilPanels({
           <path d="m282 145 3 3 5-6" className="morph-paper-stroke" />
         </g>
         <text x="44" y="184" className="morph-small morph-muted">
-          Choose the thought, then reveal the model.
+          {t("Choose the thought, then reveal the model.")}
         </text>
       </Panel>
       <Panel id="brief" frame={frame} prefix={prefix}>
@@ -282,23 +286,23 @@ function CouncilPanels({
         />
         <path d="M72 46h12m-12 5h12m-12 5h7" className="morph-paper-stroke" />
         <text x="104" y="49" className="morph-title">
-          Decision Brief
+          {t("Decision Brief")}
         </text>
         <text x="104" y="65" className="morph-small morph-muted">
-          Keep the reasoning.
+          {t("Keep the reasoning.")}
         </text>
         <path d="M64 81h222" className="morph-rule" />
         <text x="64" y="103" className="morph-strong">
-          The next step
+          {t("The next step")}
         </text>
         <text x="64" y="127">
-          Test the idea.
+          {t("Test the idea.")}
         </text>
         <text x="64" y="146">
-          Keep the objections.
+          {t("Keep the objections.")}
         </text>
         <text x="64" y="165">
-          Record the decision.
+          {t("Record the decision.")}
         </text>
         <rect
           x="64"
@@ -309,7 +313,7 @@ function CouncilPanels({
           className="morph-inset"
         />
         <text x="77" y="196" className="morph-small morph-strong">
-          A portable record
+          {t("A portable record")}
         </text>
         <Arrow x={265} y={186} />
       </Panel>
@@ -324,6 +328,7 @@ function BoundaryPanels({
   frame: UiMorphFrame;
   prefix: string;
 }) {
+  const t = useT();
   return (
     <>
       <Panel id="route" frame={frame} prefix={prefix}>
@@ -338,7 +343,7 @@ function BoundaryPanels({
           opacity={frame.details.routeFocus}
         />
         <text x="49" y="52" className="morph-title">
-          Route Card
+          {t("Route Card")}
         </text>
         <rect
           x="249"
@@ -349,26 +354,26 @@ function BoundaryPanels({
           className="morph-inset"
         />
         <text x="275" y="51" textAnchor="middle" className="morph-small">
-          Preview
+          {t("Preview")}
         </text>
         <path d="M49 68h252" className="morph-rule" />
         <text x="49" y="93" className="morph-muted">
-          Destination
+          {t("Destination")}
         </text>
         <text x="301" y="93" textAnchor="end" className="morph-strong">
-          Hosted model
+          {t("Hosted model")}
         </text>
         <text x="49" y="119" className="morph-muted">
-          Retention
+          {t("Retention")}
         </text>
         <text x="301" y="119" textAnchor="end" className="morph-strong">
-          Policy shown
+          {t("Policy shown")}
         </text>
         <text x="49" y="145" className="morph-muted">
-          Your minimum
+          {t("Your minimum")}
         </text>
         <text x="301" y="145" textAnchor="end" className="morph-strong">
-          You decide
+          {t("You decide")}
         </text>
         <rect
           x="49"
@@ -379,16 +384,16 @@ function BoundaryPanels({
           className="morph-ink"
         />
         <text x="63" y="182" className="morph-paper">
-          Inspect the terms
+          {t("Inspect the terms")}
         </text>
         <Arrow x={277} y={171} paper />
       </Panel>
       <Panel id="privacy" frame={frame} prefix={prefix}>
         <text x="51" y="80" className="morph-title">
-          Set your boundary.
+          {t("Set your boundary.")}
         </text>
         <text x="51" y="121" className="morph-strong" fontSize="14">
-          Strict privacy
+          {t("Strict privacy")}
         </text>
         <rect
           x="247"
@@ -422,12 +427,12 @@ function BoundaryPanels({
         />
         <path d="M51 143h246" className="morph-rule" />
         <text x="51" y="163" className="morph-small morph-muted">
-          Refuse a route below your minimum.
+          {t("Refuse a route below your minimum.")}
         </text>
       </Panel>
       <Panel id="guard" frame={frame} prefix={prefix}>
         <text x="48" y="59" className="morph-title">
-          Before anything leaves.
+          {t("Before anything leaves.")}
         </text>
         <rect
           x="47"
@@ -458,13 +463,13 @@ function BoundaryPanels({
             className="morph-ink"
           />
           <text x="67" y="103" className="morph-paper morph-small">
-            [REDACTED]
+            {t("[REDACTED]")}
           </text>
           <Check x={278} y={94} />
         </g>
         <circle cx="54" cy="140" r="4" className="morph-red" />
         <text x="66" y="144" className="morph-small morph-muted">
-          Synthetic example · caught locally
+          {t("Synthetic example · caught locally")}
         </text>
         <rect
           x="47"
@@ -475,7 +480,7 @@ function BoundaryPanels({
           className="morph-ink"
         />
         <text x="61" y="177" className="morph-paper">
-          Review &amp; continue
+          {t("Review & continue")}
         </text>
         <Arrow x={279} y={165} paper />
       </Panel>
@@ -490,6 +495,7 @@ function UsageChart({
   tooltip?: boolean;
   frame: UiMorphFrame;
 }) {
+  const t = useT();
   return (
     <>
       <rect
@@ -503,10 +509,10 @@ function UsageChart({
         opacity={frame.details.chartFocus.opacity}
       />
       <text x="44" y="49" className="morph-title">
-        Model usage
+        {t("Model usage")}
       </text>
       <text x="302" y="49" textAnchor="end" className="morph-small">
-        Receipt ↗
+        {t("Receipt ↗")}
       </text>
       <text x="44" y="82" className="morph-total">
         20.00
@@ -535,7 +541,7 @@ function UsageChart({
             textAnchor="middle"
             className="morph-small morph-muted"
           >
-            {["M", "T", "W", "T", "F", "S", "S"][index]}
+            {t(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][index]).slice(0, t.locale === "en" ? 1 : undefined)}
           </text>
         </g>
       ))}
@@ -556,7 +562,7 @@ function UsageChart({
           />
           <path d="m191 109 8 7 8-7" className="morph-ink" />
           <text x="193" y="82" className="morph-paper morph-small">
-            Friday
+            {t("Friday")}
           </text>
           <text x="193" y="100" className="morph-paper morph-strong">
             3.20 USDC
@@ -574,6 +580,7 @@ function PursePanels({
   frame: UiMorphFrame;
   prefix: string;
 }) {
+  const t = useT();
   return (
     <>
       <Panel id="chart" frame={frame} prefix={prefix}>
@@ -584,7 +591,7 @@ function PursePanels({
       </Panel>
       <Panel id="receipt" frame={frame} prefix={prefix}>
         <text x="61" y="48" className="morph-title">
-          Usage receipt
+          {t("Usage receipt")}
         </text>
         <circle cx="281" cy="43" r="11" className="morph-ink" />
         <g data-detail="receipt-mark" opacity={frame.details.receiptMark}>
@@ -592,26 +599,26 @@ function PursePanels({
         </g>
         <path d="M61 64h228" className="morph-rule" />
         <text x="61" y="88" className="morph-muted">
-          Model usage
+          {t("Model usage")}
         </text>
         <text x="289" y="88" textAnchor="end" className="morph-strong">
           20.00
         </text>
         <text x="61" y="114" className="morph-muted">
-          Service fee · 5%
+          {t("Service fee · 5%")}
         </text>
         <text x="289" y="114" textAnchor="end" className="morph-strong">
           1.00
         </text>
         <path d="M61 132h228" className="morph-rule" strokeDasharray="3 3" />
         <text x="61" y="158" className="morph-strong">
-          Total
+          {t("Total")}
         </text>
         <text x="289" y="159" textAnchor="end" className="morph-large">
           21.00 USDC
         </text>
         <text x="61" y="192" className="morph-small morph-muted">
-          Illustrative total · no charge
+          {t("Illustrative total · no charge")}
         </text>
       </Panel>
     </>

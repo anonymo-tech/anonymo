@@ -1,3 +1,4 @@
+import { useT } from '@/lib/i18n';
 import type { BriefDocument } from '../../lib/brief-document';
 import type {
   BriefSynthesisAnalysis,
@@ -26,8 +27,14 @@ export function BriefSynthesisResult({
   analysis: BriefSynthesisAnalysis;
   evidence: BriefDocument['evidence'];
 }) {
+  const t = useT();
   const sourceLabel = (callId: string) =>
-    `Response ${evidence.findIndex((source) => source.callId === callId) + 1} · ${evidence.find((source) => source.callId === callId)?.modelId ?? 'Source'}`;
+    t('Response {number} · {model}', {
+      number: evidence.findIndex((source) => source.callId === callId) + 1,
+      model:
+        evidence.find((source) => source.callId === callId)?.modelId ??
+        t('Source'),
+    });
   return (
     <div
       style={{
@@ -39,30 +46,32 @@ export function BriefSynthesisResult({
       }}
     >
       <p className="cp-fineprint">
-        One model’s interpretation of the saved responses. Supporting quotes
-        match the original text; they do not verify the interpretation or
-        establish external consensus.
+        {t(
+          'One model’s interpretation of the saved responses. Supporting quotes match the original text; they do not verify the interpretation or establish external consensus.',
+        )}
       </p>
       {analysis.summaries.map((summary) => (
         <section key={summary.callId}>
           <h4>{sourceLabel(summary.callId)}</h4>
           <p style={{ whiteSpace: 'pre-wrap' }}>{summary.text}</p>
           <details>
-            <summary>Supporting quotes</summary>
+            <summary>{t('Supporting quotes')}</summary>
             {summary.quotes.map((quote) => (
               <SourceQuote key={`${quote.start}:${quote.end}`} quote={quote} />
             ))}
-            <p className="cp-fineprint">Source call {summary.callId}</p>
+            <p className="cp-fineprint">
+              {t('Source call {id}', { id: summary.callId })}
+            </p>
           </details>
         </section>
       ))}
       <section>
-        <h4>Generated agreement matrix</h4>
+        <h4>{t('Generated agreement matrix')}</h4>
         <div style={{ overflowX: 'auto' }}>
           <table>
             <thead>
               <tr>
-                <th scope="col">Topic</th>
+                <th scope="col">{t('Topic')}</th>
                 {evidence.map((source) => (
                   <th scope="col" key={source.callId}>
                     {sourceLabel(source.callId)}
@@ -84,13 +93,13 @@ export function BriefSynthesisResult({
                         style={{ padding: '8px 10px', verticalAlign: 'top' }}
                       >
                         {position.position === 'unclear'
-                          ? 'Unclear / not addressed'
+                          ? t('Unclear / not addressed')
                           : position.position === 'agrees'
-                            ? 'Agrees'
-                            : 'Disagrees'}
+                            ? t('Agrees')
+                            : t('Disagrees')}
                         {position.quote && (
                           <details>
-                            <summary>Source quote</summary>
+                            <summary>{t('Source quote')}</summary>
                             <SourceQuote quote={position.quote} />
                           </details>
                         )}

@@ -1,5 +1,6 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
 import {
   useEffect,
   useEffectEvent,
@@ -49,6 +50,7 @@ function PaymentSession({
   onUpdated,
   onCredited,
 }: Props) {
+  const t = useT();
   const fieldId = useId();
   const [originalIntent] = useState(() => intent);
   const [sessionBlocked, setSessionBlocked] = useState(false);
@@ -442,32 +444,32 @@ function PaymentSession({
   }
   if (!visible || sessionBlocked) return null;
   return (
-    <section className="ct-example" aria-label="Wallet deposit payment">
+    <section className="ct-example" aria-label={t('Wallet deposit payment')}>
       <h3>
         {saved.state === 'credited'
-          ? 'Payment verified'
+          ? t('Payment verified')
           : payment
-            ? 'Review wallet transfer'
-            : 'Pay from your wallet'}
+            ? t('Review wallet transfer')
+            : t('Pay from your wallet')}
       </h3>
       <p className="cp-fineprint">
-        Conclave requests a signature for the exact transfer below, then submits
-        it to the network. Your wallet must have USDC and SOL for the network
-        fee. A network submission alone does not add service credit.
+        {t(
+          'Conclave requests a signature for the exact transfer below, then submits it to the network. Your wallet must have USDC and SOL for the network fee. A network submission alone does not add service credit.',
+        )}
       </p>
       {error && (
         <output className="cp-boundary-note" role="alert">
-          {error}
+          {t(error)}
         </output>
       )}
       {notice && (
         <output className="cp-boundary-note" aria-live="polite">
-          {notice}
+          {t(notice)}
         </output>
       )}
       {busy && (
         <output className="cp-fineprint" aria-live="polite">
-          {busy}
+          {t(busy)}
         </output>
       )}
       {!snapshot && !busy && (
@@ -476,7 +478,7 @@ function PaymentSession({
           className="cp-button"
           onClick={() => void refresh()}
         >
-          Read saved payment
+          {t('Read saved payment')}
         </button>
       )}
       {snapshot &&
@@ -491,47 +493,48 @@ function PaymentSession({
             disabled={!!busy}
             onClick={() => void prepare()}
           >
-            Review wallet payment · no transfer yet
+            {t('Review wallet payment · no transfer yet')}
           </button>
         ) : (
           <p className="cp-boundary-note">
-            Wallet payment is unavailable for this intent. Existing transfers
-            can still be checked when recovery is enabled.
+            {t(
+              'Wallet payment is unavailable for this intent. Existing transfers can still be checked when recovery is enabled.',
+            )}
           </p>
         ))}
       {payment && (
         <>
           <dl className="ct-facts">
             <div>
-              <dt>Network</dt>
+              <dt>{t('Network')}</dt>
               <dd>
                 {saved.cluster === 'mainnet-beta'
-                  ? 'Solana Mainnet'
-                  : 'Solana Devnet · test tokens'}
+                  ? t('Solana Mainnet')
+                  : t('Solana Devnet · test tokens')}
               </dd>
             </div>
             <div>
-              <dt>Exact amount</dt>
+              <dt>{t('Exact amount')}</dt>
               <dd>{formatDepositAmount(saved.amountUsd6)} USDC</dd>
             </div>
             <div>
-              <dt>Source wallet</dt>
+              <dt>{t('Source wallet')}</dt>
               <dd className="ct-code">{saved.sourceWallet}</dd>
             </div>
             <div>
-              <dt>Recipient treasury</dt>
+              <dt>{t('Recipient treasury')}</dt>
               <dd className="ct-code">{saved.recipientWallet}</dd>
             </div>
             <div>
-              <dt>Recipient USDC account</dt>
+              <dt>{t('Recipient USDC account')}</dt>
               <dd className="ct-code">{saved.recipientTokenAccount}</dd>
             </div>
             <div>
-              <dt>Estimated network fee</dt>
+              <dt>{t('Estimated network fee')}</dt>
               <dd>{formatLamports(payment.feeLamports)} SOL</dd>
             </div>
             <div>
-              <dt>Review expires</dt>
+              <dt>{t('Review expires')}</dt>
               <dd>
                 {new Date(payment.expiresAt)
                   .toISOString()
@@ -540,16 +543,16 @@ function PaymentSession({
               </dd>
             </div>
             <div>
-              <dt>Saved transfer</dt>
+              <dt>{t('Saved transfer')}</dt>
               <dd>
                 {payment.state === 'submitted'
-                  ? 'Submitted · finalization not yet verified'
-                  : payment.state}
+                  ? t('Submitted · finalization not yet verified')
+                  : t(payment.state)}
               </dd>
             </div>
             {payment.signature && (
               <div>
-                <dt>Transaction signature</dt>
+                <dt>{t('Transaction signature')}</dt>
                 <dd className="ct-code">{payment.signature}</dd>
               </div>
             )}
@@ -557,14 +560,14 @@ function PaymentSession({
           {signable ? (
             <>
               <label htmlFor={fieldId}>
-                Wallet
+                {t('Wallet')}
                 <select
                   id={fieldId}
                   value={walletIndex}
                   disabled={!!busy}
                   onChange={(event) => setWalletIndex(event.target.value)}
                 >
-                  <option value="">Choose a wallet</option>
+                  <option value="">{t('Choose a wallet')}</option>
                   {wallets.map((wallet, index) => (
                     <option key={index} value={index}>
                       {wallet.name}
@@ -574,8 +577,9 @@ function PaymentSession({
               </label>
               {!wallets.length && (
                 <p className="cp-fineprint">
-                  No compatible mainnet wallet was detected. Open this page in a
-                  browser with your source wallet available.
+                  {t(
+                    'No compatible mainnet wallet was detected. Open this page in a browser with your source wallet available.',
+                  )}
                 </p>
               )}
               <button
@@ -584,16 +588,21 @@ function PaymentSession({
                 disabled={!!busy || walletIndex === ''}
                 onClick={() => void continueInWallet()}
               >
-                Continue in wallet · {formatDepositAmount(saved.amountUsd6)}{' '}
-                USDC
+                {t('Continue in wallet · {amount} USDC', {
+                  amount: formatDepositAmount(saved.amountUsd6),
+                })}
               </button>
             </>
           ) : (
             saved.state !== 'credited' && (
               <p className="cp-fineprint">
                 {uncertain
-                  ? 'The last submission outcome is unknown. Recover this saved transfer before considering another deposit.'
-                  : 'This attempt is for recovery only once submitted or expired. It cannot be replaced with a new blockhash here.'}
+                  ? t(
+                      'The last submission outcome is unknown. Recover this saved transfer before considering another deposit.',
+                    )
+                  : t(
+                      'This attempt is for recovery only once submitted or expired. It cannot be replaced with a new blockhash here.',
+                    )}
               </p>
             )
           )}
@@ -603,15 +612,15 @@ function PaymentSession({
             disabled={!!busy}
             onClick={() => void refresh()}
           >
-            Read saved payment status
+            {t('Read saved payment status')}
           </button>
           {retryable && (
             <details className="ct-example">
-              <summary>Recover the same signed submission</summary>
+              <summary>{t('Recover the same signed submission')}</summary>
               <p className="cp-fineprint">
-                This sends only the original signed transaction again while it
-                remains valid. It does not ask for a new wallet signature or
-                create another transfer.
+                {t(
+                  'This sends only the original signed transaction again while it remains valid. It does not ask for a new wallet signature or create another transfer.',
+                )}
               </p>
               <button
                 type="button"
@@ -620,8 +629,8 @@ function PaymentSession({
                 onClick={() => void resend()}
               >
                 {payment.signature || uncertain
-                  ? 'Resubmit the same signed transfer'
-                  : 'Submit the saved signed transfer'}
+                  ? t('Resubmit the same signed transfer')
+                  : t('Submit the saved signed transfer')}
               </button>
             </details>
           )}
@@ -635,7 +644,7 @@ function PaymentSession({
             disabled={!!busy}
             onClick={() => void recover(false)}
           >
-            Check finalized payment
+            {t('Check finalized payment')}
           </button>
           {cursor && (
             <button
@@ -644,12 +653,13 @@ function PaymentSession({
               disabled={!!busy}
               onClick={() => void recover(true)}
             >
-              Check next recovery page
+              {t('Check next recovery page')}
             </button>
           )}
           <p className="cp-fineprint">
-            Recovery reads the original reference and verifies finalized
-            transfers. It never signs or sends a transaction.
+            {t(
+              'Recovery reads the original reference and verifies finalized transfers. It never signs or sends a transaction.',
+            )}
           </p>
         </>
       )}

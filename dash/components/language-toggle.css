@@ -1,0 +1,46 @@
+.language-toggle {
+  display: inline-flex;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  color: inherit;
+  font:
+    11px/1 "JetBrains Mono",
+    monospace;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.language-toggle > span {
+  opacity: 0.35;
+}
+.language-toggle > button {
+  margin: 0;
+  padding: 6px 4px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.2s;
+}
+.language-toggle > button[lang="zh-CN"] {
+  font-family:
+    "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei",
+    sans-serif;
+  letter-spacing: 0;
+}
+.language-toggle > button:hover {
+  opacity: 0.85;
+}
+.language-toggle > button[aria-pressed="true"] {
+  opacity: 1;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}

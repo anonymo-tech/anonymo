@@ -12,9 +12,11 @@ import {
   type ReactNode,
 } from 'react';
 import Image from 'next/image';
-import { Check, ChevronDown, Shield } from 'lucide-react';
+import { Check, ChevronDown, Shield, X } from 'lucide-react';
 import { MotionIcon } from './motion-icon';
 import { Wordmark } from '../conclave/wordmark';
+import { LanguageToggle } from '../language-toggle';
+import { translate, useT, type Translator } from '@/lib/i18n';
 import Link from '../site-link';
 import { MODELS, downloadFile, scanPrompt } from './data';
 import {
@@ -56,6 +58,7 @@ import { useLiveStudio } from './use-live-studio';
 import { LiveStudioReview } from './live-studio-review';
 import { LiveStudioPage } from './live-studio-page';
 import '@/app/dashboard/conversation-bar.css';
+import '@/app/dashboard/sign-in.css';
 
 const CanvasBoard = lazy(() => import('./canvas-board'));
 const views = [
@@ -213,37 +216,162 @@ function storageSnapshot(value: WorkspaceState): WorkspaceState | null {
   return JSON.stringify(checked).length <= maxStoredCharacters ? checked : null;
 }
 
+/** Localize generated notices without changing the English messages stored in state. */
+function localizeNotice(message: string, t: Translator) {
+  const templates = [
+    [
+      /^Give the project a name of 1–(\d+) characters\.$/,
+      'Give the project a name of 1–{count} characters.',
+    ],
+    [
+      /^This local preview holds up to (\d+) projects\. Remove a project to make space\.$/,
+      'This local preview holds up to {count} projects. Remove a project to make space.',
+    ],
+    [
+      /^Compare up to (\d+) models at a time\.$/,
+      'Compare up to {count} models at a time.',
+    ],
+    [
+      /^Keep your question within (\d+) characters\.$/,
+      'Keep your question within {count} characters.',
+    ],
+  ] as const;
+  for (const [pattern, template] of templates) {
+    const match = message.match(pattern);
+    if (match) return t(template, { count: match[1] });
+  }
+  return t(message);
+}
+
+function modelLabel(
+  label: string,
+  t: (text: string, vars?: { label: string }) => string,
+) {
+  const match = label.match(/^Model ([A-D])$/);
+  return match ? t('Model {label}', { label: match[1] }) : label;
+}
+
+function projectName(room: Room, t: Translator) {
+  const defaults: Record<string, string> = {
+    'room-launch': 'Launch plan',
+    'room-solana': 'Solana research',
+    'room-website': 'Website refresh',
+    'service-empty': 'New project',
+  };
+  return defaults[room.id] === room.name
+    ? t(room.name)
+    : room.name;
+}
+
 function Dialog({
   title,
   children,
   onClose,
+  account = false,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
+  account?: boolean;
 }) {
+  const t = useT();
   const ref = useRef<HTMLDialogElement>(null);
+  const outsidePointer = useRef(false);
   useEffect(() => {
     const el = ref.current;
+    const opener =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const overflow = document.body.style.overflow;
     el?.showModal();
-    return () => el?.close();
-  }, []);
+    if (account) {
+      document.body.style.overflow = 'hidden';
+      el?.querySelector<HTMLElement>('#signin-title')?.focus({
+        preventScroll: true,
+      });
+    }
+    return () => {
+      el?.close();
+      if (account) {
+        document.body.style.overflow = overflow;
+        if (opener?.isConnected) opener.focus();
+        else
+          document
+            .querySelector<HTMLButtonElement>('.cw-signin-button')
+            ?.focus();
+      }
+    };
+  }, [account]);
+  function isOutside(event: { clientX: number; clientY: number }) {
+    const bounds = ref.current?.getBoundingClientRect();
+    return (
+      !!bounds &&
+      (event.clientX < bounds.left ||
+        event.clientX > bounds.right ||
+        event.clientY < bounds.top ||
+        event.clientY > bounds.bottom)
+    );
+  }
   return (
     <dialog
       ref={ref}
-      className="cw-dialog"
-      aria-labelledby="cw-dialog-title"
-      onCancel={onClose}
+      className={`cw-dialog${account ? ' cw-signin-dialog' : ''}`}
+      aria-labelledby={account ? 'signin-title' : 'cw-dialog-title'}
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+      onPointerDown={(event) => {
+        outsidePointer.current = account && isOutside(event);
+      }}
+      onPointerUp={(event) => {
+        if (outsidePointer.current && isOutside(event)) onClose();
+        outsidePointer.current = false;
+      }}
+      onKeyDown={(event) => {
+        if (!account || event.key !== 'Tab') return;
+        const controls = Array.from(
+          event.currentTarget.querySelectorAll<HTMLElement>(
+            'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]',
+          ),
+        ).filter((element) => element.getClientRects().length > 0);
+        const first = controls[0],
+          last = controls[controls.length - 1];
+        if (!first || !last) return;
+        if (
+          event.shiftKey &&
+          (document.activeElement === first ||
+            document.activeElement?.id === 'signin-title')
+        ) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }}
     >
       <header>
-        <h2 id="cw-dialog-title">{title}</h2>
+        {account ? (
+          <Image
+            width={100}
+            height={36}
+            unoptimized
+            className="signin-wordmark"
+            src="/brand/conclave-wordmark.svg"
+            alt="Conclave"
+          />
+        ) : (
+          <h2 id="cw-dialog-title">{title}</h2>
+        )}
         <button
           data-icon-trigger
           className="cw-icon-button"
           onClick={onClose}
-          aria-label="Close dialog"
+          aria-label={t('Close dialog')}
         >
-          <MotionIcon name="close" size={21} />
+          {account ? <X size={19} /> : <MotionIcon name="close" size={21} />}
         </button>
       </header>
       <div className="cw-dialog-content">{children}</div>
@@ -264,6 +392,7 @@ function CanvasWorkspaceShell({
 }: {
   live: ReturnType<typeof useLiveWorkspace>;
 }) {
+  const t = useT();
   const [localState, setState] = useState<WorkspaceState>(initialWorkspace);
   const checkContent = useContentGuard();
   const checkingContent = useRef(false);
@@ -385,8 +514,7 @@ function CanvasWorkspaceShell({
     turn?.scrollIntoView({
       block: 'start',
       behavior:
-        smooth &&
-        !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        smooth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
           ? 'smooth'
           : 'instant',
     });
@@ -1170,7 +1298,7 @@ function CanvasWorkspaceShell({
       return;
     }
     const text =
-      `# ${room.name}\n\n${live.active ? `Conclave account project${room.live?.historyCursor ? ' · Loaded history only; earlier conversations are not included' : ''}` : 'Local preview · Sample responses'}\n\n` +
+      `# ${room.name}\n\n${live.active ? (room.live?.historyCursor ? translate('Conclave account project · Loaded history only; earlier conversations are not included') : translate('Conclave account project')) : translate('Local preview · Sample responses')}\n\n` +
       room.turns
         .map(
           (turn) =>
@@ -1178,7 +1306,7 @@ function CanvasWorkspaceShell({
             turn.answers
               .map(
                 (answer) =>
-                  `### ${answer.live?.modelName || answer.live?.label || MODELS.find((model) => model.id === answer.modelId)?.name || 'Model'}\n\n${answer.heading}\n\n${answer.paragraphs.join('\n\n')}`,
+                  `### ${answer.live?.modelName || (answer.live?.label && modelLabel(answer.live.label, translate)) || MODELS.find((model) => model.id === answer.modelId)?.name || translate('Model')}\n\n${answer.heading}\n\n${answer.paragraphs.join('\n\n')}`,
               )
               .join('\n\n'),
         )
@@ -1220,18 +1348,18 @@ function CanvasWorkspaceShell({
   }
 
   const navigationDock = (
-    <nav className="cw-navigation" aria-label="Workspace navigation">
+    <nav className="cw-navigation" aria-label={t('Workspace navigation')}>
       {navigation.map((item) => (
         <button
           data-icon-trigger
           key={item.id}
           className={`cw-nav-button${view === item.id ? ' is-active' : ''}`}
           onClick={() => navigate(item.id)}
-          aria-label={item.label}
+          aria-label={t(item.label)}
           aria-current={view === item.id ? 'page' : undefined}
         >
           <MotionIcon name={item.id} size={44} active={view === item.id} />
-          <span className="cw-tooltip">{item.label}</span>
+          <span className="cw-tooltip">{t(item.label)}</span>
         </button>
       ))}
       {(secondary.length > 0 || moreToolsVisible) && (
@@ -1239,7 +1367,7 @@ function CanvasWorkspaceShell({
           <button
             data-icon-trigger
             className={`cw-nav-button${secondary.some((item) => item.id === view) ? ' is-active' : ''}`}
-            aria-label="More tools"
+            aria-label={t('More tools')}
             aria-expanded={popup === 'more'}
             onClick={() => setPopup(popup === 'more' ? null : 'more')}
           >
@@ -1250,12 +1378,12 @@ function CanvasWorkspaceShell({
                 popup === 'more' || secondary.some((item) => item.id === view)
               }
             />
-            <span className="cw-tooltip">More</span>
+            <span className="cw-tooltip">{t('More')}</span>
           </button>
           {popup === 'more' && (
             <div className="cw-menu cw-more-menu">
               {secondary.length > 0 && (
-                <p className="cw-menu-label">YOUR WORKSPACE</p>
+                <p className="cw-menu-label">{t('YOUR WORKSPACE')}</p>
               )}
               {secondary.map((item) => (
                 <button
@@ -1268,7 +1396,7 @@ function CanvasWorkspaceShell({
                     size={32}
                     active={view === item.id}
                   />
-                  {item.label}
+                  {t(item.label)}
                 </button>
               ))}
               {secondary.length > 0 && moreToolsVisible && <hr />}
@@ -1280,7 +1408,7 @@ function CanvasWorkspaceShell({
                     height={18}
                     alt=""
                   />
-                  Solana Explainer
+                  {t('Solana Explainer')}
                 </button>
               )}
               {isVisible('crosscheck') && (
@@ -1289,13 +1417,13 @@ function CanvasWorkspaceShell({
                   onClick={() => openTool('crosscheck')}
                 >
                   <MotionIcon name="decisions" size={20} />
-                  Cross-Check
+                  {t('Cross-Check')}
                 </button>
               )}
               {isVisible('routes') && (
                 <button data-icon-trigger onClick={() => openTool('routes')}>
                   <MotionIcon name="route" size={18} />
-                  Model routes
+                  {t('Model routes')}
                 </button>
               )}
             </div>
@@ -1311,7 +1439,7 @@ function CanvasWorkspaceShell({
         <div className="cw-guard" role="alert">
           <Shield size={18} />
           <div>
-            <p>{guardMessage}</p>
+            <p>{localizeNotice(guardMessage, t)}</p>
             {redacted && (
               <button
                 data-icon-trigger
@@ -1322,7 +1450,7 @@ function CanvasWorkspaceShell({
                   }
                 }}
               >
-                Use redacted text
+                {t('Use redacted text')}
               </button>
             )}
           </div>
@@ -1332,7 +1460,7 @@ function CanvasWorkspaceShell({
               setGuardMessage('');
               setRedacted(null);
             }}
-            aria-label="Dismiss guard message"
+            aria-label={t('Dismiss guard message')}
           >
             <MotionIcon name="close" size={15} />
           </button>
@@ -1357,7 +1485,7 @@ function CanvasWorkspaceShell({
               <MotionIcon name="close" size={12} />
             </button>
           ))}
-          <span>Local only · not read by sample models</span>
+          <span>{t('Local only · not read by sample models')}</span>
         </div>
       )}
       <div className="cw-compose-line">
@@ -1365,8 +1493,8 @@ function CanvasWorkspaceShell({
           data-icon-trigger
           className="cw-attach"
           onClick={() => attachment.current?.click()}
-          aria-label="Add files to this project"
-          title="Add files locally"
+          aria-label={t('Add files to this project')}
+          title={t('Add files locally')}
         >
           <MotionIcon name="attach" size={22} />
         </button>
@@ -1381,13 +1509,13 @@ function CanvasWorkspaceShell({
               setRedacted(null);
             }
           }}
-          aria-label="Message to selected models"
+          aria-label={t('Message to selected models')}
           placeholder={
             isStudio
-              ? 'Describe your next scene…'
+              ? t('Describe your next scene…')
               : room.turns.length
-                ? 'Ask a follow-up…'
-                : 'Ask anything…'
+                ? t('Ask a follow-up…')
+                : t('Ask anything…')
           }
           onKeyDown={(event) => {
             if (
@@ -1405,7 +1533,7 @@ function CanvasWorkspaceShell({
           <button
             data-icon-trigger
             className="cw-selected-models"
-            aria-label="Choose models"
+            aria-label={t('Choose models')}
             aria-expanded={popup === 'models'}
             title={composerModelIds
               .map(
@@ -1429,15 +1557,23 @@ function CanvasWorkspaceShell({
               <div className="cw-model-menu-head">
                 <h2>
                   {isStudio
-                    ? 'One direction. Different takes.'
-                    : 'A few different perspectives.'}
+                    ? t('One direction. Different takes.')
+                    : t('A few different perspectives.')}
                 </h2>
                 <p>
                   {isStudio
                     ? live.active
-                      ? 'Choose reviewed video routes. Formats and costs appear before approval.'
-                      : 'Choose up to four video models for your draft.'
-                    : `Choose up to ${canvasLimits.modelsPerTurn} ${live.active ? 'connected' : 'sample'} models.`}
+                      ? t(
+                          'Choose reviewed video routes. Formats and costs appear before approval.',
+                        )
+                      : t('Choose up to four video models for your draft.')
+                    : live.active
+                      ? t('Choose up to {count} connected models.', {
+                          count: canvasLimits.modelsPerTurn,
+                        })
+                      : t('Choose up to {count} sample models.', {
+                          count: canvasLimits.modelsPerTurn,
+                        })}
                 </p>
               </div>
               {live.active && !isStudio && (
@@ -1450,8 +1586,8 @@ function CanvasWorkspaceShell({
               <label className="cw-search" data-icon-field>
                 <MotionIcon name="search" size={17} />
                 <input
-                  aria-label="Find a model"
-                  placeholder="Find a model…"
+                  aria-label={t('Find a model')}
+                  placeholder={t('Find a model…')}
                   value={modelQuery}
                   onChange={(event) => setModelQuery(event.target.value)}
                 />
@@ -1485,13 +1621,13 @@ function CanvasWorkspaceShell({
                         <small>
                           {live.active && isStudio
                             ? liveStudio.availableModels.includes(model.id)
-                              ? 'Reviewed video route'
-                              : 'No available video route'
+                              ? t('Reviewed video route')
+                              : t('No available video route')
                             : live.active &&
                                 !isStudio &&
                                 ['qwen', 'llama'].includes(model.id)
-                              ? 'Open model · hosted route'
-                              : model.specialty}
+                              ? t('Open model · hosted route')
+                              : t(model.specialty)}
                         </small>
                       </span>
                       <span
@@ -1528,8 +1664,10 @@ function CanvasWorkspaceShell({
                     }
                   />
                   <span>
-                    Blind comparison
-                    <small>Hide reply labels until you vote or reveal.</small>
+                    {t('Blind comparison')}
+                    <small>
+                      {t('Hide reply labels until you vote or reveal.')}
+                    </small>
                   </span>
                 </label>
               )}
@@ -1545,12 +1683,12 @@ function CanvasWorkspaceShell({
                 />
                 <span>
                   {live.active && !isStudio
-                    ? 'Require sealed execution'
-                    : 'Require a verified route'}
+                    ? t('Require sealed execution')
+                    : t('Require a verified route')}
                   <small>
                     {live.active && !isStudio
-                      ? 'Only attested routes. No fallback.'
-                      : 'Unverified routes will be blocked.'}
+                      ? t('Only attested routes. No fallback.')
+                      : t('Unverified routes will be blocked.')}
                   </small>
                 </span>
               </label>
@@ -1561,7 +1699,7 @@ function CanvasWorkspaceShell({
                   onClick={() => openTool('routes')}
                 >
                   <MotionIcon name="route" size={18} />
-                  Inspect model routes
+                  {t('Inspect model routes')}
                   <MotionIcon name="forward" size={14} />
                 </button>
               )}
@@ -1574,18 +1712,18 @@ function CanvasWorkspaceShell({
           aria-label={
             isStudio
               ? live.active
-                ? 'Review video generation'
-                : 'Review Studio draft'
+                ? t('Review video generation')
+                : t('Review Studio draft')
               : live.active
-                ? 'Review model request'
-                : 'Send sample prompt'
+                ? t('Review model request')
+                : t('Send sample prompt')
           }
           title={
             isStudio
               ? live.active
-                ? 'Review generation · Enter'
-                : 'Review draft · Enter'
-              : 'Send · Enter'
+                ? t('Review generation · Enter')
+                : t('Review draft · Enter')
+              : t('Send · Enter')
           }
           onClick={submit}
           disabled={
@@ -1602,10 +1740,10 @@ function CanvasWorkspaceShell({
   return (
     <div className={`cw-shell cw-view-${view}`}>
       <a className="cw-skip" href="#cw-main">
-        Skip to workspace
+        {t('Skip to workspace')}
       </a>
       <header className="cw-header">
-        <Link className="cw-brand" href="/" aria-label="Conclave home">
+        <Link className="cw-brand" href="/" aria-label={t('Conclave home')}>
           <Wordmark />
         </Link>
         <div className="cw-room-anchor" data-cw-popover>
@@ -1618,14 +1756,14 @@ function CanvasWorkspaceShell({
             <MotionIcon name="copy" size={16} />
             <span>
               {isConversation || view === 'studio' || view === 'agents'
-                ? room.name
-                : 'Personal'}
+                ? projectName(room, t)
+                : t('Personal')}
             </span>
             <ChevronDown size={16} />
           </button>
           {popup === 'rooms' && (
             <div className="cw-menu cw-room-menu">
-              <p className="cw-menu-label">YOUR PROJECTS</p>
+              <p className="cw-menu-label">{t('YOUR PROJECTS')}</p>
               {/* Without the Projects page, this scrolling menu lists every loaded project. */}
               {state.rooms
                 .slice(0, isVisible('rooms') ? 8 : undefined)
@@ -1636,7 +1774,7 @@ function CanvasWorkspaceShell({
                     onClick={() => openRoom(item.id)}
                   >
                     <MotionIcon name="rooms" size={16} />
-                    <span>{item.name}</span>
+                    <span>{projectName(item, t)}</span>
                     {item.id === room.id && <Check size={15} />}
                   </button>
                 ))}
@@ -1645,7 +1783,7 @@ function CanvasWorkspaceShell({
                 onClick={() => newRoom('Untitled project')}
               >
                 <MotionIcon name="add" size={16} />
-                New project
+                {t('New project')}
               </button>
               <hr />
               <button
@@ -1657,11 +1795,11 @@ function CanvasWorkspaceShell({
                 }}
               >
                 <MotionIcon name="settings" size={16} />
-                Rename project
+                {t('Rename project')}
               </button>
               <button data-icon-trigger onClick={exportRoom}>
                 <MotionIcon name="download" size={16} />
-                Export conversation
+                {t('Export conversation')}
               </button>
               {briefsVisible && (
                 <button
@@ -1673,44 +1811,76 @@ function CanvasWorkspaceShell({
                   }}
                 >
                   <MotionIcon name="brief" size={16} />
-                  Create Brief…
+                  {t('Create Brief…')}
                 </button>
               )}
               {isVisible('rooms') && (
                 <button data-icon-trigger onClick={() => navigate('rooms')}>
                   <MotionIcon name="rooms" size={16} />
-                  All projects
+                  {t('All projects')}
                 </button>
               )}
             </div>
           )}
         </div>
         <div className="cw-account-anchor" data-cw-popover>
+          <LanguageToggle className="cw-language" />
+          {!live.signedIn && (
+            <button
+              className="cw-signin-button"
+              onClick={() => openTool('identity')}
+            >
+              {t('Sign in')}
+            </button>
+          )}
           <button
             data-icon-trigger
             className="cw-avatar"
-            aria-label="Account menu"
+            aria-label={t('Account menu')}
             aria-expanded={popup === 'account'}
             onClick={() => setPopup(popup === 'account' ? null : 'account')}
           >
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <circle cx="8" cy="5.5" r="3" fill="none" stroke="currentColor" strokeWidth="1.5" />
-              <path d="M2.5 14c.8-3 2.9-4.5 5.5-4.5s4.7 1.5 5.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              <circle
+                cx="8"
+                cy="5.5"
+                r="3"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              />
+              <path
+                d="M2.5 14c.8-3 2.9-4.5 5.5-4.5s4.7 1.5 5.5 4.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
             </svg>
           </button>
           {popup === 'account' && (
             <div className="cw-menu cw-account-menu">
               {!isVisible('purse') && (
                 <>
-                  <p className="cw-menu-label">AVAILABLE BALANCE</p>
+                  <p className="cw-menu-label">{t('AVAILABLE BALANCE')}</p>
                   {live.active && live.status === 'ready' ? (
                     <button
                       data-icon-trigger
                       disabled={live.busy}
                       title={
                         live.balance
-                          ? `${formatAccountUsd6(live.balance.availableUsd6)} USD available · ${formatAccountUsd6(live.balance.reservedUsd6)} USD reserved for open requests. Select to refresh.`
-                          : 'Refresh balance'
+                          ? t(
+                              '{available} USD available · {reserved} USD reserved for open requests. Select to refresh.',
+                              {
+                                available: formatAccountUsd6(
+                                  live.balance.availableUsd6,
+                                ),
+                                reserved: formatAccountUsd6(
+                                  live.balance.reservedUsd6,
+                                ),
+                              },
+                            )
+                          : t('Refresh balance')
                       }
                       onClick={() => {
                         setPopup(null);
@@ -1724,15 +1894,21 @@ function CanvasWorkspaceShell({
                             {formatFriendlyUsd6(live.balance.availableUsd6)}
                           </strong>
                           <small>
-                            {formatFriendlyUsd6(live.balance.reservedUsd6)}{' '}
-                            reserved for open requests
+                            {t('{amount} reserved for open requests', {
+                              amount: formatFriendlyUsd6(
+                                live.balance.reservedUsd6,
+                              ),
+                            })}
                           </small>
-                          {live.balance.internalTestCreditUsd6 !== undefined && (
-                            <small>Internal test credit · not USDC</small>
+                          {live.balance.internalTestCreditUsd6 !==
+                            undefined && (
+                            <small>
+                              {t('Internal test credit · not USDC')}
+                            </small>
                           )}
                         </span>
                       ) : (
-                        'Unavailable · Refresh'
+                        t('Unavailable · Refresh')
                       )}
                     </button>
                   ) : (
@@ -1743,40 +1919,46 @@ function CanvasWorkspaceShell({
                     >
                       <MotionIcon name="purse" size={17} />
                       {live.status === 'loading'
-                        ? 'Checking…'
+                        ? t('Checking…')
                         : live.active
-                          ? 'Sign in to view'
-                          : 'Not connected'}
+                          ? t('Sign in to view')
+                          : t('Not connected')}
                     </button>
                   )}
                   <hr />
                 </>
               )}
               <p className="cw-menu-label">
-                {live.active ? 'ACCOUNT WORKSPACE' : 'LOCAL WORKSPACE'}
+                {live.active ? t('ACCOUNT WORKSPACE') : t('LOCAL WORKSPACE')}
               </p>
               {isVisible('identity') && (
                 <button data-icon-trigger onClick={() => openTool('identity')}>
                   <MotionIcon name="chapters" size={17} />
-                  Account &amp; wallet
+                  {t('Account & wallet')}
                 </button>
               )}
               {isVisible('settings') && (
                 <button data-icon-trigger onClick={() => openTool('settings')}>
                   <MotionIcon name="settings" size={17} />
-                  Settings
+                  {t('Settings')}
                 </button>
               )}
               {isVisible('help') && (
                 <button data-icon-trigger onClick={() => openTool('help')}>
                   <MotionIcon name="help" size={17} />
-                  Help &amp; shortcuts
+                  {t('Help & shortcuts')}
                 </button>
               )}
               <Link data-icon-trigger href="/docs">
                 <MotionIcon name="library" size={17} />
-                Field guide
+                {t('Field guide')}
               </Link>
+              {/* Narrow screens have no room for the switch in the header. */}
+              <div className="cw-menu-language">
+                <hr />
+                <p className="cw-menu-label">{t('LANGUAGE')}</p>
+                <LanguageToggle />
+              </div>
             </div>
           )}
         </div>
@@ -1799,17 +1981,17 @@ function CanvasWorkspaceShell({
           <div className="cw-loading">
             <p>
               {live.status === 'loading'
-                ? 'Loading your account workspace…'
+                ? t('Loading your account workspace…')
                 : live.status === 'error'
-                  ? 'Your account workspace is unavailable.'
-                  : 'Sign in to continue with your account projects.'}
+                  ? t('Your account workspace is unavailable.')
+                  : t('Sign in to continue with your account projects.')}
             </p>
             <button
               className="ct-button"
               type="button"
               onClick={() => openTool('identity')}
             >
-              Open account
+              {t('Open account')}
             </button>
           </div>
         )}
@@ -1824,7 +2006,7 @@ function CanvasWorkspaceShell({
                   disabled={live.busy}
                   onClick={() => void live.loadMoreHistory()}
                 >
-                  Load earlier conversations
+                  {t('Load earlier conversations')}
                 </button>
               )}
               {view === 'library' && live.briefsCursor && (
@@ -1834,7 +2016,7 @@ function CanvasWorkspaceShell({
                   disabled={live.busy}
                   onClick={() => void live.loadMoreBriefs()}
                 >
-                  Load more Briefs
+                  {t('Load more Briefs')}
                 </button>
               )}
               {view === 'rooms' && live.projectsCursor && (
@@ -1844,7 +2026,7 @@ function CanvasWorkspaceShell({
                   disabled={live.busy}
                   onClick={() => void live.loadMoreProjects()}
                 >
-                  Load more projects
+                  {t('Load more projects')}
                 </button>
               )}
             </div>
@@ -1853,14 +2035,16 @@ function CanvasWorkspaceShell({
           <>
             {briefsVisible && selection.length > 0 && (
               <div className="cw-selection-bar">
-                <span>{selection.length} selected</span>
+                <span>
+                  {t('{count} selected', { count: selection.length })}
+                </span>
                 <button data-icon-trigger onClick={() => setDialog('brief')}>
                   <MotionIcon name="brief" size={15} />
-                  Create Brief
+                  {t('Create Brief')}
                 </button>
                 <button
                   data-icon-trigger
-                  aria-label="Clear selection"
+                  aria-label={t('Clear selection')}
                   onClick={() => setSelection([])}
                 >
                   <MotionIcon name="close" size={15} />
@@ -1869,9 +2053,9 @@ function CanvasWorkspaceShell({
             )}
             {room.turns.length === 0 ? (
               <div className="cw-empty-room">
-                <span className="cw-empty-kicker">A NEW PROJECT</span>
-                <h1>What are we thinking about?</h1>
-                <p>One question. A few different perspectives.</p>
+                <span className="cw-empty-kicker">{t('A NEW PROJECT')}</span>
+                <h1>{t('What are we thinking about?')}</h1>
+                <p>{t('One question. A few different perspectives.')}</p>
                 <div>
                   <button
                     data-icon-trigger
@@ -1881,7 +2065,7 @@ function CanvasWorkspaceShell({
                       )
                     }
                   >
-                    Plan a launch
+                    {t('Plan a launch')}
                     <MotionIcon name="forward" size={16} />
                   </button>
                   <button
@@ -1892,23 +2076,27 @@ function CanvasWorkspaceShell({
                       )
                     }
                   >
-                    Explore Solana
+                    {t('Explore Solana')}
                     <MotionIcon name="forward" size={16} />
                   </button>
                 </div>
                 <small>
                   {live.active
                     ? live.status === 'ready'
-                      ? 'Choose your models and review the cost before sending.'
-                      : 'Sign in to open your account projects.'
-                    : 'Local preview · Sample answers, no connected models.'}
+                      ? t(
+                          'Choose your models and review the cost before sending.',
+                        )
+                      : t('Sign in to open your account projects.')
+                    : t('Local preview · Sample answers, no connected models.')}
                 </small>
               </div>
             ) : view === 'canvas' ? (
               ready && (
                 <Suspense
                   fallback={
-                    <div className="cw-loading">Opening your canvas…</div>
+                    <div className="cw-loading">
+                      {t('Opening your canvas…')}
+                    </div>
                   }
                 >
                   <CanvasBoard
@@ -1999,13 +2187,15 @@ function CanvasWorkspaceShell({
             <div className="cw-dock-search" data-icon-field>
               <MotionIcon name="search" size={18} />
               <input
-                aria-label={`Search ${view === 'rooms' ? 'projects' : view}`}
+                aria-label={
+                  view === 'rooms' ? t('Search projects') : t('Search library')
+                }
                 placeholder={
                   view === 'rooms'
-                    ? 'Find a project…'
+                    ? t('Find a project…')
                     : view === 'library'
-                      ? 'Find something you saved…'
-                      : 'Search this workspace…'
+                      ? t('Find something you saved…')
+                      : t('Search this workspace…')
                 }
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
@@ -2014,7 +2204,7 @@ function CanvasWorkspaceShell({
                 <button
                   data-icon-trigger
                   onClick={() => setQuery('')}
-                  aria-label="Clear search"
+                  aria-label={t('Clear search')}
                 >
                   <MotionIcon name="close" size={16} />
                 </button>
@@ -2032,19 +2222,22 @@ function CanvasWorkspaceShell({
           )
         }
       >
-        {live.active ? (
-          <>
-            Account workspace
-            <span>
-              {' '}
-              · {live.status === 'ready' ? 'Private session' : 'Sign in'}
-            </span>
-          </>
-        ) : (
-          <>
-            Local preview<span> · Sample data</span>
-          </>
-        )}
+        {live.active
+          ? t.rich('Account workspace{status}', {
+              status: (
+                <span>
+                  {t(' · {status}', {
+                    status:
+                      live.status === 'ready'
+                        ? t('Private session')
+                        : t('Sign in'),
+                  })}
+                </span>
+              ),
+            })
+          : t.rich('Local preview{sample}', {
+              sample: <span>{t(' · Sample data')}</span>,
+            })}
       </button>
       <input
         ref={attachment}
@@ -2074,11 +2267,11 @@ function CanvasWorkspaceShell({
       {toast && (
         <output className="cw-toast">
           <Check size={16} />
-          <span>{toast}</span>
+          <span>{localizeNotice(toast, t)}</span>
           <button
             data-icon-trigger
             onClick={() => setToast('')}
-            aria-label="Dismiss notification"
+            aria-label={t('Dismiss notification')}
           >
             <MotionIcon name="close" size={14} />
           </button>
@@ -2086,10 +2279,10 @@ function CanvasWorkspaceShell({
       )}
 
       {live.active && live.error && (
-        <output className="cw-toast">{live.error}</output>
+        <output className="cw-toast">{localizeNotice(live.error, t)}</output>
       )}
       {live.requestReview && (
-        <Dialog title="Review model request" onClose={live.dismissRequest}>
+        <Dialog title={t('Review model request')} onClose={live.dismissRequest}>
           <LiveRequestReview
             review={live.requestReview}
             availableUsd6={live.balance?.availableUsd6 ?? null}
@@ -2102,7 +2295,7 @@ function CanvasWorkspaceShell({
       )}
       {liveStudio.review && (
         <Dialog
-          title="Review video generation"
+          title={t('Review video generation')}
           onClose={() => {
             liveStudio.dismissReview();
           }}
@@ -2129,7 +2322,11 @@ function CanvasWorkspaceShell({
         </Dialog>
       )}
       {dialog && (
-        <Dialog title={dialogTitles[dialog]} onClose={() => setDialog(null)}>
+        <Dialog
+          title={t(dialogTitles[dialog])}
+          account={dialog === 'identity' && !live.signedIn}
+          onClose={() => setDialog(null)}
+        >
           {dialog === 'studio-review' ? (
             <StudioDraftReview
               draft={studio.draft}
@@ -2144,8 +2341,12 @@ function CanvasWorkspaceShell({
             <div className="cw-brief-picker">
               <p>
                 {live.active
-                  ? 'Choose up to four completed responses. Your Brief preserves their original text, provenance, and usage at save.'
-                  : 'Choose the perspectives worth keeping. Your Brief saves their sample answers together.'}
+                  ? t(
+                      'Choose up to four completed responses. Your Brief preserves their original text, provenance, and usage at save.',
+                    )
+                  : t(
+                      'Choose the perspectives worth keeping. Your Brief saves their sample answers together.',
+                    )}
               </p>
               {room.turns.map((turn) => (
                 <fieldset key={turn.id}>
@@ -2161,11 +2362,15 @@ function CanvasWorkspaceShell({
                       <span>
                         <strong>
                           {answer.live?.modelName ??
-                            answer.live?.label ??
+                            (answer.live?.label
+                              ? modelLabel(answer.live.label, t)
+                              : undefined) ??
                             MODELS.find((model) => model.id === answer.modelId)
                               ?.name}
                         </strong>
-                        {answer.heading}
+                        {answer.live && !answer.live.output
+                          ? t(answer.heading)
+                          : answer.heading}
                       </span>
                     </label>
                   ))}
@@ -2177,7 +2382,7 @@ function CanvasWorkspaceShell({
                 disabled={selection.length === 0}
                 onClick={saveBrief}
               >
-                Save Brief to Library
+                {t('Save Brief to Library')}
                 <MotionIcon name="forward" size={17} />
               </button>
             </div>
@@ -2198,7 +2403,7 @@ function CanvasWorkspaceShell({
                   setDialog(null);
               }}
             >
-              <label htmlFor="cw-room-name">Project name</label>
+              <label htmlFor="cw-room-name">{t('Project name')}</label>
               <input
                 id="cw-room-name"
                 value={rename}
@@ -2210,7 +2415,7 @@ function CanvasWorkspaceShell({
                 className="cw-primary"
                 disabled={!rename.trim()}
               >
-                Save name
+                {t('Save name')}
                 <MotionIcon name="select" size={18} />
               </button>
             </form>
@@ -2218,8 +2423,12 @@ function CanvasWorkspaceShell({
             <div className="cw-simple-form">
               <p>
                 {live.active
-                  ? 'This project will be archived. Existing requests and accounting records are retained.'
-                  : 'The project and its saved Briefs will be removed from this browser.'}
+                  ? t(
+                      'This project will be archived. Existing requests and accounting records are retained.',
+                    )
+                  : t(
+                      'The project and its saved Briefs will be removed from this browser.',
+                    )}
               </p>
               <button
                 data-icon-trigger
@@ -2264,14 +2473,15 @@ function CanvasWorkspaceShell({
                   notify('Project removed.');
                 }}
               >
-                {live.active ? 'Archive project' : 'Delete project'}
+                {live.active ? t('Archive project') : t('Delete project')}
               </button>
             </div>
           ) : dialog === 'reset' ? (
             <div className="cw-simple-form">
               <p>
-                This removes this preview’s projects and Briefs from this
-                browser. Export anything you want to keep first.
+                {t(
+                  'This removes this preview’s projects and Briefs from this browser. Export anything you want to keep first.',
+                )}
               </p>
               <button
                 data-icon-trigger
@@ -2305,7 +2515,7 @@ function CanvasWorkspaceShell({
                   );
                 }}
               >
-                Reset local workspace
+                {t('Reset local workspace')}
               </button>
             </div>
           ) : (
@@ -2331,30 +2541,34 @@ function CanvasWorkspaceShell({
               {dialog === 'settings' && !live.active && (
                 <div className="cw-reset-row">
                   <button data-icon-trigger onClick={() => setDialog('reset')}>
-                    Reset local workspace
+                    {t('Reset local workspace')}
                   </button>
                   {storageBlocked && (
                     <>
                       <p>
                         {storageConflict
-                          ? 'Another tab changed the saved workspace. This tab has stopped saving. Download your projects and Briefs before reloading the saved version.'
-                          : 'Storage is unavailable or contains data this version cannot read. Download your current projects and Briefs to keep them.'}
+                          ? t(
+                              'Another tab changed the saved workspace. This tab has stopped saving. Download your projects and Briefs before reloading the saved version.',
+                            )
+                          : t(
+                              'Storage is unavailable or contains data this version cannot read. Download your current projects and Briefs to keep them.',
+                            )}
                       </p>
                       <button data-icon-trigger onClick={exportWorkspace}>
-                        Download projects &amp; Briefs
+                        {t('Download projects & Briefs')}
                       </button>
                       {storageConflict && (
                         <button
                           data-icon-trigger
                           onClick={() => location.reload()}
                         >
-                          Reload saved workspace
+                          {t('Reload saved workspace')}
                         </button>
                       )}
                       <p>
-                        Secret-like drafts are excluded from the download.
-                        Download Studio, Agent, and Chapter plans from their
-                        pages.
+                        {t(
+                          'Secret-like drafts are excluded from the download. Download Studio, Agent, and Chapter plans from their pages.',
+                        )}
                       </p>
                     </>
                   )}

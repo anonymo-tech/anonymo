@@ -1,5 +1,7 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
+
 import {
   useEffect,
   useId,
@@ -64,6 +66,7 @@ export function LiveStudioPage({
   active: boolean;
   onToast: (message: string) => void;
 }) {
+  const t = useT();
   const title = useId();
   const [selection, setSelection] = useState('recent');
   const jobs = studio.jobs.filter((job) => job.modality === 'video');
@@ -76,23 +79,23 @@ export function LiveStudioPage({
     <section className="cs-page" hidden={!active} aria-labelledby={title}>
       <header className="cs-heading">
         <div className="cs-heading-copy">
-          <h1 id={title}>Studio</h1>
+          <h1 id={title}>{t('Studio')}</h1>
           <p>
             {studio.status === 'loading'
-              ? 'Loading your clips…'
+              ? t('Loading your clips…')
               : studio.capability?.configured
-                ? 'Your video workspace'
-                : 'Saved clips · Generation unavailable'}
+                ? t('Your video workspace')
+                : t('Saved clips · Generation unavailable')}
           </p>
         </div>
         {jobs.length > 1 && (
           <select
             className="cs-view-toggle"
-            aria-label="Studio results"
+            aria-label={t('Studio results')}
             value={chosen.length ? selection : 'recent'}
             onChange={(event) => setSelection(event.target.value)}
           >
-            <option value="recent">Recent results</option>
+            <option value="recent">{t('Recent results')}</option>
             {jobs.map((job) => (
               <option key={job.id} value={job.id}>
                 {label(job)} · {job.input.prompt.slice(0, 42)} ·{' '}
@@ -121,13 +124,15 @@ export function LiveStudioPage({
             <div className="cs-media-error">
               <span>
                 {studio.status === 'loading'
-                  ? 'Loading your saved results…'
-                  : 'Your next idea starts here'}
+                  ? t('Loading your saved results…')
+                  : t('Your next idea starts here')}
               </span>
               <p>
                 {studio.status === 'unavailable'
-                  ? 'Sign in to save and generate clips.'
-                  : 'Describe a video in the bar below. Review each model’s format and cost before generating.'}
+                  ? t('Sign in to save and generate clips.')
+                  : t(
+                      'Describe a video in the bar below. Review each model’s format and cost before generating.',
+                    )}
               </p>
             </div>
           </div>
@@ -140,7 +145,7 @@ export function LiveStudioPage({
           disabled={studio.busy || studio.status === 'unavailable'}
           onClick={() => void studio.refresh()}
         >
-          Refresh results
+          {t('Refresh results')}
         </button>
         {studio.nextCursor && (
           <button
@@ -149,7 +154,7 @@ export function LiveStudioPage({
             disabled={studio.busy}
             onClick={() => void studio.loadMore()}
           >
-            Earlier results
+            {t('Earlier results')}
           </button>
         )}
       </div>
@@ -168,6 +173,7 @@ function StudioPlayback({
   active: boolean;
   onToast: (message: string) => void;
 }) {
+  const t = useT();
   const videos = useRef(new Map<string, HTMLVideoElement>());
   const menus = useRef(new Map<string, HTMLDetailsElement>());
   const request = useRef(0),
@@ -256,7 +262,9 @@ function StudioPlayback({
     if (results.some((result) => result.status === 'rejected')) {
       pause();
       onToast(
-        'Playback could not start. Try Play again or refresh your saved results.',
+        t(
+          'Playback could not start. Try Play again or refresh your saved results.',
+        ),
       );
     }
   }
@@ -309,7 +317,7 @@ function StudioPlayback({
               className="cs-tile"
               key={job.id}
               hidden={focused !== null && job.id !== focused}
-              aria-label={`${label(job)} result`}
+              aria-label={t('{name} result', { name: label(job) })}
             >
               <div className="cs-media">
                 {saved && (
@@ -319,7 +327,9 @@ function StudioPlayback({
                     muted
                     playsInline
                     preload="metadata"
-                    aria-label={`${label(job)} generated clip`}
+                    aria-label={t('{name} generated clip', {
+                      name: label(job),
+                    })}
                     onLoadedMetadata={(event) => {
                       const value = event.currentTarget.duration;
                       if (Number.isFinite(value) && value > 0)
@@ -368,7 +378,9 @@ function StudioPlayback({
                 {(!saved || failed[job.id]) && (
                   <div className="cs-media-error">
                     <span>
-                      {failed[job.id] ? 'Playback unavailable' : status(job)}
+                      {failed[job.id]
+                        ? t('Playback unavailable')
+                        : t(status(job))}
                     </span>
                     {failed[job.id] && (
                       <button
@@ -382,7 +394,7 @@ function StudioPlayback({
                           videos.current.get(job.id)?.load();
                         }}
                       >
-                        Reload clip
+                        {t('Reload clip')}
                       </button>
                     )}
                     {job.canRecover && (
@@ -391,7 +403,7 @@ function StudioPlayback({
                         disabled={studio.busy}
                         onClick={() => void studio.recover(job.id)}
                       >
-                        Check existing request
+                        {t('Check existing request')}
                       </button>
                     )}
                     {['queued', 'dispatching', 'polling'].includes(job.state) &&
@@ -401,7 +413,7 @@ function StudioPlayback({
                           disabled={studio.busy}
                           onClick={() => void studio.cancel(job.id)}
                         >
-                          Request cancellation
+                          {t('Request cancellation')}
                         </button>
                       )}
                   </div>
@@ -434,7 +446,9 @@ function StudioPlayback({
                 >
                   <summary
                     data-icon-trigger
-                    aria-label={`Actions for ${label(job)} result`}
+                    aria-label={t('Actions for {name} result', {
+                      name: label(job),
+                    })}
                   >
                     <MotionIcon name="more" size={18} />
                   </summary>
@@ -447,7 +461,9 @@ function StudioPlayback({
                         setFocused(focused ? null : job.id);
                       }}
                     >
-                      {focused ? 'Return to compare' : 'Focus on this clip'}
+                      {focused
+                        ? t('Return to compare')
+                        : t('Focus on this clip')}
                     </button>
                     {saved && (
                       <a
@@ -455,15 +471,16 @@ function StudioPlayback({
                         download={`conclave-${job.asset!.id}.mp4`}
                         onClick={closeMenus}
                       >
-                        Download clip
+                        {t('Download clip')}
                       </a>
                     )}
                     {saved &&
                       (deleting === job.id ? (
                         <>
                           <span>
-                            Delete this saved clip? Its job, charge and receipt
-                            remain. This does not issue a refund.
+                            {t(
+                              'Delete this saved clip? Its job, charge and receipt remain. This does not issue a refund.',
+                            )}
                           </span>
                           <button
                             type="button"
@@ -478,14 +495,14 @@ function StudioPlayback({
                               });
                             }}
                           >
-                            Confirm delete clip
+                            {t('Confirm delete clip')}
                           </button>
                           <button
                             type="button"
                             disabled={studio.busy}
                             onClick={() => setDeleting(null)}
                           >
-                            Keep clip
+                            {t('Keep clip')}
                           </button>
                         </>
                       ) : (
@@ -494,13 +511,17 @@ function StudioPlayback({
                           disabled={studio.busy}
                           onClick={() => setDeleting(job.id)}
                         >
-                          Delete clip
+                          {t('Delete clip')}
                         </button>
                       ))}
                     <span>
                       {job.billing.actualUsd6 === null
-                        ? `${formatAccountUsd6(job.billing.maximumUsd6)} USD reserved`
-                        : `${formatAccountUsd6(job.billing.actualUsd6)} USD settled`}
+                        ? t('{amount} USD reserved', {
+                            amount: formatAccountUsd6(job.billing.maximumUsd6),
+                          })
+                        : t('{amount} USD settled', {
+                            amount: formatAccountUsd6(job.billing.actualUsd6),
+                          })}
                     </span>
                   </div>
                 </details>
@@ -510,13 +531,13 @@ function StudioPlayback({
         })}
       </div>
       <fieldset className="cs-transport">
-        <legend className="cs-sr-only">Saved clip playback</legend>
+        <legend className="cs-sr-only">{t('Saved clip playback')}</legend>
         <button
           className="cs-play"
           type="button"
           onClick={() => void play()}
           disabled={!playable}
-          aria-label={playing ? 'Pause clips' : 'Play clips'}
+          aria-label={playing ? t('Pause clips') : t('Play clips')}
         >
           {playing ? (
             <Pause
@@ -545,8 +566,11 @@ function StudioPlayback({
           step={0.05}
           value={Math.min(position, duration)}
           disabled={!playable}
-          aria-label="Seek saved clips"
-          aria-valuetext={`${time(position)} of ${time(duration)}`}
+          aria-label={t('Seek saved clips')}
+          aria-valuetext={t('{position} of {duration}', {
+            position: time(position),
+            duration: time(duration),
+          })}
           style={
             {
               '--cs-progress': `${duration ? (position / duration) * 100 : 0}%`,
@@ -558,9 +582,9 @@ function StudioPlayback({
           }}
         />
         {visible.length > 1 && (
-          <span className="cs-linked" title="Linked playback">
+          <span className="cs-linked" title={t('Linked playback')}>
             <Link2 size={22} strokeWidth={1.5} aria-hidden="true" />
-            <span className="cs-sr-only">Playback is linked</span>
+            <span className="cs-sr-only">{t('Playback is linked')}</span>
           </span>
         )}
       </fieldset>

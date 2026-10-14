@@ -1,5 +1,6 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
 import Image from 'next/image';
 import { useRef } from 'react';
 import { MotionIcon } from './motion-icon';
@@ -93,9 +94,11 @@ export function AnswerCard({
   /** Answers in this turn; a stop applies to every answer still running. */
   peers?: number;
 }) {
+  const t = useT();
   const model = MODELS.find((item) => item.id === answer.modelId);
-  const modelName =
-    answer.live?.modelName || answer.live?.label || model?.name || 'Model';
+  const modelName = t(
+    answer.live?.modelName || answer.live?.label || model?.name || 'Model',
+  );
   const liveState = answer.live?.state;
   const active = liveState === 'queued' || liveState === 'running';
   const stopping = active && answer.live?.cancelRequested === true;
@@ -118,11 +121,15 @@ export function AnswerCard({
       className={`cw-answer-control cw-answer-select${selected ? ' is-selected' : ''}`}
       onClick={() => onSelect(answer.id)}
       aria-pressed={selected}
-      aria-label={`${selected ? 'Deselect' : 'Select'} ${modelName} answer`}
-      title={selected ? 'Remove from selection' : 'Select for a Brief'}
+      aria-label={
+        selected
+          ? t('Deselect {name} answer', { name: modelName })
+          : t('Select {name} answer', { name: modelName })
+      }
+      title={selected ? t('Remove from selection') : t('Select for a Brief')}
     >
       <MotionIcon name="select" size={18} active={selected} />
-      {isChat && <span>{selected ? 'Selected' : 'Select'}</span>}
+      {isChat && <span>{selected ? t('Selected') : t('Select')}</span>}
     </button>
   );
   const copyControl = (
@@ -130,11 +137,11 @@ export function AnswerCard({
       data-icon-trigger
       className="cw-answer-control"
       onClick={() => actions.onCopy(answer)}
-      aria-label={`Copy ${modelName} answer`}
-      title="Copy answer"
+      aria-label={t('Copy {name} answer', { name: modelName })}
+      title={t('Copy answer')}
     >
       <MotionIcon name="copy" size={18} />
-      {isChat && <span>Copy</span>}
+      {isChat && <span>{t('Copy')}</span>}
     </button>
   );
   function performMenuAction(action: () => void) {
@@ -147,7 +154,11 @@ export function AnswerCard({
   return (
     <article
       className={`cw-answer cw-node-drag${selected ? ' is-selected' : ''}${isChat ? ' is-chat-answer' : ''}`}
-      aria-label={`${modelName} ${answer.live ? 'answer' : 'sample answer'}`}
+      aria-label={
+        answer.live
+          ? t('{name} answer', { name: modelName })
+          : t('{name} sample answer', { name: modelName })
+      }
       aria-busy={active}
     >
       {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Overflowing answers must be keyboard-scrollable. */}
@@ -155,14 +166,16 @@ export function AnswerCard({
         className="cw-answer-body nodrag nowheel"
         tabIndex={isChat ? undefined : 0}
       >
-        {answer.heading && <h2>{answer.heading}</h2>}
+        {answer.heading && <h2>{t(answer.heading)}</h2>}
         {answer.paragraphs.map((paragraph, index) => (
           <p key={index}>
-            {answer.heading === 'No live model result.' &&
-            paragraph ===
-              'Use a prepared example to explore the comparison, or keep this question in your room for later.'
-              ? 'Use a prepared example to explore the comparison, or keep this question in your project for later.'
-              : paragraph}
+            {t(
+              answer.heading === 'No live model result.' &&
+                paragraph ===
+                  'Use a prepared example to explore the comparison, or keep this question in your room for later.'
+                ? 'Use a prepared example to explore the comparison, or keep this question in your project for later.'
+                : paragraph,
+            )}
           </p>
         ))}
         {answer.live?.outputTruncated && (
@@ -171,8 +184,9 @@ export function AnswerCard({
             type="button"
             onClick={() => actions.onLoadFull?.(answer)}
           >
-            Load full answer ({answer.live.outputLength?.toLocaleString()}{' '}
-            characters)
+            {t('Load full answer ({count} characters)', {
+              count: answer.live.outputLength?.toLocaleString() ?? '',
+            })}
           </button>
         )}
       </div>
@@ -199,40 +213,48 @@ export function AnswerCard({
             <small
               title={
                 drainTimedOut
-                  ? 'Stopped. The provider did not confirm usage in time, so the final cost is being reconciled. Reserved funds remain held until then.'
+                  ? t(
+                      'Stopped. The provider did not confirm usage in time, so the final cost is being reconciled. Reserved funds remain held until then.',
+                    )
                   : liveState === 'reconciliation_pending'
-                    ? 'The final cost is being reconciled. Reserved funds remain held.'
+                    ? t(
+                        'The final cost is being reconciled. Reserved funds remain held.',
+                      )
                     : stopping
-                      ? 'Stopping. Usage already dispatched is being measured for an exact charge.'
+                      ? t(
+                          'Stopping. Usage already dispatched is being measured for an exact charge.',
+                        )
                       : undefined
               }
             >
               {answer.live.billing.maximumUsd6 === null
-                ? 'Cost after reveal'
+                ? t('Cost after reveal')
                 : drainTimedOut
-                  ? 'Stopped · Cost pending'
+                  ? t('Stopped · Cost pending')
                   : liveState === 'reconciliation_pending'
-                    ? 'Cost pending'
+                    ? t('Cost pending')
                     : liveState === 'succeeded'
-                      ? (cost ?? 'Cost pending')
+                      ? (cost ?? t('Cost pending'))
                       : stopping
-                        ? 'Stopping…'
+                        ? t('Stopping…')
                         : liveState === 'running'
-                          ? 'Generating…'
+                          ? t('Generating…')
                           : liveState === 'queued'
-                            ? 'Queued'
+                            ? t('Queued')
                             : liveState === 'cancelled'
                               ? cost
-                                ? `Stopped · ${cost}`
-                                : 'Stopped'
-                              : 'Failed'}
+                                ? t('Stopped · {cost}', { cost })
+                                : t('Stopped')
+                              : t('Failed')}
             </small>
           )}
           <details ref={menu} className="cw-answer-menu">
             <summary
               data-icon-trigger
-              aria-label={`More actions for ${modelName} answer`}
-              title="More actions"
+              aria-label={t('More actions for {name} answer', {
+                name: modelName,
+              })}
+              title={t('More actions')}
             >
               <MotionIcon name="more" size={18} />
             </summary>
@@ -245,10 +267,10 @@ export function AnswerCard({
                   }
                 >
                   {peers === undefined
-                    ? 'Stop this request'
+                    ? t('Stop this request')
                     : peers > 1
-                      ? 'Stop all models'
-                      : 'Stop'}
+                      ? t('Stop all models')
+                      : t('Stop')}
                 </button>
               )}
               {answer.modelId === 'blind' && actions.onVote && (
@@ -259,7 +281,7 @@ export function AnswerCard({
                     performMenuAction(() => actions.onVote?.(answer))
                   }
                 >
-                  Prefer this answer &amp; reveal
+                  {t('Prefer this answer & reveal')}
                 </button>
               )}
               {answer.modelId === 'blind' && actions.onReveal && (
@@ -269,7 +291,7 @@ export function AnswerCard({
                     performMenuAction(() => actions.onReveal?.(answer))
                   }
                 >
-                  Reveal model names
+                  {t('Reveal model names')}
                 </button>
               )}
 
@@ -284,7 +306,9 @@ export function AnswerCard({
                     size={menuIconSize}
                     active={selected}
                   />
-                  {selected ? 'Remove from selection' : 'Select for a Brief'}
+                  {selected
+                    ? t('Remove from selection')
+                    : t('Select for a Brief')}
                 </button>
               )}
               <button
@@ -292,7 +316,7 @@ export function AnswerCard({
                 onClick={() => performMenuAction(() => actions.onCopy(answer))}
               >
                 <MotionIcon name="copy" size={menuIconSize} />
-                Copy answer
+                {t('Copy answer')}
               </button>
               <button
                 data-icon-trigger
@@ -301,7 +325,7 @@ export function AnswerCard({
                 }
               >
                 <MotionIcon name="branch" size={menuIconSize} />
-                Follow up
+                {t('Follow up')}
               </button>
               {onRoute && (
                 <button
@@ -312,7 +336,7 @@ export function AnswerCard({
                   }
                 >
                   <MotionIcon name="route" size={menuIconSize} />
-                  Inspect route
+                  {t('Inspect route')}
                 </button>
               )}
             </div>

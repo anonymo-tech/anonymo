@@ -1717,3 +1717,18 @@
     scroll-behavior: auto !important;
   }
 }
+.cw-menu-language {
+  display: none;
+}
+.cw-menu-language .language-toggle {
+  padding: 0 7px 4px;
+  font-size: 13px;
+}
+@media (max-width: 680px) {
+  .cw-header .cw-language {
+    display: none;
+  }
+  .cw-menu-language {
+    display: block;
+  }
+}

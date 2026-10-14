@@ -1,9 +1,11 @@
+import { useT } from '@/lib/i18n';
 import { BriefSynthesisResult } from './brief-synthesis-result';
 import type { BriefDocument } from '../../lib/brief-document';
 import { formatAccountUsd6 } from '../../lib/client/account-records';
 import { featureOn } from './feature-switches';
 
 export function LiveBriefReader({ document }: { document: BriefDocument }) {
+  const t = useT();
   return (
     <div
       style={{
@@ -17,36 +19,38 @@ export function LiveBriefReader({ document }: { document: BriefDocument }) {
       {featureOn('synthesis') && document.synthesis && (
         <section>
           <h3 style={{ fontSize: 14, marginBottom: 8 }}>
-            Selected generated analysis
+            {t('Selected generated analysis')}
           </h3>
           <p className="cp-fineprint">
             {document.synthesis.modelId} ·{' '}
             {document.synthesis.actualUsd6 === null
-              ? 'Analysis charge not settled'
-              : `$${formatAccountUsd6(document.synthesis.actualUsd6)} analysis charge`}
-            . This immutable analysis is separate from your assessment.
+              ? t('Analysis charge not settled')
+              : t('{amount} analysis charge', {
+                  amount: `$${formatAccountUsd6(document.synthesis.actualUsd6)}`,
+                })}
+            {t('. This immutable analysis is separate from your assessment.')}
           </p>
           <BriefSynthesisResult
             analysis={document.synthesis.analysis}
             evidence={document.evidence}
           />
           <details>
-            <summary>Analysis provenance</summary>
+            <summary>{t('Analysis provenance')}</summary>
             <dl className="ct-facts">
               <div>
-                <dt>Run</dt>
+                <dt>{t('Run')}</dt>
                 <dd>{document.synthesis.runId}</dd>
               </div>
               <div>
-                <dt>Call</dt>
+                <dt>{t('Call')}</dt>
                 <dd>{document.synthesis.callId}</dd>
               </div>
               <div>
-                <dt>Route</dt>
+                <dt>{t('Route')}</dt>
                 <dd>{document.synthesis.routeVersionId}</dd>
               </div>
               <div>
-                <dt>Output SHA-256</dt>
+                <dt>{t('Output SHA-256')}</dt>
                 <dd>{document.synthesis.outputHash}</dd>
               </div>
             </dl>
@@ -54,22 +58,22 @@ export function LiveBriefReader({ document }: { document: BriefDocument }) {
         </section>
       )}
       <section>
-        <h3 style={{ fontSize: 14, marginBottom: 8 }}>Your decision</h3>
+        <h3 style={{ fontSize: 14, marginBottom: 8 }}>{t('Your decision')}</h3>
         <p style={{ whiteSpace: 'pre-wrap' }}>
           {document.analysis.decision ||
-            'Add your decision and notes with Edit assessment.'}
+            t('Add your decision and notes with Edit assessment.')}
         </p>
       </section>
       {document.analysis.matrix.length > 0 && (
         <section>
           <h3 style={{ fontSize: 14, marginBottom: 8 }}>
-            Your agreement assessment
+            {t('Your agreement assessment')}
           </h3>
           <div style={{ overflowX: 'auto' }}>
             <table>
               <thead>
                 <tr>
-                  <th>Topic</th>
+                  <th>{t('Topic')}</th>
                   {document.evidence.map((e) => (
                     <th key={e.callId}>{e.modelId}</th>
                   ))}
@@ -81,10 +85,10 @@ export function LiveBriefReader({ document }: { document: BriefDocument }) {
                     <th>{row.topic}</th>
                     {document.evidence.map((e) => (
                       <td key={e.callId} style={{ padding: '6px 10px' }}>
-                        {
+                        {t(
                           row.positions.find((p) => p.callId === e.callId)!
-                            .position
-                        }
+                            .position,
+                        )}
                       </td>
                     ))}
                   </tr>
@@ -99,8 +103,10 @@ export function LiveBriefReader({ document }: { document: BriefDocument }) {
           <h3 style={{ fontSize: 14, marginBottom: 4 }}>{evidence.modelId}</h3>
           <p className="cp-fineprint">
             {evidence.actualUsd6 === null
-              ? 'Cost pending at save'
-              : `$${formatAccountUsd6(evidence.actualUsd6)} at save`}
+              ? t('Cost pending at save')
+              : t('{amount} at save', {
+                  amount: `$${formatAccountUsd6(evidence.actualUsd6)}`,
+                })}
           </p>
           {document.analysis.notes.find((n) => n.callId === evidence.callId)
             ?.text && (
@@ -113,7 +119,7 @@ export function LiveBriefReader({ document }: { document: BriefDocument }) {
             </p>
           )}
           <details>
-            <summary>Original question and response</summary>
+            <summary>{t('Original question and response')}</summary>
             <p style={{ whiteSpace: 'pre-wrap', margin: '12px 0' }}>
               {evidence.question}
             </p>
@@ -122,27 +128,29 @@ export function LiveBriefReader({ document }: { document: BriefDocument }) {
         </section>
       ))}
       <details>
-        <summary>Provenance</summary>
+        <summary>{t('Provenance')}</summary>
         <p className="cp-fineprint">
-          Saved {document.savedAt}. Owner assessments are separate from the
-          original responses. A snapshot hash is not an onchain proof.
+          {t(
+            'Saved {time}. Owner assessments are separate from the original responses. A snapshot hash is not an onchain proof.',
+            { time: document.savedAt },
+          )}
         </p>
         <dl className="ct-facts">
           <div>
-            <dt>Evidence SHA-256</dt>
+            <dt>{t('Evidence SHA-256')}</dt>
             <dd>{document.evidenceHash}</dd>
           </div>
           {document.evidence.map((e) => (
             <div key={e.callId}>
               <dt>{e.modelId}</dt>
               <dd>
-                Call {e.callId}
+                {t('Call {id}', { id: e.callId })}
                 <br />
-                Comparison {e.comparisonId}
+                {t('Comparison {id}', { id: e.comparisonId })}
                 <br />
-                Route {e.routeVersionId}
+                {t('Route {id}', { id: e.routeVersionId })}
                 <br />
-                Response SHA-256 {e.answerHash}
+                {t('Response SHA-256 {hash}', { hash: e.answerHash })}
               </dd>
             </div>
           ))}

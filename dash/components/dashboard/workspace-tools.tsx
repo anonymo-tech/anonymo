@@ -1,5 +1,7 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
+
 import { useId, useState, type ReactNode } from 'react';
 import Link from '@/components/site-link';
 import { Check, Info, LockKeyhole } from 'lucide-react';
@@ -44,6 +46,7 @@ function Note({ children }: { children: ReactNode }) {
 }
 
 function SourceLink({ href, children }: { href: string; children: ReactNode }) {
+  const t = useT();
   return (
     <a
       data-icon-trigger
@@ -54,50 +57,59 @@ function SourceLink({ href, children }: { href: string; children: ReactNode }) {
     >
       {children}
       <MotionIcon name="open" size={20} />
-      <span className="ct-sr-only"> (opens in a new tab)</span>
+      <span className="ct-sr-only">{t(' (opens in a new tab)')}</span>
     </a>
   );
 }
 
 function RouteDetails({ model }: { model: DemoModel }) {
+  const t = useT();
   const headingId = useId();
   return (
     <section className="ct-detail" aria-labelledby={headingId}>
       <div className="ct-detail-heading">
         <div>
-          <span className="ct-eyebrow">Sample route</span>
+          <span className="ct-eyebrow">{t('Sample route')}</span>
           <h3 id={headingId}>{model.name}</h3>
         </div>
-        <span className="ct-status">UNVERIFIED</span>
+        <span className="ct-status">{t('UNVERIFIED')}</span>
       </div>
       <dl className="ct-facts">
         <div>
-          <dt>Design target</dt>
-          <dd className="ct-code">{model.level.replaceAll('_', ' ')}</dd>
+          <dt>{t('Design target')}</dt>
+          <dd className="ct-code">{t(model.level.replaceAll('_', ' '))}</dd>
         </div>
         <div>
-          <dt>Provider connection</dt>
-          <dd>Not configured</dd>
+          <dt>{t('Provider connection')}</dt>
+          <dd>{t('Not configured')}</dd>
         </div>
         <div>
-          <dt>Prompt handling</dt>
+          <dt>{t('Prompt handling')}</dt>
           <dd>
             {model.kind === 'Sealed'
-              ? 'Would require encryption to an attested host. Neither is connected.'
-              : 'A connected route would expose the prompt to the processing provider.'}
+              ? t(
+                  'Would require encryption to an attested host. Neither is connected.',
+                )
+              : t(
+                  'A connected route would expose the prompt to the processing provider.',
+                )}
           </dd>
         </div>
         <div>
-          <dt>Retention &amp; training</dt>
-          <dd>No verified policy</dd>
+          <dt>{t('Retention & training')}</dt>
+          <dd>{t('No verified policy')}</dd>
         </div>
         <div>
-          <dt>Evidence</dt>
-          <dd>No live route or attestation evidence</dd>
+          <dt>{t('Evidence')}</dt>
+          <dd>{t('No live route or attestation evidence')}</dd>
         </div>
         <div>
-          <dt>Sample estimate</dt>
-          <dd>{model.cost.toFixed(3)} USDC per call · 0 charged</dd>
+          <dt>{t('Sample estimate')}</dt>
+          <dd>
+            {t('{amount} USDC per call · 0 charged', {
+              amount: model.cost.toFixed(3),
+            })}
+          </dd>
         </div>
       </dl>
     </section>
@@ -105,6 +117,7 @@ function RouteDetails({ model }: { model: DemoModel }) {
 }
 
 function RoutesPanel({ modelId }: Pick<ToolsContentProps, 'modelId'>) {
+  const t = useT();
   const [selectedId, setSelectedId] = useState(
     () => MODELS.find((model) => model.id === modelId)?.id || MODELS[0].id,
   );
@@ -112,10 +125,11 @@ function RoutesPanel({ modelId }: Pick<ToolsContentProps, 'modelId'>) {
   return (
     <>
       <p className="ct-intro">
-        Inspect a model’s proposed route. Every route in this workspace is a
-        local sample.
+        {t(
+          'Inspect a model’s proposed route. Every route in this workspace is a local sample.',
+        )}
       </p>
-      <div className="ct-models" aria-label="Sample route details">
+      <div className="ct-models" aria-label={t('Sample route details')}>
         {MODELS.map((model) => (
           <button
             data-icon-trigger
@@ -131,7 +145,10 @@ function RoutesPanel({ modelId }: Pick<ToolsContentProps, 'modelId'>) {
             <span className="ct-model-name">
               <strong>{model.name}</strong>
               <small>
-                {model.family} · {model.kind} concept
+                {t('{family} · {kind} concept', {
+                  family: model.family,
+                  kind: t(model.kind),
+                })}
               </small>
             </span>
             {selectedId === model.id && <Check size={14} aria-hidden="true" />}
@@ -140,11 +157,13 @@ function RoutesPanel({ modelId }: Pick<ToolsContentProps, 'modelId'>) {
       </div>
       <RouteDetails model={selected} />
       <Note>
-        Selecting a card only opens its details. It does not change your
-        project’s models or activate a privacy guarantee.
+        {t(
+          'Selecting a card only opens its details. It does not change your project’s models or activate a privacy guarantee.',
+        )}
       </Note>
       <Link data-icon-trigger className="ct-source" href="/docs#routes">
-        Read about route levels <MotionIcon name="open" size={20} />
+        {t('Read about route levels ')}
+        <MotionIcon name="open" size={20} />
       </Link>
     </>
   );
@@ -205,16 +224,18 @@ const SOLANA_EXAMPLES = [
 ] as const;
 
 function ExplainerPanel() {
+  const t = useT();
   const [exampleId, setExampleId] = useState<string>(SOLANA_EXAMPLES[0].id);
   const example =
     SOLANA_EXAMPLES.find((item) => item.id === exampleId) || SOLANA_EXAMPLES[0];
   return (
     <>
       <p className="ct-intro">
-        Read a Solana example in plain language. No RPC connection, wallet
-        signature or onchain action.
+        {t(
+          'Read a Solana example in plain language. No RPC connection, wallet signature or onchain action.',
+        )}
       </p>
-      <div className="ct-segments" aria-label="Solana examples">
+      <div className="ct-segments" aria-label={t('Solana examples')}>
         {SOLANA_EXAMPLES.map((item) => (
           <button
             data-icon-trigger
@@ -223,25 +244,25 @@ function ExplainerPanel() {
             aria-pressed={item.id === exampleId}
             onClick={() => setExampleId(item.id)}
           >
-            {item.label}
+            {t(item.label)}
           </button>
         ))}
       </div>
       <section className="ct-detail ct-example">
-        <span className="ct-eyebrow">Educational sample</span>
-        <h3>{example.title}</h3>
-        <p>{example.description}</p>
+        <span className="ct-eyebrow">{t('Educational sample')}</span>
+        <h3>{t(example.title)}</h3>
+        <p>{t(example.description)}</p>
         <dl className="ct-facts">
           {example.rows.map(([label, value]) => (
             <div key={label}>
-              <dt>{label}</dt>
-              <dd>{value}</dd>
+              <dt>{t(label)}</dt>
+              <dd>{t(value)}</dd>
             </div>
           ))}
         </dl>
-        <p className="ct-takeaway">{example.takeaway}</p>
+        <p className="ct-takeaway">{t(example.takeaway)}</p>
       </section>
-      <SourceLink href={example.source}>{example.sourceName}</SourceLink>
+      <SourceLink href={example.source}>{t(example.sourceName)}</SourceLink>
     </>
   );
 }
@@ -300,28 +321,45 @@ const CHECK_EXAMPLES = [
 ] as const;
 
 function CrossCheckPanel({ onToast }: Pick<ToolsContentProps, 'onToast'>) {
+  const t = useT();
   const [exampleId, setExampleId] = useState<string>(CHECK_EXAMPLES[0].id);
   const example =
     CHECK_EXAMPLES.find((item) => item.id === exampleId) || CHECK_EXAMPLES[0];
   async function copySummary() {
     try {
       await navigator.clipboard.writeText(
-        `Conclave · Sample Cross-Check\nPrewritten example; no model or retrieval request.\n\nClaim: ${example.claim}\n${example.verdict}\n\n${example.reviews.map((review) => `${review.label}: ${review.text}`).join('\n')}\n\nSource: ${example.source}`,
+        t(
+          'Conclave · Sample Cross-Check\nPrewritten example; no model or retrieval request.\n\nClaim: {claim}\n{verdict}\n\n{reviews}\n\nSource: {source}',
+          {
+            claim: t(example.claim),
+            verdict: t(example.verdict),
+            reviews: example.reviews
+              .map((review) =>
+                t('{label}: {text}', {
+                  label: t(review.label),
+                  text: t(review.text),
+                }),
+              )
+              .join('\n'),
+            source: example.source,
+          },
+        ),
       );
-      onToast('Sample Cross-Check copied.');
+      onToast(t('Sample Cross-Check copied.'));
     } catch {
       onToast(
-        'Clipboard unavailable. You can select and copy the sample text.',
+        t('Clipboard unavailable. You can select and copy the sample text.'),
       );
     }
   }
   return (
     <>
       <p className="ct-intro">
-        Explore how a claim, its sources and differing readings fit together.
-        These are prewritten examples, not live model reviews.
+        {t(
+          'Explore how a claim, its sources and differing readings fit together. These are prewritten examples, not live model reviews.',
+        )}
       </p>
-      <div className="ct-segments" aria-label="Cross-Check samples">
+      <div className="ct-segments" aria-label={t('Cross-Check samples')}>
         {CHECK_EXAMPLES.map((item) => (
           <button
             data-icon-trigger
@@ -330,31 +368,33 @@ function CrossCheckPanel({ onToast }: Pick<ToolsContentProps, 'onToast'>) {
             aria-pressed={item.id === exampleId}
             onClick={() => setExampleId(item.id)}
           >
-            {item.label}
+            {t(item.label)}
           </button>
         ))}
       </div>
       <section className="ct-claim">
-        <span className="ct-eyebrow">Sample claim</span>
-        <p>{example.claim}</p>
+        <span className="ct-eyebrow">{t('Sample claim')}</span>
+        <p>{t(example.claim)}</p>
       </section>
       <div className="ct-reviews">
         {example.reviews.map((review, index) => (
           <article key={review.label} className="ct-review">
-            <span className="ct-eyebrow">Sample perspective {index + 1}</span>
-            <h3>{review.label}</h3>
-            <p>{review.text}</p>
+            <span className="ct-eyebrow">
+              {t('Sample perspective {number}', { number: index + 1 })}
+            </span>
+            <h3>{t(review.label)}</h3>
+            <p>{t(review.text)}</p>
           </article>
         ))}
       </div>
       <section className="ct-evidence">
-        <span className="ct-eyebrow">Source excerpt</span>
-        <blockquote>“{example.quote}”</blockquote>
-        <SourceLink href={example.source}>{example.sourceName}</SourceLink>
+        <span className="ct-eyebrow">{t('Source excerpt')}</span>
+        <blockquote>“{t(example.quote)}”</blockquote>
+        <SourceLink href={example.source}>{t(example.sourceName)}</SourceLink>
       </section>
       <div className="ct-result">
-        <h3>{example.verdict}</h3>
-        <p>{example.summary}</p>
+        <h3>{t(example.verdict)}</h3>
+        <p>{t(example.summary)}</p>
       </div>
       <button
         data-icon-trigger
@@ -364,7 +404,8 @@ function CrossCheckPanel({ onToast }: Pick<ToolsContentProps, 'onToast'>) {
           void copySummary();
         }}
       >
-        <MotionIcon name="copy" size={20} /> Copy sample summary
+        <MotionIcon name="copy" size={20} />
+        {t(' Copy sample summary')}
       </button>
     </>
   );
@@ -375,120 +416,147 @@ function LiveSettingsPanel({
 }: {
   service: NonNullable<ToolsContentProps['service']>;
 }) {
+  const t = useT();
   const { signedIn = false, liveInference = false } = service;
   return (
     <>
-      <p className="ct-intro">What is active for your account in this browser.</p>
+      <p className="ct-intro">
+        {t('What is active for your account in this browser.')}
+      </p>
       <dl className="ct-settings">
         <div>
-          <dt>Workspace</dt>
+          <dt>{t('Workspace')}</dt>
           <dd>
-            <strong>{signedIn ? 'Signed-in account' : 'Signed out'}</strong>
+            <strong>
+              {signedIn ? t('Signed-in account') : t('Signed out')}
+            </strong>
             <span>
               {signedIn
-                ? 'Projects and answers are saved to your account. Drafts stay in this tab.'
-                : 'Sign in from Account & wallet to open your projects.'}
+                ? t(
+                    'Projects and answers are saved to your account. Drafts stay in this tab.',
+                  )
+                : t('Sign in from Account & wallet to open your projects.')}
             </span>
           </dd>
         </div>
         <div>
-          <dt>Model responses</dt>
+          <dt>{t('Model responses')}</dt>
           <dd>
             <strong>
-              {liveInference ? 'Live inference' : 'Live inference unavailable'}
+              {liveInference
+                ? t('Live inference')
+                : t('Live inference unavailable')}
             </strong>
             <span>
               {liveInference
-                ? 'Sent through reviewed routes only after you approve the cost.'
+                ? t(
+                    'Sent through reviewed routes only after you approve the cost.',
+                  )
                 : signedIn
-                  ? 'No reviewed route is available right now. Nothing is sent.'
-                  : 'Sign in to use reviewed model routes.'}
+                  ? t(
+                      'No reviewed route is available right now. Nothing is sent.',
+                    )
+                  : t('Sign in to use reviewed model routes.')}
             </span>
           </dd>
         </div>
         <div>
-          <dt>Prompt guard</dt>
+          <dt>{t('Prompt guard')}</dt>
           <dd>
-            <strong>Local pattern check</strong>
+            <strong>{t('Local pattern check')}</strong>
             <span>
-              Runs before every quote. It can miss secrets, so keep sensitive
-              information out of your questions.
+              {t(
+                'Runs before every quote. It can miss secrets, so keep sensitive information out of your questions.',
+              )}
             </span>
           </dd>
         </div>
         <div>
-          <dt>Balance &amp; charges</dt>
+          <dt>{t('Balance & charges')}</dt>
           <dd>
             <strong>
               {!signedIn
-                ? 'Not signed in'
+                ? t('Not signed in')
                 : service.internalTestCredit
-                  ? 'Internal test credit'
-                  : 'Prepaid account balance'}
+                  ? t('Internal test credit')
+                  : t('Prepaid account balance')}
             </strong>
             <span>
               {!signedIn
-                ? 'Nothing is reserved or charged until you sign in and approve a request.'
+                ? t(
+                    'Nothing is reserved or charged until you sign in and approve a request.',
+                  )
                 : service.internalTestCredit
-                  ? 'Charges apply. Approved requests reserve and settle against test credit, which is not USDC.'
-                  : 'Charges apply. Each approved request reserves its maximum and settles verified usage.'}
+                  ? t(
+                      'Charges apply. Approved requests reserve and settle against test credit, which is not USDC.',
+                    )
+                  : t(
+                      'Charges apply. Each approved request reserves its maximum and settles verified usage.',
+                    )}
             </span>
           </dd>
         </div>
       </dl>
       <Note>
-        Standard routes are not private: the gateway and the model provider
-        receive each question in plaintext.
+        {t(
+          'Standard routes are not private: the gateway and the model provider receive each question in plaintext.',
+        )}
       </Note>
       <Link data-icon-trigger className="ct-source" href="/docs">
-        Open the field guide <MotionIcon name="open" size={20} />
+        {t('Open the field guide ')}
+        <MotionIcon name="open" size={20} />
       </Link>
     </>
   );
 }
 
 function SettingsPanel() {
+  const t = useT();
   return (
     <>
-      <p className="ct-intro">What is active in this browser.</p>
+      <p className="ct-intro">{t('What is active in this browser.')}</p>
       <dl className="ct-settings">
         <div>
-          <dt>Workspace</dt>
+          <dt>{t('Workspace')}</dt>
           <dd>
-            <strong>Local demo</strong>
-            <span>No cloud account or team sync.</span>
+            <strong>{t('Local demo')}</strong>
+            <span>{t('No cloud account or team sync.')}</span>
           </dd>
         </div>
         <div>
-          <dt>Model responses</dt>
+          <dt>{t('Model responses')}</dt>
           <dd>
-            <strong>Sample content</strong>
-            <span>Live inference is not connected.</span>
+            <strong>{t('Sample content')}</strong>
+            <span>{t('Live inference is not connected.')}</span>
           </dd>
         </div>
         <div>
-          <dt>Prompt guard</dt>
+          <dt>{t('Prompt guard')}</dt>
           <dd>
-            <strong>Local pattern check</strong>
+            <strong>{t('Local pattern check')}</strong>
             <span>
-              It can miss secrets. Keep sensitive information out of the demo.
+              {t(
+                'It can miss secrets. Keep sensitive information out of the demo.',
+              )}
             </span>
           </dd>
         </div>
         <div>
-          <dt>Wallet &amp; payments</dt>
+          <dt>{t('Wallet & payments')}</dt>
           <dd>
-            <strong>Not connected</strong>
-            <span>No signatures, deposits or charges.</span>
+            <strong>{t('Not connected')}</strong>
+            <span>{t('No signatures, deposits or charges.')}</span>
           </dd>
         </div>
       </dl>
       <Note>
-        Browser-local data is not an encrypted vault. Other people using the
-        same browser profile may be able to read it.
+        {t(
+          'Browser-local data is not an encrypted vault. Other people using the same browser profile may be able to read it.',
+        )}
       </Note>
       <Link data-icon-trigger className="ct-source" href="/docs#guards">
-        Understand the demo’s limits <MotionIcon name="open" size={20} />
+        {t('Understand the demo’s limits ')}
+        <MotionIcon name="open" size={20} />
       </Link>
     </>
   );
@@ -499,11 +567,13 @@ function IdentityPanel() {
 }
 
 function HelpPanel() {
+  const t = useT();
   return (
     <>
       <p className="ct-intro">
-        Write a question, explore sample perspectives and keep useful thinking
-        in your workspace.
+        {t(
+          'Write a question, explore sample perspectives and keep useful thinking in your workspace.',
+        )}
       </p>
       <dl className="ct-shortcuts">
         <div>
@@ -512,36 +582,40 @@ function HelpPanel() {
             <span> + </span>
             <kbd>Enter</kbd>
           </dt>
-          <dd>Send a sample message</dd>
+          <dd>{t('Send a sample message')}</dd>
         </div>
         <div>
           <dt>
             <kbd>Esc</kbd>
           </dt>
-          <dd>Close an open menu or dialog</dd>
+          <dd>{t('Close an open menu or dialog')}</dd>
         </div>
         <div>
           <dt>
             <kbd>Tab</kbd>
           </dt>
-          <dd>Move between controls</dd>
+          <dd>{t('Move between controls')}</dd>
         </div>
       </dl>
       <section className="ct-help-section">
-        <h3>Choose your view</h3>
+        <h3>{t('Choose your view')}</h3>
         <p>
-          Use the view toggle in the workspace toolbar to change the layout.
+          {t(
+            'Use the view toggle in the workspace toolbar to change the layout.',
+          )}
         </p>
       </section>
       <section className="ct-help-section">
-        <h3>Keep the limits in view</h3>
+        <h3>{t('Keep the limits in view')}</h3>
         <p>
-          Responses are samples. Cross-Check does not retrieve live evidence,
-          and the Solana explainer does not simulate or sign transactions.
+          {t(
+            'Responses are samples. Cross-Check does not retrieve live evidence, and the Solana explainer does not simulate or sign transactions.',
+          )}
         </p>
       </section>
       <Link data-icon-trigger className="ct-source" href="/docs">
-        Open the field guide <MotionIcon name="open" size={20} />
+        {t('Open the field guide ')}
+        <MotionIcon name="open" size={20} />
       </Link>
     </>
   );
@@ -554,31 +628,53 @@ export function ToolsContent({
   onClose,
   onToast,
 }: ToolsContentProps) {
+  const t = useT();
   return (
     <div className="ct-tools">
-      {view === 'routes' && (
-        service ? <LiveRoutesPanel routes={service.routes} modelId={modelId} /> : <RoutesPanel key={modelId || 'default'} modelId={modelId} />
-      )}
-      {view === 'explainer' && (service ? <LiveExplainerPanel key={service.accountId ?? 'signed-out'} accountId={service.accountId} /> : <ExplainerPanel />)}
-      {view === 'crosscheck' && (service ? <LiveCrossCheckPanel key={service.accountId ?? 'signed-out'} accountId={service.accountId} /> : <CrossCheckPanel onToast={onToast} />)}
+      {view === 'routes' &&
+        (service ? (
+          <LiveRoutesPanel routes={service.routes} modelId={modelId} />
+        ) : (
+          <RoutesPanel key={modelId || 'default'} modelId={modelId} />
+        ))}
+      {view === 'explainer' &&
+        (service ? (
+          <LiveExplainerPanel
+            key={service.accountId ?? 'signed-out'}
+            accountId={service.accountId}
+          />
+        ) : (
+          <ExplainerPanel />
+        ))}
+      {view === 'crosscheck' &&
+        (service ? (
+          <LiveCrossCheckPanel
+            key={service.accountId ?? 'signed-out'}
+            accountId={service.accountId}
+          />
+        ) : (
+          <CrossCheckPanel onToast={onToast} />
+        ))}
       {view === 'settings' &&
         (service ? <LiveSettingsPanel service={service} /> : <SettingsPanel />)}
       {view === 'identity' && <IdentityPanel />}
       {view === 'help' && <HelpPanel />}
-      <div className="ct-footer">
-        <span>
-          <LockKeyhole size={12} aria-hidden="true" />{' '}
-          {view === 'identity' || service ? 'Account' : 'Local demo'}
-        </span>
-        <button
-          data-icon-trigger
-          className="ct-button ct-button-primary"
-          type="button"
-          onClick={onClose}
-        >
-          Done
-        </button>
-      </div>
+      {view !== 'identity' && (
+        <div className="ct-footer">
+          <span>
+            <LockKeyhole size={12} aria-hidden="true" />{' '}
+            {service ? t('Account') : t('Local demo')}
+          </span>
+          <button
+            data-icon-trigger
+            className="ct-button ct-button-primary"
+            type="button"
+            onClick={onClose}
+          >
+            {t('Done')}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

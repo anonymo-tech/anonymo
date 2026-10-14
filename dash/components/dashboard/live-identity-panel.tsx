@@ -1,10 +1,13 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
+
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Fingerprint, Info } from 'lucide-react';
 import Link from '@/components/site-link';
 import { MotionIcon } from './motion-icon';
 import { LiveAccountSecurity } from './live-account-security';
+import { SignInOptions } from './sign-in-options';
 import {
   createPasskeyClient,
   getAuthCapabilities,
@@ -44,6 +47,7 @@ const accountKey = (accounts: readonly WalletAccount[]) =>
   accounts.map((account) => account.address).join(':');
 
 export function LiveIdentityPanel() {
+  const t = useT();
   const [availability, setAvailability] = useState<Availability>('loading');
   const [session, setSession] = useState<AccountSession | null>(null);
   const [wallets, setWallets] = useState<readonly StandardWallet[]>([]);
@@ -251,9 +255,7 @@ export function LiveIdentityPanel() {
       const next = { wallet, accounts, account: accounts[0] };
       connected.current = next;
       setConnection(next);
-      setNotice(
-        'Wallet connected. Choose a sign-in method below to verify this account.',
-      );
+      setNotice('');
     } catch (error) {
       failed(error, controller);
     } finally {
@@ -392,32 +394,75 @@ export function LiveIdentityPanel() {
   )?.subject;
   const preview = availability === 'preview';
 
+  if (!session || needsReauth) {
+    return (
+      <SignInOptions
+        availability={availability}
+        passkeysEnabled={passkeysEnabled && !session}
+        walletEnabled={walletEnabled}
+        wallets={wallets}
+        connection={connection}
+        busy={busy}
+        disabled={!!busy || securityBusy || uncertainSignIn}
+        notice={t(notice)}
+        uncertainSignIn={uncertainSignIn}
+        onConnect={(wallet) => void connect(wallet)}
+        onSignIn={(method) => void signIn(method)}
+        onPasskey={(purpose) => void passkeySignIn(purpose)}
+        onSelectAccount={selectAccount}
+        onClearConnection={() => {
+          connected.current = null;
+          setConnection(null);
+          setNotice('');
+        }}
+        onRefresh={() => {
+          setAvailability('loading');
+          setRefresh((value) => value + 1);
+        }}
+      />
+    );
+  }
+
   return (
     <>
       <p className="ct-intro">
         {preview
-          ? 'You are exploring without an account. No wallet or passkey is connected.'
+          ? t(
+              'You are exploring without an account. No wallet or passkey is connected.',
+            )
           : availability === 'loading'
-            ? 'Checking account availability…'
+            ? t('Checking account availability…')
             : availability === 'error'
-              ? 'Account status could not be checked.'
+              ? t('Account status could not be checked.')
               : session
-                ? 'Your Conclave account is signed in. Identity prompts only appear after you choose a sign-in or security action.'
-                : 'Create an account or sign in with a passkey or Solana wallet. Connecting a wallet alone does not verify a session.'}
+                ? t(
+                    'Your Conclave account is signed in. Identity prompts only appear after you choose a sign-in or security action.',
+                  )
+                : t(
+                    'Create an account or sign in with a passkey or Solana wallet. Connecting a wallet alone does not verify a session.',
+                  )}
       </p>
       <div className="ct-connections">
         <div>
           <MotionIcon name="purse" size={24} />
           <span>
-            <strong>Solana wallet</strong>
+            <strong>{t('Solana wallet')}</strong>
             <small>
               {preview
-                ? 'Signing and wallet identity are not connected.'
+                ? t('Signing and wallet identity are not connected.')
                 : signedAddress
-                  ? `${shortAddress(signedAddress)} · ${needsReauth ? 'sign in again to confirm wallet changes' : 'server-verified session'}`
+                  ? needsReauth
+                    ? t('{address} · sign in again to confirm wallet changes', {
+                        address: shortAddress(signedAddress),
+                      })
+                    : t('{address} · server-verified session', {
+                        address: shortAddress(signedAddress),
+                      })
                   : availability === 'service'
-                    ? 'A sign-in message does not authorize a transaction or payment.'
-                    : 'Waiting for account service status.'}
+                    ? t(
+                        'A sign-in message does not authorize a transaction or payment.',
+                      )
+                    : t('Waiting for account service status.')}
             </small>
           </span>
           {session ? (
@@ -428,47 +473,48 @@ export function LiveIdentityPanel() {
               disabled={!!busy || securityBusy || uncertainSignIn}
               onClick={() => void signOut()}
             >
-              {busy === 'signing-out' ? 'Signing out…' : 'Sign out'}
+              {busy === 'signing-out' ? t('Signing out…') : t('Sign out')}
             </button>
           ) : (
             <span className="ct-status ct-status-neutral">
               {preview
-                ? 'Unavailable'
+                ? t('Unavailable')
                 : availability === 'loading'
-                  ? 'Checking'
+                  ? t('Checking')
                   : availability === 'service'
-                    ? 'Not signed in'
-                    : 'Unavailable'}
+                    ? t('Not signed in')
+                    : t('Unavailable')}
             </span>
           )}
         </div>
         <div>
           <Fingerprint size={19} aria-hidden="true" />
           <span>
-            <strong>Passkey</strong>
+            <strong>{t('Passkey')}</strong>
             <small>
               {session?.identities.some(
                 (identity) => identity.kind === 'passkey',
               )
-                ? 'A passkey is linked to this account.'
+                ? t('A passkey is linked to this account.')
                 : passkeysEnabled
-                  ? 'Create an account or use an existing passkey. No email or password is requested.'
-                  : 'Passkey sign-in is not configured.'}
+                  ? t(
+                      'Create an account or use an existing passkey. No email or password is requested.',
+                    )
+                  : t('Passkey sign-in is not configured.')}
             </small>
           </span>
           <span className="ct-status ct-status-neutral">
-            {passkeysEnabled ? 'Available' : 'Unavailable'}
+            {passkeysEnabled ? t('Available') : t('Unavailable')}
           </span>
         </div>
       </div>
       {availability === 'service' && passkeysEnabled && !session && (
-        <section className="ct-detail" aria-label="Passkey sign-in">
-          <h3>Use a passkey</h3>
+        <section className="ct-detail" aria-label={t('Passkey sign-in')}>
+          <h3>{t('Use a passkey')}</h3>
           <p>
-            Your browser or authenticator will ask you to confirm. If every
-            previously enrolled wallet or passkey is lost, support cannot
-            restore access. There is no email reset, recovery code, or manual
-            override.
+            {t(
+              'Your browser or authenticator will ask you to confirm. If every previously enrolled wallet or passkey is lost, support cannot restore access. There is no email reset, recovery code, or manual override.',
+            )}
           </p>
           <div className="ct-segments">
             <button
@@ -477,7 +523,7 @@ export function LiveIdentityPanel() {
               disabled={!!busy || securityBusy || uncertainSignIn}
               onClick={() => void passkeySignIn('signup')}
             >
-              Create account with passkey
+              {t('Create account with passkey')}
             </button>
             <button
               className="ct-button"
@@ -485,16 +531,17 @@ export function LiveIdentityPanel() {
               disabled={!!busy || securityBusy || uncertainSignIn}
               onClick={() => void passkeySignIn('login')}
             >
-              Sign in with passkey
+              {t('Sign in with passkey')}
             </button>
           </div>
           {busy === 'passkey' && (
-            <output>Waiting for your authenticator…</output>
+            <output>{t('Waiting for your authenticator…')}</output>
           )}
           {uncertainSignIn && (
             <p role="alert">
-              Sign-in may have completed. Refresh account status before trying
-              again.
+              {t(
+                'Sign-in may have completed. Refresh account status before trying again.',
+              )}
             </p>
           )}
         </section>
@@ -513,22 +560,25 @@ export function LiveIdentityPanel() {
       {availability === 'service' &&
         walletEnabled &&
         (!session || needsReauth) && (
-          <section className="ct-detail" aria-label="Wallet sign-in">
+          <section className="ct-detail" aria-label={t('Wallet sign-in')}>
             {connection ? (
               <>
                 <h3>{connection.wallet.name.slice(0, 80)}</h3>
                 <p>
-                  Connected accounts are not signed in until the server verifies
-                  a signature.
+                  {t(
+                    'Connected accounts are not signed in until the server verifies a signature.',
+                  )}
                 </p>
-                <div className="ct-models" aria-label="Choose an account">
+                <div className="ct-models" aria-label={t('Choose an account')}>
                   {connection.accounts.map((account) => (
                     <button
                       className="ct-model"
                       type="button"
                       key={account.address}
                       disabled={!!busy || securityBusy || uncertainSignIn}
-                      aria-label={`Use account ${account.address}`}
+                      aria-label={t('Use account {address}', {
+                        address: account.address,
+                      })}
                       aria-pressed={
                         connection.account.address === account.address
                       }
@@ -538,8 +588,8 @@ export function LiveIdentityPanel() {
                         <strong>{shortAddress(account.address)}</strong>
                         <small>
                           {connection.account.address === account.address
-                            ? 'Selected account'
-                            : 'Use this account'}
+                            ? t('Selected account')
+                            : t('Use this account')}
                         </small>
                       </span>
                     </button>
@@ -555,9 +605,9 @@ export function LiveIdentityPanel() {
                     setNotice('Choose another wallet to connect.');
                   }}
                 >
-                  Choose another wallet
+                  {t('Choose another wallet')}
                 </button>
-                <div className="ct-segments" aria-label="Sign-in method">
+                <div className="ct-segments" aria-label={t('Sign-in method')}>
                   {walletSupports(connection.wallet, 'signIn') && (
                     <button
                       data-icon-trigger
@@ -568,8 +618,8 @@ export function LiveIdentityPanel() {
                     >
                       <MotionIcon name="purse" size={20} />
                       {busy === 'signing'
-                        ? 'Waiting for wallet…'
-                        : 'Sign in with wallet'}
+                        ? t('Waiting for wallet…')
+                        : t('Sign in with wallet')}
                     </button>
                   )}
                   {preferredSignInMethod(connection.wallet) ===
@@ -580,22 +630,24 @@ export function LiveIdentityPanel() {
                       disabled={!!busy || securityBusy || uncertainSignIn}
                       onClick={() => void signIn('signMessage')}
                     >
-                      Use exact-message sign-in
+                      {t('Use exact-message sign-in')}
                     </button>
                   )}
                 </div>
               </>
             ) : (
               <>
-                <h3>Choose a wallet</h3>
+                <h3>{t('Choose a wallet')}</h3>
                 <p>
                   {wallets.length
-                    ? 'Connect first, then approve a sign-in message.'
-                    : 'No compatible Solana wallet was detected. Open this page in a wallet-enabled browser, then refresh account status.'}
+                    ? t('Connect first, then approve a sign-in message.')
+                    : t(
+                        'No compatible Solana wallet was detected. Open this page in a wallet-enabled browser, then refresh account status.',
+                      )}
                 </p>
                 <div
                   className="ct-models"
-                  aria-label="Available Solana wallets"
+                  aria-label={t('Available Solana wallets')}
                 >
                   {wallets.map((wallet, index) => (
                     <button
@@ -611,8 +663,8 @@ export function LiveIdentityPanel() {
                         <strong>{wallet.name.slice(0, 80)}</strong>
                         <small>
                           {busy === 'connecting'
-                            ? 'Waiting for wallet…'
-                            : 'Connect wallet'}
+                            ? t('Waiting for wallet…')
+                            : t('Connect wallet')}
                         </small>
                       </span>
                     </button>
@@ -625,15 +677,17 @@ export function LiveIdentityPanel() {
       {notice && (
         <output className="ct-note">
           <Info size={14} aria-hidden="true" />
-          <span>{notice}</span>
+          <span>{t(notice)}</span>
         </output>
       )}
       <p className="ct-note">
         <Info size={14} aria-hidden="true" />
         <span>
           {preview
-            ? 'No signature or recovery phrase is needed to use the demo.'
-            : 'Conclave never asks for your recovery phrase or private key. Account sign-in does not send a transaction.'}
+            ? t('No signature or recovery phrase is needed to use the demo.')
+            : t(
+                'Conclave never asks for your recovery phrase or private key. Account sign-in does not send a transaction.',
+              )}
         </span>
       </p>
       {!preview && (
@@ -646,11 +700,12 @@ export function LiveIdentityPanel() {
             setRefresh((value) => value + 1);
           }}
         >
-          Refresh account status
+          {t('Refresh account status')}
         </button>
       )}
       <Link data-icon-trigger className="ct-source" href="/docs#integrations">
-        View integration status <MotionIcon name="open" size={20} />
+        {t('View integration status ')}
+        <MotionIcon name="open" size={20} />
       </Link>
     </>
   );

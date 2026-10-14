@@ -1,5 +1,7 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
+
 import { useEffect, useRef, useState } from 'react';
 import { MotionIcon } from './motion-icon';
 import { LiveDepositPanel } from './live-deposit-panel';
@@ -25,8 +27,8 @@ const activity: Record<LedgerEntry['kind'], string> = {
   refund: 'Refund credited',
   internal_test_credit: 'Internal test credit · not USDC',
 };
-const utc = (value: string) =>
-  new Intl.DateTimeFormat('en', {
+const utc = (value: string, locale: 'en' | 'zh') =>
+  new Intl.DateTimeFormat(locale === 'zh' ? 'zh-CN' : 'en', {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
@@ -41,6 +43,7 @@ export function LivePurse({
   account: PurseAccount;
   visible: boolean;
 }) {
+  const t = useT();
   const [entries, setEntries] = useState<LedgerEntry[]>([]),
     [receipts, setReceipts] = useState<ReceiptSummary[]>([]);
   const [ledgerCursor, setLedgerCursor] = useState<string | null>(null),
@@ -166,12 +169,12 @@ export function LivePurse({
     }
   }
   return (
-    <section className="cp-page cp-purse" aria-label="Account Purse">
+    <section className="cp-page cp-purse" aria-label={t('Account Purse')}>
       <header className="cp-heading">
         <div>
-          <h1 className="cp-title">Purse</h1>
+          <h1 className="cp-title">{t('Purse')}</h1>
           <p className="cp-description">
-            Your available balance, open reservations, and settled usage.
+            {t('Your available balance, open reservations, and settled usage.')}
           </p>
         </div>
         <button
@@ -185,12 +188,12 @@ export function LivePurse({
             setRevision((value) => value + 1);
           }}
         >
-          Refresh
+          {t('Refresh')}
         </button>
       </header>
       <div className="cp-purse-layout">
         <div className="cp-balance-area">
-          <span className="cp-eyebrow">Available balance</span>
+          <span className="cp-eyebrow">{t('Available balance')}</span>
           <p className="cp-balance">
             {owner && account.balance
               ? formatAccountUsd6(account.balance.availableUsd6)
@@ -199,27 +202,35 @@ export function LivePurse({
           </p>
           <p>
             {owner && account.balance
-              ? `${formatAccountUsd6(account.balance.reservedUsd6)} USD reserved for open requests.`
-              : 'Sign in to view your account balance.'}
+              ? t('{amount} USD reserved for open requests.', {
+                  amount: formatAccountUsd6(account.balance.reservedUsd6),
+                })
+              : t('Sign in to view your account balance.')}
           </p>
           {owner && account.balance?.internalTestCreditUsd6 && (
             <p className="cp-fineprint">
-              This account received{' '}
-              {formatAccountUsd6(account.balance.internalTestCreditUsd6)} USD of
-              internal test credit for local testing. Test credit is not USDC,
-              not a deposit and cannot be withdrawn.
+              {t(
+                'This account received {amount} USD of internal test credit for local testing. Test credit is not USDC, not a deposit and cannot be withdrawn.',
+                {
+                  amount: formatAccountUsd6(
+                    account.balance.internalTestCreditUsd6,
+                  ),
+                },
+              )}
             </p>
           )}
         </div>
         <div className="cp-budget-paper">
-          <h2>Review before you spend</h2>
+          <h2>{t('Review before you spend')}</h2>
           <p>
-            Every request shows its maximum reservation before you approve it.
-            Unused funds return to your available balance after settlement.
+            {t(
+              'Every request shows its maximum reservation before you approve it. Unused funds return to your available balance after settlement.',
+            )}
           </p>
           <p className="cp-fineprint">
-            A displayed balance is prepaid service credit, not a wallet token
-            balance. Deposit availability and saved intents appear below.
+            {t(
+              'A displayed balance is prepaid service credit, not a wallet token balance. Deposit availability and saved intents appear below.',
+            )}
           </p>
         </div>
       </div>
@@ -234,15 +245,15 @@ export function LivePurse({
           return account.refresh();
         }}
       />
-      {error && <output className="cp-boundary-note">{error}</output>}
-      <section className="cp-ledger" aria-label="Account activity">
+      {error && <output className="cp-boundary-note">{t(error)}</output>}
+      <section className="cp-ledger" aria-label={t('Account activity')}>
         <div className="cp-ledger-heading">
-          <h2>Activity</h2>
+          <h2>{t('Activity')}</h2>
           <span>UTC</span>
         </div>
         {entries.length ? (
           <table
-            aria-label="Account ledger"
+            aria-label={t('Account ledger')}
             style={{
               width: '100%',
               textAlign: 'left',
@@ -251,18 +262,18 @@ export function LivePurse({
           >
             <thead>
               <tr className="cp-ledger-columns">
-                <th>Activity</th>
-                <th>Date · UTC</th>
-                <th>Amount · USD</th>
+                <th>{t('Activity')}</th>
+                <th>{t('Date · UTC')}</th>
+                <th>{t('Amount · USD')}</th>
               </tr>
             </thead>
             <tbody>
               {entries.map((entry) => (
                 <tr className="cp-ledger-columns" key={entry.id}>
-                  <td>{activity[entry.kind]}</td>
+                  <td>{t(activity[entry.kind])}</td>
                   <td>
                     <time dateTime={entry.createdAt}>
-                      {utc(entry.createdAt)}
+                      {utc(entry.createdAt, t.locale)}
                     </time>
                   </td>
                   <td>
@@ -279,10 +290,10 @@ export function LivePurse({
         ) : (
           <p className="cp-fineprint">
             {!owner
-              ? 'Sign in to view activity.'
+              ? t('Sign in to view activity.')
               : busy
-                ? 'Loading activity…'
-                : 'No recorded activity yet.'}
+                ? t('Loading activity…')
+                : t('No recorded activity yet.')}
           </p>
         )}
         {ledgerCursor && (
@@ -292,31 +303,31 @@ export function LivePurse({
             disabled={busy}
             onClick={() => void more('ledger')}
           >
-            Load more activity
+            {t('Load more activity')}
           </button>
         )}
       </section>
       {featureOn('receipts') && (
-        <section className="cp-ledger" aria-label="Signed receipts">
+        <section className="cp-ledger" aria-label={t('Signed receipts')}>
           <div className="cp-ledger-heading">
-            <h2>Receipts</h2>
-            <span>Signed records</span>
+            <h2>{t('Receipts')}</h2>
+            <span>{t('Signed records')}</span>
           </div>
           <p className="cp-fineprint">
-            These receipts have not been anchored on Solana. Verify signatures
-            with a separately trusted signer key; downloading a receipt does not
-            verify its signature.
+            {t(
+              'These receipts have not been anchored on Solana. Verify signatures with a separately trusted signer key; downloading a receipt does not verify its signature.',
+            )}
           </p>
           {receipts.map((receipt) => (
             <div className="cp-ledger-columns" key={receipt.id}>
               <span>
-                {utc(receipt.issuedAt)} UTC
+                {utc(receipt.issuedAt, t.locale)} UTC
                 <br />
                 <small>
-                  {receipt.kind === 'media' ? 'Studio · ' : 'Chat · '}
+                  {receipt.kind === 'media' ? t('Studio · ') : t('Chat · ')}
                   {receipt.state === 'signed_pending_batch'
-                    ? 'Awaiting hourly batch'
-                    : 'Awaiting Solana anchor'}
+                    ? t('Awaiting hourly batch')
+                    : t('Awaiting Solana anchor')}
                 </small>
               </span>
               <button
@@ -325,7 +336,8 @@ export function LivePurse({
                 disabled={busy}
                 onClick={() => void download(receipt.id)}
               >
-                <MotionIcon name="download" size={18} /> Download receipt
+                <MotionIcon name="download" size={18} />
+                {t(' Download receipt')}
               </button>
               <span>{formatAccountUsd6(receipt.actualUsd6)} USD</span>
             </div>
@@ -333,10 +345,12 @@ export function LivePurse({
           {!receipts.length && (
             <p className="cp-fineprint">
               {!owner
-                ? 'Sign in to view receipts.'
+                ? t('Sign in to view receipts.')
                 : busy
-                  ? 'Loading receipts…'
-                  : 'No signed receipts available. Unrevealed blind comparison receipts stay hidden until you reveal their model names.'}
+                  ? t('Loading receipts…')
+                  : t(
+                      'No signed receipts available. Unrevealed blind comparison receipts stay hidden until you reveal their model names.',
+                    )}
             </p>
           )}
           {receiptCursor && (
@@ -346,7 +360,7 @@ export function LivePurse({
               disabled={busy}
               onClick={() => void more('receipts')}
             >
-              Load more receipts
+              {t('Load more receipts')}
             </button>
           )}
         </section>

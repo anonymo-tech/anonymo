@@ -1,5 +1,7 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
+
 import { useEffect, useRef, useState } from 'react';
 import type { CanvasBrief } from './canvas-state';
 import {
@@ -17,6 +19,7 @@ export function LiveBriefEditor({
   onSave: (brief: CanvasBrief) => Promise<boolean>;
   onClose: () => void;
 }) {
+  const t = useT();
   const [original] = useState(brief);
   const document = original.live!.document!;
   const [title, setTitle] = useState(original.title);
@@ -84,17 +87,19 @@ export function LiveBriefEditor({
       }}
     >
       <p className="cp-fineprint">
-        Your assessment. The original responses and their provenance stay
-        unchanged.
+        {t(
+          'Your assessment. The original responses and their provenance stay unchanged.',
+        )}
       </p>
       {brief.live?.revision !== original.live?.revision && (
         <output>
-          This Brief has a newer saved revision. Copy any unsaved notes before
-          closing and reopening the editor.
+          {t(
+            'This Brief has a newer saved revision. Copy any unsaved notes before closing and reopening the editor.',
+          )}
         </output>
       )}
       <label>
-        Title
+        {t('Title')}
         <input
           value={title}
           maxLength={160}
@@ -104,7 +109,7 @@ export function LiveBriefEditor({
         />
       </label>
       <label>
-        Your decision
+        {t('Your decision')}
         <textarea
           value={analysis.decision}
           maxLength={4000}
@@ -116,7 +121,7 @@ export function LiveBriefEditor({
       </label>
       {document.evidence.map((evidence) => (
         <label key={evidence.callId}>
-          Your summary · {evidence.modelId}
+          {t('Your summary · {model}', { model: evidence.modelId })}
           <textarea
             className="cp-short-input"
             maxLength={1600}
@@ -138,15 +143,21 @@ export function LiveBriefEditor({
         </label>
       ))}
       <details>
-        <summary>Agreement matrix · {analysis.matrix.length} topics</summary>
+        <summary>
+          {t('Agreement matrix · {count} topics', {
+            count: analysis.matrix.length,
+          })}
+        </summary>
         <p className="cp-fineprint">
-          Record how you read each response. These labels are your assessment.
+          {t(
+            'Record how you read each response. These labels are your assessment.',
+          )}
         </p>
         {analysis.matrix.map((row, index) => (
           <fieldset key={index} disabled={busy}>
-            <legend>Topic {index + 1}</legend>
+            <legend>{t('Topic {number}', { number: index + 1 })}</legend>
             <label>
-              Topic
+              {t('Topic')}
               <input
                 maxLength={240}
                 value={row.topic}
@@ -164,7 +175,9 @@ export function LiveBriefEditor({
               <label key={evidence.callId}>
                 {evidence.modelId}
                 <select
-                  aria-label={`Assessment for ${evidence.modelId}`}
+                  aria-label={t('Assessment for {model}', {
+                    model: evidence.modelId,
+                  })}
                   value={
                     row.positions.find((p) => p.callId === evidence.callId)!
                       .position
@@ -193,9 +206,11 @@ export function LiveBriefEditor({
                     }))
                   }
                 >
-                  <option value="agrees">Agrees</option>
-                  <option value="disagrees">Disagrees</option>
-                  <option value="unclear">Unclear / not addressed</option>
+                  <option value="agrees">{t('Agrees')}</option>
+                  <option value="disagrees">{t('Disagrees')}</option>
+                  <option value="unclear">
+                    {t('Unclear / not addressed')}
+                  </option>
                 </select>
               </label>
             ))}
@@ -209,7 +224,7 @@ export function LiveBriefEditor({
                 }))
               }
             >
-              Remove topic {index + 1}
+              {t('Remove topic {number}', { number: index + 1 })}
             </button>
           </fieldset>
         ))}
@@ -233,16 +248,16 @@ export function LiveBriefEditor({
             }))
           }
         >
-          Add a topic
+          {t('Add a topic')}
         </button>
       </details>
-      {error && <output role="alert">{error}</output>}
+      {error && <output role="alert">{t(error)}</output>}
       <button
         type="submit"
         className="cp-button cp-button--ink"
         disabled={busy || !title.trim()}
       >
-        {busy ? 'Saving…' : 'Save assessment'}
+        {busy ? t('Saving…') : t('Save assessment')}
       </button>
       <button
         type="button"
@@ -250,7 +265,7 @@ export function LiveBriefEditor({
         disabled={busy}
         onClick={onClose}
       >
-        Close editor
+        {t('Close editor')}
       </button>
     </form>
   );

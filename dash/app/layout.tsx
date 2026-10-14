@@ -5,6 +5,8 @@ import '@fontsource/instrument-serif/400-italic.css';
 import '@fontsource/jetbrains-mono/400.css';
 import './globals.css';
 import './conclave-typography.css';
+import './i18n.css';
+import { LocaleSync } from '@/components/locale-sync';
 
 export const metadata: Metadata = {
   title: 'Conclave — See what one model misses.',
@@ -20,7 +22,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <LocaleSync />
+        {children}
+      </body>
     </html>
   );
 }

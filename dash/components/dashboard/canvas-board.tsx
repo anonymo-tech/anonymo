@@ -12,6 +12,7 @@ import {
   type NodeProps,
   type ReactFlowInstance,
 } from '@xyflow/react';
+import { useT, type Translator } from '@/lib/i18n';
 import { MotionIcon } from './motion-icon';
 import { AnswerCard, type AnswerActions } from './answer-card';
 import { MODELS } from './data';
@@ -43,7 +44,11 @@ function ResponseNode({ data }: NodeProps<GraphNode>) {
 }
 const nodeTypes = { prompt: PromptNode, response: ResponseNode };
 
-function graphNodes(turns: Turn[], actions: AnswerActions): GraphNode[] {
+function graphNodes(
+  turns: Turn[],
+  actions: AnswerActions,
+  t: Translator,
+): GraphNode[] {
   return turns.flatMap((turn, index) => {
     const count = turn.answers.length;
     const width =
@@ -55,7 +60,7 @@ function graphNodes(turns: Turn[], actions: AnswerActions): GraphNode[] {
         position: { x: 330, y: index * 610 },
         data: { prompt: turn.prompt, actions },
         style: { width: 340 },
-        ariaLabel: `Prompt: ${turn.prompt}`,
+        ariaLabel: t('Prompt: {prompt}', { prompt: turn.prompt }),
       },
       ...turn.answers.map((answer, position) => ({
         id: answer.id,
@@ -67,7 +72,11 @@ function graphNodes(turns: Turn[], actions: AnswerActions): GraphNode[] {
         data: { answer, actions },
         dragHandle: '.cw-node-drag',
         style: { width },
-        ariaLabel: `${MODELS.find((model) => model.id === answer.modelId)?.name} response`,
+        ariaLabel: t('{model} response', {
+          model: String(
+            MODELS.find((model) => model.id === answer.modelId)?.name,
+          ),
+        }),
       })),
     ];
   });
@@ -80,6 +89,7 @@ export default function CanvasBoard({
   turns: Turn[];
   actions: AnswerActions;
 }) {
+  const t = useT();
   const container = useRef<HTMLDivElement>(null);
   const mobileCanvas = useRef<HTMLDivElement>(null);
   const [instance, setInstance] = useState<ReactFlowInstance<GraphNode> | null>(
@@ -91,7 +101,7 @@ export default function CanvasBoard({
   const previousIds = useRef(ids);
 
   useEffect(() => {
-    const next = graphNodes(turns, actions);
+    const next = graphNodes(turns, actions, t);
     setNodes((current) =>
       next.map((node) => ({
         ...node,
@@ -99,7 +109,7 @@ export default function CanvasBoard({
           current.find((old) => old.id === node.id)?.position || node.position,
       })),
     );
-  }, [turns, actions, setNodes]);
+  }, [turns, actions, setNodes, t]);
 
   const resetView = useCallback(() => {
     const el = container.current;
@@ -196,7 +206,26 @@ export default function CanvasBoard({
           deleteKeyCode={null}
           panOnScroll
           zoomOnDoubleClick={false}
-          aria-label="Conversation canvas. Drag answer footers to move them; drag the background to pan."
+          ariaLabelConfig={{
+            'node.a11yDescription.default': t(
+              'Press enter or space to select a node. Press delete to remove it and escape to cancel.',
+            ),
+            'node.a11yDescription.keyboardDisabled': t(
+              'Press enter or space to select a node. You can then use the arrow keys to move the node around. Press delete to remove it and escape to cancel.',
+            ),
+            'edge.a11yDescription.default': t(
+              'Press enter or space to select an edge. You can then press delete to remove it or escape to cancel.',
+            ),
+            'handle.ariaLabel': t('Handle'),
+            'node.a11yDescription.ariaLiveMessage': ({ direction, x, y }) =>
+              t(
+                'Moved selected node {direction}. New position, x: {x}, y: {y}',
+                { direction: t(direction), x, y },
+              ),
+          }}
+          aria-label={t(
+            'Conversation canvas. Drag answer footers to move them; drag the background to pan.',
+          )}
         >
           <Background gap={24} size={0.95} color="#cdd1ce" />
         </ReactFlow>
@@ -204,7 +233,7 @@ export default function CanvasBoard({
           <button
             data-icon-trigger
             onClick={resetView}
-            title="Reset canvas view"
+            title={t('Reset canvas view')}
           >
             {Math.round(zoom * 100)}%
           </button>
@@ -213,7 +242,7 @@ export default function CanvasBoard({
             onClick={() =>
               void instance?.fitView({ padding: 0.12, maxZoom: 1 })
             }
-            aria-label="Fit all answers"
+            aria-label={t('Fit all answers')}
           >
             <MotionIcon name="fit" size={18} />
           </button>

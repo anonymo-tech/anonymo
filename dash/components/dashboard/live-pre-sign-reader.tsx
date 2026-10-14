@@ -1,5 +1,7 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
+
 import {
   useEffect,
   useId,
@@ -35,6 +37,7 @@ export function LivePreSignReader({
   accountId: string | null;
   controlRef?: Ref<PreSignReaderControl>;
 }) {
+  const t = useT();
   const fieldId = useId();
   const [draft, setDraft] = useState({ accountId, value: '' });
   const [response, setResponse] = useState<{
@@ -144,13 +147,13 @@ export function LivePreSignReader({
   return (
     <>
       <p className="ct-intro">
-        Inspect a transaction before signing. Decode its instructions and
-        simulate against the configured Solana network, without connecting a
-        wallet or submitting it.
+        {t(
+          'Inspect a transaction before signing. Decode its instructions and simulate against the configured Solana network, without connecting a wallet or submitting it.',
+        )}
       </p>
       {!accountId && (
         <p className="ct-note">
-          Sign in through Account to inspect a transaction.
+          {t('Sign in through Account to inspect a transaction.')}
         </p>
       )}
       <form
@@ -160,7 +163,7 @@ export function LivePreSignReader({
           void inspect();
         }}
       >
-        <label htmlFor={fieldId}>Serialized transaction (base64)</label>
+        <label htmlFor={fieldId}>{t('Serialized transaction (base64)')}</label>
         <textarea
           id={fieldId}
           name="serialized-transaction"
@@ -177,12 +180,12 @@ export function LivePreSignReader({
             setResponse(null);
             setNotice(null);
           }}
-          placeholder="Paste a complete legacy or v0 transaction"
+          placeholder={t('Paste a complete legacy or v0 transaction')}
         />
         <p id={`${fieldId}-help`} className="ct-note">
-          The transaction contents will be sent to the configured RPC for
-          simulation. Never enter a private key or recovery phrase. Nothing is
-          signed, sent onchain, or saved by this view.
+          {t(
+            'The transaction contents will be sent to the configured RPC for simulation. Never enter a private key or recovery phrase. Nothing is signed, sent onchain, or saved by this view.',
+          )}
         </p>
         <div>
           <button
@@ -192,11 +195,11 @@ export function LivePreSignReader({
             disabled={!accountId || pending || !transaction.trim()}
           >
             <MotionIcon name="search" size={18} />
-            {pending ? 'Inspecting transaction…' : 'Inspect and simulate'}
+            {pending ? t('Inspecting transaction…') : t('Inspect and simulate')}
           </button>
           {pending && (
             <button className="ct-button" type="button" onClick={cancelRead}>
-              Cancel inspection
+              {t('Cancel inspection')}
             </button>
           )}
         </div>
@@ -204,7 +207,7 @@ export function LivePreSignReader({
       {error && (
         <output className="ct-note">
           <Info size={15} aria-hidden="true" />
-          <span>{error}</span>
+          <span>{t(error)}</span>
         </output>
       )}
       {inspection && <PreSignResult inspection={inspection} />}
@@ -213,6 +216,7 @@ export function LivePreSignReader({
 }
 
 function PreSignResult({ inspection }: { inspection: PreSignInspection }) {
+  const t = useT();
   const { simulation, input, lookups } = inspection;
   const instructionWarnings = inspection.instructions.flatMap((instruction) =>
     instruction.flags
@@ -232,29 +236,42 @@ function PreSignResult({ inspection }: { inspection: PreSignInspection }) {
     <>
       <section
         className="ct-detail ct-example"
-        aria-label="Simulation result and warnings"
+        aria-label={t('Simulation result and warnings')}
       >
         <span className="ct-eyebrow">
-          Pre-sign inspection · no transaction submitted
+          {t('Pre-sign inspection · no transaction submitted')}
         </span>
-        <h3>{simulationNames[simulation.status]}</h3>
+        <h3>{t(simulationNames[simulation.status])}</h3>
         <p className="ct-takeaway">
           {simulation.status === 'succeeded'
-            ? 'The RPC simulated execution successfully. This does not establish that the transaction is safe or matches your intent.'
+            ? t(
+                'The RPC simulated execution successfully. This does not establish that the transaction is safe or matches your intent.',
+              )
             : simulation.status === 'failed'
-              ? 'The RPC reported an execution failure. The decoded instructions still describe requested actions; they have not executed onchain.'
-              : 'No simulation outcome is established. Only the available instruction evidence is shown.'}
+              ? t(
+                  'The RPC reported an execution failure. The decoded instructions still describe requested actions; they have not executed onchain.',
+                )
+              : t(
+                  'No simulation outcome is established. Only the available instruction evidence is shown.',
+                )}
         </p>
         {simulation.error && (
           <p className="ct-note">
-            Execution error: {simulation.error.code.replaceAll('-', ' ')}
-            {simulation.error.instructionIndex === null
-              ? ''
-              : ` at instruction ${simulation.error.instructionIndex}`}
-            {simulation.error.customCode === null
-              ? ''
-              : ` (program code ${simulation.error.customCode})`}
-            .
+            {t('Execution error: {code}{instruction}{programCode}.', {
+              code: simulation.error.code.replaceAll('-', ' '),
+              instruction:
+                simulation.error.instructionIndex === null
+                  ? ''
+                  : t(' at instruction {index}', {
+                      index: simulation.error.instructionIndex,
+                    }),
+              programCode:
+                simulation.error.customCode === null
+                  ? ''
+                  : t(' (program code {code})', {
+                      code: simulation.error.customCode,
+                    }),
+            })}
           </p>
         )}
         {instructionWarnings.map((flag, index) => (
@@ -265,10 +282,13 @@ function PreSignResult({ inspection }: { inspection: PreSignInspection }) {
             <AlertTriangle size={15} aria-hidden="true" />
             <div>
               <strong>
-                {flag.severity === 'critical' ? 'Critical' : 'Warning'} ·
-                instruction {flag.location}
+                {t('{severity} · instruction {location}', {
+                  severity:
+                    flag.severity === 'critical' ? t('Critical') : t('Warning'),
+                  location: flag.location,
+                })}
               </strong>
-              <p>{flag.message}</p>
+              <p>{t(flag.message)}</p>
             </div>
           </div>
         ))}
@@ -277,130 +297,144 @@ function PreSignResult({ inspection }: { inspection: PreSignInspection }) {
           .map((warning) => (
             <div className="ct-note" key={warning.code}>
               <AlertTriangle size={15} aria-hidden="true" />
-              <p>{warning.message}</p>
+              <p>{t(warning.message)}</p>
             </div>
           ))}
       </section>
       <details className="ct-detail ct-example">
-        <summary>Inspection evidence</summary>
+        <summary>{t('Inspection evidence')}</summary>
         <dl className="ct-facts">
           <div>
-            <dt>Network</dt>
+            <dt>{t('Network')}</dt>
             <dd>
               {inspection.cluster === 'devnet'
-                ? 'Devnet · test network'
-                : 'Mainnet beta'}
+                ? t('Devnet · test network')
+                : t('Mainnet beta')}
             </dd>
           </div>
           <div>
-            <dt>Inspected at</dt>
+            <dt>{t('Inspected at')}</dt>
             <dd>
               {inspection.inspectedAt.replace('T', ' ').replace('Z', ' UTC')}
             </dd>
           </div>
           <div>
-            <dt>Transaction hash (SHA-256)</dt>
+            <dt>{t('Transaction hash (SHA-256)')}</dt>
             <dd className="ct-code">{inspection.transactionHash}</dd>
           </div>
           <div>
-            <dt>Genesis hash</dt>
+            <dt>{t('Genesis hash')}</dt>
             <dd className="ct-code">{inspection.genesisHash}</dd>
           </div>
           <div>
-            <dt>Reader</dt>
+            <dt>{t('Reader')}</dt>
             <dd>
-              Version {inspection.readerVersion} · deterministic instruction
-              decoding
+              {t('Version {version} · deterministic instruction decoding', {
+                version: inspection.readerVersion,
+              })}
             </dd>
           </div>
           <div>
-            <dt>Format</dt>
+            <dt>{t('Format')}</dt>
             <dd>
-              {input.version === 'legacy' ? 'Legacy' : 'Version 0'} ·{' '}
-              {input.byteLength} bytes
+              {t('{format} · {bytes} bytes', {
+                format:
+                  input.version === 'legacy' ? t('Legacy') : t('Version 0'),
+                bytes: input.byteLength,
+              })}
             </dd>
           </div>
           <div>
-            <dt>Fee payer</dt>
+            <dt>{t('Fee payer')}</dt>
             <dd className="ct-code">{input.feePayer}</dd>
           </div>
           <div>
-            <dt>Signatures</dt>
+            <dt>{t('Signatures')}</dt>
             <dd>
-              {input.presentSignatures} present / {input.requiredSignatures}{' '}
-              required · not verified
+              {t('{present} present / {required} required · not verified', {
+                present: input.presentSignatures,
+                required: input.requiredSignatures,
+              })}
             </dd>
           </div>
           <div>
-            <dt>Original blockhash</dt>
+            <dt>{t('Original blockhash')}</dt>
             <dd className="ct-code">{input.recentBlockhash}</dd>
           </div>
           <div>
-            <dt>Blockhash policy</dt>
+            <dt>{t('Blockhash policy')}</dt>
             <dd>
               {simulation.blockhashReplacementRequested
-                ? 'RPC replacement requested for simulation only'
-                : 'Original blockhash retained'}
+                ? t('RPC replacement requested for simulation only')
+                : t('Original blockhash retained')}
             </dd>
           </div>
           <div>
-            <dt>Durable nonce</dt>
+            <dt>{t('Durable nonce')}</dt>
             <dd>
               {input.nonce === 'none'
-                ? 'No recognized nonce advance'
+                ? t('No recognized nonce advance')
                 : input.nonce === 'durable'
-                  ? 'Nonce advance recognized; blockhash preserved'
-                  : 'Nonce-like instruction is ambiguous; simulation withheld'}
+                  ? t('Nonce advance recognized; blockhash preserved')
+                  : t(
+                      'Nonce-like instruction is ambiguous; simulation withheld',
+                    )}
             </dd>
           </div>
           <div>
-            <dt>Simulation bank</dt>
+            <dt>{t('Simulation bank')}</dt>
             <dd>
               {simulation.contextSlot === null
-                ? 'Unavailable'
-                : `Finalized context slot ${simulation.contextSlot} (not transaction inclusion)`}
+                ? t('Unavailable')
+                : t(
+                    'Finalized context slot {slot} (not transaction inclusion)',
+                    { slot: simulation.contextSlot },
+                  )}
             </dd>
           </div>
           {simulation.replacementBlockhash && (
             <>
               <div>
-                <dt>Simulation blockhash</dt>
+                <dt>{t('Simulation blockhash')}</dt>
                 <dd className="ct-code">
                   {simulation.replacementBlockhash.blockhash}
                 </dd>
               </div>
               <div>
-                <dt>Last valid block height</dt>
+                <dt>{t('Last valid block height')}</dt>
                 <dd>{simulation.replacementBlockhash.lastValidBlockHeight}</dd>
               </div>
             </>
           )}
           <div>
-            <dt>Compute units</dt>
-            <dd>{simulation.unitsConsumed ?? 'Unavailable'}</dd>
+            <dt>{t('Compute units')}</dt>
+            <dd>{simulation.unitsConsumed ?? t('Unavailable')}</dd>
           </div>
           <div>
-            <dt>Simulated fee (lamports)</dt>
-            <dd>{simulation.feeLamports ?? 'Unavailable'}</dd>
+            <dt>{t('Simulated fee (lamports)')}</dt>
+            <dd>{simulation.feeLamports ?? t('Unavailable')}</dd>
           </div>
           <div>
-            <dt>Address tables</dt>
+            <dt>{t('Address tables')}</dt>
             <dd>
               {lookups.status === 'not-required'
-                ? 'Not required'
+                ? t('Not required')
                 : lookups.status === 'resolved'
-                  ? `${lookups.tables.length} resolved at slot ${lookups.contextSlot}`
-                  : 'Could not resolve'}
+                  ? t('{count} resolved at slot {slot}', {
+                      count: lookups.tables.length,
+                      slot: lookups.contextSlot!,
+                    })
+                  : t('Could not resolve')}
             </dd>
           </div>
           <div>
-            <dt>Simulation address binding</dt>
+            <dt>{t('Simulation address binding')}</dt>
             <dd>
               {lookups.simulationBinding === 'matched'
-                ? 'Loaded addresses matched resolved tables'
+                ? t('Loaded addresses matched resolved tables')
                 : lookups.simulationBinding === 'not-required'
-                  ? 'No loaded addresses'
-                  : 'Unverified'}
+                  ? t('No loaded addresses')
+                  : t('Unverified')}
             </dd>
           </div>
         </dl>
@@ -408,52 +442,72 @@ function PreSignResult({ inspection }: { inspection: PreSignInspection }) {
           .filter((warning) => warning.severity === 'info')
           .map((warning) => (
             <p className="ct-note" key={warning.code}>
-              {warning.message}
+              {t(warning.message)}
             </p>
           ))}
       </details>
       {inspection.instructions.map((instruction) => (
         <details className="ct-detail ct-example" key={instruction.location}>
           <summary>
-            Instruction {instruction.location} ·{' '}
-            {instruction.kind === 'unknown'
-              ? 'Not decoded'
-              : readable(instruction.kind)}
+            {t('Instruction {location} · {kind}', {
+              location: instruction.location,
+              kind:
+                instruction.kind === 'unknown'
+                  ? t('Not decoded')
+                  : t(readable(instruction.kind)),
+            })}
           </summary>
-          <p className="ct-note">{instruction.description}</p>
+          <p className="ct-note">{t(instruction.description)}</p>
           <dl className="ct-facts">
             <div>
-              <dt>Program</dt>
+              <dt>{t('Program')}</dt>
               <dd className="ct-code">
-                {instruction.programId ?? 'Unavailable'}
+                {instruction.programId ?? t('Unavailable')}
               </dd>
             </div>
             {Object.entries(instruction.fields).map(([key, value]) => (
               <div key={key}>
-                <dt>{readable(key)}</dt>
-                <dd className="ct-code">{value}</dd>
+                <dt>{t(readable(key))}</dt>
+                <dd className="ct-code">
+                  {[
+                    'authorityType',
+                    'accountState',
+                    'auditorKeyConfigured',
+                    'autoApproveNewAccounts',
+                  ].includes(key) ||
+                  value === 'none' ||
+                  (key === 'amount' && value === 'confidential; not decoded')
+                    ? t(value)
+                    : value}
+                </dd>
               </div>
             ))}
           </dl>
           {instruction.flags.map((flag, index) => (
             <p className="ct-note" key={`${flag.code}:${index}`}>
-              <strong>{readable(flag.severity)}:</strong> {flag.message}
+              <strong>
+                {t('{severity}:', { severity: t(readable(flag.severity)) })}
+              </strong>{' '}
+              {t(flag.message)}
             </p>
           ))}
         </details>
       ))}
       <details className="ct-detail ct-example">
-        <summary>Accounts · {inspection.accounts.length}</summary>
+        <summary>
+          {t('Accounts · {count}', { count: inspection.accounts.length })}
+        </summary>
         <p className="ct-note">
-          Account roles come from the transaction message. Signer status does
-          not verify a signature or prove authorization.
+          {t(
+            'Account roles come from the transaction message. Signer status does not verify a signature or prove authorization.',
+          )}
         </p>
         {inspection.accounts.map((account) => (
           <dl className="ct-facts" key={account.address}>
             <div>
               <dt>
-                {account.signer ? 'Signer' : 'Non-signer'} ·{' '}
-                {account.writable ? 'Writable' : 'Read only'}
+                {account.signer ? t('Signer') : t('Non-signer')} ·{' '}
+                {account.writable ? t('Writable') : t('Read only')}
               </dt>
               <dd className="ct-code">{account.address}</dd>
             </div>
@@ -462,91 +516,97 @@ function PreSignResult({ inspection }: { inspection: PreSignInspection }) {
       </details>
       <details className="ct-detail ct-example">
         <summary>
-          Simulated account state · {simulation.accounts.length} returned
+          {t('Simulated account state · {count} returned', {
+            count: simulation.accounts.length,
+          })}
         </summary>
         <p className="ct-note">
-          These are bounded post-simulation snapshots, not balance changes or a
-          complete account of transaction effects.{' '}
-          {simulation.omittedWritableAccounts} writable accounts were outside
-          the return limit.
+          {t(
+            'These are bounded post-simulation snapshots, not balance changes or a complete account of transaction effects. {count} writable accounts were outside the return limit.',
+            { count: simulation.omittedWritableAccounts },
+          )}
         </p>
         {!simulation.accounts.length && (
-          <p className="ct-note">No checked account snapshots are available.</p>
+          <p className="ct-note">
+            {t('No checked account snapshots are available.')}
+          </p>
         )}
         {simulation.accounts.map((account) => (
-          <section key={account.address} aria-label="Simulated account">
+          <section key={account.address} aria-label={t('Simulated account')}>
             <dl className="ct-facts">
               <div>
-                <dt>Address</dt>
+                <dt>{t('Address')}</dt>
                 <dd className="ct-code">{account.address}</dd>
               </div>
               <div>
-                <dt>State</dt>
+                <dt>{t('State')}</dt>
                 <dd>
                   {account.exists
-                    ? `Present · data ${account.dataStatus}`
-                    : 'Absent in returned snapshot'}
+                    ? t('Present · data {status}', {
+                        status: t(account.dataStatus),
+                      })
+                    : t('Absent in returned snapshot')}
                 </dd>
               </div>
               {account.exists && (
                 <>
                   <div>
-                    <dt>Program owner</dt>
+                    <dt>{t('Program owner')}</dt>
                     <dd className="ct-code">{account.owner}</dd>
                   </div>
                   <div>
-                    <dt>Lamports</dt>
+                    <dt>{t('Lamports')}</dt>
                     <dd>{account.lamports}</dd>
                   </div>
                   <div>
-                    <dt>Data bytes</dt>
+                    <dt>{t('Data bytes')}</dt>
                     <dd>{account.dataBytes}</dd>
                   </div>
                   <div>
-                    <dt>Executable</dt>
-                    <dd>{account.executable ? 'Yes' : 'No'}</dd>
+                    <dt>{t('Executable')}</dt>
+                    <dd>{account.executable ? t('Yes') : t('No')}</dd>
                   </div>
                 </>
               )}
               {account.token && (
                 <>
                   <div>
-                    <dt>Token mint</dt>
+                    <dt>{t('Token mint')}</dt>
                     <dd className="ct-code">{account.token.mint}</dd>
                   </div>
                   <div>
-                    <dt>Token authority</dt>
+                    <dt>{t('Token authority')}</dt>
                     <dd className="ct-code">{account.token.owner}</dd>
                   </div>
                   <div>
-                    <dt>Token amount (base units)</dt>
+                    <dt>{t('Token amount (base units)')}</dt>
                     <dd>{account.token.amount}</dd>
                   </div>
                   <div>
-                    <dt>Token state</dt>
-                    <dd>{account.token.state}</dd>
+                    <dt>{t('Token state')}</dt>
+                    <dd>{t(account.token.state)}</dd>
                   </div>
                   <div>
-                    <dt>Delegate</dt>
+                    <dt>{t('Delegate')}</dt>
                     <dd className="ct-code">
-                      {account.token.delegate ?? 'None'}
+                      {account.token.delegate ?? t('None')}
                     </dd>
                   </div>
                   <div>
-                    <dt>Delegated amount (base units)</dt>
+                    <dt>{t('Delegated amount (base units)')}</dt>
                     <dd>{account.token.delegatedAmount}</dd>
                   </div>
                   <div>
-                    <dt>Close authority</dt>
+                    <dt>{t('Close authority')}</dt>
                     <dd className="ct-code">
-                      {account.token.closeAuthority ?? 'Token owner'}
+                      {account.token.closeAuthority ?? t('Token owner')}
                     </dd>
                   </div>
                   <div>
-                    <dt>Native reserve (lamports)</dt>
+                    <dt>{t('Native reserve (lamports)')}</dt>
                     <dd>
                       {account.token.nativeReserve ??
-                        'Not a native token account'}
+                        t('Not a native token account')}
                     </dd>
                   </div>
                 </>

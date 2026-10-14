@@ -1,5 +1,7 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
+
 import {
   useCallback,
   useEffect,
@@ -82,6 +84,7 @@ function StudioProvider({ model }: { model: StudioModel }) {
 }
 
 export function StudioPage({ active, modelIds, onToast }: StudioPageProps) {
+  const t = useT();
   const headingId = useId();
   const videos = useRef(new Map<string, HTMLVideoElement>());
   const menus = useRef(new Map<string, HTMLDetailsElement>());
@@ -304,7 +307,9 @@ export function StudioPage({ active, modelIds, onToast }: StudioPageProps) {
     if (results.some((result) => result.status === 'rejected')) {
       pauseAll();
       onToast(
-        'The sample could not play. Try Play again, or reload the clip from its preview.',
+        t(
+          'The sample could not play. Try Play again, or reload the clip from its preview.',
+        ),
       );
     }
   }
@@ -351,7 +356,9 @@ export function StudioPage({ active, modelIds, onToast }: StudioPageProps) {
     pauseAll();
     setFailed((current) => ({ ...current, [id]: true }));
     onToast(
-      'A sample clip could not load. Use Reload sample in its preview to try again.',
+      t(
+        'A sample clip could not load. Use Reload sample in its preview to try again.',
+      ),
     );
   }
 
@@ -384,8 +391,8 @@ export function StudioPage({ active, modelIds, onToast }: StudioPageProps) {
     <section className="cs-page" hidden={!active} aria-labelledby={headingId}>
       <header className="cs-heading">
         <div className="cs-heading-copy">
-          <h1 id={headingId}>Studio</h1>
-          <p>Sample clips · Models not connected</p>
+          <h1 id={headingId}>{t('Studio')}</h1>
+          <p>{t('Sample clips · Models not connected')}</p>
         </div>
         {models.length > 1 && (
           <button
@@ -393,12 +400,14 @@ export function StudioPage({ active, modelIds, onToast }: StudioPageProps) {
             type="button"
             aria-label={
               showingComparison
-                ? `Compare view. Focus on ${focusedModel.name} sample`
-                : 'Focus view. Compare all sample clips'
+                ? t('Compare view. Focus on {name} sample', {
+                    name: focusedModel.name,
+                  })
+                : t('Focus view. Compare all sample clips')
             }
             onClick={toggleView}
           >
-            {showingComparison ? 'Compare' : 'Focus'}
+            {showingComparison ? t('Compare') : t('Focus')}
             <ChevronDown size={14} aria-hidden="true" />
           </button>
         )}
@@ -415,7 +424,7 @@ export function StudioPage({ active, modelIds, onToast }: StudioPageProps) {
                 key={model.id}
                 className="cs-tile"
                 hidden={!showingComparison && model.id !== focusedModel.id}
-                aria-label={`${model.name} sample preview`}
+                aria-label={t('{name} sample preview', { name: model.name })}
               >
                 <div className="cs-media">
                   <video
@@ -425,7 +434,10 @@ export function StudioPage({ active, modelIds, onToast }: StudioPageProps) {
                     muted
                     playsInline
                     preload="metadata"
-                    aria-label={`Prepared sample clip ${sample.toUpperCase()}; ${model.name} is not connected`}
+                    aria-label={t(
+                      'Prepared sample clip {sample}; {name} is not connected',
+                      { sample: sample.toUpperCase(), name: model.name },
+                    )}
                     onLoadedMetadata={(event) => {
                       const video = event.currentTarget;
                       if (
@@ -471,16 +483,18 @@ export function StudioPage({ active, modelIds, onToast }: StudioPageProps) {
                     }}
                   />
                   {!sampleSources[sample] && !sampleErrors[sample] && (
-                    <span className="cs-media-loading">Loading sample…</span>
+                    <span className="cs-media-loading">
+                      {t('Loading sample…')}
+                    </span>
                   )}
                   {(failed[model.id] || sampleErrors[sample]) && (
                     <div className="cs-media-error">
-                      <span>Sample clip unavailable</span>
+                      <span>{t('Sample clip unavailable')}</span>
                       <button
                         type="button"
                         onClick={() => reloadSample(model.id)}
                       >
-                        Reload sample
+                        {t('Reload sample')}
                       </button>
                     </div>
                   )}
@@ -505,7 +519,9 @@ export function StudioPage({ active, modelIds, onToast }: StudioPageProps) {
                   >
                     <summary
                       data-icon-trigger
-                      aria-label={`Actions for ${model.name} sample`}
+                      aria-label={t('Actions for {name} sample', {
+                        name: model.name,
+                      })}
                     >
                       <MotionIcon name="more" size={18} />
                     </summary>
@@ -514,14 +530,14 @@ export function StudioPage({ active, modelIds, onToast }: StudioPageProps) {
                         type="button"
                         onClick={() => changeView(model.id, false)}
                       >
-                        Focus on this clip
+                        {t('Focus on this clip')}
                       </button>
                       {models.length > 1 && !showingComparison && (
                         <button
                           type="button"
                           onClick={() => changeView(model.id, true)}
                         >
-                          Return to compare
+                          {t('Return to compare')}
                         </button>
                       )}
                       <a
@@ -529,7 +545,7 @@ export function StudioPage({ active, modelIds, onToast }: StudioPageProps) {
                         download={`conclave-sample-${sample}.mp4`}
                         onClick={closeMenus}
                       >
-                        Download sample
+                        {t('Download sample')}
                       </a>
                     </div>
                   </details>
@@ -540,7 +556,7 @@ export function StudioPage({ active, modelIds, onToast }: StudioPageProps) {
         </div>
 
         <fieldset className="cs-transport">
-          <legend className="cs-sr-only">Sample playback</legend>
+          <legend className="cs-sr-only">{t('Sample playback')}</legend>
           <button
             className="cs-play"
             type="button"
@@ -548,13 +564,17 @@ export function StudioPage({ active, modelIds, onToast }: StudioPageProps) {
             disabled={!playable}
             aria-label={
               playing
-                ? 'Pause sample clips'
+                ? t('Pause sample clips')
                 : currentTime >= duration - 0.05
-                  ? 'Replay sample clips'
-                  : 'Play sample clips'
+                  ? t('Replay sample clips')
+                  : t('Play sample clips')
             }
             title={
-              pending ? 'Loading sample clips' : playing ? 'Pause' : 'Play'
+              pending
+                ? t('Loading sample clips')
+                : playing
+                  ? t('Pause')
+                  : t('Play')
             }
           >
             {playing ? (
@@ -584,8 +604,11 @@ export function StudioPage({ active, modelIds, onToast }: StudioPageProps) {
             step={0.05}
             value={currentTime}
             disabled={!playable}
-            aria-label="Seek sample clips"
-            aria-valuetext={`${formatTime(currentTime)} of ${formatTime(duration)}`}
+            aria-label={t('Seek sample clips')}
+            aria-valuetext={t('{position} of {duration}', {
+              position: formatTime(currentTime),
+              duration: formatTime(duration),
+            })}
             style={
               {
                 '--cs-progress': `${(currentTime / duration) * 100}%`,
@@ -594,9 +617,11 @@ export function StudioPage({ active, modelIds, onToast }: StudioPageProps) {
             onChange={(event) => seekAll(Number(event.target.value))}
           />
           {showingComparison && (
-            <span className="cs-linked" title="Linked sample playback">
+            <span className="cs-linked" title={t('Linked sample playback')}>
               <Link2 size={22} strokeWidth={1.5} aria-hidden="true" />
-              <span className="cs-sr-only">Sample playback is linked</span>
+              <span className="cs-sr-only">
+                {t('Sample playback is linked')}
+              </span>
             </span>
           )}
         </fieldset>

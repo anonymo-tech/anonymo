@@ -1,5 +1,6 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
 import {
   useEffect,
   useId,
@@ -82,6 +83,7 @@ function FilmScene({
   frame: FilmMorphFrame;
   prefix: string;
 }) {
+  const t = useT();
   const { compact, width, shape } = frame;
   const margin = compact ? 14 : 21;
   const headingY = compact ? 28 : 35;
@@ -157,10 +159,10 @@ function FilmScene({
       <g clipPath={`url(#${prefix}-surface)`}>
         <Content id="question" frame={frame} prefix={prefix}>
           <text x={margin} y={headingY} className="fm-heading">
-            What are we missing?
+            {t("What are we missing?")}
           </text>
           <text x={margin} y={compact ? 52 : 62} className="fm-secondary">
-            Bring another point of view.
+            {t("Bring another point of view.")}
           </text>
           <circle
             cx={maxWidth * 0.94 - 26}
@@ -173,7 +175,7 @@ function FilmScene({
 
         <Content id="perspectives" frame={frame} prefix={prefix}>
           <text x={margin} y={headingY} className="fm-heading">
-            Four perspectives.
+            {t("Four perspectives.")}
           </text>
           <rect
             x={margin - 2}
@@ -199,7 +201,7 @@ function FilmScene({
               textAnchor="middle"
               className="fm-label"
             >
-              {label}
+              {t(label)}
             </text>
           ))}
           <g clipPath={`url(#${prefix}-active-tab)`}>
@@ -211,12 +213,12 @@ function FilmScene({
                 textAnchor="middle"
                 className="fm-label fm-paper"
               >
-                {label}
+                {t(label)}
               </text>
             ))}
           </g>
           <text x={margin} y={compact ? 120 : 179} className="fm-secondary">
-            One question. Four angles.
+            {t("One question. Four angles.")}
           </text>
           {!compact && (
             <path
@@ -228,7 +230,7 @@ function FilmScene({
 
         <Content id="compare" frame={frame} prefix={prefix}>
           <text x={margin} y={headingY} className="fm-heading">
-            A pattern emerges.
+            {t("A pattern emerges.")}
           </text>
           {['Wider view', 'Open question', 'Useful link', 'Different take'].map(
             (label, i) => {
@@ -247,7 +249,7 @@ function FilmScene({
                     opacity={0.45 + frame.rows[i] * 0.55}
                   />
                   <text x={compact ? 42 : 54} y={y + 4} className="fm-label">
-                    {label}
+                    {t(label)}
                   </text>
                   <path
                     d={`M${lineX} ${y}h${lineWidth}`}
@@ -275,14 +277,14 @@ function FilmScene({
           )}
           {!compact && (
             <text x={margin} y="235" className="fm-secondary">
-              Agreement is only half the picture.
+              {t("Agreement is only half the picture.")}
             </text>
           )}
         </Content>
 
         <Content id="dissent" frame={frame} prefix={prefix}>
           <text x={margin} y={headingY} className="fm-heading">
-            Keep the difference.
+            {t("Keep the difference.")}
           </text>
           <rect
             x={margin}
@@ -299,7 +301,7 @@ function FilmScene({
             className="fm-secondary"
             opacity={1 - frame.kept}
           >
-            Keep this view
+            {t("Keep this view")}
           </text>
           <g>
             <rect
@@ -315,7 +317,7 @@ function FilmScene({
               y={dragY + (compact ? 20 : 24)}
               className="fm-label"
             >
-              {compact ? 'Another angle.' : 'An angle worth keeping.'}
+              {compact ? t('Another angle.') : t('An angle worth keeping.')}
             </text>
             <g opacity={frame.kept}>
               <Check
@@ -325,13 +327,13 @@ function FilmScene({
             </g>
           </g>
           <text x={margin} y={compact ? 134 : 184} className="fm-secondary">
-            A place for dissent.
+            {t("A place for dissent.")}
           </text>
         </Content>
 
         <Content id="direction" frame={frame} prefix={prefix}>
           <text x={margin} y={headingY} className="fm-heading">
-            Shared direction.
+            {t("Shared direction.")}
           </text>
           {frame.nodes.map((node, i) => (
             <path
@@ -365,7 +367,7 @@ function FilmScene({
             y={briefY + (compact ? 54 : 63)}
             className="fm-heading fm-paper"
           >
-            Brief
+            {t("Brief")}
           </text>
           {!compact && (
             <path
@@ -381,7 +383,7 @@ function FilmScene({
             y={compact ? 135 : 219}
             className="fm-secondary fm-final-copy"
           >
-            Many minds. Your next move.
+            {t("Many minds. Your next move.")}
           </text>
         </Content>
 

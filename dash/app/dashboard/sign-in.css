@@ -1,0 +1,237 @@
+.cw-account-anchor {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.cw-shell .cw-signin-button {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 9px 14px;
+  border: 1px solid #e0e1df;
+  border-radius: 7px;
+  background: #fff;
+}
+.cw-shell .cw-signin-button:hover {
+  background: #f5f5f4;
+}
+.cw-signin-dialog {
+  width: min(428px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  border-radius: 16px;
+  overflow: hidden;
+  color: #171816;
+}
+.cw-signin-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.cw-signin-dialog > header {
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: 32px 1fr 32px;
+  gap: 0;
+  padding: 20px 20px 0;
+  border: 0;
+}
+.cw-signin-dialog .signin-wordmark {
+  grid-column: 2;
+  justify-self: center;
+  width: 100px;
+  height: 36px;
+  object-fit: contain;
+}
+.cw-signin-dialog > header .cw-icon-button {
+  grid-column: 3;
+  color: #737570;
+}
+.cw-signin-dialog .cw-dialog-content {
+  padding: 28px 32px 32px;
+  overflow-y: auto;
+  min-height: 0;
+  overscroll-behavior: contain;
+}
+.cw-shell .signin-options h2 {
+  margin: 0 0 28px;
+  font-size: 26px;
+  font-weight: 550;
+  line-height: 1.25;
+  letter-spacing: -0.8px;
+  text-align: center;
+}
+.cw-shell .signin-options h2:focus {
+  outline: none;
+}
+.cw-shell .signin-back {
+  position: absolute;
+  top: 22px;
+  left: 20px;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: #737570;
+  border-radius: 6px;
+}
+.cw-shell .signin-actions {
+  display: grid;
+  gap: 12px;
+}
+.cw-shell .signin-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 52px;
+  padding: 12px 16px;
+  border: 1px solid #dedfdd;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+}
+.cw-shell .signin-action:hover:not(:disabled) {
+  background: #f6f6f5;
+}
+.cw-shell .signin-primary {
+  background: #ea2a22;
+  border-color: #ea2a22;
+  color: #fff;
+}
+.cw-shell .signin-primary:hover:not(:disabled) {
+  background: #d9231c;
+}
+.cw-shell .signin-action:disabled,
+.cw-shell .signin-wallet:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.cw-shell .signin-switch {
+  margin: 24px 0 0;
+  color: #797b77;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.cw-shell .signin-switch button {
+  color: #171816;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.cw-shell .signin-helper,
+.cw-shell .signin-notice {
+  display: block;
+  margin: 0 0 22px;
+  color: #686b65;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.cw-shell .signin-notice {
+  display: block;
+  margin: 20px 0 0;
+}
+.cw-shell .signin-helper[role='status'] {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+}
+.cw-shell .signin-wallets {
+  display: grid;
+  gap: 8px;
+}
+.cw-shell .signin-wallet {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 60px;
+  padding: 14px 16px;
+  border: 1px solid #dedfdd;
+  border-radius: 9px;
+  background: #fff;
+  text-align: left;
+  font-size: 14px;
+}
+.cw-shell .signin-wallet:hover:not(:disabled) {
+  background: #f7f7f6;
+  border-color: #aeb0aa;
+}
+.cw-shell .signin-wallet img {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+  border-radius: 6px;
+}
+.cw-shell .signin-wallet span {
+  flex: 1;
+}
+.cw-shell .signin-wallet > svg {
+  color: #8b8e87;
+}
+.cw-shell .signin-selected-logo {
+  display: block;
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+  margin: 0 auto 20px;
+  border-radius: 9px;
+}
+.cw-shell .signin-accounts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.cw-shell .signin-accounts button {
+  padding: 8px 10px;
+  border: 1px solid #dedfdd;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.cw-shell .signin-accounts button[aria-pressed='true'] {
+  border-color: #ea2a22;
+}
+.cw-shell .signin-options button:focus-visible,
+.cw-shell .signin-options a:focus-visible,
+.cw-shell .cw-signin-button:focus-visible {
+  outline: 2px solid #ea2a22;
+  outline-offset: 3px;
+}
+.cw-shell .signin-spinner {
+  animation: signin-spin 1s linear infinite;
+}
+@keyframes signin-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-width: 600px) {
+  .cw-account-anchor {
+    gap: 8px;
+  }
+  .cw-shell .cw-signin-button {
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+  .cw-signin-dialog .cw-dialog-content {
+    padding: 24px 24px 28px;
+  }
+  .cw-shell .signin-options h2 {
+    font-size: 25px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cw-shell .signin-spinner {
+    animation: none;
+  }
+}
+
+.cw-signin-dialog .ct-tools {
+  font: inherit;
+  color: inherit;
+}

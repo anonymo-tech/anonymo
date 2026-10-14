@@ -1,5 +1,6 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
 import { ROUTING_TASKS, ROUTING_TASK_LABELS } from '../../lib/model-routing';
 import {
   effectiveReservationCap,
@@ -23,6 +24,7 @@ export function LiveRoutingOptions({
   /** Available balance; an empty budget is capped by it as well as the service limit. */
   availableUsd6?: string | null;
 }) {
+  const t = useT();
   const cap = effectiveReservationCap('10000000', availableUsd6);
   return (
     <div>
@@ -38,14 +40,16 @@ export function LiveRoutingOptions({
           }
         />
         <span>
-          Auto route this question
-          <small>Choose one reviewed route for your task and budget.</small>
+          {t('Auto route this question')}
+          <small>
+            {t('Choose one reviewed route for your task and budget.')}
+          </small>
         </span>
       </label>
       {value.mode === 'auto' && (
         <div className="cw-simple-form">
           <label>
-            Task{' '}
+            {t('Task')}{' '}
             <select
               value={value.task}
               onChange={(event) => {
@@ -57,20 +61,24 @@ export function LiveRoutingOptions({
             >
               {ROUTING_TASKS.map((task) => (
                 <option key={task} value={task}>
-                  {ROUTING_TASK_LABELS[task]}
+                  {t(ROUTING_TASK_LABELS[task])}
                 </option>
               ))}
             </select>
           </label>
           <label>
-            Maximum reservation (USD)
+            {t('Maximum reservation (USD)')}
             <input
               inputMode="decimal"
-              aria-label="Maximum automatic route reservation in US dollars"
+              aria-label={t(
+                'Maximum automatic route reservation in US dollars',
+              )}
               placeholder={
                 cap.limitedByBalance
-                  ? `Up to ${formatFriendlyUsd6(cap.usd6).slice(1)} · your balance`
-                  : '10.00 service limit'
+                  ? t('Up to {amount} · your balance', {
+                      amount: formatFriendlyUsd6(cap.usd6).slice(1),
+                    })
+                  : t('10.00 service limit')
               }
               value={value.budgetUsd}
               maxLength={14}
@@ -80,22 +88,24 @@ export function LiveRoutingOptions({
             />
           </label>
           <p className="ct-note">
-            Auto compares the reviewed routes supplied for this task. Review the
-            exact model and cost before sending. Vision and attachments are not
-            supported.
+            {t(
+              'Auto compares the reviewed routes supplied for this task. Review the exact model and cost before sending. Vision and attachments are not supported.',
+            )}
           </p>
           {value.task === 'long_context' && (
             <p className="ct-note">
-              Current requests include at most 32 KiB of loaded context. The
-              review lists any omitted exchanges.
+              {t(
+                'Current requests include at most 32 KiB of loaded context. The review lists any omitted exchanges.',
+              )}
             </p>
           )}
         </div>
       )}
       <p className="ct-note">
-        Mention a model with @claude or @{'{model-id}'} to choose it for one
-        question. Mentions override Auto; choosing a model below returns to
-        Manual.
+        {t(
+          'Mention a model with @claude or {mention} to choose it for one question. Mentions override Auto; choosing a model below returns to Manual.',
+          { mention: '@{model-id}' },
+        )}
       </p>
     </div>
   );

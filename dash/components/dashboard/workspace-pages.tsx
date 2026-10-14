@@ -22,6 +22,7 @@ import { LiveBriefReader } from './live-brief-reader';
 import { LiveBriefSynthesis } from './live-brief-synthesis';
 import { featureOn } from './feature-switches';
 import { renderBriefPrintHtml } from '../../lib/brief-document';
+import { useT, type Translator } from '@/lib/i18n';
 import '@/app/dashboard/workspace-pages.css';
 
 export type PageView =
@@ -49,12 +50,70 @@ type WorkspacePagesProps = {
   onToast: (message: string) => void;
 };
 
-function dateLabel(value: number) {
-  return new Intl.DateTimeFormat('en', {
+function dateLabel(value: number, locale: Translator['locale']) {
+  return new Intl.DateTimeFormat(locale === 'zh' ? 'zh-CN' : 'en', {
     month: 'short',
     day: 'numeric',
     timeZone: 'UTC',
   }).format(value);
+}
+
+function roomLabel(room: Room, t: Translator) {
+  const samples: Record<string, string> = {
+    'room-launch': 'Launch plan',
+    'room-solana': 'Solana research',
+    'room-website': 'Website refresh',
+  };
+  return !room.live && samples[room.id] === room.name
+    ? t(room.name)
+    : room.name;
+}
+
+const SAMPLE_BRIEF_NOTICE =
+  'Local sample comparison. No live models were called.';
+
+function isInitialSampleTurn(turn: Room['turns'][number]) {
+  return (
+    !turn.live &&
+    [
+      'turn-launch-sample',
+      'turn-solana-sample',
+      'turn-website-sample',
+    ].includes(turn.id)
+  );
+}
+
+function briefTitleLabel(
+  brief: CanvasBrief,
+  room: Room | undefined,
+  t: Translator,
+) {
+  return !brief.live && room && brief.title === room.name
+    ? roomLabel(room, t)
+    : brief.title;
+}
+
+function briefBodyLabel(
+  brief: CanvasBrief,
+  room: Room | undefined,
+  t: Translator,
+) {
+  if (brief.live || !brief.body.startsWith(`${SAMPLE_BRIEF_NOTICE}\n\n`))
+    return brief.body;
+  let body = `${t(SAMPLE_BRIEF_NOTICE)}${brief.body.slice(SAMPLE_BRIEF_NOTICE.length)}`;
+  for (const turn of room?.turns ?? []) {
+    if (isInitialSampleTurn(turn)) {
+      body = body.replace(`## ${turn.prompt}\n\n`, `## ${t(turn.prompt)}\n\n`);
+    }
+    for (const answer of turn.answers) {
+      if (answer.live) continue;
+      body = body.replace(
+        ` — ${answer.heading}\n\n${answer.paragraphs.join('\n\n')}`,
+        ` — ${t(answer.heading)}\n\n${answer.paragraphs.map((paragraph) => t(paragraph)).join('\n\n')}`,
+      );
+    }
+  }
+  return body;
 }
 
 function filename(value: string) {
@@ -127,6 +186,7 @@ function EmptyState({
 }
 
 function RoomPreview({ room }: { room: Room }) {
+  const t = useT();
   const turn = room.turns.at(-1);
   return (
     <div
@@ -137,7 +197,7 @@ function RoomPreview({ room }: { room: Room }) {
         <>
           <div className="cp-preview-question">
             <span className="cp-red-dot" />
-            <p>{turn.prompt}</p>
+            <p>{isInitialSampleTurn(turn) ? t(turn.prompt) : turn.prompt}</p>
           </div>
           <div className="cp-preview-connection">
             <span />
@@ -145,10 +205,17 @@ function RoomPreview({ room }: { room: Room }) {
           </div>
           <div className="cp-preview-answer">
             <MotionIcon name="brief" size={20} />
-            <p>{turn.answers[0]?.heading || 'A question worth exploring.'}</p>
+            <p>
+              {turn.answers[0]?.heading
+                ? turn.answers[0].live
+                  ? turn.answers[0].heading
+                  : t(turn.answers[0].heading)
+                : t('A question worth exploring.')}
+            </p>
             <small>
-              {turn.answers.length}{' '}
-              {turn.answers.length === 1 ? 'perspective' : 'perspectives'}
+              {turn.answers.length === 1
+                ? t('{count} perspective', { count: turn.answers.length })
+                : t('{count} perspectives', { count: turn.answers.length })}
             </small>
           </div>
         </>
@@ -157,7 +224,7 @@ function RoomPreview({ room }: { room: Room }) {
           <span className="cp-room-outline">
             <MotionIcon name="add" size={24} />
           </span>
-          <p>A place for your next idea.</p>
+          <p>{t('A place for your next idea.')}</p>
         </>
       )}
     </div>
@@ -172,6 +239,7 @@ function RoomsPage({
   onTogglePin,
   onDeleteRoom,
 }: WorkspacePagesProps) {
+  const t = useT();
   const [filter, setFilter] = useState<'recent' | 'pinned'>('recent');
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -199,8 +267,10 @@ function RoomsPage({
   return (
     <section className="cp-page cp-rooms">
       <PageHeading
-        title="Projects"
-        description="A place for every question. Pick up a thought, or start something new."
+        title={t('Projects')}
+        description={t(
+          'A place for every question. Pick up a thought, or start something new.',
+        )}
       >
         <button
           data-icon-trigger
@@ -211,12 +281,12 @@ function RoomsPage({
           onClick={() => setCreating(!creating)}
         >
           <MotionIcon name="add" size={20} />
-          New project
+          {t('New project')}
         </button>
       </PageHeading>
       {creating && (
         <form className="cp-create-strip" id="cp-new-room" onSubmit={create}>
-          <label htmlFor="cp-room-name">What are you working on?</label>
+          <label htmlFor="cp-room-name">{t('What are you working on?')}</label>
           <div>
             <input
               ref={input}
@@ -224,7 +294,7 @@ function RoomsPage({
               value={name}
               onChange={(event) => setName(event.target.value)}
               maxLength={80}
-              placeholder="Give your project a name"
+              placeholder={t('Give your project a name')}
               required
             />
             <button
@@ -233,7 +303,7 @@ function RoomsPage({
               type="submit"
               disabled={!name.trim()}
             >
-              Create project
+              {t('Create project')}
               <MotionIcon name="forward" size={20} />
             </button>
             <button
@@ -241,7 +311,7 @@ function RoomsPage({
               className="cp-icon-button"
               type="button"
               onClick={() => setCreating(false)}
-              aria-label="Cancel new project"
+              aria-label={t('Cancel new project')}
             >
               <MotionIcon name="close" size={20} />
             </button>
@@ -249,14 +319,14 @@ function RoomsPage({
         </form>
       )}
       <div className="cp-filter-row">
-        <div className="cp-tabs" aria-label="Project filter">
+        <div className="cp-tabs" aria-label={t('Project filter')}>
           <button
             data-icon-trigger
             type="button"
             aria-pressed={filter === 'recent'}
             onClick={() => setFilter('recent')}
           >
-            Recent
+            {t('Recent')}
           </button>
           <button
             data-icon-trigger
@@ -264,11 +334,13 @@ function RoomsPage({
             aria-pressed={filter === 'pinned'}
             onClick={() => setFilter('pinned')}
           >
-            Pinned
+            {t('Pinned')}
           </button>
         </div>
         <span className="cp-count">
-          {rooms.length} {rooms.length === 1 ? 'project' : 'projects'}
+          {rooms.length === 1
+            ? t('{count} project', { count: rooms.length })
+            : t('{count} projects', { count: rooms.length })}
         </span>
       </div>
       {rooms.length ? (
@@ -281,7 +353,11 @@ function RoomsPage({
                   className={`cp-icon-button${room.pinned ? ' is-pinned' : ''}`}
                   type="button"
                   onClick={() => onTogglePin(room.id)}
-                  aria-label={`${room.pinned ? 'Unpin' : 'Pin'} ${room.name}`}
+                  aria-label={
+                    room.pinned
+                      ? t('Unpin {name}', { name: roomLabel(room, t) })
+                      : t('Pin {name}', { name: roomLabel(room, t) })
+                  }
                   aria-pressed={room.pinned}
                 >
                   <MotionIcon name="pin" size={20} active={room.pinned} />
@@ -291,7 +367,7 @@ function RoomsPage({
                   className="cp-icon-button"
                   type="button"
                   onClick={() => onDeleteRoom(room.id)}
-                  aria-label={`Delete ${room.name}`}
+                  aria-label={t('Delete {name}', { name: roomLabel(room, t) })}
                 >
                   <MotionIcon name="remove" size={20} />
                 </button>
@@ -301,18 +377,24 @@ function RoomsPage({
                 className="cp-room-open"
                 type="button"
                 onClick={() => onOpenRoom(room.id)}
-                aria-label={`Open ${room.name}`}
+                aria-label={t('Open {name}', { name: roomLabel(room, t) })}
               >
                 <RoomPreview room={room} />
                 <div className="cp-room-caption">
-                  <h2>{room.name}</h2>
+                  <h2>{roomLabel(room, t)}</h2>
                   <div>
                     <span>
                       {room.turns.length
-                        ? `${room.turns.length} ${room.turns.length === 1 ? 'conversation' : 'conversations'}`
-                        : 'A fresh start'}
+                        ? room.turns.length === 1
+                          ? t('{count} conversation', {
+                              count: room.turns.length,
+                            })
+                          : t('{count} conversations', {
+                              count: room.turns.length,
+                            })
+                        : t('A fresh start')}
                     </span>
-                    <span>{dateLabel(room.updatedAt)}</span>
+                    <span>{dateLabel(room.updatedAt, t.locale)}</span>
                   </div>
                 </div>
               </button>
@@ -330,10 +412,10 @@ function RoomsPage({
           }
           title={
             search
-              ? 'No projects found'
+              ? t('No projects found')
               : filter === 'pinned'
-                ? 'Keep a thought close'
-                : 'Start a project'
+                ? t('Keep a thought close')
+                : t('Start a project')
           }
           action={
             !search && filter === 'recent' ? (
@@ -344,16 +426,18 @@ function RoomsPage({
                 onClick={() => setCreating(true)}
               >
                 <MotionIcon name="add" size={20} />
-                New project
+                {t('New project')}
               </button>
             ) : undefined
           }
         >
           {search
-            ? 'Try a project name or a few words from a question.'
+            ? t('Try a project name or a few words from a question.')
             : filter === 'pinned'
-              ? 'Pin a project to give your ongoing work a place here.'
-              : 'Start with a question, a project, or an idea you want to understand.'}
+              ? t('Pin a project to give your ongoing work a place here.')
+              : t(
+                  'Start with a question, a project, or an idea you want to understand.',
+                )}
         </EmptyState>
       )}
     </section>
@@ -362,6 +446,7 @@ function RoomsPage({
 
 function BriefPreview({
   brief,
+  room,
   roomName,
   onOpenRoom,
   onDelete,
@@ -375,27 +460,34 @@ function BriefPreview({
   visible: boolean;
   onRefreshBrief?: (id: string) => Promise<boolean>;
   brief: CanvasBrief;
+  room?: Room;
   roomName: string;
   onOpenRoom: () => void;
   onDelete: () => void;
   onClose: () => void;
   onEdit?: (brief: CanvasBrief) => Promise<boolean>;
 }) {
+  const t = useT();
   const [confirming, setConfirming] = useState(false);
   const [editing, setEditing] = useState(false);
   const [printError, setPrintError] = useState('');
   return (
-    <aside className="cp-brief-preview" aria-label={`Preview: ${brief.title}`}>
+    <aside
+      className="cp-brief-preview"
+      aria-label={t('Preview: {title}', {
+        title: briefTitleLabel(brief, room, t),
+      })}
+    >
       <div className="cp-preview-toolbar">
         <span>
           <MotionIcon name="brief" size={20} />
-          Saved Brief
+          {t('Saved Brief')}
         </span>
         <button
           data-icon-trigger
           className="cp-icon-button"
           type="button"
-          aria-label="Close Brief preview"
+          aria-label={t('Close Brief preview')}
           onClick={onClose}
         >
           <MotionIcon name="close" size={20} />
@@ -403,9 +495,9 @@ function BriefPreview({
       </div>
       <div className="cp-brief-content">
         <p className="cp-eyebrow">
-          {roomName} · {dateLabel(brief.createdAt)}
+          {roomName} · {dateLabel(brief.createdAt, t.locale)}
         </p>
-        <h2>{brief.title}</h2>
+        <h2>{briefTitleLabel(brief, room, t)}</h2>
         {editing && onEdit && brief.live?.document ? (
           <LiveBriefEditor
             brief={brief}
@@ -415,7 +507,7 @@ function BriefPreview({
         ) : brief.live?.document ? (
           <LiveBriefReader document={brief.live.document} />
         ) : (
-          <pre>{brief.body}</pre>
+          <pre>{briefBodyLabel(brief, room, t)}</pre>
         )}
         {featureOn('synthesis') &&
           accountId &&
@@ -456,7 +548,7 @@ function BriefPreview({
               setPrintError('');
             }}
           >
-            Print / PDF
+            {t('Print / PDF')}
           </button>
         )}
         {onEdit && brief.live?.document && (
@@ -466,7 +558,7 @@ function BriefPreview({
             disabled={editing}
             onClick={() => setEditing(true)}
           >
-            Edit assessment
+            {t('Edit assessment')}
           </button>
         )}
         <button
@@ -474,11 +566,14 @@ function BriefPreview({
           type="button"
           className="cp-button cp-button--ink"
           onClick={() =>
-            downloadText(`${filename(brief.title)}.md`, brief.body)
+            downloadText(
+              `${filename(brief.title)}.md`,
+              briefBodyLabel(brief, room, t),
+            )
           }
         >
           <MotionIcon name="download" size={20} />
-          Download
+          {t('Download')}
         </button>
         <button
           data-icon-trigger
@@ -486,23 +581,23 @@ function BriefPreview({
           className="cp-button"
           onClick={onOpenRoom}
         >
-          Open project
+          {t('Open project')}
           <MotionIcon name="open" size={20} />
         </button>
         <button
           data-icon-trigger
           type="button"
           className="cp-icon-button"
-          aria-label="Delete saved Brief"
+          aria-label={t('Delete saved Brief')}
           onClick={() => setConfirming(!confirming)}
         >
           <MotionIcon name="remove" size={20} />
         </button>
       </div>
-      {printError && <output>{printError}</output>}
+      {printError && <output>{t(printError)}</output>}
       {confirming && (
         <div className="cp-delete-confirm">
-          <p>Remove this saved Brief from your library?</p>
+          <p>{t('Remove this saved Brief from your library?')}</p>
           <div>
             <button
               data-icon-trigger
@@ -510,7 +605,7 @@ function BriefPreview({
               type="button"
               onClick={() => setConfirming(false)}
             >
-              Keep Brief
+              {t('Keep Brief')}
             </button>
             <button
               data-icon-trigger
@@ -518,7 +613,7 @@ function BriefPreview({
               type="button"
               onClick={onDelete}
             >
-              Delete Brief
+              {t('Delete Brief')}
             </button>
           </div>
         </div>
@@ -537,6 +632,7 @@ function LibraryPage({
   account,
   view,
 }: WorkspacePagesProps) {
+  const t = useT();
   const [filter, setFilter] = useState('All');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const search = query.trim().toLowerCase();
@@ -552,11 +648,13 @@ function LibraryPage({
   return (
     <section className="cp-page cp-library">
       <PageHeading
-        title="Library"
-        description="The useful things you chose to keep. Your saved Briefs, together in one place."
+        title={t('Library')}
+        description={t(
+          'The useful things you chose to keep. Your saved Briefs, together in one place.',
+        )}
       />
       <div className="cp-filter-row">
-        <div className="cp-pills" aria-label="Library filter">
+        <div className="cp-pills" aria-label={t('Library filter')}>
           {['All', 'Files', 'Media', 'Briefs'].map((item) => (
             <button
               data-icon-trigger
@@ -565,12 +663,14 @@ function LibraryPage({
               aria-pressed={filter === item}
               onClick={() => setFilter(item)}
             >
-              {item}
+              {t(item)}
             </button>
           ))}
         </div>
         <span className="cp-count">
-          {briefs.length} {briefs.length === 1 ? 'item' : 'items'}
+          {briefs.length === 1
+            ? t('{count} item', { count: briefs.length })
+            : t('{count} items', { count: briefs.length })}
         </span>
       </div>
       <div className={`cp-library-layout${selected ? ' has-preview' : ''}`}>
@@ -588,20 +688,39 @@ function LibraryPage({
                 >
                   <div className="cp-document-preview">
                     <MotionIcon name="brief" size={24} />
-                    <strong>{brief.title}</strong>
+                    <strong>
+                      {briefTitleLabel(
+                        brief,
+                        state.rooms.find((room) => room.id === brief.roomId),
+                        t,
+                      )}
+                    </strong>
                     <p>
                       {(brief.live?.document
                         ? brief.live.document.analysis.decision ||
                           brief.live.document.evidence[0].answer
-                        : brief.body.replace(/^#+\s*/gm, '')
+                        : briefBodyLabel(
+                            brief,
+                            state.rooms.find(
+                              (room) => room.id === brief.roomId,
+                            ),
+                            t,
+                          ).replace(/^#+\s*/gm, '')
                       ).slice(0, 165)}
                     </p>
                   </div>
                   <div className="cp-library-caption">
-                    <h2>{brief.title}</h2>
+                    <h2>
+                      {briefTitleLabel(
+                        brief,
+                        state.rooms.find((room) => room.id === brief.roomId),
+                        t,
+                      )}
+                    </h2>
                     <span>
-                      Brief<span>·</span>
-                      {dateLabel(brief.createdAt)}
+                      {t('Brief')}
+                      <span>·</span>
+                      {dateLabel(brief.createdAt, t.locale)}
                     </span>
                   </div>
                 </button>
@@ -618,17 +737,23 @@ function LibraryPage({
               }
               title={
                 search
-                  ? 'Nothing matches just yet'
+                  ? t('Nothing matches just yet')
                   : filter === 'Files' || filter === 'Media'
-                    ? `No saved ${filter.toLowerCase()} yet`
-                    : 'Keep the parts that matter'
+                    ? filter === 'Files'
+                      ? t('No saved files yet')
+                      : t('No saved media yet')
+                    : t('Keep the parts that matter')
               }
             >
               {search
-                ? 'Try a different title or a few words from your Brief.'
+                ? t('Try a different title or a few words from your Brief.')
                 : filter === 'Files' || filter === 'Media'
-                  ? 'This library currently holds saved Briefs. Uploaded Studio references stay in the Studio draft.'
-                  : 'Select useful answers in a project and save a Brief. It will be waiting here.'}
+                  ? t(
+                      'This library currently holds saved Briefs. Uploaded Studio references stay in the Studio draft.',
+                    )
+                  : t(
+                      'Select useful answers in a project and save a Brief. It will be waiting here.',
+                    )}
             </EmptyState>
           )}
         </div>
@@ -636,14 +761,17 @@ function LibraryPage({
           <BriefPreview
             key={selected.id}
             brief={selected}
+            room={state.rooms.find((room) => room.id === selected.roomId)}
             onEdit={onEditBrief}
             accountId={account?.accountId}
             visible={view === 'library'}
             onRefreshBrief={onRefreshBrief}
-            roomName={
-              state.rooms.find((room) => room.id === selected.roomId)?.name ||
-              'Saved project'
-            }
+            roomName={(() => {
+              const room = state.rooms.find(
+                (room) => room.id === selected.roomId,
+              );
+              return room ? roomLabel(room, t) : t('Saved project');
+            })()}
             onClose={() => setSelectedId(null)}
             onOpenRoom={() => onOpenRoom(selected.roomId)}
             onDelete={() => {
@@ -667,6 +795,7 @@ type AgentDraft = {
 };
 
 function AgentsPage({ state, onToast }: WorkspacePagesProps) {
+  const t = useT();
   const [drafts, setDrafts] = useState<AgentDraft[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -694,7 +823,7 @@ function AgentsPage({ state, onToast }: WorkspacePagesProps) {
     setGoal('');
     setScope('');
     setNotes('');
-    onToast('Agent plan created. No task is running.');
+    onToast(t('Agent plan created. No task is running.'));
   };
   const choose = (draft: AgentDraft) => {
     setSelectedId(draft.id);
@@ -703,21 +832,31 @@ function AgentsPage({ state, onToast }: WorkspacePagesProps) {
   const exportPlan = (draft: AgentDraft) =>
     downloadText(
       `${filename(draft.name)}-agent-plan.md`,
-      `# ${draft.name}\n\nStatus: local draft; no runtime connected\nScope: ${state.rooms.find((room) => room.id === draft.scope)?.name || 'Unassigned project'}\n\n## Goal\n\n${draft.goal}\n\n## Instructions\n\n${draft.notes || 'No additional instructions.'}\n\nNo apps, computer, memory service, schedule or spending authority has been granted.\n`,
+      `# ${draft.name}\n\n${t('Status: local draft; no runtime connected')}\n${t(
+        'Scope: {project}',
+        {
+          project: (() => {
+            const room = state.rooms.find((room) => room.id === draft.scope);
+            return room ? roomLabel(room, t) : t('Unassigned project');
+          })(),
+        },
+      )}\n\n## ${t('Goal')}\n\n${draft.goal}\n\n## ${t('Instructions')}\n\n${draft.notes || t('No additional instructions.')}\n\n${t('No apps, computer, memory service, schedule or spending authority has been granted.')}\n`,
     );
   return (
     <section className="cp-page cp-agents">
       <PageHeading
-        title="Agents"
-        description="Give ongoing work a clear purpose. Start with a goal and the boundaries that matter."
+        title={t('Agents')}
+        description={t(
+          'Give ongoing work a clear purpose. Start with a goal and the boundaries that matter.',
+        )}
       >
         <span className="cp-status">
           <span />
-          Runtime not connected
+          {t('Runtime not connected')}
         </span>
       </PageHeading>
       <div className="cp-agent-tabs">
-        <div className="cp-tabs" aria-label="Agent drafts">
+        <div className="cp-tabs" aria-label={t('Agent drafts')}>
           {drafts.map((draft) => (
             <button
               data-icon-trigger
@@ -736,10 +875,12 @@ function AgentsPage({ state, onToast }: WorkspacePagesProps) {
             onClick={() => setSelectedId(null)}
           >
             <MotionIcon name="add" size={20} />
-            New agent
+            {t('New agent')}
           </button>
         </div>
-        <span className="cp-fineprint">Local plans · download to keep</span>
+        <span className="cp-fineprint">
+          {t('Local plans · download to keep')}
+        </span>
       </div>
       {!selected ? (
         <div className="cp-plan-layout">
@@ -748,25 +889,27 @@ function AgentsPage({ state, onToast }: WorkspacePagesProps) {
               <MotionIcon name="agents" size={24} />
             </span>
             <h2>
-              Good work starts
-              <br />
-              with a good brief.
+              {t.rich('Good work starts{break}with a good brief.', {
+                break: <br />,
+              })}
             </h2>
             <p>
-              What should this agent help you do? Give it a name, a specific
-              goal, and a project to work within.
+              {t(
+                'What should this agent help you do? Give it a name, a specific goal, and a project to work within.',
+              )}
             </p>
             <div className="cp-boundary-note">
               <LockKeyhole size={17} />
               <span>
-                This creates a plan. Apps, memory and background execution are
-                not connected.
+                {t(
+                  'This creates a plan. Apps, memory and background execution are not connected.',
+                )}
               </span>
             </div>
           </div>
           <form className="cp-form-paper" onSubmit={create}>
             <label>
-              Name
+              {t('Name')}
               <input
                 value={name}
                 onChange={(event) => {
@@ -774,42 +917,44 @@ function AgentsPage({ state, onToast }: WorkspacePagesProps) {
                   setName(event.target.value);
                 }}
                 maxLength={50}
-                placeholder="For example, Scout"
+                placeholder={t('For example, Scout')}
                 required
               />
             </label>
             <label>
-              Goal
+              {t('Goal')}
               <textarea
                 value={goal}
                 onChange={(event) => {
                   setScope(workingRoom);
                   setGoal(event.target.value);
                 }}
-                placeholder="Describe what a useful result would look like…"
+                placeholder={t(
+                  'Describe what a useful result would look like…',
+                )}
                 maxLength={3000}
                 required
               />
             </label>
             <label>
-              Working project
+              {t('Working project')}
               <select
                 value={workingRoom}
                 onChange={(event) => setScope(event.target.value)}
               >
                 {!workingRoomExists && (
                   <option value={workingRoom} disabled>
-                    Choose an available project
+                    {t('Choose an available project')}
                   </option>
                 )}
                 {state.rooms.length ? (
                   state.rooms.map((room) => (
                     <option value={room.id} key={room.id}>
-                      {room.name}
+                      {roomLabel(room, t)}
                     </option>
                   ))
                 ) : (
-                  <option value="">Unassigned</option>
+                  <option value="">{t('Unassigned')}</option>
                 )}
               </select>
             </label>
@@ -819,7 +964,7 @@ function AgentsPage({ state, onToast }: WorkspacePagesProps) {
               className="cp-button cp-button--red"
               disabled={!name.trim() || !goal.trim() || !workingRoomExists}
             >
-              Create agent plan
+              {t('Create agent plan')}
               <MotionIcon name="forward" size={20} />
             </button>
           </form>
@@ -830,21 +975,27 @@ function AgentsPage({ state, onToast }: WorkspacePagesProps) {
             <article className="cp-goal-paper">
               <div>
                 <MotionIcon name="decisions" size={24} />
-                <span>Goal</span>
+                <span>{t('Goal')}</span>
               </div>
               <h2>{selected.goal}</h2>
               <p>
-                {state.rooms.find((room) => room.id === selected.scope)?.name ||
-                  'Unassigned project'}
+                {(() => {
+                  const room = state.rooms.find(
+                    (room) => room.id === selected.scope,
+                  );
+                  return room ? roomLabel(room, t) : t('Unassigned project');
+                })()}
               </p>
             </article>
             <div className="cp-agent-next">
               <span className="cp-red-dot" />
               <div>
-                <h3>A plan, ready for its next step.</h3>
+                <h3>{t('A plan, ready for its next step.')}</h3>
                 <p>
-                  {selected.name} has not started a task. Connect a runtime
-                  before granting tools, schedules or permission to act.
+                  {t(
+                    '{name} has not started a task. Connect a runtime before granting tools, schedules or permission to act.',
+                    { name: selected.name },
+                  )}
                 </p>
                 <button
                   data-icon-trigger
@@ -853,13 +1004,13 @@ function AgentsPage({ state, onToast }: WorkspacePagesProps) {
                   onClick={() => exportPlan(selected)}
                 >
                   <MotionIcon name="download" size={20} />
-                  Download plan
+                  {t('Download plan')}
                 </button>
               </div>
             </div>
           </div>
           <aside className="cp-agent-inspector">
-            <div className="cp-tabs" aria-label="Agent details">
+            <div className="cp-tabs" aria-label={t('Agent details')}>
               {['Instructions', 'Activity', 'Apps'].map((item) => (
                 <button
                   data-icon-trigger
@@ -868,7 +1019,7 @@ function AgentsPage({ state, onToast }: WorkspacePagesProps) {
                   aria-pressed={tab === item}
                   onClick={() => setTab(item)}
                 >
-                  {item}
+                  {t(item)}
                 </button>
               ))}
             </div>
@@ -881,29 +1032,32 @@ function AgentsPage({ state, onToast }: WorkspacePagesProps) {
                       draft.id === selected.id ? { ...draft, notes } : draft,
                     ),
                   );
-                  onToast('Instructions saved to this draft.');
+                  onToast(t('Instructions saved to this draft.'));
                 }}
               >
                 <label htmlFor="cp-agent-notes">
-                  Things this agent should know
+                  {t('Things this agent should know')}
                 </label>
                 <textarea
                   id="cp-agent-notes"
                   value={notes}
                   onChange={(event) => setNotes(event.target.value)}
                   maxLength={5000}
-                  placeholder="Scope, sources to use, and actions that would need your review…"
+                  placeholder={t(
+                    'Scope, sources to use, and actions that would need your review…',
+                  )}
                 />
                 <p className="cp-fineprint">
-                  Your notes are part of this draft. They have not been sent to
-                  an agent or memory service.
+                  {t(
+                    'Your notes are part of this draft. They have not been sent to an agent or memory service.',
+                  )}
                 </p>
                 <button
                   data-icon-trigger
                   className="cp-button cp-button--ink"
                   type="submit"
                 >
-                  Save instructions
+                  {t('Save instructions')}
                   <MotionIcon name="select" size={20} />
                 </button>
               </form>
@@ -911,18 +1065,23 @@ function AgentsPage({ state, onToast }: WorkspacePagesProps) {
               <div className="cp-agent-activity">
                 <span className="cp-red-dot" />
                 <div>
-                  <h3>Plan created</h3>
-                  <p>{dateLabel(selected.createdAt)} · in this session</p>
-                  <small>No background work has run.</small>
+                  <h3>{t('Plan created')}</h3>
+                  <p>
+                    {t('{date} · in this session', {
+                      date: dateLabel(selected.createdAt, t.locale),
+                    })}
+                  </p>
+                  <small>{t('No background work has run.')}</small>
                 </div>
               </div>
             ) : (
               <EmptyState
                 icon={<MotionIcon name="connections" size={24} />}
-                title="No access granted"
+                title={t('No access granted')}
               >
-                Connected apps and computer access will be listed here when a
-                runtime is available.
+                {t(
+                  'Connected apps and computer access will be listed here when a runtime is available.',
+                )}
               </EmptyState>
             )}
           </aside>
@@ -932,13 +1091,15 @@ function AgentsPage({ state, onToast }: WorkspacePagesProps) {
   );
 }
 
+const DEFAULT_DECISION_OPTIONS = 'Billing\nAccount\nTechnical\nOther / review';
+
 function DecisionsPage({ onToast }: WorkspacePagesProps) {
+  const t = useT();
   const [type, setType] = useState('choice');
   const [question, setQuestion] = useState('');
   const [evidence, setEvidence] = useState('');
-  const [options, setOptions] = useState(
-    'Billing\nAccount\nTechnical\nOther / review',
-  );
+  const [options, setOptions] = useState(DEFAULT_DECISION_OPTIONS);
+  const [optionsEdited, setOptionsEdited] = useState(false);
   const [criteria, setCriteria] = useState('');
   const [reviewed, setReviewed] = useState(false);
   const choices = options
@@ -974,17 +1135,19 @@ function DecisionsPage({ onToast }: WorkspacePagesProps) {
       ),
       'application/json;charset=utf-8',
     );
-    onToast('Decision draft downloaded.');
+    onToast(t('Decision draft downloaded.'));
   };
   return (
     <section className="cp-page cp-decisions">
       <PageHeading
-        title="Decisions"
-        description="A clear question. The right context. An explicit place for human judgment."
+        title={t('Decisions')}
+        description={t(
+          'A clear question. The right context. An explicit place for human judgment.',
+        )}
       >
         <span className="cp-status">
           <span />
-          Decision service not connected
+          {t('Decision service not connected')}
         </span>
       </PageHeading>
       <div className="cp-decision-layout">
@@ -995,7 +1158,7 @@ function DecisionsPage({ onToast }: WorkspacePagesProps) {
             if (ready) setReviewed(true);
           }}
         >
-          <div className="cp-pills" aria-label="Decision type">
+          <div className="cp-pills" aria-label={t('Decision type')}>
             {[
               { id: 'choice', name: 'Choice' },
               { id: 'score', name: 'Score' },
@@ -1008,46 +1171,51 @@ function DecisionsPage({ onToast }: WorkspacePagesProps) {
                 aria-pressed={type === item.id}
                 onClick={() => edit(setType, item.id)}
               >
-                {item.name}
+                {t(item.name)}
               </button>
             ))}
           </div>
           <label>
-            {type === 'noul' ? 'Proposition to evaluate' : 'The question'}
+            {type === 'noul' ? t('Proposition to evaluate') : t('The question')}
             <input
               value={question}
               onChange={(event) => edit(setQuestion, event.target.value)}
               maxLength={400}
               placeholder={
                 type === 'choice'
-                  ? 'Which team should review this request?'
+                  ? t('Which team should review this request?')
                   : type === 'score'
-                    ? 'How well does this meet our rubric?'
-                    : 'The evidence supports this claim…'
+                    ? t('How well does this meet our rubric?')
+                    : t('The evidence supports this claim…')
               }
               required
             />
           </label>
           <label>
-            Input and evidence
+            {t('Input and evidence')}
             <textarea
               value={evidence}
               onChange={(event) => edit(setEvidence, event.target.value)}
               maxLength={6000}
-              placeholder="Add the actual state or source material the decision should consider."
+              placeholder={t(
+                'Add the actual state or source material the decision should consider.',
+              )}
               required
             />
           </label>
           {type === 'choice' && (
             <label>
-              Options
+              {t('Options')}
               <span className="cp-label-note">
-                One per line; keep an Other / review path.
+                {t('One per line; keep an Other / review path.')}
               </span>
               <textarea
                 className="cp-options-input"
-                value={options}
-                onChange={(event) => edit(setOptions, event.target.value)}
+                value={optionsEdited ? options : t(DEFAULT_DECISION_OPTIONS)}
+                onChange={(event) => {
+                  setOptionsEdited(true);
+                  edit(setOptions, event.target.value);
+                }}
                 maxLength={1000}
                 required
               />
@@ -1055,8 +1223,8 @@ function DecisionsPage({ onToast }: WorkspacePagesProps) {
           )}
           <label>
             {type === 'score'
-              ? 'Scoring rubric and range'
-              : 'Criteria and review conditions'}
+              ? t('Scoring rubric and range')
+              : t('Criteria and review conditions')}
             <textarea
               className="cp-short-input"
               value={criteria}
@@ -1064,8 +1232,8 @@ function DecisionsPage({ onToast }: WorkspacePagesProps) {
               maxLength={2000}
               placeholder={
                 type === 'score'
-                  ? 'Define the scale and what each score means.'
-                  : 'What matters? When should a person take a closer look?'
+                  ? t('Define the scale and what each score means.')
+                  : t('What matters? When should a person take a closer look?')
               }
               required
             />
@@ -1076,37 +1244,37 @@ function DecisionsPage({ onToast }: WorkspacePagesProps) {
             className="cp-button cp-button--red"
             disabled={!ready}
           >
-            Review decision draft
+            {t('Review decision draft')}
             <MotionIcon name="forward" size={20} />
           </button>
         </form>
         <aside className="cp-decision-output">
           <div className="cp-paper-heading">
             <ShieldCheck size={20} />
-            <h2>Review</h2>
+            <h2>{t('Review')}</h2>
           </div>
           {reviewed ? (
             <div className="cp-decision-result">
-              <span className="cp-review-badge">Needs evaluation</span>
+              <span className="cp-review-badge">{t('Needs evaluation')}</span>
               <h3>{question}</h3>
               <dl>
                 <div>
-                  <dt>Type</dt>
+                  <dt>{t('Type')}</dt>
                   <dd>
                     {type === 'noul'
-                      ? 'Proposition / Noul'
+                      ? t('Proposition / Noul')
                       : type === 'score'
-                        ? 'Score'
-                        : 'Choice'}
+                        ? t('Score')
+                        : t('Choice')}
                   </dd>
                 </div>
                 <div>
-                  <dt>Result</dt>
-                  <dd>Not evaluated</dd>
+                  <dt>{t('Result')}</dt>
+                  <dd>{t('Not evaluated')}</dd>
                 </div>
                 <div>
-                  <dt>Confidence</dt>
-                  <dd>Not available</dd>
+                  <dt>{t('Confidence')}</dt>
+                  <dd>{t('Not available')}</dd>
                 </div>
               </dl>
               {type === 'choice' && (
@@ -1114,14 +1282,15 @@ function DecisionsPage({ onToast }: WorkspacePagesProps) {
                   {choices.map((option, index) => (
                     <span key={`${option}-${index}`}>
                       <span>{String(index + 1).padStart(2, '0')}</span>
-                      {option}
+                      {optionsEdited ? option : t(option)}
                     </span>
                   ))}
                 </div>
               )}
               <p>
-                The draft is complete. It has not been sent to a decision model,
-                and no rule has been deployed.
+                {t(
+                  'The draft is complete. It has not been sent to a decision model, and no rule has been deployed.',
+                )}
               </p>
               <button
                 data-icon-trigger
@@ -1130,16 +1299,17 @@ function DecisionsPage({ onToast }: WorkspacePagesProps) {
                 onClick={exportDraft}
               >
                 <MotionIcon name="download" size={20} />
-                Download draft
+                {t('Download draft')}
               </button>
             </div>
           ) : (
             <EmptyState
               icon={<ShieldCheck size={30} />}
-              title="A question before a conclusion"
+              title={t('A question before a conclusion')}
             >
-              Complete the worksheet to review its structure. Probabilities and
-              scores need a connected, evaluated decision service.
+              {t(
+                'Complete the worksheet to review its structure. Probabilities and scores need a connected, evaluated decision service.',
+              )}
             </EmptyState>
           )}
         </aside>
@@ -1184,28 +1354,34 @@ const CONNECTIONS = [
 ] as const;
 
 function ConnectionsPage({ state }: WorkspacePagesProps) {
+  const t = useT();
   const [selected, setSelected] = useState<string | null>(null);
   return (
     <section className="cp-page cp-utility">
       <PageHeading
-        title="Connections"
-        description="Only the access you choose. See what is connected and where your information can go."
+        title={t('Connections')}
+        description={t(
+          'Only the access you choose. See what is connected and where your information can go.',
+        )}
       />
       <div className="cp-local-connection">
         <span className="cp-connection-icon">
           <MotionIcon name="rooms" size={20} />
         </span>
         <div>
-          <h2>This browser</h2>
+          <h2>{t('This browser')}</h2>
           <p>
-            {state.rooms.length}{' '}
-            {state.rooms.length === 1 ? 'project' : 'projects'} ·{' '}
-            {state.briefs.length} saved{' '}
-            {state.briefs.length === 1 ? 'Brief' : 'Briefs'}
+            {state.rooms.length === 1
+              ? t('{count} project', { count: state.rooms.length })
+              : t('{count} projects', { count: state.rooms.length })}{' '}
+            ·{' '}
+            {state.briefs.length === 1
+              ? t('{count} saved Brief', { count: state.briefs.length })
+              : t('{count} saved Briefs', { count: state.briefs.length })}
           </p>
         </div>
         <span className="cp-local-label">
-          Local workspace
+          {t('Local workspace')}
           <Check size={14} />
         </span>
       </div>
@@ -1230,10 +1406,12 @@ function ConnectionsPage({ state }: WorkspacePagesProps) {
                   />
                 </span>
                 <span className="cp-connection-copy">
-                  <strong>{item.name}</strong>
-                  <span>{item.description}</span>
+                  <strong>{t(item.name)}</strong>
+                  <span>{t(item.description)}</span>
                 </span>
-                <span className="cp-connection-state">Not connected</span>
+                <span className="cp-connection-state">
+                  {t('Not connected')}
+                </span>
                 <ChevronRight
                   size={17}
                   className={selected === item.id ? 'is-open' : ''}
@@ -1244,10 +1422,10 @@ function ConnectionsPage({ state }: WorkspacePagesProps) {
                   id={`cp-connection-${item.id}`}
                   className="cp-connection-detail"
                 >
-                  <p>{item.detail}</p>
+                  <p>{t(item.detail)}</p>
                   <span>
                     <LockKeyhole size={14} />
-                    No permissions granted
+                    {t('No permissions granted')}
                   </span>
                 </div>
               )}
@@ -1256,35 +1434,41 @@ function ConnectionsPage({ state }: WorkspacePagesProps) {
         })}
       </div>
       <p className="cp-footer-note">
-        No account connections are required to explore your local workspace.
+        {t(
+          'No account connections are required to explore your local workspace.',
+        )}
       </p>
     </section>
   );
 }
 
 function PursePage({ onToast }: WorkspacePagesProps) {
+  const t = useT();
   const [budget, setBudget] = useState('');
   const [saved, setSaved] = useState<string | null>(null);
   const amount = Number(budget);
   return (
     <section className="cp-page cp-purse">
       <PageHeading
-        title="Purse"
-        description="Know what a request will cost. Keep a clear record of what you choose to spend."
+        title={t('Purse')}
+        description={t(
+          'Know what a request will cost. Keep a clear record of what you choose to spend.',
+        )}
       />
       <div className="cp-purse-layout">
         <div className="cp-balance-area">
-          <span className="cp-eyebrow">Available balance</span>
+          <span className="cp-eyebrow">{t('Available balance')}</span>
           <p className="cp-balance">
             — <span>USDC</span>
           </p>
           <span className="cp-status">
             <span />
-            Wallet and payments not connected
+            {t('Wallet and payments not connected')}
           </span>
           <p>
-            Your balance will appear when a wallet and the payment service are
-            connected.
+            {t(
+              'Your balance will appear when a wallet and the payment service are connected.',
+            )}
           </p>
         </div>
         <form
@@ -1299,12 +1483,14 @@ function PursePage({ onToast }: WorkspacePagesProps) {
             )
               return;
             setSaved(amount.toFixed(2));
-            onToast('Spending plan saved in this view. No live limit was set.');
+            onToast(
+              t('Spending plan saved in this view. No live limit was set.'),
+            );
           }}
         >
-          <h2>A plan for your spending</h2>
-          <p>Set an intended monthly amount for your draft.</p>
-          <label htmlFor="cp-budget">Monthly target</label>
+          <h2>{t('A plan for your spending')}</h2>
+          <p>{t('Set an intended monthly amount for your draft.')}</p>
+          <label htmlFor="cp-budget">{t('Monthly target')}</label>
           <div className="cp-money-input">
             <input
               id="cp-budget"
@@ -1328,7 +1514,7 @@ function PursePage({ onToast }: WorkspacePagesProps) {
             className="cp-button cp-button--ink"
             disabled={!budget.trim()}
           >
-            Save spending plan
+            {t('Save spending plan')}
             <MotionIcon name="select" size={20} />
           </button>
           {saved !== null && (
@@ -1353,31 +1539,33 @@ function PursePage({ onToast }: WorkspacePagesProps) {
               }
             >
               <MotionIcon name="download" size={20} />
-              Download {saved} USDC plan
+              {t('Download {amount} USDC plan', { amount: saved })}
             </button>
           )}
           <p className="cp-fineprint">
-            A planning amount only. It does not move funds or enforce a spending
-            limit.
+            {t(
+              'A planning amount only. It does not move funds or enforce a spending limit.',
+            )}
           </p>
         </form>
       </div>
       <div className="cp-ledger">
         <div className="cp-ledger-heading">
-          <h2>Receipts</h2>
-          <span>No settled activity</span>
+          <h2>{t('Receipts')}</h2>
+          <span>{t('No settled activity')}</span>
         </div>
         <div className="cp-ledger-columns" aria-hidden="true">
-          <span>Activity</span>
-          <span>Reference</span>
-          <span>Amount</span>
+          <span>{t('Activity')}</span>
+          <span>{t('Reference')}</span>
+          <span>{t('Amount')}</span>
         </div>
         <EmptyState
           icon={<MotionIcon name="brief" size={24} />}
-          title="Every real request, accounted for"
+          title={t('Every real request, accounted for')}
         >
-          Receipts will appear after connected requests settle. The local
-          preview does not charge you.
+          {t(
+            'Receipts will appear after connected requests settle. The local preview does not charge you.',
+          )}
         </EmptyState>
       </div>
     </section>
@@ -1393,6 +1581,7 @@ type ChapterDraft = {
 };
 
 function ChaptersPage({ state, onToast }: WorkspacePagesProps) {
+  const t = useT();
   const [name, setName] = useState('');
   const [purpose, setPurpose] = useState('');
   const [rooms, setRooms] = useState<string[]>([]);
@@ -1414,22 +1603,31 @@ function ChaptersPage({ state, onToast }: WorkspacePagesProps) {
     setName('');
     setPurpose('');
     setRooms([]);
-    onToast('Chapter plan saved in this view. No access was shared.');
+    onToast(t('Chapter plan saved in this view. No access was shared.'));
   };
   const exportPlan = (draft: ChapterDraft) =>
     downloadText(
       `${filename(draft.name)}-chapter-plan.md`,
-      `# ${draft.name}\n\n${draft.purpose}\n\n## Proposed projects\n\n${draft.rooms.map((id) => `- ${state.rooms.find((room) => room.id === id)?.name || 'Removed project'}`).join('\n') || 'No projects selected.'}\n\n## Sharing preference\n\n${draft.access}\n\nLocal draft only. No invitations sent, permissions granted, shared budget created or Squads account connected.\n`,
+      `# ${draft.name}\n\n${draft.purpose}\n\n## ${t('Proposed projects')}\n\n${
+        draft.rooms
+          .map((id) => {
+            const room = state.rooms.find((room) => room.id === id);
+            return `- ${room ? roomLabel(room, t) : t('Removed project')}`;
+          })
+          .join('\n') || t('No projects selected.')
+      }\n\n## ${t('Sharing preference')}\n\n${t(draft.access)}\n\n${t('Local draft only. No invitations sent, permissions granted, shared budget created or Squads account connected.')}\n`,
     );
   return (
     <section className="cp-page cp-chapters">
       <PageHeading
-        title="Chapters"
-        description="A shared direction for a few good minds. Plan the projects and boundaries for your team."
+        title={t('Chapters')}
+        description={t(
+          'A shared direction for a few good minds. Plan the projects and boundaries for your team.',
+        )}
       >
         <span className="cp-status">
           <span />
-          Team services not connected
+          {t('Team services not connected')}
         </span>
       </PageHeading>
       <div className="cp-plan-layout">
@@ -1438,16 +1636,17 @@ function ChaptersPage({ state, onToast }: WorkspacePagesProps) {
             <MotionIcon name="chapters" size={24} />
           </span>
           <h2>
-            Work together.
-            <br />
-            Choose what is shared.
+            {t.rich('Work together.{break}Choose what is shared.', {
+              break: <br />,
+            })}
           </h2>
           <p>
-            A Chapter will bring people, projects and a shared allowance
-            together. Start by deciding what belongs in yours.
+            {t(
+              'A Chapter will bring people, projects and a shared allowance together. Start by deciding what belongs in yours.',
+            )}
           </p>
           {drafts.length > 0 && (
-            <div className="cp-chapter-drafts" aria-label="Chapter drafts">
+            <div className="cp-chapter-drafts" aria-label={t('Chapter drafts')}>
               {drafts.map((draft) => (
                 <article key={draft.id}>
                   <span>
@@ -1456,16 +1655,20 @@ function ChaptersPage({ state, onToast }: WorkspacePagesProps) {
                   <div>
                     <h3>{draft.name}</h3>
                     <p>
-                      {draft.rooms.length} proposed{' '}
-                      {draft.rooms.length === 1 ? 'project' : 'projects'} ·
-                      local draft
+                      {draft.rooms.length === 1
+                        ? t('{count} proposed project · local draft', {
+                            count: draft.rooms.length,
+                          })
+                        : t('{count} proposed projects · local draft', {
+                            count: draft.rooms.length,
+                          })}
                     </p>
                   </div>
                   <button
                     data-icon-trigger
                     className="cp-icon-button"
                     type="button"
-                    aria-label={`Download ${draft.name} plan`}
+                    aria-label={t('Download {name} plan', { name: draft.name })}
                     onClick={() => exportPlan(draft)}
                   >
                     <MotionIcon name="download" size={20} />
@@ -1477,34 +1680,37 @@ function ChaptersPage({ state, onToast }: WorkspacePagesProps) {
           <div className="cp-boundary-note">
             <LockKeyhole size={17} />
             <span>
-              Project access stays personal. Save or download a plan before
-              connecting team services.
+              {t(
+                'Project access stays personal. Save or download a plan before connecting team services.',
+              )}
             </span>
           </div>
         </div>
         <form className="cp-form-paper" onSubmit={create}>
           <label>
-            Chapter name
+            {t('Chapter name')}
             <input
               value={name}
               onChange={(event) => setName(event.target.value)}
               maxLength={80}
-              placeholder="What brings your team together?"
+              placeholder={t('What brings your team together?')}
               required
             />
           </label>
           <label>
-            Purpose
+            {t('Purpose')}
             <textarea
               className="cp-short-input"
               value={purpose}
               onChange={(event) => setPurpose(event.target.value)}
               maxLength={2000}
-              placeholder="A short note about the work you want to do together."
+              placeholder={t(
+                'A short note about the work you want to do together.',
+              )}
             />
           </label>
           <fieldset className="cp-room-checklist">
-            <legend>Projects to include in the plan</legend>
+            <legend>{t('Projects to include in the plan')}</legend>
             {state.rooms.map((room) => (
               <label key={room.id}>
                 <input
@@ -1519,22 +1725,28 @@ function ChaptersPage({ state, onToast }: WorkspacePagesProps) {
                   }
                 />
                 <MotionIcon name="rooms" size={20} />
-                <span>{room.name}</span>
+                <span>{roomLabel(room, t)}</span>
               </label>
             ))}
             {!state.rooms.length && (
-              <p>No projects yet. You can add them to a later plan.</p>
+              <p>{t('No projects yet. You can add them to a later plan.')}</p>
             )}
           </fieldset>
           <label>
-            Sharing preference
+            {t('Sharing preference')}
             <select
               value={access}
               onChange={(event) => setAccess(event.target.value)}
             >
-              <option>Review before sharing</option>
-              <option>Members can contribute</option>
-              <option>Members can view only</option>
+              <option value="Review before sharing">
+                {t('Review before sharing')}
+              </option>
+              <option value="Members can contribute">
+                {t('Members can contribute')}
+              </option>
+              <option value="Members can view only">
+                {t('Members can view only')}
+              </option>
             </select>
           </label>
           <button
@@ -1543,12 +1755,13 @@ function ChaptersPage({ state, onToast }: WorkspacePagesProps) {
             type="submit"
             disabled={!name.trim()}
           >
-            Save Chapter plan
+            {t('Save Chapter plan')}
             <MotionIcon name="forward" size={20} />
           </button>
           <p className="cp-fineprint">
-            A local draft. No invitation, shared access or team budget is
-            created.
+            {t(
+              'A local draft. No invitation, shared access or team budget is created.',
+            )}
           </p>
         </form>
       </div>

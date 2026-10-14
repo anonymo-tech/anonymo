@@ -1,5 +1,6 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
 import { useId, useLayoutEffect, useRef, type KeyboardEvent } from 'react';
 import { AnswerCard, ProviderIcon, type AnswerActions } from './answer-card';
 import type { Turn } from './canvas-state';
@@ -47,6 +48,7 @@ export function ChatTurn({
   preference,
   onPreferenceChange,
 }: ChatTurnProps) {
+  const t = useT();
   const id = useId();
   const tabs = useRef<Record<string, HTMLButtonElement | null>>({});
   const activeAnswer =
@@ -108,8 +110,8 @@ export function ChatTurn({
       aria-labelledby={questionId}
     >
       <p className="cw-chat-prompt" id={questionId}>
-        <span className="cw-chat-sr-only">You: </span>
-        {turn.prompt}
+        <span className="cw-chat-sr-only">{t('You: ')}</span>
+        {t(turn.prompt)}
       </p>
       {activeAnswer && (
         <>
@@ -119,16 +121,19 @@ export function ChatTurn({
               role="tablist"
               aria-label={
                 comparing
-                  ? 'Model responses, comparing all. Choose a model to focus.'
-                  : 'Model responses'
+                  ? t(
+                      'Model responses, comparing all. Choose a model to focus.',
+                    )
+                  : t('Model responses')
               }
               aria-orientation="horizontal"
             >
               {turn.answers.map((answer, index) => {
-                const name =
+                const name = t(
                   answer.live?.modelName ||
-                  answer.live?.label ||
-                  modelName(answer.modelId);
+                    answer.live?.label ||
+                    modelName(answer.modelId),
+                );
                 const selected = actions.selected.includes(answer.id);
                 const active = answer.id === activeAnswerId;
                 return (
@@ -144,7 +149,11 @@ export function ChatTurn({
                     role="tab"
                     aria-selected={active}
                     aria-controls={`${id}-panel-${index}`}
-                    aria-label={selected ? `${name}, selected for Brief` : name}
+                    aria-label={
+                      selected
+                        ? t('{name}, selected for Brief', { name })
+                        : name
+                    }
                     tabIndex={active ? 0 : -1}
                     onClick={() => focusAnswer(answer.id)}
                     onKeyDown={(event) => moveTab(event, index)}
@@ -167,13 +176,21 @@ export function ChatTurn({
                 type="button"
                 aria-label={
                   several
-                    ? `Stop all ${turn.answers.length} model responses`
-                    : `Stop the ${running.live?.modelName || running.live?.label || modelName(running.modelId)} response`
+                    ? t('Stop all {count} model responses', {
+                        count: turn.answers.length,
+                      })
+                    : t('Stop the {name} response', {
+                        name: t(
+                          running.live?.modelName ||
+                            running.live?.label ||
+                            modelName(running.modelId),
+                        ),
+                      })
                 }
                 onClick={() => actions.onCancel?.(running)}
               >
                 <span className="cw-chat-stop-glyph" aria-hidden="true" />
-                {several ? 'Stop all' : 'Stop'}
+                {several ? t('Stop all') : t('Stop')}
               </button>
             )}
             {stopping && actions.onCancel && (
@@ -181,10 +198,12 @@ export function ChatTurn({
                 className="cw-chat-compare cw-chat-stop"
                 type="button"
                 disabled
-                title="Measuring usage already dispatched for an exact charge."
+                title={t(
+                  'Measuring usage already dispatched for an exact charge.',
+                )}
               >
                 <span className="cw-chat-stop-glyph" aria-hidden="true" />
-                Stopping…
+                {t('Stopping…')}
               </button>
             )}
             {turn.answers.length > 1 && (
@@ -193,8 +212,16 @@ export function ChatTurn({
                 type="button"
                 aria-label={
                   comparing
-                    ? `Focus on ${activeAnswer.live?.modelName || activeAnswer.live?.label || modelName(activeAnswer.modelId)}`
-                    : `Compare all ${turn.answers.length} responses`
+                    ? t('Focus on {name}', {
+                        name: t(
+                          activeAnswer.live?.modelName ||
+                            activeAnswer.live?.label ||
+                            modelName(activeAnswer.modelId),
+                        ),
+                      })
+                    : t('Compare all {count} responses', {
+                        count: turn.answers.length,
+                      })
                 }
                 aria-controls={`${id}-panels`}
                 onClick={() =>
@@ -204,13 +231,15 @@ export function ChatTurn({
                   })
                 }
               >
-                {comparing ? 'Focus' : 'Compare'}
+                {comparing ? t('Focus') : t('Compare')}
               </button>
             )}
           </div>
           {comparing && (
             <output className="cw-chat-compare-caption">
-              Comparing {turn.answers.length} perspectives
+              {t('Comparing {count} perspectives', {
+                count: turn.answers.length,
+              })}
             </output>
           )}
           <div
@@ -231,9 +260,11 @@ export function ChatTurn({
                   <div className="cw-chat-compare-provider" aria-hidden="true">
                     <ProviderIcon id={answer.modelId} size={18} />
                     <span>
-                      {answer.live?.modelName ||
-                        answer.live?.label ||
-                        modelName(answer.modelId)}
+                      {t(
+                        answer.live?.modelName ||
+                          answer.live?.label ||
+                          modelName(answer.modelId),
+                      )}
                     </span>
                   </div>
                 )}

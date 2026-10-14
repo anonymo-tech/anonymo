@@ -1,5 +1,7 @@
 'use client';
 
+import { useT, type Translator } from '@/lib/i18n';
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   createMediaClient,
@@ -24,6 +26,44 @@ import {
   type StudioReview,
 } from '../../lib/client/studio-review';
 import { useContentGuard } from './use-content-guard';
+
+/** Translate display messages while retaining the original request and error data. */
+export function studioMessage(message: string, t: Translator): string {
+  let match =
+    /^(Sora|A selected model) has no supported live media route\. Change the selection before continuing\.$/.exec(
+      message,
+    );
+  if (match)
+    return t(
+      '{model} has no supported live media route. Change the selection before continuing.',
+      {
+        model:
+          match[1] === 'A selected model' ? t('A selected model') : match[1],
+      },
+    );
+  match =
+    /^(Runway|Veo|Kling) has no currently reviewed video route\. Refresh the routes or change the model selection\.$/.exec(
+      message,
+    );
+  if (match)
+    return t(
+      '{model} has no currently reviewed video route. Refresh the routes or change the model selection.',
+      { model: match[1] },
+    );
+  match =
+    /^(Runway|Veo|Kling) has no reviewed (16:9|9:16|1:1) option\. Change the frame explicitly before continuing\.$/.exec(
+      message,
+    );
+  if (match)
+    return t(
+      '{model} has no reviewed {ratio} option. Change the frame explicitly before continuing.',
+      { model: match[1], ratio: match[2] },
+    );
+  match = /^(Runway|Veo|Kling) requires a shorter description\.$/.exec(message);
+  if (match)
+    return t('{model} requires a shorter description.', { model: match[1] });
+  return t(message);
+}
 
 export type { StudioDraftPreference, StudioReview };
 type StudioState = {
@@ -85,6 +125,7 @@ export function useLiveStudio({
   projectId: string | null;
   active: boolean;
 }) {
+  const t = useT();
   const scope =
     accountId && projectId && uuid.test(accountId) && uuid.test(projectId)
       ? `${accountId.toLowerCase()}:${projectId.toLowerCase()}`
@@ -467,7 +508,7 @@ export function useLiveStudio({
     ],
     review: visible.review,
     busy: visible.busy,
-    error: visible.error,
+    error: visible.error ? studioMessage(visible.error, t) : null,
     nextCursor: visible.nextCursor,
     requestReview,
     selectVariant,

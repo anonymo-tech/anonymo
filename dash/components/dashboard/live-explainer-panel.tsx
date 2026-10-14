@@ -1,5 +1,7 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
+
 import {
   useEffect,
   useId,
@@ -83,6 +85,7 @@ export function LiveExplainerPanel({
 }: {
   accountId: string | null;
 }) {
+  const t = useT();
   const [mode, setMode] = useState<'transaction' | 'program' | 'pre-sign'>(
     'transaction',
   );
@@ -101,27 +104,27 @@ export function LiveExplainerPanel({
   };
   return (
     <>
-      <fieldset className="ct-segments" aria-label="Inspection mode">
+      <fieldset className="ct-segments" aria-label={t('Inspection mode')}>
         <button
           type="button"
           aria-pressed={mode === 'transaction'}
           onClick={() => chooseMode('transaction')}
         >
-          Transaction
+          {t('Transaction')}
         </button>
         <button
           type="button"
           aria-pressed={mode === 'program'}
           onClick={() => chooseMode('program')}
         >
-          Program
+          {t('Program')}
         </button>
         <button
           type="button"
           aria-pressed={mode === 'pre-sign'}
           onClick={() => chooseMode('pre-sign')}
         >
-          Pre-sign
+          {t('Pre-sign')}
         </button>
       </fieldset>
       <div hidden={mode !== 'transaction'}>
@@ -156,6 +159,7 @@ function LiveTransactionReader({
   accountId: string | null;
   controlRef: Ref<ProgramReaderControl>;
 }) {
+  const t = useT();
   const fieldId = useId();
   const [draft, setDraft] = useState({ accountId, value: '' });
   const [response, setResponse] = useState<{
@@ -261,13 +265,13 @@ function LiveTransactionReader({
   return (
     <>
       <p className="ct-intro">
-        Inspect an existing Solana transaction through the configured network’s
-        RPC. This deterministic decoder reads transaction data; it does not ask
-        a model, connect a wallet, sign, simulate, or submit a transaction.
+        {t(
+          'Inspect an existing Solana transaction through the configured network’s RPC. This deterministic decoder reads transaction data; it does not ask a model, connect a wallet, sign, simulate, or submit a transaction.',
+        )}
       </p>
       {!accountId && (
         <p className="ct-note">
-          Sign in through Account to read an existing transaction.
+          {t('Sign in through Account to read an existing transaction.')}
         </p>
       )}
       <form
@@ -277,7 +281,7 @@ function LiveTransactionReader({
           void inspect();
         }}
       >
-        <label htmlFor={fieldId}>Transaction signature</label>
+        <label htmlFor={fieldId}>{t('Transaction signature')}</label>
         <input
           id={fieldId}
           name="transaction-signature"
@@ -294,12 +298,12 @@ function LiveTransactionReader({
             setResponse(null);
             setNotice(null);
           }}
-          placeholder="Paste an existing transaction signature"
+          placeholder={t('Paste an existing transaction signature')}
         />
         <p id={`${fieldId}-help`} className="ct-note">
-          Paste only the public transaction signature, never a private key or
-          recovery phrase. The signature will be sent to the configured RPC
-          service.
+          {t(
+            'Paste only the public transaction signature, never a private key or recovery phrase. The signature will be sent to the configured RPC service.',
+          )}
         </p>
         <div>
           <button
@@ -309,11 +313,11 @@ function LiveTransactionReader({
             disabled={!accountId || pending || !signature.trim()}
           >
             <MotionIcon name="search" size={18} />
-            {pending ? 'Reading transaction…' : 'Inspect transaction'}
+            {pending ? t('Reading transaction…') : t('Inspect transaction')}
           </button>
           {pending && (
             <button className="ct-button" type="button" onClick={cancelRead}>
-              Cancel read
+              {t('Cancel read')}
             </button>
           )}
         </div>
@@ -321,38 +325,43 @@ function LiveTransactionReader({
       {error && (
         <output className="ct-note">
           <Info size={15} aria-hidden="true" />
-          <span>{error}</span>
+          <span>{t(error)}</span>
         </output>
       )}
       {explanation && (
         <>
           <section
             className="ct-detail ct-example"
-            aria-label="Execution and decoder warnings"
+            aria-label={t('Execution and decoder warnings')}
           >
-            <span className="ct-eyebrow">Read-only RPC result</span>
+            <span className="ct-eyebrow">{t('Read-only RPC result')}</span>
             <h3>
               {explanation.execution === 'failed'
-                ? 'Transaction failed'
+                ? t('Transaction failed')
                 : explanation.execution === 'unknown'
-                  ? 'Execution outcome unknown'
-                  : 'Transaction executed'}
+                  ? t('Execution outcome unknown')
+                  : t('Transaction executed')}
             </h3>
             <p>
               {explanation.execution === 'failed'
-                ? 'The recorded instructions describe attempted actions. Their requested state changes did not commit; a network fee may still have been charged.'
+                ? t(
+                    'The recorded instructions describe attempted actions. Their requested state changes did not commit; a network fee may still have been charged.',
+                  )
                 : explanation.execution === 'unknown'
-                  ? 'The available data does not establish whether execution succeeded. Do not infer that the listed actions completed.'
-                  : 'The RPC reports successful execution. This is not a determination that the transaction was safe or intended.'}
+                  ? t(
+                      'The available data does not establish whether execution succeeded. Do not infer that the listed actions completed.',
+                    )
+                  : t(
+                      'The RPC reports successful execution. This is not a determination that the transaction was safe or intended.',
+                    )}
             </p>
             <p className="ct-takeaway">
-              Finalized inclusion is not a safety guarantee. Unknown programs,
-              unsupported instructions, and missing metadata can leave effects
-              unexplained. Mint state, invoked hook behavior, program upgrades,
-              and current permissions have not been inspected.
+              {t(
+                'Finalized inclusion is not a safety guarantee. Unknown programs, unsupported instructions, and missing metadata can leave effects unexplained. Mint state, invoked hook behavior, program upgrades, and current permissions have not been inspected.',
+              )}
             </p>
             {explanation.flags.length ? (
-              <div aria-label="Decoder flags">
+              <div aria-label={t('Decoder flags')}>
                 {explanation.flags.map((flag, index) => (
                   <div
                     className="ct-note"
@@ -366,67 +375,74 @@ function LiveTransactionReader({
                     <div>
                       <strong>
                         {flag.severity === 'critical'
-                          ? 'Critical'
+                          ? t('Critical')
                           : flag.severity === 'warning'
-                            ? 'Warning'
-                            : 'Information'}
+                            ? t('Warning')
+                            : t('Information')}
                         {flag.instruction !== undefined
-                          ? ` · instruction ${flag.instruction}`
+                          ? t(' · instruction {instruction}', {
+                              instruction: flag.instruction,
+                            })
                           : ''}
                       </strong>
-                      <p>{flag.message}</p>
+                      <p>{t(flag.message)}</p>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
               <p className="ct-note">
-                The supported decoder did not return a flag. This does not
-                establish that every effect was decoded or that the transaction
-                was safe.
+                {t(
+                  'The supported decoder did not return a flag. This does not establish that every effect was decoded or that the transaction was safe.',
+                )}
               </p>
             )}
           </section>
           <section
             className="ct-detail ct-example"
-            aria-label="Transaction evidence"
+            aria-label={t('Transaction evidence')}
           >
             <div className="ct-detail-heading">
-              <h3>Transaction record</h3>
-              <span className="ct-status ct-status-neutral">Finalized</span>
+              <h3>{t('Transaction record')}</h3>
+              <span className="ct-status ct-status-neutral">
+                {t('Finalized')}
+              </span>
             </div>
             <dl className="ct-facts">
               <div>
-                <dt>Network</dt>
+                <dt>{t('Network')}</dt>
                 <dd>
                   {explanation.cluster === 'devnet'
-                    ? 'Devnet · test network'
-                    : 'Mainnet beta'}
+                    ? t('Devnet · test network')
+                    : t('Mainnet beta')}
                 </dd>
               </div>
               <div>
-                <dt>Genesis hash</dt>
+                <dt>{t('Genesis hash')}</dt>
                 <dd className="ct-code">{explanation.genesisHash}</dd>
               </div>
               <div>
-                <dt>Signature</dt>
+                <dt>{t('Signature')}</dt>
                 <dd className="ct-code">{explanation.signature}</dd>
               </div>
               <div>
-                <dt>Slot</dt>
+                <dt>{t('Slot')}</dt>
                 <dd>{explanation.slot}</dd>
               </div>
               <div>
-                <dt>Decoder</dt>
+                <dt>{t('Decoder')}</dt>
                 <dd>
-                  Version {explanation.decoderVersion} · instruction data only
+                  {t('Version {version} · instruction data only', {
+                    version: explanation.decoderVersion,
+                  })}
                 </dd>
               </div>
               <div>
-                <dt>Instructions</dt>
+                <dt>{t('Instructions')}</dt>
                 <dd>
-                  {explanation.instructions.length} decoded or marked
-                  unsupported
+                  {t('{count} decoded or marked unsupported', {
+                    count: explanation.instructions.length,
+                  })}
                 </dd>
               </div>
             </dl>
@@ -437,27 +453,44 @@ function LiveTransactionReader({
               key={instruction.location}
             >
               <summary>
-                Instruction {instruction.location} ·{' '}
-                {kindLabels[instruction.kind] ?? readableName(instruction.kind)}
+                {t('Instruction {location} · {kind}', {
+                  location: instruction.location,
+                  kind: t(
+                    kindLabels[instruction.kind] ??
+                      readableName(instruction.kind),
+                  ),
+                })}
               </summary>
-              <p className="ct-note">{instruction.description}</p>
+              <p className="ct-note">{t(instruction.description)}</p>
               <dl className="ct-facts">
                 <div>
-                  <dt>Program</dt>
+                  <dt>{t('Program')}</dt>
                   <dd className="ct-code">
-                    {instruction.programId ?? 'Unavailable or malformed'}
+                    {instruction.programId ?? t('Unavailable or malformed')}
                   </dd>
                 </div>
                 {Object.entries(instruction.fields).map(([key, value]) => (
                   <div key={key}>
-                    <dt>{fieldLabels[key] ?? readableName(key)}</dt>
-                    <dd className="ct-code">{value}</dd>
+                    <dt>{t(fieldLabels[key] ?? readableName(key))}</dt>
+                    <dd className="ct-code">
+                      {[
+                        'authorityType',
+                        'accountState',
+                        'auditorKeyConfigured',
+                        'autoApproveNewAccounts',
+                      ].includes(key) ||
+                      value === 'none' ||
+                      (key === 'amount' &&
+                        value === 'confidential; not decoded')
+                        ? t(value)
+                        : value}
+                    </dd>
                   </div>
                 ))}
               </dl>
               {instruction.flags.map((flag, index) => (
                 <p className="ct-note" key={`${flag.code}:${index}`}>
-                  {flag.message}
+                  {t(flag.message)}
                 </p>
               ))}
             </details>

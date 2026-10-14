@@ -1,12 +1,14 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
+
 import { useEffect, useState } from 'react';
+import { studioMessage } from './use-live-studio';
 import { formatUsd6 } from '../../lib/client/workspace';
 import {
   hasUncertainStudioApproval,
   studioPendingMaximum,
   studioVariantKey,
-  studioVariantLabel,
   type StudioReview,
 } from '../../lib/client/studio-review';
 
@@ -27,6 +29,7 @@ export function LiveStudioReview({
   onApprove: () => void;
   onDismiss: () => void;
 }) {
+  const t = useT();
   const [now, setNow] = useState(Date.now);
   const timed = review.entries.some((entry) => entry.phase === 'quoted');
   useEffect(() => {
@@ -59,56 +62,73 @@ export function LiveStudioReview({
     <div className="cw-simple-form">
       <p className="ct-intro">
         {uncertain
-          ? 'A submission was interrupted. Recover its original approval before starting anything else. Accepted jobs are never sent again, and recovery does not start the unsubmitted models.'
+          ? t(
+              'A submission was interrupted. Recover its original approval before starting anything else. Accepted jobs are never sent again, and recovery does not start the unsubmitted models.',
+            )
           : accepted === review.entries.length
-            ? 'These jobs are saved. Generation, processing and final billing remain visible in Studio.'
-            : 'Review the exact video options and maximum reservation for each model before generation starts.'}
+            ? t(
+                'These jobs are saved. Generation, processing and final billing remain visible in Studio.',
+              )
+            : t(
+                'Review the exact video options and maximum reservation for each model before generation starts.',
+              )}
       </p>
-      <section className="ct-detail" aria-label="Studio request summary">
+      <section className="ct-detail" aria-label={t('Studio request summary')}>
         <div className="ct-detail-heading">
-          <h3>Video comparison</h3>
+          <h3>{t('Video comparison')}</h3>
           <span className="ct-status">
-            {review.entries.length}{' '}
-            {review.entries.length === 1 ? 'model' : 'models'}
+            {review.entries.length === 1
+              ? t('{count} model', { count: review.entries.length })
+              : t('{count} models', { count: review.entries.length })}
           </span>
         </div>
         <p className="ct-code">{review.prompt}</p>
         <dl className="ct-facts">
           <div>
-            <dt>Draft preference</dt>
+            <dt>{t('Draft preference')}</dt>
             <dd>
-              {review.requestedRatio} · {review.requestedDuration} seconds
+              {t('{ratio} · {duration} seconds', {
+                ratio: review.requestedRatio,
+                duration: review.requestedDuration,
+              })}
             </dd>
           </div>
           <div>
-            <dt>Exact generation options</dt>
+            <dt>{t('Exact generation options')}</dt>
             <dd>
-              Shown per model below. A draft duration may differ from supported
-              model durations.
+              {t(
+                'Shown per model below. A draft duration may differ from supported model durations.',
+              )}
             </dd>
           </div>
           <div>
-            <dt>Maximum still to reserve</dt>
+            <dt>{t('Maximum still to reserve')}</dt>
             <dd>
               {maximum === null
-                ? 'Quotes required for all remaining models'
+                ? t('Quotes required for all remaining models')
                 : formatUsd6(maximum)}
             </dd>
           </div>
           {accepted > 0 && (
             <div>
-              <dt>Already submitted</dt>
+              <dt>{t('Already submitted')}</dt>
               <dd>
-                {accepted} {accepted === 1 ? 'job' : 'jobs'} · excluded from new
-                submissions
+                {accepted === 1
+                  ? t('{count} job · excluded from new submissions', {
+                      count: accepted,
+                    })
+                  : t('{count} jobs · excluded from new submissions', {
+                      count: accepted,
+                    })}
               </dd>
             </div>
           )}
           <div>
-            <dt>Privacy route</dt>
+            <dt>{t('Privacy route')}</dt>
             <dd>
-              Standard · The inference gateway and the upstream model provider receive the
-              description in plaintext.
+              {t(
+                'Standard · The inference gateway and the upstream model provider receive the description in plaintext.',
+              )}
             </dd>
           </div>
         </dl>
@@ -117,28 +137,28 @@ export function LiveStudioReview({
         <section
           className="ct-detail"
           key={entry.family}
-          aria-label={`${entry.name} generation terms`}
+          aria-label={t('{name} generation terms', { name: entry.name })}
         >
           <div className="ct-detail-heading">
             <h3>{entry.name}</h3>
             <span className="ct-status">
               {entry.phase === 'accepted'
-                ? 'Submitted'
+                ? t('Submitted')
                 : entry.phase === 'uncertain'
-                  ? 'Outcome unknown'
+                  ? t('Outcome unknown')
                   : entry.phase === 'submitting'
-                    ? 'Submitting…'
+                    ? t('Submitting…')
                     : entry.phase === 'rejected'
-                      ? 'Not accepted'
+                      ? t('Not accepted')
                       : entry.phase === 'quoted'
-                        ? 'Quoted'
-                        : 'Quote needed'}
+                        ? t('Quoted')
+                        : t('Quote needed')}
             </span>
           </div>
           <label>
-            Exact {entry.name} variant
+            {t('Exact {name} variant', { name: entry.name })}
             <select
-              aria-label={`${entry.name} generation variant`}
+              aria-label={t('{name} generation variant', { name: entry.name })}
               value={studioVariantKey(entry.options)}
               disabled={selectionLocked}
               onChange={(event) =>
@@ -152,51 +172,63 @@ export function LiveStudioReview({
                     key={studioVariantKey(variant.options)}
                     value={studioVariantKey(variant.options)}
                   >
-                    {studioVariantLabel(variant.options)}
+                    {variant.options.kind === 'video'
+                      ? t('{duration}s · {ratio} · {quality}', {
+                          duration: variant.options.duration,
+                          ratio: variant.options.aspectRatio,
+                          quality:
+                            variant.options.quality === 'standard'
+                              ? t('standard')
+                              : variant.options.quality,
+                        })
+                      : `${variant.options.resolution} · ${variant.options.aspectRatio}`}
                   </option>
                 ))}
             </select>
           </label>
           <dl className="ct-facts">
             <div>
-              <dt>Model</dt>
+              <dt>{t('Model')}</dt>
               <dd>{entry.route.modelId}</dd>
             </div>
             <div>
-              <dt>Maximum reservation</dt>
+              <dt>{t('Maximum reservation')}</dt>
               <dd>
                 {entry.quote
                   ? formatUsd6(entry.quote.maximumUsd6)
-                  : 'Not quoted'}
+                  : t('Not quoted')}
               </dd>
             </div>
             {entry.quote && (
               <div>
-                <dt>Quote</dt>
+                <dt>{t('Quote')}</dt>
                 <dd>
                   {entry.phase === 'accepted'
-                    ? 'Accepted terms retained'
+                    ? t('Accepted terms retained')
                     : ['uncertain', 'submitting'].includes(entry.phase)
-                      ? 'Original key retained for recovery'
+                      ? t('Original key retained for recovery')
                       : Date.parse(entry.quote.expiresAt) <= now
-                        ? 'Expired — refresh quotes'
-                        : `Expires ${entry.quote.expiresAt.slice(11, 19)} UTC`}
+                        ? t('Expired — refresh quotes')
+                        : t('Expires {time} UTC', {
+                            time: entry.quote.expiresAt.slice(11, 19),
+                          })}
                 </dd>
               </div>
             )}
             <div>
-              <dt>Retention</dt>
-              <dd>{entry.route.privacy.retentionDisclosure}</dd>
+              <dt>{t('Retention')}</dt>
+              <dd>{t(entry.route.privacy.retentionDisclosure)}</dd>
             </div>
           </dl>
-          {entry.error && <output className="ct-note">{entry.error}</output>}
+          {entry.error && (
+            <output className="ct-note">{studioMessage(entry.error, t)}</output>
+          )}
         </section>
       ))}
       <p className="ct-note">
-        Each model creates a separate job and balance hold. A hold is a maximum
-        reservation; confirmed provider cost determines settlement. Cancellation
-        after dispatch may still incur a charge. Provider cancellation is
-        unavailable. Saved media is served only after processing succeeds.
+        {t(
+          'Each model creates a separate job and balance hold. A hold is a maximum reservation; confirmed provider cost determines settlement. Cancellation after dispatch may still incur a charge. Provider cancellation is unavailable. Saved media is served only after processing succeeds.',
+        )}
       </p>
       {error && (
         <output className="ct-note" role="alert">
@@ -210,7 +242,7 @@ export function LiveStudioReview({
           onClick={onDismiss}
           disabled={busy || uncertain}
         >
-          {accepted ? 'Close review' : 'Keep editing'}
+          {accepted ? t('Close review') : t('Keep editing')}
         </button>
         {remaining.length > 0 && !uncertain && (
           <button
@@ -220,10 +252,10 @@ export function LiveStudioReview({
             disabled={busy}
           >
             {busy
-              ? 'Checking…'
+              ? t('Checking…')
               : needsQuotes
-                ? 'Get current quotes'
-                : 'Refresh quotes'}
+                ? t('Get current quotes')
+                : t('Refresh quotes')}
           </button>
         )}
         {remaining.length > 0 && (
@@ -234,10 +266,12 @@ export function LiveStudioReview({
             disabled={busy || (!uncertain && (needsQuotes || maximum === null))}
           >
             {busy
-              ? 'Checking saved requests…'
+              ? t('Checking saved requests…')
               : uncertain
-                ? 'Recover interrupted approvals'
-                : `Reserve up to ${formatUsd6(maximum ?? '0')} and generate`}
+                ? t('Recover interrupted approvals')
+                : t('Reserve up to {amount} and generate', {
+                    amount: formatUsd6(maximum ?? '0'),
+                  })}
           </button>
         )}
       </div>

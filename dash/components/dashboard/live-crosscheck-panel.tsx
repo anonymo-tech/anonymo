@@ -1,5 +1,6 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
 import { useEffect, useId, useRef, useState } from 'react';
 import { Info, AlertTriangle } from 'lucide-react';
 import { MotionIcon } from './motion-icon';
@@ -43,6 +44,7 @@ export function LiveCrossCheckPanel({
 }: {
   accountId: string | null;
 }) {
+  const t = useT();
   const labelId = useId(),
     checkContent = useContentGuard();
   const [projects, setProjects] = useState<ServiceProject[]>([]),
@@ -508,43 +510,48 @@ export function LiveCrossCheckPanel({
   return (
     <>
       <p className="ct-intro">
-        Check explicit claims against text you provide. Independent reviewers
-        see the same source snapshots without one another’s answers. Exact quote
-        checks verify text presence; agreement is not proof that a claim is
-        true.
+        {t(
+          'Check explicit claims against text you provide. Independent reviewers see the same source snapshots without one another’s answers. Exact quote checks verify text presence; agreement is not proof that a claim is true.',
+        )}
       </p>
       {!accountId && (
         <p className="ct-note">
-          Sign in through Account to prepare or read a Cross-Check.
+          {t('Sign in through Account to prepare or read a Cross-Check.')}
         </p>
       )}
       {loading && (
         <output className="ct-note">
-          Loading reviewed rosters and your projects…
+          {t('Loading reviewed rosters and your projects…')}
         </output>
       )}
       {capability && !capability.configured && (
         <div className="ct-claim">
-          <strong>Live reviews unavailable</strong>
+          <strong>{t('Live reviews unavailable')}</strong>
           <p>
             {capability.reason === 'REVIEWED_ROSTER_REQUIRED'
-              ? 'The operator must configure a current reviewed roster before model reviews can run.'
-              : 'The operator has not enabled and configured Cross-Check execution. Saving a source or preparing a plan does not run models.'}
+              ? t(
+                  'The operator must configure a current reviewed roster before model reviews can run.',
+                )
+              : t(
+                  'The operator has not enabled and configured Cross-Check execution. Saving a source or preparing a plan does not run models.',
+                )}
           </p>
         </div>
       )}
       {error && (
         <output className="ct-note">
           <AlertTriangle size={15} aria-hidden="true" />
-          <span>{error}</span>
+          <span>{t(error)}</span>
         </output>
       )}
       {warnings.map((warning, index) => (
         <p className="ct-note" key={`${warning}:${index}`}>
           <AlertTriangle size={15} aria-hidden="true" />
           <span>
-            {warning} This text is treated as source data, not an instruction to
-            the reviewer.
+            {t(
+              '{warning} This text is treated as source data, not an instruction to the reviewer.',
+              { warning: t(warning) },
+            )}
           </span>
         </p>
       ))}
@@ -552,7 +559,9 @@ export function LiveCrossCheckPanel({
         <>
           {!projects.length ? (
             <p className="ct-note">
-              Create an account project in Projects, then reopen Cross-Check.
+              {t(
+                'Create an account project in Projects, then reopen Cross-Check.',
+              )}
             </p>
           ) : (
             <form
@@ -562,7 +571,7 @@ export function LiveCrossCheckPanel({
                 void prepare();
               }}
             >
-              <label htmlFor={`${labelId}-project`}>Project</label>
+              <label htmlFor={`${labelId}-project`}>{t('Project')}</label>
               <select
                 id={`${labelId}-project`}
                 className="ct-button"
@@ -603,11 +612,11 @@ export function LiveCrossCheckPanel({
                     })
                   }
                 >
-                  Load more projects
+                  {t('Load more projects')}
                 </button>
               )}
               <label htmlFor={`${labelId}-roster`}>
-                Independent reviewer roster
+                {t('Independent reviewer roster')}
               </label>
               <select
                 id={`${labelId}-roster`}
@@ -617,29 +626,34 @@ export function LiveCrossCheckPanel({
                 onChange={(event) => setRosterId(event.target.value)}
               >
                 {!rosters.length && (
-                  <option value="">No reviewed roster available</option>
+                  <option value="">{t('No reviewed roster available')}</option>
                 )}
                 {rosters.map((roster) => (
                   <option key={roster.id} value={roster.id}>
-                    {roster.label} · {roster.reviewers.length} families
+                    {t('{roster} · {count} families', {
+                      roster: t(roster.label),
+                      count: roster.reviewers.length,
+                    })}
                   </option>
                 ))}
               </select>
               {roster && (
                 <p className="ct-note">
-                  {roster.reviewers
-                    .map(
-                      (reviewer) =>
-                        `${reviewer.modelId} (${reviewer.distribution})`,
-                    )
-                    .join(' · ')}
-                  . Up to {maximumClaims} claims for this roster.
+                  {t('{reviewers}. Up to {count} claims for this roster.', {
+                    reviewers: roster.reviewers
+                      .map(
+                        (reviewer) =>
+                          `${reviewer.modelId} (${t(reviewer.distribution)})`,
+                      )
+                      .join(' · '),
+                    count: maximumClaims,
+                  })}
                 </p>
               )}
               {claims.map((claim, index) => (
                 <div className="cw-simple-form" key={claim.id}>
                   <label htmlFor={`${labelId}-${claim.id}`}>
-                    Claim {index + 1}
+                    {t('Claim {number}', { number: index + 1 })}
                   </label>
                   <textarea
                     className="ct-detail"
@@ -657,7 +671,9 @@ export function LiveCrossCheckPanel({
                         ),
                       )
                     }
-                    placeholder="One specific claim that these sources can support or contradict"
+                    placeholder={t(
+                      'One specific claim that these sources can support or contradict',
+                    )}
                   />
                   {claims.length > 1 && (
                     <button
@@ -670,7 +686,7 @@ export function LiveCrossCheckPanel({
                         )
                       }
                     >
-                      Remove claim {index + 1}
+                      {t('Remove claim {number}', { number: index + 1 })}
                     </button>
                   )}
                 </div>
@@ -688,10 +704,10 @@ export function LiveCrossCheckPanel({
                 }
               >
                 <MotionIcon name="add" size={18} />
-                Add claim
+                {t('Add claim')}
               </button>
               <fieldset disabled={locked}>
-                <legend>Source snapshots · choose up to 8</legend>
+                <legend>{t('Source snapshots · choose up to 8')}</legend>
                 {sources.length ? (
                   sources.map((source) => (
                     <label className="ct-note" key={source.id}>
@@ -711,15 +727,18 @@ export function LiveCrossCheckPanel({
                         }
                       />
                       <span>
-                        {source.title} · {source.sourceBytes.toLocaleString()}{' '}
-                        bytes · provided text
+                        {t('{title} · {bytes} bytes · provided text', {
+                          title: source.title,
+                          bytes: source.sourceBytes.toLocaleString(),
+                        })}
                       </span>
                     </label>
                   ))
                 ) : (
                   <p className="ct-note">
-                    Save a source excerpt below to begin. URLs are references;
-                    this panel does not retrieve web pages.
+                    {t(
+                      'Save a source excerpt below to begin. URLs are references; this panel does not retrieve web pages.',
+                    )}
                   </p>
                 )}
               </fieldset>
@@ -748,13 +767,14 @@ export function LiveCrossCheckPanel({
                     })
                   }
                 >
-                  Load more sources
+                  {t('Load more sources')}
                 </button>
               )}
               <p className="ct-note">
-                Selected source text: {chosenBytes.toLocaleString()} / 131,072
-                bytes. Individual reviewer routes may accept less. All selected
-                text is included; oversized inputs are refused.
+                {t(
+                  'Selected source text: {bytes} / 131,072 bytes. Individual reviewer routes may accept less. All selected text is included; oversized inputs are refused.',
+                  { bytes: chosenBytes.toLocaleString() },
+                )}
               </p>
               <button
                 data-icon-trigger
@@ -771,16 +791,16 @@ export function LiveCrossCheckPanel({
               >
                 <MotionIcon name="search" size={18} />
                 {busy
-                  ? 'Preparing…'
+                  ? t('Preparing…')
                   : capability?.configured
-                    ? 'Prepare and review cost'
-                    : 'Save unreviewed plan'}
+                    ? t('Prepare and review cost')
+                    : t('Save unreviewed plan')}
               </button>
             </form>
           )}
           {projects.length > 0 && (
             <details className="ct-detail ct-example">
-              <summary>Add a provided source snapshot</summary>
+              <summary>{t('Add a provided source snapshot')}</summary>
               <form
                 className="cw-simple-form"
                 onSubmit={(event) => {
@@ -789,11 +809,13 @@ export function LiveCrossCheckPanel({
                 }}
               >
                 <p className="ct-note">
-                  This saves an immutable excerpt in your account project after
-                  a local content check. No web page is fetched and no model is
-                  called.
+                  {t(
+                    'This saves an immutable excerpt in your account project after a local content check. No web page is fetched and no model is called.',
+                  )}
                 </p>
-                <label htmlFor={`${labelId}-source-title`}>Source title</label>
+                <label htmlFor={`${labelId}-source-title`}>
+                  {t('Source title')}
+                </label>
                 <input
                   id={`${labelId}-source-title`}
                   value={sourceDraft.title}
@@ -807,7 +829,7 @@ export function LiveCrossCheckPanel({
                   }
                 />
                 <label htmlFor={`${labelId}-source-uri`}>
-                  Reference URL (optional)
+                  {t('Reference URL (optional)')}
                 </label>
                 <input
                   id={`${labelId}-source-uri`}
@@ -824,7 +846,7 @@ export function LiveCrossCheckPanel({
                   placeholder="https://…"
                 />
                 <label htmlFor={`${labelId}-source-text`}>
-                  Exact source excerpt
+                  {t('Exact source excerpt')}
                 </label>
                 <textarea
                   className="ct-detail"
@@ -841,9 +863,10 @@ export function LiveCrossCheckPanel({
                   }
                 />
                 <p className="ct-note">
-                  {bytes(sourceDraft.text).toLocaleString()} / 65,536 bytes.
-                  Remove secrets before saving. Pattern checks do not catch
-                  every secret.
+                  {t(
+                    '{bytes} / 65,536 bytes. Remove secrets before saving. Pattern checks do not catch every secret.',
+                    { bytes: bytes(sourceDraft.text).toLocaleString() },
+                  )}
                 </p>
                 <button
                   className="ct-button"
@@ -855,7 +878,7 @@ export function LiveCrossCheckPanel({
                     bytes(sourceDraft.text) > 65536
                   }
                 >
-                  Check and save source
+                  {t('Check and save source')}
                 </button>
               </form>
             </details>
@@ -863,9 +886,9 @@ export function LiveCrossCheckPanel({
           {runs.length > 0 && (
             <section
               className="ct-detail ct-example"
-              aria-label="Saved Cross-Checks"
+              aria-label={t('Saved Cross-Checks')}
             >
-              <h3>Saved Cross-Checks</h3>
+              <h3>{t('Saved Cross-Checks')}</h3>
               {runs.map((saved) => (
                 <button
                   className="ct-button"
@@ -874,8 +897,8 @@ export function LiveCrossCheckPanel({
                   disabled={locked}
                   onClick={() => void readRun(saved.id)}
                 >
-                  {saved.status === 'reviewed' ? 'Reviewed' : 'Prepared'} ·{' '}
-                  {saved.preparedAt.slice(0, 16).replace('T', ' ')} UTC
+                  {saved.status === 'reviewed' ? t('Reviewed') : t('Prepared')}{' '}
+                  · {saved.preparedAt.slice(0, 16).replace('T', ' ')} UTC
                 </button>
               ))}
               {runCursor && (
@@ -900,7 +923,7 @@ export function LiveCrossCheckPanel({
                     })
                   }
                 >
-                  Load earlier checks
+                  {t('Load earlier checks')}
                 </button>
               )}
             </section>
@@ -912,61 +935,74 @@ export function LiveCrossCheckPanel({
           <section className="ct-detail ct-example">
             <span className="ct-eyebrow">
               {cacheHit
-                ? 'Reused completed review · no new model calls started'
+                ? t('Reused completed review · no new model calls started')
                 : run.result
-                  ? 'Completed review'
+                  ? t('Completed review')
                   : run.execution?.state === 'not_started'
-                    ? 'Prepared · not reviewed'
-                    : `Execution · ${run.execution?.state.replaceAll('_', ' ') ?? 'unavailable'}`}
+                    ? t('Prepared · not reviewed')
+                    : t('Execution · {state}', {
+                        state: t(
+                          run.execution?.state.replaceAll('_', ' ') ??
+                            'unavailable',
+                        ),
+                      })}
             </span>
             <h3>
               {run.result
-                ? verdictLabel[run.result.verdict]
-                : 'Review against provided sources'}
+                ? t(verdictLabel[run.result.verdict])
+                : t('Review against provided sources')}
             </h3>
-            {run.result && <p>{run.result.limitation}</p>}
+            {run.result && <p>{t(run.result.limitation)}</p>}
             {run.execution?.state === 'incomplete' && (
               <p className="ct-note">
-                Some reviews or settlement need attention. This is not a
-                complete consensus result. Reading status will not retry or
-                rebill model calls.
+                {t(
+                  'Some reviews or settlement need attention. This is not a complete consensus result. Reading status will not retry or rebill model calls.',
+                )}
               </p>
             )}
             <dl className="ct-facts">
               <div>
-                <dt>Claims</dt>
+                <dt>{t('Claims')}</dt>
                 <dd>{run.plan.claims.length}</dd>
               </div>
               <div>
-                <dt>Reviewer families</dt>
+                <dt>{t('Reviewer families')}</dt>
                 <dd>{run.plan.reviewers.length}</dd>
               </div>
               <div>
-                <dt>Source snapshots</dt>
-                <dd>{run.plan.sources.length} · provided text only</dd>
+                <dt>{t('Source snapshots')}</dt>
+                <dd>
+                  {t('{count} · provided text only', {
+                    count: run.plan.sources.length,
+                  })}
+                </dd>
               </div>
               <div>
-                <dt>Cached result</dt>
+                <dt>{t('Cached result')}</dt>
                 <dd>
                   {run.result
                     ? run.cacheUsable
-                      ? 'Eligible for reuse in this project within its recorded window'
-                      : 'Historical result · reuse window expired or unavailable'
-                    : 'No completed result'}
+                      ? t(
+                          'Eligible for reuse in this project within its recorded window',
+                        )
+                      : t(
+                          'Historical result · reuse window expired or unavailable',
+                        )
+                    : t('No completed result')}
                 </dd>
               </div>
               {run.execution?.maximumUsd6 && (
                 <div>
-                  <dt>Approved maximum</dt>
+                  <dt>{t('Approved maximum')}</dt>
                   <dd>{formatUsd6(run.execution.maximumUsd6)}</dd>
                 </div>
               )}
               {run.execution && (
                 <div>
-                  <dt>Settled usage</dt>
+                  <dt>{t('Settled usage')}</dt>
                   <dd>
                     {run.execution.actualUsd6 === null
-                      ? 'Not fully settled'
+                      ? t('Not fully settled')
                       : formatUsd6(run.execution.actualUsd6)}
                   </dd>
                 </div>
@@ -974,32 +1010,37 @@ export function LiveCrossCheckPanel({
             </dl>
           </section>
           <details className="ct-detail ct-example" open={!run.result}>
-            <summary>Claims, source snapshots and reviewer roster</summary>
+            <summary>
+              {t('Claims, source snapshots and reviewer roster')}
+            </summary>
             {run.plan.claims.map((claim, index) => (
               <p className="ct-note" key={claim.id}>
-                <strong>Claim {index + 1}</strong>
+                <strong>{t('Claim {number}', { number: index + 1 })}</strong>
                 <span>{claim.text}</span>
               </p>
             ))}
             {run.plan.reviewers.map((reviewer) => (
               <p className="ct-note" key={reviewer.id}>
-                {reviewer.modelId} · {reviewer.family} · {reviewer.distribution}
+                {reviewer.modelId} · {reviewer.family} ·{' '}
+                {t(reviewer.distribution)}
               </p>
             ))}
             {run.plan.sources.map((source) => (
               <details className="ct-example" key={source.id}>
-                <summary>{source.title} · provided text</summary>
+                <summary>
+                  {t('{title} · provided text', { title: source.title })}
+                </summary>
                 <dl className="ct-facts">
                   <div>
-                    <dt>Captured</dt>
+                    <dt>{t('Captured')}</dt>
                     <dd>{new Date(source.capturedAtMs).toISOString()}</dd>
                   </div>
                   <div>
-                    <dt>Reference</dt>
-                    <dd>{source.uri ?? 'No reference URL supplied'}</dd>
+                    <dt>{t('Reference')}</dt>
+                    <dd>{source.uri ?? t('No reference URL supplied')}</dd>
                   </div>
                   <div>
-                    <dt>Snapshot hash</dt>
+                    <dt>{t('Snapshot hash')}</dt>
                     <dd className="ct-code">{source.snapshotHash}</dd>
                   </div>
                 </dl>
@@ -1010,31 +1051,38 @@ export function LiveCrossCheckPanel({
           {pending && (
             <section
               className="ct-detail ct-example"
-              aria-label="Paid review approval"
+              aria-label={t('Paid review approval')}
             >
               <h3>
                 {uncertain
-                  ? 'Recover the original request'
-                  : 'Review the maximum reservation'}
+                  ? t('Recover the original request')
+                  : t('Review the maximum reservation')}
               </h3>
               <p className="ct-note">
                 {uncertain
-                  ? 'The approval outcome is uncertain. Recovery uses the same request key and quoted amount; it does not request a new execution.'
-                  : `${pending.quote.reviewCount} independent reviewer calls. The inference gateway and each upstream provider receive these claims and sources in plaintext.`}
+                  ? t(
+                      'The approval outcome is uncertain. Recovery uses the same request key and quoted amount; it does not request a new execution.',
+                    )
+                  : t(
+                      '{count} independent reviewer calls. The inference gateway and each upstream provider receive these claims and sources in plaintext.',
+                      { count: pending.quote.reviewCount },
+                    )}
               </p>
               <dl className="ct-facts">
                 <div>
-                  <dt>Total maximum</dt>
+                  <dt>{t('Total maximum')}</dt>
                   <dd>{formatUsd6(pending.quote.maximumUsd6)}</dd>
                 </div>
                 <div>
-                  <dt>Quote</dt>
+                  <dt>{t('Quote')}</dt>
                   <dd>
                     {uncertain
-                      ? 'Original approval retained'
+                      ? t('Original approval retained')
                       : expired
-                        ? 'Expired — dismiss and request another quote'
-                        : `Expires ${pending.quote.expiresAt.slice(11, 19)} UTC`}
+                        ? t('Expired — dismiss and request another quote')
+                        : t('Expires {time} UTC', {
+                            time: pending.quote.expiresAt.slice(11, 19),
+                          })}
                   </dd>
                 </div>
               </dl>
@@ -1044,25 +1092,30 @@ export function LiveCrossCheckPanel({
                   key={`${term.claimId}:${term.reviewerId}`}
                 >
                   <summary>
-                    {term.modelId} · claim{' '}
-                    {run.plan.claims.findIndex(
-                      (claim) => claim.id === term.claimId,
-                    ) + 1}{' '}
-                    · maximum {formatUsd6(term.maximumUsd6)}
+                    {t('{model} · claim {number} · maximum {amount}', {
+                      model: term.modelId,
+                      number:
+                        run.plan.claims.findIndex(
+                          (claim) => claim.id === term.claimId,
+                        ) + 1,
+                      amount: formatUsd6(term.maximumUsd6),
+                    })}
                   </summary>
                   <p className="ct-note">
-                    {term.card.level} · {term.card.retentionDisclosure}
+                    {t(term.card.level)} · {t(term.card.retentionDisclosure)}
                   </p>
                   <p className="ct-note">
-                    Markup {term.markupBps / 100}% included. Evidence date:{' '}
-                    {term.card.evidenceDate}.
+                    {t('Markup {percent}% included. Evidence date: {date}.', {
+                      percent: term.markupBps / 100,
+                      date: term.card.evidenceDate,
+                    })}
                   </p>
                 </details>
               ))}
               <p className="ct-note">
-                Cancellation may still incur usage already dispatched. Uncertain
-                settlement can remain held for review. No free recheck
-                entitlement is implied.
+                {t(
+                  'Cancellation may still incur usage already dispatched. Uncertain settlement can remain held for review. No free recheck entitlement is implied.',
+                )}
               </p>
               <button
                 className="ct-button"
@@ -1073,7 +1126,7 @@ export function LiveCrossCheckPanel({
                   setError(null);
                 }}
               >
-                Dismiss quote
+                {t('Dismiss quote')}
               </button>
               <button
                 className="ct-button ct-button-primary"
@@ -1082,34 +1135,39 @@ export function LiveCrossCheckPanel({
                 onClick={() => void approve()}
               >
                 {busy
-                  ? 'Checking…'
+                  ? t('Checking…')
                   : uncertain
-                    ? 'Recover same request'
-                    : `Reserve up to ${formatUsd6(pending.quote.maximumUsd6)} and run reviews`}
+                    ? t('Recover same request')
+                    : t('Reserve up to {amount} and run reviews', {
+                        amount: formatUsd6(pending.quote.maximumUsd6),
+                      })}
               </button>
             </section>
           )}
           {run.result?.claims.map((claim, index) => (
             <section className="ct-detail ct-example" key={claim.claim.id}>
               <span className="ct-eyebrow">
-                Claim {index + 1} · {claim.validFamilyCount} /{' '}
-                {run.plan.reviewers.length} valid reviews
+                {t('Claim {number} · {valid} / {total} valid reviews', {
+                  number: index + 1,
+                  valid: claim.validFamilyCount,
+                  total: run.plan.reviewers.length,
+                })}
               </span>
-              <h3>{verdictLabel[claim.verdict]}</h3>
+              <h3>{t(verdictLabel[claim.verdict])}</h3>
               <p className="ct-note">{claim.claim.text}</p>
               {claim.dissent && (
                 <p className="ct-note">
                   <AlertTriangle size={15} aria-hidden="true" />
-                  Valid reviewers disagree. Dissent is preserved below.
+                  {t('Valid reviewers disagree. Dissent is preserved below.')}
                 </p>
               )}
               {claim.uncertainty.length > 0 && (
                 <p className="ct-note">
-                  Uncertainty:{' '}
-                  {claim.uncertainty
-                    .map((reason) => reason.replaceAll('_', ' '))
-                    .join('; ')}
-                  .
+                  {t('Uncertainty: {reasons}.', {
+                    reasons: claim.uncertainty
+                      .map((reason) => t(reason.replaceAll('_', ' ')))
+                      .join(t.locale === 'zh' ? '；' : '; '),
+                  })}
                 </p>
               )}
               {claim.reviews.map((review) => (
@@ -1121,13 +1179,17 @@ export function LiveCrossCheckPanel({
                   <summary>
                     {review.modelId} ·{' '}
                     {review.valid
-                      ? review.verdict?.replaceAll('_', ' ')
-                      : 'Review discarded'}
+                      ? review.verdict && t(review.verdict.replaceAll('_', ' '))
+                      : t('Review discarded')}
                   </summary>
                   <p className="ct-note">
                     {review.valid
                       ? review.rationale
-                      : `Not counted: ${review.invalidReason?.replaceAll('_', ' ')}.`}
+                      : t('Not counted: {reason}.', {
+                          reason: review.invalidReason
+                            ? t(review.invalidReason.replaceAll('_', ' '))
+                            : 'undefined',
+                        })}
                   </p>
                   {review.quotes.map((quote, index) => (
                     <div
@@ -1135,16 +1197,18 @@ export function LiveCrossCheckPanel({
                       key={`${quote.sourceId}:${index}`}
                     >
                       <span className="ct-eyebrow">
-                        {
-                          run.plan.sources.find(
-                            (source) => source.id === quote.sourceId,
-                          )?.title
-                        }{' '}
-                        · exact normalized match
+                        {t('{title} · exact normalized match', {
+                          title:
+                            run.plan.sources.find(
+                              (source) => source.id === quote.sourceId,
+                            )?.title ?? '',
+                        })}
                       </span>
                       <blockquote>{quote.quote}</blockquote>
                       <p className="ct-code">
-                        Source snapshot {quote.sourceHash}
+                        {t('Source snapshot {hash}', {
+                          hash: quote.sourceHash,
+                        })}
                       </p>
                     </div>
                   ))}
@@ -1154,20 +1218,21 @@ export function LiveCrossCheckPanel({
           ))}
           {!!run.execution?.calls.length && (
             <details className="ct-detail ct-example">
-              <summary>Reviewer delivery and settlement</summary>
+              <summary>{t('Reviewer delivery and settlement')}</summary>
               {run.execution.calls.map((call) => (
                 <p className="ct-note" key={call.id}>
-                  {
-                    run.plan.reviewers.find(
-                      (reviewer) => reviewer.id === call.reviewerId,
-                    )?.modelId
-                  }{' '}
-                  · claim{' '}
-                  {run.plan.claims.findIndex(
-                    (claim) => claim.id === call.claimId,
-                  ) + 1}
-                  : {call.state.replaceAll('_', ' ')} ·{' '}
-                  {call.billingState.replaceAll('_', ' ')}
+                  {t('{model} · claim {number}: {state} · {billing}', {
+                    model:
+                      run.plan.reviewers.find(
+                        (reviewer) => reviewer.id === call.reviewerId,
+                      )?.modelId ?? '',
+                    number:
+                      run.plan.claims.findIndex(
+                        (claim) => claim.id === call.claimId,
+                      ) + 1,
+                    state: t(call.state.replaceAll('_', ' ')),
+                    billing: t(call.billingState.replaceAll('_', ' ')),
+                  })}
                   {call.actualUsd6 !== null
                     ? ` · ${formatUsd6(call.actualUsd6)}`
                     : ''}
@@ -1179,8 +1244,9 @@ export function LiveCrossCheckPanel({
           <div className="ct-note">
             <Info size={15} aria-hidden="true" />
             <span>
-              Sources are supplied snapshots, not independently retrieved or
-              verified publications. Consensus can be wrong.
+              {t(
+                'Sources are supplied snapshots, not independently retrieved or verified publications. Consensus can be wrong.',
+              )}
             </span>
           </div>
           <button
@@ -1189,7 +1255,7 @@ export function LiveCrossCheckPanel({
             disabled={busy}
             onClick={() => void refreshRun()}
           >
-            Read saved status
+            {t('Read saved status')}
           </button>
           {!pending &&
             !run.result &&
@@ -1200,7 +1266,7 @@ export function LiveCrossCheckPanel({
                 disabled={busy || !capability?.configured}
                 onClick={() => void requestQuote()}
               >
-                Request current quote
+                {t('Request current quote')}
               </button>
             )}
           {run.execution?.calls.some((call) =>
@@ -1224,7 +1290,7 @@ export function LiveCrossCheckPanel({
                 })
               }
             >
-              Request cancellation
+              {t('Request cancellation')}
             </button>
           )}
           <button
@@ -1246,7 +1312,7 @@ export function LiveCrossCheckPanel({
               });
             }}
           >
-            Back to draft and saved checks
+            {t('Back to draft and saved checks')}
           </button>
         </>
       )}

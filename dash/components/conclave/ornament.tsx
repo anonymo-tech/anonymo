@@ -1,9 +1,12 @@
-import Link from "@/components/site-link";
-import type { ReactNode } from "react";
-import { HorseMark } from "./horse-mark";
-import { Wordmark } from "./wordmark";
+'use client';
 
-export function Ornament({ className = "" }: { className?: string }) {
+import { useT } from '@/lib/i18n';
+import Link from '@/components/site-link';
+import type { ReactNode } from 'react';
+import { HorseMark } from './horse-mark';
+import { Wordmark } from './wordmark';
+
+export function Ornament({ className = '' }: { className?: string }) {
   return (
     <svg
       className={`ornament ${className}`}
@@ -24,7 +27,7 @@ export function Ornament({ className = "" }: { className?: string }) {
   );
 }
 
-export function Flourish({ className = "" }: { className?: string }) {
+export function Flourish({ className = '' }: { className?: string }) {
   return (
     <svg
       className={`frame-flourish ${className}`}
@@ -50,7 +53,7 @@ export function Flourish({ className = "" }: { className?: string }) {
 
 export function OrnateFrame({
   children,
-  className = "",
+  className = '',
 }: {
   children: ReactNode;
   className?: string;
@@ -67,11 +70,12 @@ export function OrnateFrame({
 }
 
 export function Brand({ compact = false }: { compact?: boolean }) {
+  const t = useT();
   return (
     <Link
       href="/"
-      className={`conclave-brand ${compact ? "brand-compact" : ""}`}
-      aria-label="Conclave home"
+      className={`conclave-brand ${compact ? 'brand-compact' : ''}`}
+      aria-label={t('Conclave home')}
     >
       <HorseMark className="brand-horse" />
       <Wordmark />

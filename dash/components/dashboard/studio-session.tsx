@@ -1,5 +1,7 @@
 'use client';
 
+import { useT, translate } from '@/lib/i18n';
+
 import Image from 'next/image';
 import { useEffect, useRef, useState } from 'react';
 import { downloadFile, scanPrompt } from './data';
@@ -56,15 +58,19 @@ export function useStudioSession(projectId: string) {
       ) ||
       file.size > 20 * 1024 * 1024
     )
-      return 'Choose a JPEG, PNG, WebP or GIF smaller than 20 MB.';
+      return translate('Choose a JPEG, PNG, WebP or GIF smaller than 20 MB.');
     if (scanPrompt(file.name))
-      return 'Rename this file to remove secret-like text before attaching it.';
+      return translate(
+        'Rename this file to remove secret-like text before attaching it.',
+      );
     const previous = urls.current.get(projectId);
     if (previous) URL.revokeObjectURL(previous);
     const url = URL.createObjectURL(file);
     urls.current.set(projectId, url);
     update({ reference: { name: file.name, url } });
-    return 'Reference attached to this Studio draft. It stays in this tab and is not uploaded.';
+    return translate(
+      'Reference attached to this Studio draft. It stays in this tab and is not uploaded.',
+    );
   };
   const reset = () => {
     urls.current.forEach((url) => URL.revokeObjectURL(url));
@@ -93,12 +99,13 @@ export function StudioDraftOptions({
   onChange: (change: Partial<StudioDraft>) => void;
   connected?: boolean;
 }) {
+  const t = useT();
   return (
     <div className="cs-draft-options">
       <label>
-        Frame
+        {t('Frame')}
         <select
-          aria-label="Studio aspect ratio"
+          aria-label={t('Studio aspect ratio')}
           value={draft.ratio}
           onChange={(event) => onChange({ ratio: event.target.value })}
         >
@@ -108,32 +115,32 @@ export function StudioDraftOptions({
         </select>
       </label>
       <label>
-        Length
+        {t('Length')}
         <select
-          aria-label="Studio duration"
+          aria-label={t('Studio duration')}
           value={draft.duration}
           onChange={(event) => onChange({ duration: event.target.value })}
         >
           {connected ? (
             <>
-              <option value="5">Prefer 5 seconds</option>
-              <option value="6">Closest format per model</option>
-              <option value="8">Prefer 8 seconds</option>
-              <option value="10">Prefer 10 seconds</option>
+              <option value="5">{t('Prefer 5 seconds')}</option>
+              <option value="6">{t('Closest format per model')}</option>
+              <option value="8">{t('Prefer 8 seconds')}</option>
+              <option value="10">{t('Prefer 10 seconds')}</option>
             </>
           ) : (
             <>
-              <option value="6">6 seconds</option>
-              <option value="10">10 seconds</option>
-              <option value="15">15 seconds</option>
+              <option value="6">{t('6 seconds')}</option>
+              <option value="10">{t('10 seconds')}</option>
+              <option value="15">{t('15 seconds')}</option>
             </>
           )}
         </select>
       </label>
       <p>
         {connected
-          ? 'Exact supported formats appear in the review before approval.'
-          : 'For your draft. Sample playback stays 16:9 · 6s.'}
+          ? t('Exact supported formats appear in the review before approval.')
+          : t('For your draft. Sample playback stays 16:9 · 6s.')}
       </p>
     </div>
   );
@@ -152,34 +159,49 @@ export function StudioDraftReview({
   onClose: () => void;
   onToast: (message: string) => void;
 }) {
+  const t = useT();
   const exportDraft = () => {
-    const text = `# Studio draft\n\nProject: ${projectName}\nModels: ${modelNames.join(', ')}\nFrame: ${draft.ratio}\nDuration: ${draft.duration} seconds\nReference: ${draft.reference?.name ?? 'None'}\n\n## Direction\n\n${draft.prompt.trim()}\n\nLocal draft only. No model was called. Reference image is not included.\n`;
+    const text = t(
+      '# Studio draft\n\nProject: {project}\nModels: {models}\nFrame: {ratio}\nDuration: {duration} seconds\nReference: {reference}\n\n## Direction\n\n{prompt}\n\nLocal draft only. No model was called. Reference image is not included.\n',
+      {
+        project: projectName,
+        models: modelNames.join(', '),
+        ratio: draft.ratio,
+        duration: draft.duration,
+        reference: draft.reference?.name ?? t('None'),
+        prompt: draft.prompt.trim(),
+      },
+    );
     if (scanPrompt(text)) {
-      onToast('Remove secret-like text before downloading this draft.');
+      onToast(t('Remove secret-like text before downloading this draft.'));
       return;
     }
     downloadFile('conclave-studio-draft.md', text, 'text/markdown');
-    onToast('Studio draft downloaded. No request was sent to a model.');
+    onToast(t('Studio draft downloaded. No request was sent to a model.'));
   };
   return (
     <div className="cs-draft-review cw-simple-form">
       <p>
-        Video models are not connected yet. Keep this direction as a draft; the
-        sample clips stay unchanged.
+        {t(
+          'Video models are not connected yet. Keep this direction as a draft; the sample clips stay unchanged.',
+        )}
       </p>
       <dl>
         <div>
-          <dt>Project</dt>
+          <dt>{t('Project')}</dt>
           <dd>{projectName}</dd>
         </div>
         <div>
-          <dt>Models</dt>
+          <dt>{t('Models')}</dt>
           <dd>{modelNames.join(', ')}</dd>
         </div>
         <div>
-          <dt>Format</dt>
+          <dt>{t('Format')}</dt>
           <dd>
-            {draft.ratio} · {draft.duration} seconds
+            {t('{ratio} · {duration} seconds', {
+              ratio: draft.ratio,
+              duration: draft.duration,
+            })}
           </dd>
         </div>
       </dl>
@@ -188,21 +210,25 @@ export function StudioDraftReview({
         <figure>
           <Image
             src={draft.reference.url}
-            alt="Your local reference"
+            alt={t('Your local reference')}
             width={360}
             height={180}
             unoptimized
           />
-          <figcaption>{draft.reference.name} · Local only</figcaption>
+          <figcaption>
+            {t('{name} · Local only', { name: draft.reference.name })}
+          </figcaption>
         </figure>
       )}
       <small>
-        This Studio draft stays in this tab. Download it before refreshing.
+        {t(
+          'This Studio draft stays in this tab. Download it before refreshing.',
+        )}
       </small>
       <button className="cw-primary" onClick={exportDraft}>
-        Download draft
+        {t('Download draft')}
       </button>
-      <button onClick={onClose}>Keep editing</button>
+      <button onClick={onClose}>{t('Keep editing')}</button>
     </div>
   );
 }

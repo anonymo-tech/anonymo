@@ -1,16 +1,18 @@
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from 'react';
 
-type HeroPhrase = readonly [string, string, string, string, string];
+import { useT } from '@/lib/i18n';
+
+type HeroPhrase = readonly string[];
 
 const PHRASES = [
-  ["MANY", "GREAT MINDS.", "ONE", "COMMON", "GROUND."],
-  ["YOUR", "NEXT QUESTION.", "MORE", "THAN ONE", "ANSWER."],
-  ["SEE", "WHAT ONE", "MODEL", "ALONE", "MISSES."],
-] as const satisfies readonly HeroPhrase[];
+  'MANY{line}GREAT MINDS.{line}ONE{line}COMMON{line}GROUND.',
+  'YOUR{line}NEXT QUESTION.{line}MORE{line}THAN ONE{line}ANSWER.',
+  'SEE{line}WHAT ONE{line}MODEL{line}ALONE{line}MISSES.',
+] as const;
 
-const SCRAMBLE_CHARACTERS = "CONCLAVE+-*#=";
+const SCRAMBLE_CHARACTERS = 'CONCLAVE+-*#=';
 const CYCLE_DURATION = 5000;
 const SCRAMBLE_DURATION = 700;
 const CHARACTER_STEP_DURATION = 64;
@@ -22,14 +24,14 @@ function scrambleWord(
   progress: number,
 ) {
   const length = Math.max(source.length, target.length);
-  let result = "";
+  let result = '';
 
   for (let characterIndex = 0; characterIndex < length; characterIndex += 1) {
-    const sourceCharacter = source[characterIndex] ?? "";
-    const targetCharacter = target[characterIndex] ?? "";
+    const sourceCharacter = source[characterIndex] ?? '';
+    const targetCharacter = target[characterIndex] ?? '';
 
-    if (targetCharacter === " ") {
-      result += " ";
+    if (targetCharacter === ' ') {
+      result += ' ';
       continue;
     }
 
@@ -52,11 +54,22 @@ function scrambleWord(
 }
 
 export function AnimatedHeroTitle() {
-  const [words, setWords] = useState<string[]>([...PHRASES[0]]);
+  const t = useT();
+  // Five deliberate phrase segments preserve the four-line composition in both languages.
+  const phrases = useMemo(
+    () => PHRASES.map((phrase) => t(phrase, { line: '\n' }).split('\n')),
+    [t],
+  );
+  const [frame, setFrame] = useState(() => ({
+    locale: t.locale,
+    words: [...phrases[0]],
+  }));
+  const words = frame.locale === t.locale ? frame.words : phrases[0];
 
   useEffect(() => {
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    let sourceWords: string[] = [...PHRASES[0]];
+    const setWords = (words: string[]) => setFrame({ locale: t.locale, words });
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let sourceWords: string[] = [...phrases[0]];
     let phraseIndex = 0;
     let animationFrame = 0;
     let interval = 0;
@@ -82,7 +95,7 @@ export function AnimatedHeroTitle() {
           lastCharacterStep = now;
           setWords(
             target.map((word, index) =>
-              scrambleWord(sourceWords[index] ?? "", word, index, progress),
+              scrambleWord(sourceWords[index] ?? '', word, index, progress),
             ),
           );
         }
@@ -102,40 +115,43 @@ export function AnimatedHeroTitle() {
     const configure = () => {
       stop();
       phraseIndex = 0;
-      sourceWords = [...PHRASES[0]];
-      setWords([...PHRASES[0]]);
+      sourceWords = [...phrases[0]];
+      setWords([...phrases[0]]);
 
       if (reducedMotion.matches) return;
 
       interval = window.setInterval(() => {
         if (document.hidden || window.scrollY > window.innerHeight) return;
-        phraseIndex = (phraseIndex + 1) % PHRASES.length;
-        transitionTo(PHRASES[phraseIndex]);
+        phraseIndex = (phraseIndex + 1) % phrases.length;
+        transitionTo(phrases[phraseIndex]);
       }, CYCLE_DURATION);
     };
 
     configure();
-    reducedMotion.addEventListener("change", configure);
+    reducedMotion.addEventListener('change', configure);
 
     return () => {
-      reducedMotion.removeEventListener("change", configure);
+      reducedMotion.removeEventListener('change', configure);
       stop();
     };
-  }, []);
+  }, [phrases, t.locale]);
 
   return (
     <h1
       className="hero-title"
       data-scroll-drift
       data-drift-y="76"
-      aria-label="Many great minds. One common ground."
+      aria-label={t('Many great minds. One common ground.')}
     >
       <span className="hero-title__visual" aria-hidden="true">
         <span className="hero-title__line">{words[0]}</span>
         <span className="hero-title__line hero-title__line--vision">
           {words[1]}
         </span>
-        <span className="hero-title__line hero-title__line--split">
+        <span
+          className="hero-title__line hero-title__line--split"
+          style={t.locale === 'zh' ? { columnGap: '0.25em' } : undefined}
+        >
           <span>{words[2]}</span>
           <span className="hero-title__timeless">{words[3]}</span>
         </span>

@@ -1,11 +1,13 @@
 "use client";
 
+import { useT } from '@/lib/i18n';
 import Image from "next/image";
 import { Pause, Play, RotateCcw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import "./about-film.css";
 
 export function AboutFilm({ still = false }: { still?: boolean }) {
+  const t = useT();
   const stage = useRef<HTMLDivElement>(null);
   const film = useRef<HTMLVideoElement>(null);
   const [reducedMotion, setReducedMotion] = useState(true);
@@ -102,11 +104,9 @@ export function AboutFilm({ still = false }: { still?: boolean }) {
     >
       <div className="cl-about-surface">
         <div className="cl-about-heading">
-          <h2 id="cl-about-title">Good thinking has good company.</h2>
+          <h2 id="cl-about-title">{t("Good thinking has good company.")}</h2>
           <p>
-            Conclave is a multi-model AI workspace. Bring different perspectives
-            into one room, compare what they see, and understand where your
-            information goes. The final word is yours.
+            {t("Conclave is a multi-model AI workspace. Bring different perspectives into one room, compare what they see, and understand where your information goes. The final word is yours.")}
           </p>
         </div>
 
@@ -119,7 +119,7 @@ export function AboutFilm({ still = false }: { still?: boolean }) {
             className="cl-about-video"
             src="/media/conclave-about-film.webm?v=white-accents"
             poster="/media/conclave-about-poster.png?v=white-accents"
-            aria-label="Conclave about film"
+            aria-label={t("Conclave about film")}
             aria-describedby="cl-about-film-description"
             muted
             loop
@@ -163,7 +163,7 @@ export function AboutFilm({ still = false }: { still?: boolean }) {
         <div className="cl-about-controls">
           <span className="cl-about-control-rule" aria-hidden="true" />
           {failed && (
-            <p className="cl-about-error">Film unavailable. Replay to retry.</p>
+            <p className="cl-about-error">{t("Film unavailable. Replay to retry.")}</p>
           )}
           <div className="cl-about-buttons">
             <button
@@ -172,16 +172,16 @@ export function AboutFilm({ still = false }: { still?: boolean }) {
               disabled={motionDisabled}
               aria-label={
                 playing
-                  ? "Pause Conclave about film"
-                  : "Play Conclave about film"
+                  ? t("Pause Conclave about film")
+                  : t("Play Conclave about film")
               }
               aria-describedby="cl-about-playback-status"
               title={
                 motionDisabled
-                  ? "Motion is paused"
+                  ? t("Motion is paused")
                   : playing
-                    ? "Pause film"
-                    : "Play film"
+                    ? t("Pause film")
+                    : t("Play film")
               }
             >
               {playing ? (
@@ -194,25 +194,23 @@ export function AboutFilm({ still = false }: { still?: boolean }) {
               type="button"
               onClick={() => playFromControl(true)}
               disabled={motionDisabled}
-              aria-label="Replay Conclave about film"
+              aria-label={t("Replay Conclave about film")}
               aria-describedby="cl-about-playback-status"
-              title={motionDisabled ? "Motion is paused" : "Replay film"}
+              title={motionDisabled ? t("Motion is paused") : t("Replay film")}
             >
               <RotateCcw size={22} strokeWidth={1.6} />
             </button>
           </div>
         </div>
         <p className="cl-about-sr-only" id="cl-about-film-description">
-          A silent, fifteen-second visual introduction to Conclave: a workspace
-          for comparing model perspectives and inspecting how information is
-          routed.
+          {t("A silent, fifteen-second visual introduction to Conclave: a workspace for comparing model perspectives and inspecting how information is routed.")}
         </p>
         <output
           className="cl-about-sr-only"
           id="cl-about-playback-status"
           aria-live="polite"
         >
-          {playbackStatus}
+          {t(playbackStatus)}
         </output>
       </div>
     </section>

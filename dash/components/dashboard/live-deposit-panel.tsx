@@ -1,5 +1,6 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
 import { useEffect, useId, useRef, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { LiveDepositPayment } from './live-deposit-payment';
@@ -34,46 +35,47 @@ const statusLabel = (intent: DepositIntent, now: number) =>
       : 'Awaiting payment';
 
 function IntentFacts({ intent }: { intent: DepositIntent }) {
+  const t = useT();
   return (
     <dl className="ct-facts">
       <div>
-        <dt>Network</dt>
-        <dd>{networkLabel(intent.cluster)}</dd>
+        <dt>{t('Network')}</dt>
+        <dd>{t(networkLabel(intent.cluster))}</dd>
       </div>
       <div>
-        <dt>Exact amount</dt>
+        <dt>{t('Exact amount')}</dt>
         <dd>{formatDepositAmount(intent.amountUsd6)} USDC</dd>
       </div>
       <div>
-        <dt>Source wallet</dt>
+        <dt>{t('Source wallet')}</dt>
         <dd className="ct-code">{intent.sourceWallet}</dd>
       </div>
       <div>
-        <dt>USDC mint</dt>
+        <dt>{t('USDC mint')}</dt>
         <dd className="ct-code">{intent.mint}</dd>
       </div>
       <div>
-        <dt>Treasury wallet</dt>
+        <dt>{t('Treasury wallet')}</dt>
         <dd className="ct-code">{intent.recipientWallet}</dd>
       </div>
       <div>
-        <dt>Treasury token account</dt>
+        <dt>{t('Treasury token account')}</dt>
         <dd className="ct-code">{intent.recipientTokenAccount}</dd>
       </div>
       <div>
-        <dt>Required reference</dt>
+        <dt>{t('Required reference')}</dt>
         <dd className="ct-code">{intent.reference}</dd>
       </div>
       <div>
-        <dt>Created</dt>
+        <dt>{t('Created')}</dt>
         <dd>{utc(intent.createdAt)}</dd>
       </div>
       <div>
-        <dt>Payment window ends</dt>
+        <dt>{t('Payment window ends')}</dt>
         <dd>{utc(intent.expiresAt)}</dd>
       </div>
       <div>
-        <dt>Intent ID</dt>
+        <dt>{t('Intent ID')}</dt>
         <dd className="ct-code">{intent.id}</dd>
       </div>
     </dl>
@@ -89,6 +91,7 @@ export function LiveDepositPanel({
   visible: boolean;
   onCredited: () => Promise<boolean | void>;
 }) {
+  const t = useT();
   const fieldId = useId();
   const [capability, setCapability] = useState<DepositCapability | null>(null);
   const [wallets, setWallets] = useState<string[]>([]),
@@ -466,9 +469,9 @@ export function LiveDepositPanel({
     : false;
 
   return (
-    <section className="cp-ledger ct-tools" aria-label="USDC deposits">
+    <section className="cp-ledger ct-tools" aria-label={t('USDC deposits')}>
       <div className="cp-ledger-heading">
-        <h2>USDC deposits</h2>
+        <h2>{t('USDC deposits')}</h2>
         <button
           className="cp-text-button"
           type="button"
@@ -479,58 +482,63 @@ export function LiveDepositPanel({
             setRevision((value) => value + 1);
           }}
         >
-          Refresh deposit records
+          {t('Refresh deposit records')}
         </button>
       </div>
       <p className="cp-fineprint">
-        Deposits add prepaid service credit. The balance shown in Purse is not
-        your wallet’s token balance. Wallet payment is available only when its
-        network and treasury checks are enabled.
+        {t(
+          'Deposits add prepaid service credit. The balance shown in Purse is not your wallet’s token balance. Wallet payment is available only when its network and treasury checks are enabled.',
+        )}
       </p>
       {!accountId && (
         <p className="cp-boundary-note">
-          Sign in through Account to view or recover owned deposit intents.
+          {t(
+            'Sign in through Account to view or recover owned deposit intents.',
+          )}
         </p>
       )}
       {loading && (
         <output className="cp-boundary-note">
-          Reading deposit configuration and account records…
+          {t('Reading deposit configuration and account records…')}
         </output>
       )}
       {capability && !capability.configured && (
         <p className="cp-boundary-note">
           <AlertTriangle size={15} aria-hidden="true" />
           <span>
-            New deposits are disabled or missing operator configuration.{' '}
+            {t('New deposits are disabled or missing operator configuration.')}{' '}
             {capability.recoveryConfigured
-              ? 'Existing intents may still allow signature recovery.'
-              : 'Deposit recovery is also unavailable until the operator enables it for the configured network.'}
+              ? t('Existing intents may still allow signature recovery.')
+              : t(
+                  'Deposit recovery is also unavailable until the operator enables it for the configured network.',
+                )}
           </span>
         </p>
       )}
       {capability?.configured && (
         <p className="cp-boundary-note">
           {capability.cluster === 'devnet'
-            ? 'Devnet is a test network. Do not use real funds.'
-            : 'Mainnet configuration is present.'}{' '}
-          Configuration alone is not a live RPC or treasury verification.
-          Transfers are verified against the saved intent during reconciliation.
+            ? t('Devnet is a test network. Do not use real funds.')
+            : t('Mainnet configuration is present.')}{' '}
+          {t(
+            'Configuration alone is not a live RPC or treasury verification. Transfers are verified against the saved intent during reconciliation.',
+          )}
         </p>
       )}
       {error && (
         <output className="cp-boundary-note">
           <AlertTriangle size={15} aria-hidden="true" />
-          <span>{error}</span>
+          <span>{t(error)}</span>
         </output>
       )}
-      {notice && <output className="cp-boundary-note">{notice}</output>}
+      {notice && <output className="cp-boundary-note">{t(notice)}</output>}
       {accountId &&
         !loading &&
         !selected &&
         !review &&
         capability?.configured && (
           <details className="ct-example">
-            <summary>Prepare a deposit intent</summary>
+            <summary>{t('Prepare a deposit intent')}</summary>
             <form
               className="cp-form-paper"
               onSubmit={(event) => {
@@ -539,19 +547,20 @@ export function LiveDepositPanel({
               }}
             >
               <p className="cp-fineprint">
-                Creating an intent records the exact amount, verified source
-                wallet, network, and a 15-minute payment window. It does not
-                move funds or open your wallet.
+                {t(
+                  'Creating an intent records the exact amount, verified source wallet, network, and a 15-minute payment window. It does not move funds or open your wallet.',
+                )}
               </p>
               {!wallets.length ? (
                 <p className="cp-boundary-note">
-                  Sign in through Account with the source Solana wallet before
-                  preparing an intent.
+                  {t(
+                    'Sign in through Account with the source Solana wallet before preparing an intent.',
+                  )}
                 </p>
               ) : (
                 <>
                   <label htmlFor={`${fieldId}-wallet`}>
-                    Verified source wallet
+                    {t('Verified source wallet')}
                     <select
                       id={`${fieldId}-wallet`}
                       value={sourceWallet}
@@ -566,7 +575,7 @@ export function LiveDepositPanel({
                     </select>
                   </label>
                   <label htmlFor={`${fieldId}-amount`}>
-                    Exact amount · USDC
+                    {t('Exact amount · USDC')}
                     <input
                       id={`${fieldId}-amount`}
                       inputMode="decimal"
@@ -579,15 +588,17 @@ export function LiveDepositPanel({
                     />
                   </label>
                   <p className="cp-fineprint">
-                    Up to {formatDepositAmount(capability.maximumUsd6!)} USDC
-                    per intent on {networkLabel(capability.cluster!)}.
+                    {t('Up to {amount} USDC per intent on {network}.', {
+                      amount: formatDepositAmount(capability.maximumUsd6!),
+                      network: t(networkLabel(capability.cluster!)),
+                    })}
                   </p>
                   <button
                     className="cp-button cp-button-primary"
                     type="submit"
                     disabled={busy || !amount.trim() || !sourceWallet}
                   >
-                    Review intent
+                    {t('Review intent')}
                   </button>
                 </>
               )}
@@ -595,35 +606,38 @@ export function LiveDepositPanel({
           </details>
         )}
       {review && (
-        <div className="cp-form-paper" aria-label="Deposit intent confirmation">
+        <div
+          className="cp-form-paper"
+          aria-label={t('Deposit intent confirmation')}
+        >
           <h3>
             {review.phase === 'uncertain'
-              ? 'Recover the original intent'
-              : 'Confirm the intent details'}
+              ? t('Recover the original intent')
+              : t('Confirm the intent details')}
           </h3>
           <dl className="ct-facts">
             <div>
-              <dt>Network</dt>
-              <dd>{networkLabel(review.capability.cluster!)}</dd>
+              <dt>{t('Network')}</dt>
+              <dd>{t(networkLabel(review.capability.cluster!))}</dd>
             </div>
             <div>
-              <dt>Exact amount</dt>
+              <dt>{t('Exact amount')}</dt>
               <dd>{formatDepositAmount(review.input.amountUsd6)} USDC</dd>
             </div>
             <div>
-              <dt>Source wallet</dt>
+              <dt>{t('Source wallet')}</dt>
               <dd className="ct-code">{review.input.sourceWallet}</dd>
             </div>
             <div>
-              <dt>USDC mint</dt>
+              <dt>{t('USDC mint')}</dt>
               <dd className="ct-code">{review.capability.mint}</dd>
             </div>
             <div>
-              <dt>Treasury wallet</dt>
+              <dt>{t('Treasury wallet')}</dt>
               <dd className="ct-code">{review.capability.recipientWallet}</dd>
             </div>
             <div>
-              <dt>Treasury token account</dt>
+              <dt>{t('Treasury token account')}</dt>
               <dd className="ct-code">
                 {review.capability.recipientTokenAccount}
               </dd>
@@ -631,8 +645,12 @@ export function LiveDepositPanel({
           </dl>
           <p className="cp-fineprint">
             {review.phase === 'uncertain'
-              ? 'The previous response did not establish whether the intent was saved. Recovery uses the same request key and exact terms. After closing this page, check recent intents before creating another.'
-              : 'The reference and expiry will be assigned when the service saves this intent. This action does not transfer USDC.'}
+              ? t(
+                  'The previous response did not establish whether the intent was saved. Recovery uses the same request key and exact terms. After closing this page, check recent intents before creating another.',
+                )
+              : t(
+                  'The reference and expiry will be assigned when the service saves this intent. This action does not transfer USDC.',
+                )}
           </p>
           {review.phase === 'review' && (
             <button
@@ -641,7 +659,7 @@ export function LiveDepositPanel({
               disabled={busy}
               onClick={() => setReview(null)}
             >
-              Back to amount
+              {t('Back to amount')}
             </button>
           )}
           <button
@@ -651,44 +669,52 @@ export function LiveDepositPanel({
             onClick={() => void createIntent()}
           >
             {busy
-              ? 'Checking intent…'
+              ? t('Checking intent…')
               : review.phase === 'uncertain'
-                ? 'Recover same intent request'
-                : 'Create intent · no transfer'}
+                ? t('Recover same intent request')
+                : t('Create intent · no transfer')}
           </button>
         </div>
       )}
       {selected && (
-        <div className="cp-form-paper" aria-label="Selected deposit intent">
+        <div
+          className="cp-form-paper"
+          aria-label={t('Selected deposit intent')}
+        >
           <h3>
-            {statusLabel(selected, now)} ·{' '}
+            {t(statusLabel(selected, now))} ·{' '}
             {formatDepositAmount(selected.amountUsd6)} USDC
           </h3>
           {selected.cluster === 'devnet' && (
             <p className="cp-boundary-note">
-              Devnet test intent. Do not send real funds.
+              {t('Devnet test intent. Do not send real funds.')}
             </p>
           )}
           {selected.state !== 'credited' && (
             <p className="cp-fineprint">
               {selectedExpired
-                ? 'The payment window has closed. An already-submitted transfer can still be checked if it landed within the original window.'
-                : 'This is an unpaid intent, not proof that a transfer was submitted.'}{' '}
-              A generic wallet send without the exact reference and supported
-              transfer format may not be accepted.
+                ? t(
+                    'The payment window has closed. An already-submitted transfer can still be checked if it landed within the original window.',
+                  )
+                : t(
+                    'This is an unpaid intent, not proof that a transfer was submitted.',
+                  )}{' '}
+              {t(
+                'A generic wallet send without the exact reference and supported transfer format may not be accepted.',
+              )}
             </p>
           )}
           {selected.state !== 'credited' &&
             !selectedExpired &&
             !selected.paymentWindowOpen && (
               <p className="cp-boundary-note">
-                New payments are unavailable for this saved intent under the
-                current configuration. Its details remain available for
-                recovery.
+                {t(
+                  'New payments are unavailable for this saved intent under the current configuration. Its details remain available for recovery.',
+                )}
               </p>
             )}
           <details className="ct-example" open>
-            <summary>Saved intent details</summary>
+            <summary>{t('Saved intent details')}</summary>
             <IntentFacts intent={selected} />
           </details>
           {accountId && (
@@ -703,18 +729,18 @@ export function LiveDepositPanel({
           )}
           {selected.settlement && (
             <div className="ct-example">
-              <h3>Recorded settlement</h3>
+              <h3>{t('Recorded settlement')}</h3>
               <dl className="ct-facts">
                 <div>
-                  <dt>Transaction signature</dt>
+                  <dt>{t('Transaction signature')}</dt>
                   <dd className="ct-code">{selected.settlement.signature}</dd>
                 </div>
                 <div>
-                  <dt>Finalized slot</dt>
+                  <dt>{t('Finalized slot')}</dt>
                   <dd>{selected.settlement.slot}</dd>
                 </div>
                 <div>
-                  <dt>Block time</dt>
+                  <dt>{t('Block time')}</dt>
                   <dd>
                     {utc(
                       new Date(
@@ -724,11 +750,11 @@ export function LiveDepositPanel({
                   </dd>
                 </div>
                 <div>
-                  <dt>Verified</dt>
+                  <dt>{t('Verified')}</dt>
                   <dd>{utc(selected.settlement.verifiedAt)}</dd>
                 </div>
                 <div>
-                  <dt>Ledger transaction</dt>
+                  <dt>{t('Ledger transaction')}</dt>
                   <dd className="ct-code">
                     {selected.settlement.transactionId}
                   </dd>
@@ -738,9 +764,9 @@ export function LiveDepositPanel({
           )}
           {selected.state !== 'credited' && !selected.canReconcile && (
             <p className="cp-boundary-note">
-              Signature recovery is unavailable for this saved intent’s network
-              and treasury configuration. Keep its ID and the original
-              transaction signature.
+              {t(
+                'Signature recovery is unavailable for this saved intent’s network and treasury configuration. Keep its ID and the original transaction signature.',
+              )}
             </p>
           )}
           {selected.state !== 'credited' && selected.canReconcile && (
@@ -751,15 +777,14 @@ export function LiveDepositPanel({
                 reviewSignature();
               }}
             >
-              <h3>Recover an existing transfer</h3>
+              <h3>{t('Recover an existing transfer')}</h3>
               <p className="cp-fineprint">
-                Provide a transaction already submitted for this exact intent.
-                The server reads the configured network and verifies finality,
-                amount, wallet, recipient, reference, and original time window
-                before crediting.
+                {t(
+                  'Provide a transaction already submitted for this exact intent. The server reads the configured network and verifies finality, amount, wallet, recipient, reference, and original time window before crediting.',
+                )}
               </p>
               <label htmlFor={`${fieldId}-signature`}>
-                Transaction signature
+                {t('Transaction signature')}
                 <input
                   id={`${fieldId}-signature`}
                   value={signature}
@@ -772,7 +797,7 @@ export function LiveDepositPanel({
                     setCheckedSignature(null);
                     setVerificationPending(false);
                   }}
-                  placeholder="Existing base58 transaction signature"
+                  placeholder={t('Existing base58 transaction signature')}
                 />
               </label>
               {!signatureReview && (
@@ -781,26 +806,27 @@ export function LiveDepositPanel({
                   type="submit"
                   disabled={busy || !signature.trim()}
                 >
-                  Review signature check
+                  {t('Review signature check')}
                 </button>
               )}
               {signatureReview && (
                 <>
                   <p className="cp-fineprint">
-                    Confirm a read and ledger reconciliation for this signature.
-                    No wallet transaction will be signed or sent.
+                    {t(
+                      'Confirm a read and ledger reconciliation for this signature. No wallet transaction will be signed or sent.',
+                    )}
                   </p>
                   <dl className="ct-facts">
                     <div>
-                      <dt>Signature to verify</dt>
+                      <dt>{t('Signature to verify')}</dt>
                       <dd className="ct-code">{signatureReview}</dd>
                     </div>
                   </dl>
                   {verificationPending && (
                     <p className="cp-boundary-note">
-                      Verification outcome is uncertain. Read saved status or
-                      check this same signature again; do not send another
-                      transfer.
+                      {t(
+                        'Verification outcome is uncertain. Read saved status or check this same signature again; do not send another transfer.',
+                      )}
                     </p>
                   )}
                   <button
@@ -810,10 +836,10 @@ export function LiveDepositPanel({
                     onClick={() => void reconcile()}
                   >
                     {busy
-                      ? 'Verifying transfer…'
+                      ? t('Verifying transfer…')
                       : checkedSignature === signatureReview
-                        ? 'Check the same signature again'
-                        : 'Confirm signature verification'}
+                        ? t('Check the same signature again')
+                        : t('Confirm signature verification')}
                   </button>
                   <button
                     className="cp-text-button"
@@ -824,7 +850,7 @@ export function LiveDepositPanel({
                       setCheckedSignature(null);
                     }}
                   >
-                    Edit signature
+                    {t('Edit signature')}
                   </button>
                 </>
               )}
@@ -836,7 +862,7 @@ export function LiveDepositPanel({
             disabled={busy}
             onClick={() => void readStatus()}
           >
-            Read saved intent status
+            {t('Read saved intent status')}
           </button>
           <button
             className="cp-text-button"
@@ -853,13 +879,13 @@ export function LiveDepositPanel({
               setError('');
             }}
           >
-            Back to recent intents
+            {t('Back to recent intents')}
           </button>
         </div>
       )}
       {accountId && !loading && (
         <details className="ct-example" open={!selected && !review}>
-          <summary>Recent deposit intents</summary>
+          <summary>{t('Recent deposit intents')}</summary>
           {intents.length ? (
             intents.map((intent) => (
               <button
@@ -870,13 +896,13 @@ export function LiveDepositPanel({
                 onClick={() => void openIntent(intent.id)}
               >
                 {formatDepositAmount(intent.amountUsd6)} USDC ·{' '}
-                {networkLabel(intent.cluster)} · {statusLabel(intent, now)} ·{' '}
-                {utc(intent.createdAt)}
+                {t(networkLabel(intent.cluster))} ·{' '}
+                {t(statusLabel(intent, now))} · {utc(intent.createdAt)}
               </button>
             ))
           ) : (
             <p className="cp-fineprint">
-              No intents were returned on this page.
+              {t('No intents were returned on this page.')}
             </p>
           )}
           {nextCursor && (
@@ -894,7 +920,7 @@ export function LiveDepositPanel({
                 })
               }
             >
-              Read earlier intents
+              {t('Read earlier intents')}
             </button>
           )}
         </details>

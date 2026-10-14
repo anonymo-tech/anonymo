@@ -1,7 +1,9 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useT } from '@/lib/i18n';
 import { securityActionLabel } from '../../lib/auth/security';
+
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   AccountSecurityError,
   createAccountSecurityClient,
@@ -51,6 +53,7 @@ export function LiveAccountSecurity({
   onBusyChange,
   onSessionRefresh,
 }: Props) {
+  const t = useT();
   const [overview, setOverview] = useState<SecurityOverview | null>(null);
   const [action, setAction] = useState<SecurityAction | null>(null);
   const [grant, setGrant] = useState<SecurityGrant | null>(null);
@@ -380,39 +383,64 @@ export function LiveAccountSecurity({
     action?.kind === 'revoke-sessions'
       ? overview?.sessions.find((row) => row.id === action.target)
       : undefined;
+  function actionLabel(reviewed: SecurityAction) {
+    const english = securityActionLabel(reviewed);
+    if (reviewed.kind === 'link-wallet')
+      return t('Link Solana wallet {address} to this Conclave account', {
+        address: reviewed.target ?? '',
+      });
+    if (reviewed.kind === 'remove-identity')
+      return t('Remove sign-in identity {id} from this Conclave account', {
+        id: reviewed.target ?? '',
+      });
+    if (reviewed.kind === 'revoke-sessions' && reviewed.target !== 'others')
+      return t('Sign out Conclave session {id}', { id: reviewed.target ?? '' });
+    return t(english);
+  }
   const actionTitle = !action
     ? ''
     : reviewedIdentity
-      ? `Remove ${reviewedIdentity.kind === 'passkey' ? `Passkey ${reviewedIdentityIndex + 1}` : 'Solana wallet'}`
+      ? reviewedIdentity.kind === 'passkey'
+        ? t('Remove Passkey {number}', { number: reviewedIdentityIndex + 1 })
+        : t('Remove Solana wallet')
       : reviewedSession
-        ? `Sign out ${reviewedSession.current ? 'this session' : 'the session'} started ${utc(reviewedSession.createdAt)}`
-        : securityActionLabel(action);
+        ? reviewedSession.current
+          ? t('Sign out this session started {date}', {
+              date: utc(reviewedSession.createdAt),
+            })
+          : t('Sign out the session started {date}', {
+              date: utc(reviewedSession.createdAt),
+            })
+        : actionLabel(action);
   const locked = disabled || busy;
   const eligible =
     overview?.identities.filter(
       (v) => action?.kind !== 'remove-identity' || action.target !== v.id,
     ) ?? [];
   return (
-    <section className="ct-detail" aria-label="Account security">
-      <h3>Account security</h3>
+    <section className="ct-detail" aria-label={t('Account security')}>
+      <h3>{t('Account security')}</h3>
       <p>
-        Keep access to another previously enrolled wallet or passkey, including
-        a synced copy. If all enrolled credentials are lost, support cannot
-        restore access. There is no email reset, recovery code, or manual
-        override. Adding or removing a method signs out your other sessions.
+        {t(
+          'Keep access to another previously enrolled wallet or passkey, including a synced copy. If all enrolled credentials are lost, support cannot restore access. There is no email reset, recovery code, or manual override. Adding or removing a method signs out your other sessions.',
+        )}
       </p>
       {overview ? (
         <>
-          <h4>Sign-in methods</h4>
+          <h4>{t('Sign-in methods')}</h4>
           <ul>
             {overview.identities.map((identity, index) => (
               <li key={identity.id}>
                 <strong>
                   {identity.kind === 'passkey'
-                    ? `Passkey ${index + 1}`
-                    : `Solana wallet ${short(identity.subject)}`}
+                    ? t('Passkey {number}', { number: index + 1 })
+                    : t('Solana wallet {address}', {
+                        address: short(identity.subject),
+                      })}
                 </strong>{' '}
-                <small>Added {utc(identity.createdAt)}</small>{' '}
+                <small>
+                  {t('Added {date}', { date: utc(identity.createdAt) })}
+                </small>{' '}
                 <button
                   className="ct-button"
                   type="button"
@@ -421,7 +449,7 @@ export function LiveAccountSecurity({
                     choose({ kind: 'remove-identity', target: identity.id })
                   }
                 >
-                  Review removal
+                  {t('Review removal')}
                 </button>
               </li>
             ))}
@@ -437,14 +465,17 @@ export function LiveAccountSecurity({
             }
             onClick={() => choose({ kind: 'add-passkey', target: null })}
           >
-            Add passkey
+            {t('Add passkey')}
           </button>
-          {!passkeysEnabled && <p>Passkey enrollment is not configured.</p>}
+          {!passkeysEnabled && (
+            <p>{t('Passkey enrollment is not configured.')}</p>
+          )}
           <details>
-            <summary>Link a Solana wallet</summary>
+            <summary>{t('Link a Solana wallet')}</summary>
             <p>
-              Connect the new wallet, approve the link with an existing sign-in
-              method, then prove ownership of the new wallet.
+              {t(
+                'Connect the new wallet, approve the link with an existing sign-in method, then prove ownership of the new wallet.',
+              )}
             </p>
             <div className="ct-segments">
               {wallets.map((wallet, index) => (
@@ -457,11 +488,13 @@ export function LiveAccountSecurity({
                   }
                   onClick={() => void connectNewWallet(wallet)}
                 >
-                  Connect {wallet.name.slice(0, 80)}
+                  {t('Connect {wallet}', { wallet: wallet.name.slice(0, 80) })}
                 </button>
               ))}
             </div>
-            {!wallets.length && <p>No compatible wallet was detected.</p>}
+            {!wallets.length && (
+              <p>{t('No compatible wallet was detected.')}</p>
+            )}
             {connection && (
               <div className="ct-models">
                 {connection.accounts.map((account) => (
@@ -475,21 +508,26 @@ export function LiveAccountSecurity({
                       choose({ kind: 'link-wallet', target: account.address });
                     }}
                   >
-                    Review linking {short(account.address)}
+                    {t('Review linking {address}', {
+                      address: short(account.address),
+                    })}
                   </button>
                 ))}
               </div>
             )}
           </details>
-          <h4>Sessions</h4>
+          <h4>{t('Sessions')}</h4>
           <ul>
             {overview.sessions.map((row) => (
               <li key={row.id}>
                 <strong>
-                  {row.current ? 'This session' : 'Other session'}
+                  {row.current ? t('This session') : t('Other session')}
                 </strong>{' '}
                 <small>
-                  Started {utc(row.createdAt)} · Expires {utc(row.expiresAt)}
+                  {t('Started {started} · Expires {expires}', {
+                    started: utc(row.createdAt),
+                    expires: utc(row.expiresAt),
+                  })}
                 </small>{' '}
                 <button
                   className="ct-button"
@@ -499,15 +537,16 @@ export function LiveAccountSecurity({
                     choose({ kind: 'revoke-sessions', target: row.id })
                   }
                 >
-                  Review sign-out
+                  {t('Review sign-out')}
                 </button>
               </li>
             ))}
           </ul>
           {overview.moreSessions && (
             <p>
-              Showing the 50 most recent sessions. “Sign out other sessions”
-              also covers older sessions.
+              {t(
+                'Showing the 50 most recent sessions. “Sign out other sessions” also covers older sessions.',
+              )}
             </p>
           )}
           <button
@@ -518,14 +557,14 @@ export function LiveAccountSecurity({
               choose({ kind: 'revoke-sessions', target: 'others' })
             }
           >
-            Sign out other sessions
+            {t('Sign out other sessions')}
           </button>
         </>
       ) : (
-        <p>Account security details have not loaded.</p>
+        <p>{t('Account security details have not loaded.')}</p>
       )}
       {action && !unknown && (
-        <section className="ct-detail" aria-label="Review account action">
+        <section className="ct-detail" aria-label={t('Review account action')}>
           <h4>{actionTitle}</h4>
           {reviewedIdentity && (
             <p>
@@ -539,21 +578,23 @@ export function LiveAccountSecurity({
                   <br />
                 </>
               )}
-              Added {utc(reviewedIdentity.createdAt)}
+              {t('Added {date}', { date: utc(reviewedIdentity.createdAt) })}
             </p>
           )}
           {action.kind === 'remove-identity' && (
             <p>
-              This method will no longer sign in. Confirm using a different
-              method that remains on the account.
+              {t(
+                'This method will no longer sign in. Confirm using a different method that remains on the account.',
+              )}
             </p>
           )}
           {grant && !expired ? (
             <>
               <p>
-                Identity confirmed until{' '}
-                {utc(new Date(grant.expiresAt).toISOString())}. This approval
-                applies only to the action above.
+                {t(
+                  'Identity confirmed until {date}. This approval applies only to the action above.',
+                  { date: utc(new Date(grant.expiresAt).toISOString()) },
+                )}
               </p>
               <button
                 className="ct-button ct-button-primary"
@@ -562,20 +603,22 @@ export function LiveAccountSecurity({
                 onClick={() => void complete()}
               >
                 {action.kind === 'add-passkey'
-                  ? 'Create the new passkey'
+                  ? t('Create the new passkey')
                   : action.kind === 'link-wallet'
-                    ? 'Confirm with the new wallet'
+                    ? t('Confirm with the new wallet')
                     : action.kind === 'remove-identity'
-                      ? 'Remove this sign-in method'
-                      : 'Sign out reviewed sessions'}
+                      ? t('Remove this sign-in method')
+                      : t('Sign out reviewed sessions')}
               </button>
             </>
           ) : (
             <>
               <p>
                 {expired
-                  ? 'Approval expired. Confirm again with an existing identity.'
-                  : 'Confirm this action with an existing sign-in method.'}
+                  ? t(
+                      'Approval expired. Confirm again with an existing identity.',
+                    )
+                  : t('Confirm this action with an existing sign-in method.')}
               </p>
               {passkeysEnabled &&
                 eligible.some((v) => v.kind === 'passkey') && (
@@ -585,14 +628,18 @@ export function LiveAccountSecurity({
                     disabled={locked}
                     onClick={() => void provePasskey()}
                   >
-                    Confirm with existing passkey
+                    {t('Confirm with existing passkey')}
                   </button>
                 )}
               {eligible
                 .filter((v) => v.kind === 'solana')
                 .map((identity) => (
                   <div key={identity.id}>
-                    <p>Existing wallet {identity.subject}</p>
+                    <p>
+                      {t('Existing wallet {address}', {
+                        address: identity.subject,
+                      })}
+                    </p>
                     {wallets.map((wallet, index) => (
                       <button
                         className="ct-button"
@@ -601,7 +648,9 @@ export function LiveAccountSecurity({
                         key={`${wallet.name}:${index}`}
                         onClick={() => void proveWallet(identity, wallet)}
                       >
-                        Confirm in {wallet.name.slice(0, 80)}
+                        {t('Confirm in {wallet}', {
+                          wallet: wallet.name.slice(0, 80),
+                        })}
                       </button>
                     ))}
                   </div>
@@ -617,25 +666,28 @@ export function LiveAccountSecurity({
               setGrant(null);
             }}
           >
-            Cancel action
+            {t('Cancel action')}
           </button>
         </section>
       )}
       {unknown && (
         <p role="alert">
-          The last action may have completed. Read the saved security status
-          before starting another action.
+          {t(
+            'The last action may have completed. Read the saved security status before starting another action.',
+          )}
         </p>
       )}
-      {notice && <output className="ct-note">{notice}</output>}
-      {busy && <output>Waiting for your account or authenticator…</output>}
+      {notice && <output className="ct-note">{t(notice)}</output>}
+      {busy && (
+        <output>{t('Waiting for your account or authenticator…')}</output>
+      )}
       <button
         className="ct-button"
         type="button"
         disabled={locked}
         onClick={() => void refresh()}
       >
-        Refresh security status
+        {t('Refresh security status')}
       </button>
     </section>
   );

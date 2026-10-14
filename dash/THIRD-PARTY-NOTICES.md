@@ -56,3 +56,7 @@ The interactive conversation canvas uses React Flow. The full license accompanie
 ## Additional Studio marks
 
 Runway and Kling SVG assets are distributed from `@lobehub/icons-static-svg` 1.95.1 under the MIT license, reproduced in `public/licenses/lobe-icons-LICENSE.txt`. Their names and marks remain the property of their respective owners; their display does not imply affiliation or endorsement.
+
+## Wallet marks
+
+The wallet picker uses the published marks of [Phantom](https://phantom.com/), [Solflare](https://www.solflare.com/), [Backpack](https://backpack.app/), [MetaMask](https://metamask.io/), [Trust Wallet](https://trustwallet.com/), and [OKX Wallet](https://web3.okx.com/). The files in `public/brand/wallets/` come from their official websites or press kits and identify wallet options. They remain the property of their respective owners, are subject to their brand guidelines, and do not imply affiliation or endorsement.
