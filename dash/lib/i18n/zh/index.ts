@@ -11,6 +11,14 @@ import deposits from './deposits.ts';
 import solanaBriefs from './solana-briefs.ts';
 import studio from './studio.ts';
 import production from './production.ts';
+import answerCosts from './answer-costs.ts';
+import answerSources from './answer-sources.ts';
+import onlyOneSaid from './only-one-said.ts';
+import savedCouncils from './saved-councils.ts';
+import blindRecord from './blind-record.ts';
+import failureReasons from './failure-reasons.ts';
+import explorerLinks from './explorer-links.ts';
+import pdfReferences from './pdf-references.ts';
 
 /** Every area's strings in one table. An English key that appears in two areas takes the later entry. */
 const zh: Dictionary = {
@@ -26,6 +34,14 @@ const zh: Dictionary = {
   ...chatParts,
   ...chat,
   ...production,
+  ...answerCosts,
+  ...answerSources,
+  ...onlyOneSaid,
+  ...savedCouncils,
+  ...blindRecord,
+  ...failureReasons,
+  ...explorerLinks,
+  ...pdfReferences,
 };
 
 export default zh;

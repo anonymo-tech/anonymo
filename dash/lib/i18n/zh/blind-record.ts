@@ -1,0 +1,26 @@
+const blindRecord = {
+  'Your blind record': '你的盲选记录',
+  'See which model families you picked with their names hidden.': '看看在模型名称隐藏时，你选择了哪些模型系列。',
+  'Counted in your browser from your own comparisons.': '根据你自己的对比记录，在浏览器中统计。',
+  'This needs a signed-in account. Sign in from Account & wallet; preview comparisons are not counted.': '此功能需要登录账户。请从“账户与钱包”登录；预览对比不计入统计。',
+  'Account changed. Reopen Settings before counting again.': '账户已更改。请重新打开设置后再统计。',
+  'Counting requests your saved projects and comparisons. Scans up to {pages} pages per project and {comparisons} comparisons in total.': '统计会请求你保存的项目和对比记录。每个项目最多扫描 {pages} 页，总计最多扫描 {comparisons} 次对比。',
+  'Count my blind picks': '统计我的盲选',
+  'Cancel counting': '取消统计',
+  'Checked {projects} projects, scanned {comparisons} comparisons; {votes} blind votes found.': '已检查 {projects} 个项目，扫描 {comparisons} 次对比；找到 {votes} 次盲选投票。',
+  'Counting cancelled. No tally was kept.': '统计已取消，未保留统计结果。',
+  'Counting could not finish. No complete tally is available. Try again when your account is available.': '未能完成统计，暂无完整结果。账户可用后请重试。',
+  'Total blind votes: {votes}': '盲选投票总数：{votes}',
+  'Comparisons scanned: {count}': '已扫描对比数：{count}',
+  'Reached the limit of {count} comparisons. This tally may leave out more history.': '已达到 {count} 次对比的上限。本次统计可能未涵盖全部历史记录。',
+  'Reached the limit of {count} pages in at least one project. This tally leaves out more history from those projects.': '至少一个项目已达到 {count} 页的上限。本次统计未涵盖这些项目的全部历史记录。',
+  'Only {n} votes so far. Too few to read much into.': '目前只有 {n} 次投票，样本太少，不宜过多解读。',
+  '{count} votes have no model family available and could not be assigned to a family.': '有 {count} 次投票缺少模型系列信息，无法归入具体系列。',
+  'Pick rate is picks divided by voted blind comparisons featuring that family. Each family appears at most once per comparison.': '选择率为被选次数除以该系列参与且有投票的盲选对比数。每次对比中，每个系列最多计为出现一次。',
+  'Times picked': '被选次数',
+  'Times appeared': '出现次数',
+  'Pick rate': '选择率',
+  '{rate}%': '{rate}%',
+};
+
+export default blindRecord;

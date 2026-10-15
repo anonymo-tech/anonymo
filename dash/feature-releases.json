@@ -48,6 +48,15 @@
     "sendYourWay",
     "decisionImport",
     "decisionCompare",
-    "studioSearch"
+    "studioSearch",
+    "onlyOneSaid",
+    "answerSources",
+    "savedCouncils",
+    "explorerLinks",
+    "failureReasons",
+    "pdfReferences",
+    "answerCosts",
+    "blindRecord",
+    "shareTarget"
   ]
 }

@@ -11,14 +11,15 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { fomoPromptPresentation } from '../../lib/second-look/fomo-presentation';
-import { AnswerCard, ProviderIcon, type AnswerActions } from './answer-card';
+import { AnswerCard, ProviderIcon, TurnCostLine, type AnswerActions, AnswerSourceCount } from './answer-card';
+import { featureOn } from './feature-switches';
 import type { Turn } from './canvas-state';
 import { MODELS } from './data';
-import { featureOn } from './feature-switches';
 import { AskAgain, type ReuseQuestion } from './ask-again';
 import { ThreadMap } from './thread-map';
 import { RunTotal } from './run-total';
 import { ReadingRoom } from './reading-room';
+import { onlyOneSaidAnswers } from './only-one-said';
 import '../../app/dashboard/chat-thread.css';
 
 export type ChatTurnPreference = {
@@ -36,6 +37,7 @@ type ChatThreadProps = {
   loadingHistory?: boolean;
   onLoadEarlier?: () => void;
   accountScope?: string;
+  onOnlyOneSaid?: (turn: Turn, focusedAnswerId: string) => void;
 };
 
 type ChatTurnProps = {
@@ -45,6 +47,7 @@ type ChatTurnProps = {
   preference?: ChatTurnPreference;
   onPreferenceChange: ChatThreadProps['onPreferenceChange'];
   onReuseQuestion?: ReuseQuestion;
+  onOnlyOneSaid?: ChatThreadProps['onOnlyOneSaid'];
 };
 
 function sourceChain(turns: Turn[]) {
@@ -76,6 +79,7 @@ export function ChatTurn({
   preference,
   onPreferenceChange,
   onReuseQuestion,
+  onOnlyOneSaid,
 }: ChatTurnProps) {
   const t = useT();
   const id = useId();
@@ -299,6 +303,21 @@ export function ChatTurn({
               </button>
             )}
           </div>
+          {featureOn('runTotal') ? <RunTotal turn={turn} /> : featureOn('answerCosts') && featureOn('purse') ? <TurnCostLine answers={turn.answers} /> : null}
+          {featureOn('onlyOneSaid') &&
+            onOnlyOneSaid &&
+            onlyOneSaidAnswers(turn).length >= 2 && (
+              <div className="cw-chat-only-one-said">
+                <button
+                  className="cw-chat-compare"
+                  type="button"
+                  onClick={() => onOnlyOneSaid(turn, activeAnswerId)}
+                >
+                  {t('Only one said it')}
+                </button>
+                <small>{t('See what one model misses.')}</small>
+              </div>
+            )}
           {comparing && (
             <output className="cw-chat-compare-caption">
               {t('Comparing {count} perspectives', {
@@ -319,6 +338,17 @@ export function ChatTurn({
                 aria-labelledby={`${id}-tab-${index}`}
                 tabIndex={0}
                 hidden={!comparing && answer.id !== activeAnswerId}
+                onFocusCapture={
+                  featureOn('onlyOneSaid') && onOnlyOneSaid
+                    ? () => {
+                        if (answer.id !== activeAnswerId)
+                          onPreferenceChange(turn.id, {
+                            activeAnswerId: answer.id,
+                            comparing,
+                          });
+                      }
+                    : undefined
+                }
               >
                 {comparing && (
                   <div className="cw-chat-compare-provider" aria-hidden="true">
@@ -330,6 +360,7 @@ export function ChatTurn({
                           modelName(answer.modelId),
                       )}
                     </span>
+                    {featureOn('answerSources') && <AnswerSourceCount answer={answer} />}
                   </div>
                 )}
                 <AnswerCard
@@ -345,7 +376,6 @@ export function ChatTurn({
               </div>
             ))}
           </div>
-          {featureOn('runTotal') && <RunTotal turn={turn} />}
         </>
       )}
     </section>
@@ -362,6 +392,7 @@ export function ChatThread({
   loadingHistory,
   onLoadEarlier,
   accountScope = 'preview',
+  onOnlyOneSaid,
 }: ChatThreadProps) {
   const sources = useMemo(() => sourceChain(turns), [turns]);
   const root = useRef<HTMLDivElement>(null);
@@ -383,6 +414,7 @@ export function ChatThread({
           preference={preferences[turn.id]}
           onPreferenceChange={onPreferenceChange}
           onReuseQuestion={onReuseQuestion}
+          onOnlyOneSaid={onOnlyOneSaid}
         />
       ))}
     </div>

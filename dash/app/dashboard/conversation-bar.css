@@ -172,6 +172,55 @@
 .cw-conversation-dock .cw-attachments {
   padding: 4px 4px 0;
 }
+.cw-explorer-chip {
+  padding: 4px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.cw-explorer-chip > :is(button, output) {
+  display: inline-block;
+  max-width: 100%;
+  padding: 5px 9px;
+  border: 1px solid var(--cw-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--cw-ink);
+  text-align: left;
+}
+.cw-explorer-chip > button:hover {
+  border-color: #ea2a22;
+}
+.cw-text-reference {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.cw-text-reference > button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid var(--cw-line);
+  border-radius: 5px;
+  padding: 3px 6px;
+}
+.cw-text-reference > button > span:first-of-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cw-reference-pages {
+  flex-shrink: 0;
+  font-family: 'JetBrains Mono', monospace;
+}
+.cw-text-reference > span {
+  overflow-wrap: anywhere;
+}
 .cw-shell:is(.cw-view-chat, .cw-view-canvas) .cw-content {
   bottom: var(--cw-compose-clearance, 116px);
 }

@@ -728,7 +728,7 @@ function LibraryPage({
           </select>
         </label>
         {project && <button type="button" onClick={() => projectSetting.save('')}>Clear project filter</button>}
-        {projectSetting.error && <span role="status">{projectSetting.error}</span>}
+        {projectSetting.error && <output>{projectSetting.error}</output>}
       </div>}
       {featureOn('briefStars') && <div className="cl-library-tools">
         <button className="cl-library-favorites" type="button" aria-pressed={onlyStars} onClick={() => setOnlyStars(!onlyStars)}><Star size={15} fill={onlyStars ? 'currentColor' : 'none'} /> Favorites{onlyStars ? ' only' : ''}</button>

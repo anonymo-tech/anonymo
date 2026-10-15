@@ -5,12 +5,20 @@ import type { ReuseQuestion } from './ask-again';
 import { SendYourWay, useSendYourWay } from './send-your-way';
 import { shouldSubmitChatKey } from '../../lib/chat-send-key';
 import { CHAT_LIMITS } from '../../lib/chat-limits';
+import {
+  parseExplorerLinks,
+  explorerNetworkStatus,
+  dashboardLinkInput,
+  type ExplorerTransaction,
+} from '../../lib/solana/explorer-links';
+import type { PdfText } from '../../lib/client/pdf-references.ts';
 
 import {
   lazy,
   Suspense,
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -35,11 +43,12 @@ import {
   workspaceKey,
   type Answer,
   type Room,
+  type Turn,
   type WorkspaceState,
 } from './canvas-state';
+import { buildOnlyOneSaidDraft } from './only-one-said';
 import { ProviderIcon, type AnswerActions } from './answer-card';
 import { appendDecisionDraft } from '../../lib/decision-worksheet';
-import { CHAT_LIMITS } from '../../lib/chat-limits';
 import { takeawayDocument } from '../../lib/takeaway';
 import { PaperTrail } from './paper-trail';
 import {paperPrompt,type PaperSource} from '../../lib/paper-trail';
@@ -87,6 +96,9 @@ const SecondLookWorkspace = lazy(() =>
 );
 
 const CanvasBoard = lazy(() => import('./canvas-board'));
+const SavedCouncilsPicker = lazy(() =>
+  import('./saved-councils-picker').then(module => ({ default: module.SavedCouncilsPicker })),
+);
 const views = [
   'second-look',
   'canvas',
@@ -152,7 +164,12 @@ const FEATURE_SURFACES: Record<FeatureName, readonly (View | Tool)[]> = {
   paperTrail: [],
   flywheel: [],
   moreModels: [],
+  answerSources: [],
+  savedCouncils: [],
+  pdfReferences: [],
   secondLook: ['second-look'],
+  onlyOneSaid: [],
+  blindRecord: [],
   projects: ['rooms'],
   canvas: ['canvas'],
   library: ['library'],
@@ -160,10 +177,14 @@ const FEATURE_SURFACES: Record<FeatureName, readonly (View | Tool)[]> = {
   help: ['help'],
   routes: ['routes'],
   purse: ['purse'],
+  answerCosts: [],
   receipts: [],
   crosscheck: ['crosscheck'],
   synthesis: [],
   explainer: ['explainer'],
+  failureReasons: [],
+  explorerLinks: [],
+  shareTarget: [],
   studio: ['studio'],
   chapters: ['chapters'],
   agents: ['agents'],
@@ -377,19 +398,22 @@ function Dialog({
   );
 }
 
-export default function CanvasWorkspace() {
+type ExplorerLinkProps = { configuredCluster?: 'devnet' | 'mainnet-beta' | null };
+
+export default function CanvasWorkspace({ configuredCluster = null }: ExplorerLinkProps) {
   const live = useLiveWorkspace({ loadBriefs: briefsVisible });
   const sessionKey = live.active
     ? `account:${live.account?.accountId ?? 'signed-out'}`
     : 'local-preview';
-  return <CanvasWorkspaceShell key={sessionKey} live={live} />;
+  return <CanvasWorkspaceShell key={sessionKey} live={live} configuredCluster={configuredCluster} />;
 }
 
 function CanvasWorkspaceShell({
   live,
+  configuredCluster = null,
 }: {
   live: ReturnType<typeof useLiveWorkspace>;
-}) {
+} & ExplorerLinkProps) {
   const t = useT();
   const sendSetting = useSendYourWay(live.active ? live.account?.accountId ?? 'signed-out' : 'preview', featureOn('sendYourWay'));
   const [localState, setState] = useState<WorkspaceState>(initialWorkspace);
@@ -410,6 +434,8 @@ function CanvasWorkspaceShell({
   const [view, setView] = useState<View>(DEFAULT_VIEW);
   const [popup, setPopup] = useState<Popup>(null);
   const [dialog, setDialog] = useState<DialogName>(null);
+  const [explainerSignature, setExplainerSignature] = useState<string>();
+  const incomingLinksRead = useRef(false);
   const [selection, setSelection] = useState<string[]>([]);
   const briefSubmission = useRef<{ fingerprint: string; key: string } | null>(
     null,
@@ -425,11 +451,22 @@ function CanvasWorkspaceShell({
   >({});
   const [routeModel, setRouteModel] = useState('claude');
   const [toast, setToast] = useState('');
+  const [councilUndo, setCouncilUndo] = useState<(() => boolean) | null>(null);
+  const [savedGroupTab, setSavedGroupTab] = useState<'councils' | 'panels'>('councils');
   const [guardMessage, setGuardMessage] = useState('');
   const [redacted, setRedacted] = useState<string | null>(null);
   const [paperByRoom,setPaperByRoom] = useState<Record<string,PaperSource|null>>({});
   const [pictureByRoom,setPictureByRoom] = useState<Record<string,ChatImage[]>>({});
   const [attached, setAttached] = useState<string[]>([]);
+  const [referenceChips, setReferenceChips] = useState<{
+    name: string;
+    block: string;
+    scope: string;
+    pdf?: PdfText;
+    truncated: boolean;
+    bytes: number;
+  }[]>([]);
+  const [readingReferences, setReadingReferences] = useState(false);
   const [rename, setRename] = useState('');
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [chatPreferences, setChatPreferences] = useState<
@@ -462,6 +499,7 @@ function CanvasWorkspaceShell({
   const isConversation = view === 'canvas' || view === 'chat';
   const isStudio = view === 'studio';
   const isSecondLook = featureOn('secondLook') && view === 'second-look';
+  const pdfReferencesEnabled = featureOn('pdfReferences') && view === 'chat';
   const [secondLookDraftStore, setSecondLookDraftStore] = useState<{
     accountId: string | null;
     value: string;
@@ -501,6 +539,13 @@ function CanvasWorkspaceShell({
     : isStudio
       ? studio.draft.prompt
       : room.draft;
+  const explorerTransactions = useMemo(
+    () => featureOn('explorerLinks') && featureOn('explainer') && isConversation
+      ? parseExplorerLinks(composerDraft)
+      : [],
+    [composerDraft, isConversation],
+  );
+  const explorerTransaction = explorerTransactions.length === 1 ? explorerTransactions[0] : null;
   const composerModelIds = isStudio
     ? studio.draft.modelIds
     : releasedModelSelection(room.selectedModels, live.active ? [] : ['claude', 'gemini']);
@@ -513,6 +558,10 @@ function CanvasWorkspaceShell({
         : []
       : attached;
   const composerStrict = isStudio ? studio.draft.strict : strict;
+  const referenceScope = pdfReferencesEnabled ? `${live.account?.accountId ?? 'preview'}:${room.id}` : '';
+  const visibleReferenceChips = pdfReferencesEnabled
+    ? referenceChips.filter((item) => item.scope === referenceScope && composerDraft.includes(item.block))
+    : [];
   const submissionVersion = JSON.stringify({
     account: live.account?.accountId,
     project: room.id,
@@ -531,7 +580,10 @@ function CanvasWorkspaceShell({
     latestSubmission.current = submissionVersion;
   }, [submissionVersion]);
 
-  const notify = useCallback((message: string) => setToast(message), []);
+  const notify = useCallback((message: string) => {
+    if (featureOn('savedCouncils')) setCouncilUndo(null);
+    setToast(message);
+  }, []);
   const blockConflictingSave = useCallback(
     (reportFailure = true) => {
       writesBlocked.current = true;
@@ -822,7 +874,7 @@ function CanvasWorkspaceShell({
     if (!toast) return;
     const timer = setTimeout(() => setToast(''), 5500);
     return () => clearTimeout(timer);
-  }, [toast]);
+  }, [toast, councilUndo]);
 
   useEffect(() => {
     function key(event: KeyboardEvent) {
@@ -913,6 +965,52 @@ function CanvasWorkspaceShell({
       return true;
     } catch (error) { notify(error instanceof Error ? error.message : 'The worksheet could not be added to chat.'); return false; }
   }
+  function prepareOnlyOneSaid(turn: Turn, focusedAnswerId: string) {
+    if (!featureOn('onlyOneSaid')) return;
+    const currentRoom = stateRef.current.rooms.find(
+      (item) => item.id === stateRef.current.activeRoomId,
+    );
+    if (!currentRoom) return;
+    const result = buildOnlyOneSaidDraft({
+      turn,
+      draft: currentRoom.draft,
+      instruction: t(
+        'List the points that appear in only one of the answers below. For each point, name the model that raised it (or use its answer label if names are hidden) and quote its key phrase. Do not list points shared by two or more answers. If every point is shared, say so.',
+      ),
+      modelName: (answer) =>
+        answer.live?.modelName ||
+        MODELS.find((model) => model.id === answer.modelId)?.name || t('Model'),
+      answerLabel: (letter) => t('Answer {letter}', { letter }),
+      focusedAnswerId,
+      maxCharacters: live.active ? Number.MAX_SAFE_INTEGER : canvasLimits.draft,
+      maxBytes: CHAT_LIMITS.inputBytes,
+    });
+    if (result.status === 'too-long') {
+      notify(
+        t('Your current draft is too long to add this question. Your text has been kept unchanged.'),
+      );
+      return;
+    }
+    if (result.status !== 'ready') return;
+    // In a blind comparison, use the current picker rather than hidden identities.
+    const modelId = [
+      result.modelId,
+      ...currentRoom.selectedModels,
+      ...(live.active ? live.availableModels : []),
+    ].find((id): id is string =>
+      Boolean(id && modelReleased(id) && (!live.active || live.availableModels.includes(id))),
+    );
+    if (
+      !updateRoom({
+        draft: result.draft,
+        ...(modelId ? { selectedModels: [modelId] } : {}),
+      })
+    ) return;
+    setGuardMessage('');
+    setRedacted(null);
+    notify(t('Draft ready. Review it, choose a model and send.'));
+    composer.current?.focus();
+  }
   function openRoom(id: string) {
     chatScrollPositions.current.delete(id);
     if (live.active) {
@@ -973,9 +1071,58 @@ function CanvasWorkspaceShell({
     return true;
   }
   function openTool(tool: Tool) {
+    if (tool === 'explainer' && featureOn('explorerLinks') && featureOn('explainer'))
+      setExplainerSignature(undefined);
     if (isVisible(tool)) setDialog(tool);
     setPopup(null);
   }
+
+  function openExplorerTransaction(transaction: ExplorerTransaction) {
+    if (!featureOn('explorerLinks') || !featureOn('explainer')) return false;
+    const status = explorerNetworkStatus(transaction, configuredCluster);
+    if (status !== 'ready') {
+      notify(status === 'different-cluster'
+        ? translate('This link is for {cluster}', { cluster: transaction.cluster })
+        : translate('The transaction network is not configured.'));
+      return false;
+    }
+    openTool('explainer');
+    setExplainerSignature(transaction.signature);
+    return true;
+  }
+
+  const readIncomingLinks = useEffectEvent(() => {
+    const shareEnabled = featureOn('shareTarget');
+    const url = new URL(location.href);
+    const incoming = dashboardLinkInput(url.searchParams, {
+      explorerLinks: featureOn('explorerLinks'),
+      explainer: featureOn('explainer'),
+      shareTarget: shareEnabled,
+    });
+    const opened = incoming.transaction ? openExplorerTransaction(incoming.transaction) : false;
+    if (incoming.sharedText && !opened) {
+      // Keep any existing draft. Sharing never sends a message.
+      const draft = room.draft ? `${room.draft}\n\n${incoming.sharedText}` : incoming.sharedText;
+      // Existing guard/size failures must not discard the shared content from the URL.
+      if (!updateRoom({ draft })) return;
+      setView('chat');
+      setPopup(null);
+      setDialog(null);
+    }
+    for (const name of incoming.removeParams) url.searchParams.delete(name);
+    if (incoming.removeParams.length) history.replaceState(null, '', url);
+  });
+
+  useEffect(() => {
+    if ((!featureOn('shareTarget') && !(featureOn('explorerLinks') && featureOn('explainer'))) ||
+      !ready || live.loading || incomingLinksRead.current) return;
+    const frame = requestAnimationFrame(() => {
+      if (incomingLinksRead.current) return;
+      incomingLinksRead.current = true;
+      readIncomingLinks();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [ready, live.loading]);
   function toggleModel(id: string) {
     if (!isStudio && !modelReleased(id)) return;
     if (live.active && !isStudio && routing.mode === 'auto') {
@@ -1007,7 +1154,100 @@ function CanvasWorkspaceShell({
     }
     return isStudio ? studio.update({ prompt: draft }) : updateRoom({ draft });
   }
+  async function attachChatReferences(files: File[]) {
+    if (!pdfReferencesEnabled || readingReferences) return;
+    if (live.active && !live.signedIn) {
+      openTool('identity');
+      return;
+    }
+    const version = latestSubmission.current;
+    setReadingReferences(true);
+    try {
+      const [{ textReferenceBlock }, { CHAT_LIMITS }] = await Promise.all([
+        import('../../lib/client/pdf-references.ts'),
+        import('../../lib/chat-limits.ts'),
+      ]);
+      const encoder = new TextEncoder();
+      const maxBytes = live.active
+        ? Math.min(CHAT_LIMITS.inputBytes, ...live.routes.filter((route) =>
+            route.available && (routing.mode === 'auto' || composerModelIds.includes(route.family)),
+          ).map((route) => route.pricing.maxInputBytes))
+        : canvasLimits.prompt;
+      let draft = composerDraft;
+      const chips: typeof referenceChips = [];
+      const localFiles: string[] = [];
+      for (const file of files.slice(0, 3)) {
+        const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+        if (!isPdf && !/\.(txt|md|csv|json)$/i.test(file.name)) {
+          localFiles.push(file.name);
+          continue;
+        }
+        const remaining = maxBytes - encoder.encode(draft + textReferenceBlock(file.name, '')).length;
+        if (remaining <= 0) {
+          if (latestSubmission.current === version)
+            notify(t('There is no room for reference text within the input limit. Nothing was attached.'));
+          return;
+        }
+        let text: string;
+        let pdf: PdfText | undefined;
+        let truncated = false;
+        if (isPdf) {
+          const { readPdfText } = await import('./pdf-text');
+          const read = await readPdfText(file, remaining);
+          if (read.status !== 'ok') {
+            if (latestSubmission.current === version) {
+              notify(read.status === 'no-text'
+                ? t('This PDF has no readable text (it may be a scan). Nothing was attached.')
+                : read.status === 'little-text'
+                  ? t('This PDF has too little readable text to use as a reference (it may be a scan). Nothing was attached.')
+                : read.status === 'password'
+                  ? t('This PDF is password-protected. Nothing was attached.')
+                  : read.status === 'limit'
+                    ? t('There is no room for reference text within the input limit. Nothing was attached.')
+                    : t('This PDF could not be read. It may be damaged or unsupported. Nothing was attached.'));
+            }
+            return;
+          }
+          pdf = read.result;
+          text = pdf.text;
+          truncated = pdf.byteLimited || pdf.pagesRead < pdf.totalPages;
+        } else {
+          truncated = file.size > remaining;
+          text = new TextDecoder().decode(await file.slice(0, remaining).arrayBuffer(), {
+            stream: truncated,
+          });
+        }
+        const block = textReferenceBlock(file.name, text);
+        draft += block;
+        chips.push({ name: file.name, block, scope: referenceScope, pdf, truncated, bytes: encoder.encode(text).length });
+      }
+      const checked = await checkContent(draft);
+      if (latestSubmission.current !== version) {
+        notify(t('Your draft or project changed while reading. Choose the file again.'));
+        return;
+      }
+      const finding = checked.findings.find((item) => item.severity === 'block');
+      if (finding) {
+        setGuardMessage(finding.message);
+        setRedacted(null);
+        return;
+      }
+      if (!setComposerDraft(draft)) return;
+      setReferenceChips([...visibleReferenceChips, ...chips]);
+      setAttached(localFiles);
+      notify(t('Reference text was added to your draft. Review it before sending. Images remain local only.'));
+    } catch {
+      if (latestSubmission.current === version)
+        notify(t('The reference could not be read. Nothing was attached.'));
+    } finally {
+      setReadingReferences(false);
+    }
+  }
   async function submit() {
+    if (pdfReferencesEnabled && readingReferences) {
+      notify(t('Wait for the reference text to finish loading.'));
+      return;
+    }
     if (isSecondLook) {
       if (!secondLookDraft.trim() || secondLookComposer.busy) return;
       if (containsSecret(secondLookDraft)) {
@@ -1577,6 +1817,21 @@ function CanvasWorkspaceShell({
 
   const compose = (
     <div className="cw-composer">
+      {explorerTransaction && (
+        <div className="cw-explorer-chip">
+          {explorerNetworkStatus(explorerTransaction, configuredCluster) === 'ready' ? (
+            <button type="button" onClick={() => openExplorerTransaction(explorerTransaction)}>
+              {t('Explain this transaction')}
+            </button>
+          ) : (
+            <output>
+              {explorerNetworkStatus(explorerTransaction, configuredCluster) === 'different-cluster'
+                ? t('This link is for {cluster}', { cluster: explorerTransaction.cluster })
+                : t('The transaction network is not configured.')}
+            </output>
+          )}
+        </div>
+      )}
       {guardMessage && (
         <div className="cw-guard" role="alert">
           <Shield size={18} />
@@ -1609,6 +1864,38 @@ function CanvasWorkspaceShell({
         </div>
       )}
       {recallOpen && featureOn('recall') && <Recall accountId={live.active ? live.account?.accountId ?? null : null} rooms={state.rooms} onClose={()=>setRecallOpen(false)} onOpen={async hit=>{if(live.active){if(!await live.openRecalledExchange(hit.projectId,hit.comparisonId))throw new Error('Unavailable');}else updateWorkspace(current=>({...current,activeRoomId:hit.projectId}));navigate('chat');setRecalledTurn(hit.comparisonId);}}/>}
+      {pdfReferencesEnabled && (readingReferences || visibleReferenceChips.length > 0) && (
+        <div className="cw-attachments cw-text-references">
+          {readingReferences && <output>{t('Reading reference text…')}</output>}
+          {visibleReferenceChips.map((item, index) => (
+            <div className="cw-text-reference" key={`${item.name}-${index}`}>
+              <button
+                data-icon-trigger
+                title={t('Remove reference text: {name}', { name: item.name })}
+                aria-label={t('Remove reference text: {name}', { name: item.name })}
+                onClick={() => {
+                  if (setComposerDraft(composerDraft.replace(item.block, '')))
+                    setReferenceChips(visibleReferenceChips.filter((_, i) => i !== index));
+                }}
+              >
+                <MotionIcon name="attach" size={12} />
+                <span>{item.name}</span>
+                {item.pdf && <span className="cw-reference-pages">{item.pdf.totalPages === 1
+                  ? t('{count} page', { count: item.pdf.totalPages })
+                  : t('{count} pages', { count: item.pdf.totalPages })}</span>}
+                <MotionIcon name="close" size={12} />
+              </button>
+              {item.pdf && <span>{t('Pages 1–{read} of {total} were read.', {
+                read: item.pdf.pagesRead, total: item.pdf.totalPages,
+              })}{item.pdf.partialPage && <> {t('Page {page} was kept only in part; {bytes} bytes of extracted text were kept in total.', {
+                page: item.pdf.pagesRead, bytes: item.bytes,
+              })}</>}</span>}
+              {!item.pdf && item.truncated && <span>{t('Kept the first {bytes} bytes of text.', { bytes: item.bytes })}</span>}
+            </div>
+          ))}
+          {visibleReferenceChips.length > 0 && <span>{t('Text is in your draft. PDF images are not read. Review before sending.')}</span>}
+        </div>
+      )}
       {composerAttachments.length > 0 && (
         <div className="cw-attachments">
           {composerAttachments.map((name, i) => (
@@ -1632,7 +1919,7 @@ function CanvasWorkspaceShell({
         </div>
       )}
       {isConversation && ['quickPhrases','sayIt','pictureThis','paperTrail'].some(name=>featureOn(name as FeatureName)) && <div className="eu-composer-tools" aria-label="Message tools">
-        {isConversation && featureOn('paperTrail') && <div className="eu-controls"><PaperTrail key={room.id} value={paperByRoom[room.id]??null} onChange={source=>setPaperByRoom(current=>({...current,[room.id]:source}))}/></div>}
+        {isConversation && featureOn('paperTrail') && <div className="eu-controls" title="Attach a PDF with page citations"><PaperTrail key={room.id} value={paperByRoom[room.id]??null} onChange={source=>setPaperByRoom(current=>({...current,[room.id]:source}))}/></div>}
         {isConversation && featureOn('pictureThis') && <div className="eu-controls"><PictureThis key={room.id} value={pictureByRoom[room.id]??[]} onChange={images=>setPictureByRoom(current=>({...current,[room.id]:images}))}/></div>}
         {isConversation && featureOn('sayIt') && <div className="eu-controls"><SayIt onInsert={text=>appendSuggestion(text)}/></div>}
         {isConversation && featureOn('quickPhrases') && <div className="eu-controls"><QuickPhrases scope={live.active ? live.account?.accountId ?? 'signed-out' : 'preview'} draft={room.draft} onChange={draft=>updateRoom({draft})}/></div>}
@@ -1641,14 +1928,15 @@ function CanvasWorkspaceShell({
         <button
           data-icon-trigger
           className="cw-attach"
+          disabled={pdfReferencesEnabled && readingReferences}
           onClick={() => attachment.current?.click()}
           aria-label={
             isSecondLook
               ? t('Read a text request from a file')
-              : t('Add files to this project')
+              : pdfReferencesEnabled ? t('Add PDF or text to your draft') : t('Add files to this project')
           }
           title={
-            isSecondLook ? t('Read a text request locally') : t('Add files locally')
+            isSecondLook ? t('Read a text request locally') : pdfReferencesEnabled ? t('Read PDF or text files into your draft. Use Paper Trail for page citations.') : t('Add files locally')
           }
         >
           <MotionIcon name="attach" size={22} />
@@ -1741,6 +2029,36 @@ function CanvasWorkspaceShell({
                           })}
                   </p>
                 </div>
+                {!isStudio && featureOn('savedCouncils') && featureOn('modelPanels') && (
+                  <label className="eu-controls">
+                    <span>Saved model groups</span>
+                    <select aria-label="Saved model groups" value={savedGroupTab}
+                      onChange={event => setSavedGroupTab(event.target.value === 'panels' ? 'panels' : 'councils')}>
+                      <option value="councils">Councils · this browser</option>
+                      <option value="panels">Your Panel · this account</option>
+                    </select>
+                  </label>
+                )}
+                <div hidden={isStudio || (featureOn('modelPanels') && savedGroupTab !== 'councils')}>
+                {featureOn('savedCouncils') && !isStudio && (
+                  <Suspense fallback={null}>
+                    <SavedCouncilsPicker
+                      selected={composerModelIds}
+                      models={composerModels}
+                      available={live.active ? live.availableModels : null}
+                      onChoose={(ids) => {
+                        if (live.active && routing.mode === 'auto')
+                          updateRouting({ ...routing, mode: 'manual' });
+                        updateRoom({ selectedModels: pickerOrder(ids, composerModels) });
+                      }}
+                      onDelete={(undo) => {
+                        setToast(t('Council deleted.'));
+                        setCouncilUndo(() => undo);
+                      }}
+                    />
+                  </Suspense>
+                )}
+                </div>
                 {live.active && !isStudio && isVisible('routes') && (
                   <LiveRoutingOptions
                     value={routing}
@@ -1757,7 +2075,7 @@ function CanvasWorkspaceShell({
                     onChange={(event) => setModelQuery(event.target.value)}
                   />
                 </label>
-                {!isStudio && featureOn('modelPanels') && <ModelPanels scope={live.active ? live.account?.accountId ?? 'signed-out' : 'preview'} selected={composerModelIds} available={live.active ? live.availableModels : composerModels.map(model=>model.id)} onApply={models=>{ updateRoom({selectedModels:models}); updateRouting({...routing,mode:'manual'}); }} />}
+                {!isStudio && featureOn('modelPanels') && (!featureOn('savedCouncils') || savedGroupTab === 'panels') && <ModelPanels scope={live.active ? live.account?.accountId ?? 'signed-out' : 'preview'} selected={composerModelIds} available={live.active ? live.availableModels : composerModels.map(model=>model.id)} onApply={models=>{ updateRoom({selectedModels:models}); updateRouting({...routing,mode:'manual'}); }} />}
                 <ModelPickerOptions
                   routes={live.routes}
                   accountScope={live.active ? live.account?.accountId ?? "signed-out" : "preview"}
@@ -2247,6 +2565,9 @@ function CanvasWorkspaceShell({
                 loadingHistory={live.busy}
                 onLoadEarlier={() => void live.loadMoreHistory()}
                 accountScope={live.active ? live.account?.accountId ?? 'signed-out' : 'preview'}
+                onOnlyOneSaid={
+                  featureOn('onlyOneSaid') ? prepareOnlyOneSaid : undefined
+                }
               />
             )}
           </>
@@ -2427,7 +2748,9 @@ function CanvasWorkspaceShell({
             ? '.txt,.json'
             : isStudio
               ? 'image/jpeg,image/png,image/webp,image/gif'
-              : '.txt,.md,.csv,.json,image/*'
+              : pdfReferencesEnabled
+                ? '.txt,.md,.csv,.json,image/*,application/pdf,.pdf'
+                : '.txt,.md,.csv,.json,image/*'
         }
         onChange={(event) => {
           const files = Array.from(event.target.files || []);
@@ -2464,6 +2787,11 @@ function CanvasWorkspaceShell({
             event.target.value = '';
             return;
           }
+          if (pdfReferencesEnabled) {
+            event.target.value = '';
+            if (files.length) void attachChatReferences(files);
+            return;
+          }
           setAttached(files.slice(0, 3).map((file) => file.name));
           notify(
             'Files are attached locally. Sample models do not read or upload them.',
@@ -2475,6 +2803,13 @@ function CanvasWorkspaceShell({
         <output className="cw-toast">
           <Check size={16} />
           <span>{localizeNotice(toast, t)}</span>
+          {featureOn('savedCouncils') && councilUndo && (
+            <button type="button" aria-label={t('Undo council deletion')} onClick={() => {
+              const restored = councilUndo();
+              setCouncilUndo(null);
+              setToast(restored ? '' : t('The council could not be restored because the saved council limit was reached.'));
+            }}>{t('Undo')}</button>
+          )}
           <button
             data-icon-trigger
             onClick={() => setToast('')}
@@ -2750,6 +3085,7 @@ function CanvasWorkspaceShell({
                 }
                 view={dialog}
                 modelId={routeModel}
+                explainerSignature={featureOn('explorerLinks') && featureOn('explainer') ? explainerSignature : undefined}
                 onClose={() => setDialog(null)}
                 onToast={notify}
               />

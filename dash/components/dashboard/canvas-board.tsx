@@ -14,28 +14,38 @@ import {
 } from '@xyflow/react';
 import { useT, type Translator } from '@/lib/i18n';
 import { MotionIcon } from './motion-icon';
-import { AnswerCard, type AnswerActions } from './answer-card';
+import { AnswerCard, TurnCostLine, type AnswerActions } from './answer-card';
+import { featureOn } from './feature-switches';
 import { MODELS } from './data';
 import type { Answer, Turn } from './canvas-state';
-import { featureOn } from './feature-switches';
 import { canvasLayoutKey, parseCanvasLayout, snapshotCanvasLayout, type CanvasLayout } from '../../lib/canvas-layout';
 import '../../app/dashboard/canvas-extras.css';
 import { useDeviceSetting } from './use-device-setting';
 import { arrangeCanvas } from '../../lib/canvas-arrange';
 const validLayout = (value: unknown): value is CanvasLayout | null => value === null || parseCanvasLayout(value) !== null;
 
-type GraphData = { prompt?: string; answer?: Answer; actions: AnswerActions };
+type GraphData = {
+  prompt?: string;
+  answer?: Answer;
+  costAnswers?: Answer[];
+  actions: AnswerActions;
+};
 type GraphNode = Node<GraphData>;
 
 function PromptNode({ data }: NodeProps<GraphNode>) {
   return (
-    <div className="cw-prompt-node">
-      {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Long prompts must be keyboard-scrollable. */}
-      <span className="nodrag nowheel" tabIndex={0}>
-        {data.prompt}
-      </span>
-      <Handle type="source" position={Position.Bottom} isConnectable={false} />
-    </div>
+    <>
+      <div className="cw-prompt-node">
+        {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Long prompts must be keyboard-scrollable. */}
+        <span className="nodrag nowheel" tabIndex={0}>
+          {data.prompt}
+        </span>
+        <Handle type="source" position={Position.Bottom} isConnectable={false} />
+      </div>
+      {featureOn('answerCosts') && featureOn('purse') && featureOn('canvas') && data.costAnswers && (
+        <TurnCostLine answers={data.costAnswers} />
+      )}
+    </>
   );
 }
 function ResponseNode({ data }: NodeProps<GraphNode>) {
@@ -64,7 +74,11 @@ function graphNodes(
         id: turn.id,
         type: 'prompt',
         position: { x: 330, y: index * 610 },
-        data: { prompt: turn.prompt, actions },
+        data: {
+          prompt: turn.prompt, actions,
+          ...(featureOn('answerCosts') && featureOn('purse') && featureOn('canvas')
+            ? { costAnswers: turn.answers } : {}),
+        },
         style: { width: 340 },
         ariaLabel: t('Prompt: {prompt}', { prompt: turn.prompt }),
       },
@@ -312,6 +326,9 @@ export default function CanvasBoard({
         {turns.map((turn) => (
           <section key={turn.id}>
             <div className="cw-mobile-prompt">{turn.prompt}</div>
+            {featureOn('answerCosts') && featureOn('purse') && featureOn('canvas') && (
+              <TurnCostLine answers={turn.answers} />
+            )}
             <div className="cw-mobile-answers">
               {turn.answers.map((answer) => (
                 <AnswerCard key={answer.id} answer={answer} actions={actions} />

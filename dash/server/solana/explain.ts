@@ -14,6 +14,9 @@ import type {
 import { decodeCoreInstruction } from './explain-core.ts';
 import { decodeTokenInstruction } from './explain-token.ts';
 import { SOLANA_DECODER_VERSION } from '../../lib/solana/explanation.ts';
+import { featureOn } from '../../components/dashboard/feature-switches.ts';
+import { normalizeTransactionError } from '../../lib/solana/transaction-errors.ts';
+import type { TransactionErrorDetail } from '../../lib/solana/transaction-errors.ts';
 
 export type {
   ExplanationFlag,
@@ -81,6 +84,7 @@ export function explainParsedTransaction(value: unknown) {
     },
   ];
   let execution: 'succeeded' | 'failed' | 'unknown' = 'unknown';
+  let executionError: TransactionErrorDetail | null = null;
   if (root.meta === null || root.meta === undefined) {
     flags.push({
       code: 'INCOMPLETE_METADATA',
@@ -108,13 +112,23 @@ export function explainParsedTransaction(value: unknown) {
         severity: 'warning',
         message: 'Execution success or failure is not recorded.',
       });
-    if (execution === 'failed')
+    if (execution === 'failed') {
+      if (featureOn('explainer') && featureOn('failureReasons')) {
+        const detail = normalizeTransactionError(meta.err);
+        if (
+          detail &&
+          (detail.instructionIndex === null ||
+            detail.instructionIndex < top.length)
+        )
+          executionError = detail;
+      }
       flags.push({
         code: 'TRANSACTION_FAILED',
         severity: 'warning',
         message:
           'The transaction failed; its instructions did not commit their requested changes.',
       });
+    }
     if (Array.isArray(meta.innerInstructions)) {
       const seen = new Set<number>();
       for (const raw of list(meta.innerInstructions, 64)) {
@@ -158,6 +172,7 @@ export function explainParsedTransaction(value: unknown) {
     signature: signatures[0],
     slot: uint(root.slot),
     execution,
+    ...(executionError ? { executionError } : {}),
     finality: 'not-verified' as const,
     instructions,
     flags,

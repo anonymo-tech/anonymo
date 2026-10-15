@@ -1,4 +1,7 @@
 import bs58 from 'bs58';
+import { featureOn } from '../../components/dashboard/feature-switches.ts';
+import { parseTransactionErrorDetail } from '../solana/transaction-errors.ts';
+import type { TransactionErrorDetail } from '../solana/transaction-errors.ts';
 
 import {
   EXPLANATION_FLAG_SEVERITY,
@@ -20,6 +23,7 @@ export type TransactionExplanation = {
   signature: string;
   slot: number;
   execution: 'succeeded' | 'failed' | 'unknown';
+  executionError?: TransactionErrorDetail;
   finality: 'finalized';
   instructions: ExplainedInstruction[];
   flags: ExplanationFlag[];
@@ -260,6 +264,21 @@ export function parseExplanation(
     instructions.map((instruction) => instruction.location),
   );
   if (locations.size !== instructions.length) return invalid();
+  let executionError: TransactionErrorDetail | null = null;
+  if (
+    featureOn('explainer') &&
+    featureOn('failureReasons') &&
+    root.executionError !== undefined
+  ) {
+    executionError = parseTransactionErrorDetail(root.executionError);
+    if (
+      root.execution !== 'failed' ||
+      !executionError ||
+      (executionError.instructionIndex !== null &&
+        !locations.has(String(executionError.instructionIndex)))
+    )
+      return invalid();
+  }
   const flags = list(root.flags, 2051, flag);
   if (
     flags.some(
@@ -300,6 +319,7 @@ export function parseExplanation(
     signature,
     slot: root.slot,
     execution: root.execution as TransactionExplanation['execution'],
+    ...(executionError ? { executionError } : {}),
     finality: 'finalized',
     instructions,
     flags: [...all.values()].sort(

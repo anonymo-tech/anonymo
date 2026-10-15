@@ -26,6 +26,7 @@ These packages, and the dependencies they pull in, ship in the browser bundle or
 | `vinext` | 1.0.0-beta.5 | MIT | © 2026 Cloudflare, Inc. |
 | `shaders` | 4.0.0 | MIT | © 2026 Shader Effects Inc. |
 | `three` | 0.186.1 | MIT | © 2010–2026 three.js authors |
+| `pdfjs-dist` | 6.4.299 | Apache-2.0 | © Mozilla Foundation. The full license is included in the installed package at `pdfjs-dist/LICENSE`. |
 | `typegpu`, `tinyest` (used by `shaders`) | 0.12.3, 0.3.4 | MIT | © 2025 Software Mansion |
 | `typed-binary` (used by `typegpu`) | 4.3.3 | MIT | © 2022 Iwo Plaza |
 | `tsover-runtime` (used by `typegpu`) | 0.0.7 | Apache-2.0 | Software Mansion ([source](https://github.com/software-mansion/tsover)) |

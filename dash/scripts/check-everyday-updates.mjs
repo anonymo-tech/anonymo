@@ -19,10 +19,13 @@ const long=Array.from({length:5000},(_,i)=>'word'+i).join(' ');const chunks=spee
 assert.throws(()=>parseChatImages([{dataUrl:'https://127.0.0.1/private'}]));assert.throws(()=>parseChatImages([{dataUrl:'data:image/svg+xml;base64,AAAA'}]));
 const image={dataUrl:'data:image/png;base64,iVBORw0KGgo='};assert.equal(parseChatImages([image])[0].dataUrl,image.dataUrl);
 const input={messages:[{role:'user',content:'Read this',images:[image]}],maxOutputTokens:100,privacy:'standard'};
+const releasedPicture = FEATURE_SWITCHES.pictureThis, releasedRecall = FEATURE_SWITCHES.recall;
+FEATURE_SWITCHES.pictureThis=false; FEATURE_SWITCHES.recall=false;
 assert.throws(()=>parseChatInput(input));assert.throws(()=>assertEndpointReleased('history/search','POST'));
+FEATURE_SWITCHES.recall=releasedRecall;
 FEATURE_SWITCHES.pictureThis=true;assert.equal(parseChatInput(input).messages[0].images[0].dataUrl,image.dataUrl);
 const route={family:'gpt',pricing:{inputPerMillionUsd6:'1000000',outputPerMillionUsd6:'1000000',markupBps:0,maxInputBytes:16777216,maxOutputTokens:100,maxReasoningTokens:0,contextTokens:200000}};
-assert.equal(quoteMaximum(route,parseChatInput(input)),'200100');assert.throws(()=>quoteMaximum({...route,family:'llama'},parseChatInput(input)));FEATURE_SWITCHES.pictureThis=false;
+assert.equal(quoteMaximum(route,parseChatInput(input)),'200100');assert.throws(()=>quoteMaximum({...route,family:'llama'},parseChatInput(input)));FEATURE_SWITCHES.pictureThis=releasedPicture;
 const source={name:'Plan.pdf',pages:[{number:1,text:'Budget 100.'},{number:2,text:'Owner Ana.'}]};const wrapped=paperPrompt('What budget?',source);assert.deepEqual(readPaperPrompt(wrapped),{question:'What budget?',source});assert.deepEqual(citedPages('Budget [p. 1], owner [p. 2], fake [p. 99]',source),[1,2]);assert.equal(readPaperPrompt('plain question'),null);
 console.log('Everyday updates: preference limits, full-answer search, safe export, speech continuity, image gating/pricing and page citations passed.');
 

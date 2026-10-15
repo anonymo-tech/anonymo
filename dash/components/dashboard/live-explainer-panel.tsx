@@ -13,6 +13,11 @@ import {
 import { AlertTriangle, Info } from 'lucide-react';
 import { MotionIcon } from './motion-icon';
 import { LivePreSignReader } from './live-pre-sign-reader';
+import { featureOn } from './feature-switches';
+import {
+  decodeTransactionError,
+  parseTransactionErrorDetail,
+} from '../../lib/solana/transaction-errors';
 import {
   LiveProgramReader,
   type ProgramReaderControl,
@@ -82,8 +87,10 @@ const readableName = (value: string) =>
 
 export function LiveExplainerPanel({
   accountId,
+  initialSignature,
 }: {
   accountId: string | null;
+  initialSignature?: string;
 }) {
   const t = useT();
   const [mode, setMode] = useState<'transaction' | 'program' | 'pre-sign'>(
@@ -131,6 +138,7 @@ export function LiveExplainerPanel({
         <LiveTransactionReader
           key={accountId ?? 'signed-out'}
           accountId={accountId}
+          initialSignature={initialSignature}
           controlRef={transactionControl}
         />
       </div>
@@ -154,14 +162,16 @@ export function LiveExplainerPanel({
 
 function LiveTransactionReader({
   accountId,
+  initialSignature = '',
   controlRef,
 }: {
   accountId: string | null;
+  initialSignature?: string;
   controlRef: Ref<ProgramReaderControl>;
 }) {
   const t = useT();
   const fieldId = useId();
-  const [draft, setDraft] = useState({ accountId, value: '' });
+  const [draft, setDraft] = useState({ accountId, value: initialSignature });
   const [response, setResponse] = useState<{
     accountId: string;
     explanation: TransactionExplanation;
@@ -355,6 +365,14 @@ function LiveTransactionReader({
                       'The RPC reports successful execution. This is not a determination that the transaction was safe or intended.',
                     )}
             </p>
+            {featureOn('explainer') &&
+              featureOn('failureReasons') &&
+              explanation.execution === 'failed' && (
+                <FailureReason
+                  error={explanation.executionError}
+                  instructions={explanation.instructions}
+                />
+              )}
             <p className="ct-takeaway">
               {t(
                 'Finalized inclusion is not a safety guarantee. Unknown programs, unsupported instructions, and missing metadata can leave effects unexplained. Mint state, invoked hook behavior, program upgrades, and current permissions have not been inspected.',
@@ -498,5 +516,71 @@ function LiveTransactionReader({
         </>
       )}
     </>
+  );
+}
+
+function FailureReason({
+  error,
+  instructions,
+}: {
+  error: unknown;
+  instructions: TransactionExplanation['instructions'];
+}) {
+  const t = useT();
+  const detail = parseTransactionErrorDetail(error);
+  const programId =
+    detail?.instructionIndex === null
+      ? null
+      : (instructions.find(
+          (instruction) =>
+            instruction.location === String(detail?.instructionIndex),
+        )?.programId ?? null);
+  const failure = detail && decodeTransactionError(detail, programId);
+  return (
+    <section className="ct-takeaway" aria-label={t('Why it failed')}>
+      <h4>{t('Why it failed')}</h4>
+      <p>
+        {failure
+          ? t(failure.reason, {
+              code: failure.code ?? '',
+              hex:
+                failure.code === undefined
+                  ? ''
+                  : `0x${failure.code.toString(16)}`,
+            })
+          : t('The RPC did not provide a structured failure reason.')}
+      </p>
+      {failure && (
+        <>
+          <p className="ct-code" style={{ overflowWrap: 'anywhere' }}>
+            {failure.instructionIndex === null
+              ? t('Transaction · {error}', {
+                  error: failure.name ?? detail?.kind ?? '',
+                })
+              : t('Instruction #{n} · {program} · {error}', {
+                  n: failure.instructionIndex,
+                  program: failure.programName
+                    ? t(failure.programName)
+                    : programId
+                      ? `${programId.slice(0, 6)}…${programId.slice(-6)}`
+                      : t('Program unavailable'),
+                  error: failure.name ?? failure.code ?? detail?.kind ?? '',
+                })}
+          </p>
+          {failure.code !== undefined && !failure.name && programId && (
+            <p className="ct-code" style={{ overflowWrap: 'anywhere' }}>
+              {programId}
+            </p>
+          )}
+          {failure.instructionIndex !== null && (
+            <p>
+              {t(
+                'The instruction number is zero-based. The program shown is the outer instruction’s program; an invoked program may have returned the error.',
+              )}
+            </p>
+          )}
+        </>
+      )}
+    </section>
   );
 }

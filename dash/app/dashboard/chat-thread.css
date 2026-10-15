@@ -17,7 +17,7 @@
 .cw-thread-map ol { list-style: none; padding: 0; margin: 0; }
 .cw-thread-map nav button { display: flex; gap: 12px; width: 100%; padding: 10px; text-align: left; line-height: 1.5; }
 .cw-thread-map nav button span { flex: 0 0 18px; color: #aaa; }
-.cw-chat-thread:has(.cw-thread-map) .cw-chat-turn { scroll-margin-top: 72px; }
+.cw-view-chat .cw-chat-thread:has(.cw-thread-map) .cw-chat-turn { scroll-margin-top: 72px; }
 .cw-chat-thread .cw-chat-turn:focus-visible { outline: 2px solid #e93125; outline-offset: 8px; border-radius: 4px; }
 .cw-run-total { margin: 16px 0 0; color: #686868; font-size: 12px; line-height: 1.6; font-variant-numeric: tabular-nums; }
 .cw-run-total summary { width: fit-content; padding: 4px 0; cursor: pointer; }
@@ -169,6 +169,19 @@
 .cw-view-chat .cw-chat-thread .cw-chat-compare:hover,
 .cw-view-chat .cw-chat-thread .cw-chat-compare.is-comparing {
   color: var(--cw-red, #ea2a22);
+}
+
+.cw-view-chat .cw-chat-thread .cw-chat-only-one-said {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 12px;
+  color: #74776f;
+}
+
+.cw-view-chat .cw-chat-thread .cw-chat-only-one-said .cw-chat-compare {
+  padding-left: 0;
+  text-align: left;
 }
 
 .cw-view-chat .cw-chat-thread .cw-chat-panels {

@@ -15,9 +15,22 @@ import { chineseModelByKey } from '../../lib/chinese-models';
 import type { Answer } from './canvas-state';
 import { formatAccountUsd6 } from '../../lib/client/account-records';
 import { CANCEL_DRAIN_TIMEOUT } from '../../lib/client/workspace';
+import { answerCosts, sumAnswerCosts } from './answer-costs';
+import { extractAnswerSources } from '../../lib/answer-sources';
 import '../../app/dashboard/answer-card.css';
 import { fomoAnalysisBody } from '../../lib/second-look/fomo-score';
 import { ResearchMarkdown } from '../second-look/chat/research-markdown';
+
+export function TurnCostLine({ answers }: { answers: Answer[] }) {
+  const t = useT();
+  if (!featureOn('answerCosts') || !featureOn('purse')) return null;
+  const total = sumAnswerCosts(answers);
+  return total && (
+    <div className="cw-turn-cost nodrag nowheel">
+      {t('This turn: settled {settled} of up to {quoted}', total)}
+    </div>
+  );
+}
 
 const providerAssets: Record<string, string> = {
   claude: 'claude',
@@ -98,6 +111,54 @@ export type AnswerActions = {
   onLoadFull?: (answer: Answer) => void;
 };
 
+function sourceText(answer: Answer) {
+  return answer.live ? answer.live.output || '' : [answer.heading, ...answer.paragraphs].join('\n\n');
+}
+
+/** Mounted only behind answerSources, including in comparison headers. */
+export function AnswerSourceCount({ answer }: { answer: Answer }) {
+  const t = useT();
+  const text = sourceText(answer);
+  if (!text.trim()) return null;
+  const count = extractAnswerSources(text).length;
+  return (
+    <small className="cw-answer-source-count">
+      {count === 20 ? t('{count} sources shown (limit)', { count })
+        : count === 1 ? t('{count} source', { count }) : t('{count} sources', { count })}
+    </small>
+  );
+}
+
+function AnswerSources({ answer }: { answer: Answer }) {
+  const t = useT();
+  const text = sourceText(answer);
+  if (!text.trim()) return null;
+  const sources = extractAnswerSources(text);
+  const chips = sources.map((source) => (
+    <a className="cw-answer-source-chip" key={source.url} href={source.url}
+      target="_blank" rel="noopener noreferrer" title={source.url}>
+      {source.domain}
+    </a>
+  ));
+  return (
+    <div className="cw-answer-sources nodrag nowheel" aria-label={t('Sources')}>
+      <span>{t('Sources')}</span>
+      {sources.length ? chips.slice(0, 6) : <span>{t('No sources given')}</span>}
+      {sources.length > 6 && (
+        <details className="cw-answer-sources-more">
+          <summary>{t('+{count} more', { count: sources.length - 6 })}</summary>
+          <div className="cw-answer-source-links">{chips.slice(6)}</div>
+        </details>
+      )}
+      <details className="cw-answer-sources-info">
+        <summary>{t('About sources')}</summary>
+        <div>{t("Links as the model wrote them. Conclave hasn't opened or checked them.")}</div>
+        {sources.length === 20 && <div>{t('Up to 20 links shown.')}</div>}
+      </details>
+    </div>
+  );
+}
+
 export function AnswerCard({
   answer,
   actions,
@@ -127,6 +188,9 @@ export function AnswerCard({
     liveState === 'reconciliation_pending' &&
     answer.live?.errorCode === CANCEL_DRAIN_TIMEOUT;
   const amount = answer.live?.billing.actualUsd6;
+  const costs = featureOn('answerCosts') && featureOn('purse')
+    ? answerCosts(answer.live?.billing)
+    : null;
   const cost =
     amount !== null && amount !== undefined
       ? `$${formatAccountUsd6(amount)}`
@@ -212,11 +276,21 @@ export function AnswerCard({
             })}
           </button>
         )}
+        {featureOn('answerSources') && <AnswerSources answer={answer} />}
       </div>
       {featureOn('quoteReply') && actions.onQuote && <QuoteReply answerId={answer.id} onQuote={text => actions.onQuote?.(answer, text)} />}
       {featureOn('paperTrail') && paperSource && <PaperSources source={paperSource} text={answer.paragraphs.join('\n\n')}/>}
       {featureOn('readToMe') && (!answer.live || (answer.live.state==='succeeded' && !answer.live.outputTruncated)) && <ReadToMe key={answer.id+answer.paragraphs.join('').length} text={answer.paragraphs.join('\n\n')} />}
-      <footer className="cw-answer-footer">
+      <footer className={`cw-answer-footer${costs ? ' has-cost' : ''}`}>
+        {costs && (
+          <div className="cw-answer-cost nodrag nowheel">
+            {costs.settled === null
+              ? t('Quoted up to {quoted} · settling…', { quoted: costs.quoted })
+              : t('Quoted up to {quoted} · Settled {settled}', {
+                  quoted: costs.quoted, settled: costs.settled,
+                })}
+          </div>
+        )}
         {!isChat && (
           <span className="cw-answer-attribution">
             <ProviderIcon id={answer.modelId} size={18} />

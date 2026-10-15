@@ -24,10 +24,10 @@ export function ReadingRoom({ scope, enabled, children }: { scope: string; enabl
     <details className="cw-reading-controls">
       <summary>Reading settings</summary>
       <div>
-        <label>Text size<select value={setting.value.size} onChange={event => setting.save({ ...setting.value, size: event.target.value as ReadingPreferences['size'] })}>
+        <label>Text size<select aria-label="Text size" value={setting.value.size} onChange={event => setting.save({ ...setting.value, size: event.target.value as ReadingPreferences['size'] })}>
           <option value="small">Small</option><option value="standard">Standard</option><option value="large">Large</option>
         </select></label>
-        <label>Spacing<select value={setting.value.spacing} onChange={event => setting.save({ ...setting.value, spacing: event.target.value as ReadingPreferences['spacing'] })}>
+        <label>Spacing<select aria-label="Spacing" value={setting.value.spacing} onChange={event => setting.save({ ...setting.value, spacing: event.target.value as ReadingPreferences['spacing'] })}>
           <option value="standard">Standard</option><option value="relaxed">Relaxed</option>
         </select></label>
         <button type="button" onClick={() => setting.save(defaults)}>Reset</button>

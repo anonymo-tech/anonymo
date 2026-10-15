@@ -9,7 +9,7 @@ export function useSendYourWay(scope: string, enabled: boolean) {
 }
 export function SendYourWay({ setting }: { setting: ReturnType<typeof useSendYourWay> }) {
   return <div className="cw-send-your-way">
-    <label>Send with <select value={setting.value} onChange={event => {
+    <label>Send with <select aria-label="Send with" value={setting.value} onChange={event => {
       if (validChatSendKey(event.target.value)) setting.save(event.target.value);
     }}><option value="enter">Enter</option><option value="modifier">⌘ / Ctrl + Enter</option></select></label>
     <span>{setting.value === 'enter' ? 'Shift + Enter for a new line' : 'Enter for a new line'}</span>

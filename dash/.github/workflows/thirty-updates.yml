@@ -1,0 +1,52 @@
+name: thirty-updates
+on:
+  push:
+    branches: [codex/thirty-updates-live]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      CONCLAVE_DEPLOY_TARGET: node
+      CONCLAVE_TEST_DATABASE_URL: postgresql://conclave_test@127.0.0.1:5432/conclave_test
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: conclave_test
+          POSTGRES_DB: conclave_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U conclave_test -d conclave_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
+      - run: pnpm install --frozen-lockfile
+      - name: Verify approved releases and types
+        run: |
+          pnpm check:feature-release
+          pnpm typecheck
+      - name: Verify features and existing live behavior
+        run: |
+          node --experimental-strip-types --test scripts/check-everyday-updates.mjs scripts/check-chat-upgrades.mjs scripts/check-canvas-layout.mjs scripts/check-canvas-arrange.mjs scripts/check-project-organizer.mjs scripts/check-decision-worksheet.mjs scripts/check-studio-reuse.mjs scripts/check-studio-search.mjs scripts/check-saved-councils.mjs scripts/check-pdf-references.mjs scripts/check-only-one-said.mjs scripts/check-answer-costs.mjs scripts/check-answer-sources.mjs scripts/check-blind-record.mjs scripts/check-failure-reasons.mjs scripts/check-explorer-links.mjs
+          pnpm test:canvas
+          pnpm test:client-workspace
+          pnpm test:ppq
+          pnpm test:model-routing
+          pnpm test:studio-review
+      - name: Verify protected archive recovery against isolated Postgres
+        run: |
+          CONCLAVE_DATABASE_URL="$CONCLAVE_TEST_DATABASE_URL" pnpm db:migrate
+          node --experimental-strip-types --test scripts/check-archive-recovery.mjs
+      - run: pnpm build

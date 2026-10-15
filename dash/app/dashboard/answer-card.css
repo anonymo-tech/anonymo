@@ -338,6 +338,37 @@
   }
 }
 
+.cw-shell .cw-answer .cw-answer-footer.has-cost {
+  flex-wrap: wrap;
+}
+
+.cw-shell .cw-answer-cost,
+.cw-shell .cw-turn-cost {
+  min-width: 0;
+  color: var(--cw-muted, #74776f);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.cw-shell .cw-answer-cost {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
+}
+
+.cw-shell .cw-turn-cost {
+  margin-top: 8px;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.cw-board .cw-turn-cost {
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: var(--cw-paper, #fff);
+}
+
 /* Monogram mark for models without a bundled provider asset. */
 .cw-provider-icon.cw-provider-monogram {
   display: inline-grid;
@@ -349,4 +380,67 @@
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0;
+}
+
+.cw-shell .cw-answer-sources,
+.cw-shell .cw-answer-source-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cw-shell .cw-answer-sources {
+  margin-top: 14px;
+  color: #74776f;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.cw-shell .cw-answer-source-chip {
+  max-width: 100%;
+  padding: 2px 7px;
+  border: 1px solid #d9dad5;
+  border-radius: 5px;
+  background: #fff;
+  color: var(--cw-ink, #171816);
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+.cw-shell .cw-answer-source-chip:hover {
+  text-decoration: underline;
+}
+
+.cw-shell .cw-answer-sources details {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.cw-shell .cw-answer-sources summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.cw-shell .cw-answer-sources-more summary,
+.cw-shell .cw-answer-source-count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.cw-shell .cw-answer-sources-more[open],
+.cw-shell .cw-answer-sources-info[open] {
+  flex-basis: 100%;
+}
+
+.cw-shell .cw-answer-source-links {
+  margin-top: 6px;
+}
+
+.cw-shell .cw-answer-sources-info > div {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
 }

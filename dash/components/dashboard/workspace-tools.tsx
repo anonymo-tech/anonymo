@@ -6,6 +6,8 @@ import { useId, useState, type ReactNode } from 'react';
 import Link from '@/components/site-link';
 import { Check, Info, LockKeyhole } from 'lucide-react';
 import { MotionIcon } from './motion-icon';
+import { BlindRecord } from './blind-record';
+import { featureOn } from './feature-switches';
 import { LiveIdentityPanel } from './live-identity-panel';
 import { LiveRoutesPanel } from './live-routes-panel';
 import { LiveExplainerPanel } from './live-explainer-panel';
@@ -32,6 +34,7 @@ type ToolsContentProps = {
   };
   view: ToolView;
   modelId?: string;
+  explainerSignature?: string;
   onClose: () => void;
   onToast: (message: string) => void;
 };
@@ -625,6 +628,7 @@ export function ToolsContent({
   service,
   view,
   modelId,
+  explainerSignature,
   onClose,
   onToast,
 }: ToolsContentProps) {
@@ -638,10 +642,11 @@ export function ToolsContent({
           <RoutesPanel key={modelId || 'default'} modelId={modelId} />
         ))}
       {view === 'explainer' &&
-        (service ? (
+        (service || explainerSignature ? (
           <LiveExplainerPanel
-            key={service.accountId ?? 'signed-out'}
-            accountId={service.accountId}
+            key={explainerSignature ? `${service?.accountId ?? 'signed-out'}:${explainerSignature}` : service?.accountId ?? 'signed-out'}
+            accountId={service?.accountId ?? null}
+            initialSignature={explainerSignature}
           />
         ) : (
           <ExplainerPanel />
@@ -657,6 +662,12 @@ export function ToolsContent({
         ))}
       {view === 'settings' &&
         (service ? <LiveSettingsPanel service={service} /> : <SettingsPanel />)}
+      {view === 'settings' && featureOn('blindRecord') && featureOn('projects') && (
+        <BlindRecord
+          key={service?.signedIn ? service.accountId ?? 'signed-out' : 'signed-out'}
+          accountId={service?.signedIn ? service.accountId : null}
+        />
+      )}
       {view === 'identity' && <IdentityPanel onClose={onClose} />}
       {view === 'help' && <HelpPanel />}
       {view !== 'identity' && (
