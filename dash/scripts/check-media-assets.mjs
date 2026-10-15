@@ -159,11 +159,8 @@ void test('storage limits validate trusted integer configuration and conservativ
     100 * MEDIA_CHUNK_BYTES + 100 * 28 + 2048,
   );
   assert.deepEqual(mediaStoragePolicy(), DEFAULT_MEDIA_STORAGE_POLICY);
-  assert.ok(
-    DEFAULT_MEDIA_STORAGE_POLICY.accountBytes >=
-      3 * mediaStorageReservationBytes('video'),
-  );
-  assert.equal(DEFAULT_MEDIA_STORAGE_POLICY.globalBytes, 512 * 1024 * 1024);
+  assert.equal(DEFAULT_MEDIA_STORAGE_POLICY.accountBytes, null);
+  assert.equal(DEFAULT_MEDIA_STORAGE_POLICY.globalBytes, 400 * 1024 * 1024);
   for (const invalid of [
     null,
     {},
@@ -750,4 +747,17 @@ void test('failed-import cleanup shares its parent transaction and cannot releas
   );
   await finalizeMediaAsset(pool, f.accountId, s.j.jobId, s.encrypted, keyring);
   await deleteOwnedMediaAsset(pool, f.accountId, s.asset.id);
+});
+
+void test('unrestricted accounts can reserve repeatedly within real shared storage capacity', async () => {
+  const f = await fixture();
+  const jobs = [await job(f), await job(f)];
+  const baseline = Number((await pool.query('SELECT COALESCE(sum(allocated_bytes),0)::text AS n FROM media_assets')).rows[0].n);
+  const bytes = mediaStorageReservationBytes('image');
+  const limits = {accountBytes: null, globalBytes: baseline + 2 * bytes};
+  const results = await Promise.all(jobs.map(j => reserve(f, j, limits)));
+  assert.equal(results.length, 2);
+  const third = await job(f);
+  await assert.rejects(reserve(f, third, limits), {code: 'MEDIA_STORAGE_CAPACITY'});
+  for (const j of [...jobs, third]) { await failed(j); await release(f, j); }
 });

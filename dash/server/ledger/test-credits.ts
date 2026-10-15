@@ -3,6 +3,7 @@ import { one, transaction, type Queryable } from '../db/database.ts';
 import { ServiceError, requireCondition } from '../core/errors.ts';
 import { decimalUsd6, usd6 } from './money.ts';
 import { getBalance, ledgerAccount, post } from './ledger.ts';
+import { welcomeCreditGrantedUsd6 } from './welcome-credit.ts';
 
 // Internal test credit is local-testing balance only. It is never USDC, never a
 // deposit and never chain evidence; deposits keep their separate verified path.
@@ -261,19 +262,30 @@ export async function internalTestCreditGrantedUsd6(
   return row?.total ?? '0';
 }
 
-/** Balance response; accounts holding test credit get an explicit label. */
+/** Credit provenance is lifetime granted usage credit, not a token balance. */
 export async function labelledBalance(pool: Pool, accountId: string) {
-  const [balance, granted] = await Promise.all([
+  const [balance, granted, welcomeGranted] = await Promise.all([
     getBalance(pool, accountId),
     internalTestCreditGrantedUsd6(pool, accountId),
+    welcomeCreditGrantedUsd6(pool, accountId),
   ]);
-  return granted === '0'
-    ? balance
-    : {
-        ...balance,
+  return {
+    ...balance,
+    ...(granted === '0'
+      ? {}
+      : {
         internalTestCredit: {
           grantedUsd6: granted,
           label: INTERNAL_TEST_CREDIT_LABEL,
         },
-      };
+      }),
+    ...(welcomeGranted === '0'
+      ? {}
+      : {
+        welcomeCredit: {
+          grantedUsd6: welcomeGranted,
+          label: 'Welcome usage credit (not USDC)',
+        },
+      }),
+  };
 }

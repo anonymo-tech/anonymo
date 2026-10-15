@@ -1,3 +1,4 @@
+import { publicSignerKeys } from '../receipts/runtime-signer.ts';
 import type { Pool } from 'pg';
 import { getOwnedReceipt } from '../receipts/service.ts';
 import { jsonResponse, uuidField } from '../core/http.ts';
@@ -12,6 +13,7 @@ export async function receiptRoutes(
   accountId: string,
 ): Promise<Response | null> {
   if (request.method !== 'GET') return null;
+  if (path === 'receipts/keys' && request.method === 'GET') return jsonResponse({signers: await publicSignerKeys(pool)});
   if (path === 'receipts') {
     const scope = `${accountId}:receipts`,
       cursor = readCursor(

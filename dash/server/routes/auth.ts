@@ -18,6 +18,7 @@ import { getSession } from './session.ts';
 import { digestText } from '../core/digest.ts';
 import { browserBinding } from '../auth/security.ts';
 import { grantSignInTestCredit } from '../ledger/test-credits.ts';
+import { grantWalletWelcomeCreditInTransaction } from '../ledger/welcome-credit.ts';
 
 export async function authRoute(
   pool: Pool,
@@ -144,6 +145,9 @@ export async function authRoute(
           "SELECT id,account_id,revoked_at FROM identities WHERE kind='solana' AND subject=$1",
           [verified.address],
         );
+        let welcomeCredit: Awaited<
+          ReturnType<typeof grantWalletWelcomeCreditInTransaction>
+        > = null;
         if (!identity) {
           const accountId = crypto.randomUUID();
           await client.query('INSERT INTO accounts(id) VALUES($1)', [
@@ -159,6 +163,11 @@ export async function authRoute(
             account_id: accountId,
             revoked_at: null,
           };
+          welcomeCredit = await grantWalletWelcomeCreditInTransaction(client, {
+            accountId,
+            identityId,
+            walletAddress: verified.address,
+          });
         }
         const available = await one(
           client,
@@ -199,7 +208,11 @@ export async function authRoute(
           "INSERT INTO sessions(token_hash,account_id,identity_id,browser_hash,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 day')",
           [tokenHash, identity.account_id, identity.id, browser.hash],
         );
-        return { accountId: identity.account_id, method: verified.method };
+        return {
+          accountId: identity.account_id,
+          method: verified.method,
+          ...(welcomeCredit ? { welcomeCredit } : {}),
+        };
       });
       await grantSignInTestCredit(pool, result.accountId, origin);
       const headers = new Headers();

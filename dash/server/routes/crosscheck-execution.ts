@@ -1,3 +1,4 @@
+import { publicRouteCard } from './public-inference.ts';
 import type { Pool } from 'pg';
 import { one, transaction } from '../db/database.ts';
 import {
@@ -76,10 +77,10 @@ export async function crosscheckExecutionRoutes(
       { accountId, runId, maxOutputTokens: Number(body.maxOutputTokens) },
       configuredKeyring(),
     );
-    return jsonResponse({ quote }, 201);
+    return jsonResponse({ quote: {...quote, terms: quote.terms.map(term=>({...term,card:publicRouteCard(term.card)}))} }, 201);
   }
   if (match[2] === 'run') {
-    exact(body, ['quoteGroupId', 'approveMaximumUsd6', 'idempotencyKey']);
+    exact(body, ['quoteGroupId', 'idempotencyKey', 'approveMaximumUsd6']);
     const queued = await enqueueCrossCheck(
       pool,
       {

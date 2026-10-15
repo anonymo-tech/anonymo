@@ -15,6 +15,7 @@ const PAYMENT_RPC_METHODS = [
   'getBlockHeight',
   'isBlockhashValid',
   'getFeeForMessage',
+  'getMinimumBalanceForRentExemption',
   'simulateTransaction',
   'getSignatureStatuses',
   'getTransaction',

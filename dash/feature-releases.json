@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "approved": [
+    "projects",
+    "canvas",
+    "library",
+    "decisions",
+    "help",
+    "purse",
+    "moreModels",
+    "routes",
+    "receipts",
+    "crosscheck",
+    "synthesis",
+    "explainer",
+    "studio",
+    "chapters",
+    "agents",
+    "connections",
+    "flywheel",
+    "secondLook"
+  ]
+}

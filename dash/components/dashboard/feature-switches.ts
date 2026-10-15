@@ -1,25 +1,28 @@
 /**
- * Feature switches for the workspace. Every feature beyond Chat ships behind its
- * own switch, and every switch is off, so the public build shows Chat, sign-in
- * and settings only. To turn a feature on, set its value to true: its entry
- * points, deep links and in-chat actions appear with it.
+ * Workspace features require explicit owner approval. Projects, Canvas, Library,
+ * Decisions, Help, updates 06–15 and More models are approved. FOMO is approved; other Second Look tools remain held. Keep these
+ * static switches aligned with feature-releases.json; the build verifies them.
  */
 export const FEATURE_SWITCHES = {
-  projects: false,
-  canvas: false,
-  library: false,
-  decisions: false,
-  help: false,
-  routes: false,
-  purse: false,
-  receipts: false,
-  crosscheck: false,
-  synthesis: false,
-  explainer: false,
-  studio: false,
-  chapters: false,
-  agents: false,
-  connections: false,
+  frontRow: false,
+  flywheel: true,
+  moreModels: true,
+  secondLook: true,
+  projects: true,
+  canvas: true,
+  library: true,
+  decisions: true,
+  help: true,
+  routes: true,
+  purse: true,
+  receipts: true,
+  crosscheck: true,
+  synthesis: true,
+  explainer: true,
+  studio: true,
+  chapters: true,
+  agents: true,
+  connections: true,
 } satisfies Record<string, boolean>;
 
 export type FeatureName = keyof typeof FEATURE_SWITCHES;

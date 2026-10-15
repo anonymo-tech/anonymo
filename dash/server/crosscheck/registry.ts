@@ -2,9 +2,9 @@ import { isDeepStrictEqual } from 'node:util';
 import type { Pool } from 'pg';
 import { one, transaction, type Queryable } from '../db/database.ts';
 import { ServiceError, requireCondition } from '../core/errors.ts';
-import { GATEWAY_MODEL_ALLOWLIST } from '../gateway/catalog.ts';
+import { PPQ_MODEL_ALLOWLIST } from '../ppq/catalog.ts';
 import {
-  routeCatalogUrl,
+  ROUTE_CATALOG_URL,
   validateRouteReview,
   type ReviewedRouteCard,
   type ReviewedRoutePricing,
@@ -143,7 +143,7 @@ function member(value: unknown): ReviewedRosterMember {
   )
     return invalid('CROSSCHECK_MODEL_UNAVAILABLE');
   const family = entry.family as keyof typeof distributions;
-  if (entry.modelId !== GATEWAY_MODEL_ALLOWLIST[family].id)
+  if (entry.modelId !== PPQ_MODEL_ALLOWLIST[family].id)
     return invalid('CROSSCHECK_MODEL_UNAVAILABLE');
   if (entry.distribution !== distributions[family])
     return invalid('CROSSCHECK_DISTRIBUTION_MISMATCH');
@@ -155,7 +155,7 @@ function member(value: unknown): ReviewedRosterMember {
     return invalid('CROSSCHECK_MODEL_VERSION_REQUIRED');
   return {
     routeVersionId: uuid(entry.routeVersionId),
-    modelId: GATEWAY_MODEL_ALLOWLIST[family].id,
+    modelId: PPQ_MODEL_ALLOWLIST[family].id,
     family,
     modelVersion: entry.modelVersion,
     distribution: distributions[family],
@@ -264,7 +264,7 @@ function catalogEvidence(value: unknown, checkedAt: string): boolean {
     const checked = Date.parse(checkedAt),
       observed = Date.parse(utc(entry.fetchedAt));
     return (
-      entry.sourceUrl === routeCatalogUrl() &&
+      entry.sourceUrl === ROUTE_CATALOG_URL &&
       typeof entry.sha256 === 'string' &&
       /^[0-9a-f]{64}$/.test(entry.sha256) &&
       entry.priceCheck === 'matched' &&
@@ -328,7 +328,7 @@ async function validateInstalledRoutes(
             'evidenceDate',
             'lastVerifiedAt',
           ],
-          ['catalogVerification'],
+          ['catalogVerification', 'routing'],
         );
         catalogVerification = recorded;
         validateRouteReview(

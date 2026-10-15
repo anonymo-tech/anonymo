@@ -4,7 +4,7 @@ export type ServiceConfig = {
   mode: 'preview' | 'service';
   origin: string | null;
   databaseUrl: string | null;
-  gatewayKey: string | null;
+  ppqKey: string | null;
   inferenceEnabled: boolean;
   cluster: 'devnet' | 'mainnet-beta' | null;
   rpcUrl: string | null;
@@ -31,7 +31,7 @@ export function serviceConfig(env: Record<string, string | undefined> = process.
     mode,
     origin,
     databaseUrl: env.CONCLAVE_DATABASE_URL || null,
-    gatewayKey: env.GATEWAY_API_KEY || null,
+    ppqKey: env.PPQ_API_KEY || null,
     inferenceEnabled: env.CONCLAVE_INFERENCE_ENABLED === 'true',
     cluster: cluster === 'devnet' || cluster === 'mainnet-beta' ? cluster : null,
     rpcUrl: env.CONCLAVE_SOLANA_RPC_URL || null,

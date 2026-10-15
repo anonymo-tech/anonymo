@@ -6,7 +6,8 @@ export type LedgerEntry = {
     | 'capture'
     | 'release'
     | 'refund'
-    | 'internal_test_credit';
+    | 'internal_test_credit'
+    | 'promotional_credit';
   createdAt: string;
   availableDeltaUsd6: string;
   reservedDeltaUsd6: string;
@@ -133,6 +134,7 @@ export function createAccountRecordsClient(
             'release',
             'refund',
             'internal_test_credit',
+            'promotional_credit',
           ].includes(String(row.kind))
         )
           throw new Error('Account records could not be verified.');

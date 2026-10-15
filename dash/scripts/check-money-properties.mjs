@@ -1,6 +1,6 @@
 // Property tests over the integer money math: micro-USD parsing (money.ts),
 // the platform fee / burn share / hold buffer (platform-fee.ts), provider cost
-// and usage parsing (gateway/codec.ts), platform token pricing (token/price.ts)
+// and usage parsing (ppq/codec.ts), platform token pricing (token/price.ts)
 // and the chat quote maximum (routes/call-contract.ts).
 //
 // Pure: no database, network or environment. Every property runs with the
@@ -35,8 +35,8 @@ import {
   parseExactUsd6,
   parseUsd6,
   usage,
-} from '../server/gateway/codec.ts';
-import { GatewayError } from '../server/gateway/errors.ts';
+} from '../server/ppq/codec.ts';
+import { PpqError } from '../server/ppq/errors.ts';
 import {
   TOKEN_PRICE_LIMITS,
   assertUsableQuote,
@@ -84,7 +84,7 @@ function serviceCode(work) {
   } catch (error) {
     if (error instanceof ServiceError) return error.code;
     if (error instanceof RangeError) return 'RangeError';
-    if (error instanceof GatewayError) return `gateway:${error.code}`;
+    if (error instanceof PpqError) return `ppq:${error.code}`;
     throw error;
   }
   return null;
@@ -585,7 +585,7 @@ void test('the priced quote maximum is buffered base plus fee and throws exactly
   );
 });
 
-// ------------------------------------------------------------- gateway/codec.ts
+// ------------------------------------------------------------- ppq/codec.ts
 
 /** A decimal string for micro-USD `micro` with `extra` sub-micro digits appended. */
 function decimalText(micro, extra) {
@@ -748,7 +748,7 @@ void test('cost and usage parsing fail closed with the caller billing flag', () 
           assert.throws(
             () => cost(value, ambiguous, exact),
             (error) =>
-              error instanceof GatewayError &&
+              error instanceof PpqError &&
               error.code === 'invalid_response' &&
               error.billingAmbiguous === ambiguous,
           );
@@ -803,7 +803,7 @@ void test('cost and usage parsing fail closed with the caller billing flag', () 
           assert.throws(
             () => usage(data),
             (error) =>
-              error instanceof GatewayError && error.billingAmbiguous === true,
+              error instanceof PpqError && error.billingAmbiguous === true,
           );
         else
           assert.deepEqual(usage(data), {
@@ -826,7 +826,7 @@ void test('cost and usage parsing fail closed with the caller billing flag', () 
   for (const value of ['x', 1, [], true])
     assert.throws(
       () => usage(value),
-      (error) => error instanceof GatewayError,
+      (error) => error instanceof PpqError,
     );
 });
 

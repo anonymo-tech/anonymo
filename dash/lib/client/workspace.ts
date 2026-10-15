@@ -1,4 +1,6 @@
+import { CHAT_LIMITS } from '../chat-limits.ts';
 import {
+  MAX_ROUTING_CANDIDATES,
   ROUTING_TASKS,
   parseRoutingProfile,
   type RoutingTask,
@@ -79,6 +81,8 @@ export type ServiceBalance = {
   currency: 'USD6';
   /** Lifetime internal test credit granted to this account; never USDC. */
   internalTestCreditUsd6?: string;
+  /** Lifetime welcome usage credit granted; never a deposit or token balance. */
+  welcomeCreditUsd6?: string;
 };
 export type CallState =
   | 'queued'
@@ -338,7 +342,7 @@ function card(v: unknown): RouteCard {
     level: text(r.level, 80),
     reviewed: bool(r.reviewed),
     retentionDisclosure: text(r.retentionDisclosure, 8000),
-    evidenceUrl: text(r.evidenceUrl, 2048),
+    evidenceUrl: text(r.evidenceUrl, 2048, true),
     evidenceDate: text(r.evidenceDate, 40),
     plaintextVisibility:
       typeof r.plaintextVisibility === 'string'
@@ -352,7 +356,7 @@ function card(v: unknown): RouteCard {
         : list(r.upstreamProviders, 32, (v) => text(v, 200)),
     ...(r.routing === undefined
       ? {}
-      : { routing: parseRoutingProfile(r.routing) }),
+      : { routing: parseRoutingProfile(r.routing, { allowWithheldEvidence: true }) }),
   };
 }
 export function parseProject(v: unknown): ServiceProject {
@@ -409,8 +413,8 @@ export function parseRoute(v: unknown): ServiceRoute {
       inputPerMillionUsd6: money(p.inputPerMillionUsd6),
       outputPerMillionUsd6: money(p.outputPerMillionUsd6),
       markupBps: integer(p.markupBps, 0, 10000),
-      maxOutputTokens: integer(p.maxOutputTokens, 1, 8192),
-      maxInputBytes: integer(p.maxInputBytes, 1, 32768),
+      maxOutputTokens: integer(p.maxOutputTokens, 1, CHAT_LIMITS.outputTokens),
+      maxInputBytes: integer(p.maxInputBytes, 1, CHAT_LIMITS.inputBytes),
     },
   };
 }
@@ -445,7 +449,7 @@ export function parseCallSnapshot(v: unknown): CallSnapshot {
       'reconciliation_pending',
     ]),
     errorCode: nullable(r.errorCode, (v) => text(v, 160)),
-    output: text(r.output, 500000, true),
+    output: text(r.output, CHAT_LIMITS.outputCharacters, true),
     billing,
     cancelRequested:
       r.cancelRequested === undefined ? false : bool(r.cancelRequested),
@@ -462,7 +466,7 @@ export function parseComparison(v: unknown): ServiceComparison {
         outputLength =
           c.outputLength === undefined
             ? snapshot.output.length
-            : integer(c.outputLength, 0, 500000);
+            : integer(c.outputLength, 0, CHAT_LIMITS.outputCharacters);
       if (
         outputLength < snapshot.output.length ||
         (!outputTruncated && outputLength !== snapshot.output.length) ||
@@ -487,7 +491,7 @@ export function parseComparison(v: unknown): ServiceComparison {
   const result = {
     id: id(r.id),
     projectId: id(r.projectId),
-    prompt: text(r.prompt, 32768),
+    prompt: text(r.prompt, CHAT_LIMITS.inputBytes),
     createdAt: date(r.createdAt),
     blind: bool(r.blind),
     revealedAt: nullable(r.revealedAt, date),
@@ -590,8 +594,7 @@ export function parseQuoteResponse(
     quotes.length !== input.items.length ||
     quotes.some(
       (q, i) =>
-        q.routeVersionId !== input.items[i].routeVersionId ||
-        BigInt(q.maximumUsd6) > 10000000n,
+        q.routeVersionId !== input.items[i].routeVersionId,
     )
   )
     return invalid();
@@ -887,6 +890,11 @@ export function createWorkspaceClient(options: ClientOptions = {}) {
                 object(r.internalTestCredit).grantedUsd6,
               ),
             }),
+        ...(r.welcomeCredit === undefined
+          ? {}
+          : {
+              welcomeCreditUsd6: money(object(r.welcomeCredit).grantedUsd6),
+            }),
       };
     },
     async projects(after?: string | null) {
@@ -937,7 +945,7 @@ export function createWorkspaceClient(options: ClientOptions = {}) {
             `comparisons/${id(comparisonId)}`,
             'GET',
             undefined,
-            16 * 1024 * 1024,
+            CHAT_LIMITS.responseBytes,
           )
         ).comparison,
       );
@@ -958,21 +966,20 @@ export function createWorkspaceClient(options: ClientOptions = {}) {
         BigInt(money(input.budgetUsd6)) < 1n ||
         BigInt(input.budgetUsd6) > 10000000n ||
         input.candidates.length < 1 ||
-        input.candidates.length > 16 ||
+        input.candidates.length > MAX_ROUTING_CANDIDATES ||
         new Set(input.candidates.map((item) => item.routeVersionId)).size !==
           input.candidates.length
       )
         return invalid();
-      const output = integer(input.candidates[0].maxOutputTokens, 1, 8192);
       const question = text(
         input.candidates[0].messages.at(-1)?.content,
-        32768,
+        CHAT_LIMITS.inputBytes,
       );
       for (const candidate of input.candidates) {
         id(candidate.routeVersionId);
         if (
           candidate.privacy !== 'standard' ||
-          candidate.maxOutputTokens !== output ||
+          integer(candidate.maxOutputTokens, 1, CHAT_LIMITS.outputTokens) !== candidate.maxOutputTokens ||
           candidate.messages.at(-1)?.role !== 'user' ||
           candidate.messages.at(-1)?.content !== question
         )
@@ -984,7 +991,7 @@ export function createWorkspaceClient(options: ClientOptions = {}) {
       );
     },
     async submit(input: QuotedComparisonInput) {
-      const r = await request('comparisons', 'POST', input, 16 * 1024 * 1024);
+      const r = await request('comparisons', 'POST', input, CHAT_LIMITS.responseBytes);
       const comparison = parseComparison(r.comparison);
       if (
         comparison.projectId !== input.projectId ||
@@ -1004,7 +1011,7 @@ export function createWorkspaceClient(options: ClientOptions = {}) {
         `comparisons/${id(comparisonId)}/${action}`,
         'POST',
         action === 'vote' ? { callId: id(callId) } : {},
-        16 * 1024 * 1024,
+        CHAT_LIMITS.responseBytes,
       );
       const result = parseComparison(r.comparison);
       if (result.id !== comparisonId) return invalid();
@@ -1138,7 +1145,7 @@ export function createWorkspaceClient(options: ClientOptions = {}) {
           buffer = (
             buffer + decoder.decode(chunk.value, { stream: true })
           ).replace(/\r\n/g, '\n');
-          if (buffer.length > 4 * 1024 * 1024) return invalid();
+          if (buffer.length > CHAT_LIMITS.responseBytes) return invalid();
           let boundary: number;
           while ((boundary = buffer.indexOf('\n\n')) >= 0) {
             const block = buffer.slice(0, boundary);
@@ -1171,6 +1178,7 @@ export function createWorkspaceClient(options: ClientOptions = {}) {
             onSnapshot(snapshot);
           }
         }
+        if (buffer.trim()) return invalid();
       } finally {
         await reader.cancel().catch(() => {});
         reader.releaseLock();

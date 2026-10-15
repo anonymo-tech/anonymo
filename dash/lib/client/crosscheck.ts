@@ -646,7 +646,7 @@ export function parseCrossCheckQuote(
           level: text(card.level, 80),
           retentionDisclosure: text(card.retentionDisclosure, 8000),
           evidenceDate: text(card.evidenceDate, 40),
-          evidenceUrl: text(card.evidenceUrl, 2048),
+          evidenceUrl: card.evidenceUrl === '' ? '' : text(card.evidenceUrl, 2048),
         },
       };
     }),

@@ -1,7 +1,9 @@
+import { CHAT_LIMITS } from '../../lib/chat-limits.ts';
+import { releasedChatRoute } from '../core/feature-release.ts';
 import { requireCondition, ServiceError } from '../core/errors.ts';
 import { digestText } from '../core/digest.ts';
 import { usd6, ceilRatio } from '../ledger/money.ts';
-import { validateModel } from '../gateway/catalog.ts';
+import { validateModel } from '../ppq/catalog.ts';
 
 export type ChatInput = {
   messages: { role: 'system' | 'user' | 'assistant'; content: string }[];
@@ -25,6 +27,7 @@ export type RouteVersion = {
   pricing: {
     inputPerMillionUsd6: string;
     outputPerMillionUsd6: string;
+    cacheReadPerMillionUsd6?: string;
     markupBps: number;
     maxOutputTokens: number;
     maxInputBytes: number;
@@ -34,11 +37,12 @@ export type RouteVersion = {
      * route's full output cap for reasoning, whatever the request asked for.
      */
     maxReasoningTokens?: number;
+    contextTokens?: number;
   };
 };
 
 /** Upper bound for a reviewed reasoning cap; matches the largest provider budgets. */
-export const MAX_REASONING_TOKENS = 65536;
+export const MAX_REASONING_TOKENS = CHAT_LIMITS.outputTokens;
 
 /**
  * Reasoning tokens the hold must cover. Providers bill reasoning at the output
@@ -76,10 +80,10 @@ export function parseChatInput(
   requireCondition(
     Array.isArray(body.messages) &&
       body.messages.length >= 1 &&
-      body.messages.length <= 40,
+      body.messages.length <= CHAT_LIMITS.messages,
     400,
     'INVALID_MESSAGES',
-    'Send between one and forty messages.',
+    `Send between one and ${CHAT_LIMITS.messages} messages.`,
   );
   let bytes = 0;
   const messages: ChatInput['messages'] = body.messages.map(
@@ -106,7 +110,7 @@ export function parseChatInput(
       );
       bytes += new TextEncoder().encode(entry.content).byteLength;
       requireCondition(
-        bytes <= 32_768,
+        bytes <= CHAT_LIMITS.inputBytes,
         413,
         'PROMPT_TOO_LARGE',
         'This conversation exceeds the current request limit.',
@@ -132,10 +136,10 @@ export function parseChatInput(
   requireCondition(
     Number.isSafeInteger(body.maxOutputTokens) &&
       Number(body.maxOutputTokens) >= 1 &&
-      Number(body.maxOutputTokens) <= 8192,
+      Number(body.maxOutputTokens) <= CHAT_LIMITS.outputTokens,
     400,
     'INVALID_OUTPUT_LIMIT',
-    'Choose an output limit between 1 and 8192 tokens.',
+    `Choose an output limit between 1 and ${CHAT_LIMITS.outputTokens} tokens.`,
   );
   return {
     messages,
@@ -148,7 +152,7 @@ export function assertUsableRoute(
   route: RouteVersion | null,
 ): asserts route is RouteVersion {
   requireCondition(
-    route && route.enabled && route.fresh && route.modality === 'chat',
+    route && route.enabled && route.fresh && route.modality === 'chat' && releasedChatRoute(route),
     409,
     'ROUTE_UNAVAILABLE',
     'This model route is unavailable.',
@@ -175,7 +179,7 @@ export function assertUsableRoute(
   }
 }
 
-/** Per-request cap on a chat quote's maximum, including any platform fee. */
+/** Default optional Auto routing budget. Manual chat is bounded by its funded reservation. */
 export const CHAT_REQUEST_BUDGET_USD6 = 10_000_000n;
 
 export function quoteMaximum(route: RouteVersion, input: ChatInput): string {
@@ -186,7 +190,7 @@ export function quoteMaximum(route: RouteVersion, input: ChatInput): string {
       pricing.markupBps <= 10000 &&
       Number.isSafeInteger(pricing.maxInputBytes) &&
       pricing.maxInputBytes > 0 &&
-      pricing.maxInputBytes <= 32768 &&
+      pricing.maxInputBytes <= CHAT_LIMITS.inputBytes &&
       Number.isSafeInteger(pricing.maxOutputTokens) &&
       input.maxOutputTokens <= pricing.maxOutputTokens,
     409,
@@ -206,9 +210,10 @@ export function quoteMaximum(route: RouteVersion, input: ChatInput): string {
   );
   // Conservative text-only token allowance. Verified actual cost still governs settlement;
   // an unexpected excess is held for reconciliation, never an additional user debit.
-  // Reasoning tokens are billed at the output rate on top of the visible output, so
-  // the reservation covers the route's reviewed reasoning cap as well.
-  const inputAllowance = BigInt(bytes + input.messages.length * 256 + 1024);
+  // Separate reasoning counts are reserved in addition to the completion maximum.
+  // Included reasoning already lives inside that maximum.
+  const inputAllowance = BigInt(Math.min(bytes + input.messages.length * 256 + 1024,
+    pricing.contextTokens ?? Number.MAX_SAFE_INTEGER));
   const outputAllowance = BigInt(
     input.maxOutputTokens + reasoningAllowance(pricing, input.maxOutputTokens),
   );
@@ -221,12 +226,7 @@ export function quoteMaximum(route: RouteVersion, input: ChatInput): string {
     providerMaximum * BigInt(10000 + pricing.markupBps),
     10000n,
   );
-  requireCondition(
-    maximum <= CHAT_REQUEST_BUDGET_USD6,
-    400,
-    'REQUEST_BUDGET_EXCEEDED',
-    'This request exceeds the current maximum budget.',
-  );
+
   return (maximum > 0n ? maximum : 1n).toString();
 }
 

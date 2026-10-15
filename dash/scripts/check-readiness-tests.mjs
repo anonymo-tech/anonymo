@@ -44,9 +44,7 @@ const base = () => ({
 });
 const enabled = () => ({
   ...base(),
-  GATEWAY_API_KEY: randomBytes(24).toString('hex'),
-  GATEWAY_API_ORIGIN: 'https://api.inference.invalid',
-  GATEWAY_EVIDENCE_ORIGINS: '["https://inference.invalid","https://www.inference.invalid"]',
+  PPQ_API_KEY: randomBytes(24).toString('hex'),
   CONCLAVE_INFERENCE_ENABLED: 'true',
   // Production readiness requires the per-account overage breaker.
   CONCLAVE_MAX_ACCOUNT_OVERAGE_USD6: '1000000',
@@ -227,7 +225,7 @@ void test('explicit capability flags and concurrency bounds cannot be replaced b
   assert.ok(
     has(
       await checkReadiness(
-        { ...enabled(), GATEWAY_API_KEY: 'invalid key whitespace' },
+        { ...enabled(), PPQ_API_KEY: 'invalid key whitespace' },
         { target: 'worker' },
       ),
       'PROVIDER_KEY',
@@ -371,9 +369,7 @@ void test('redacted reporting never interpolates credentials, URLs, paths or unk
     ...base(),
     CONCLAVE_APP_ORIGIN: `https://${marker}.example/private`,
     CONCLAVE_DATABASE_URL: `postgresql://user:${marker}@db.example/fixture?unsafe=${marker}`,
-    GATEWAY_API_KEY: marker,
-    GATEWAY_API_ORIGIN: 'https://api.inference.invalid',
-    GATEWAY_EVIDENCE_ORIGINS: '["https://inference.invalid","https://www.inference.invalid"]',
+    PPQ_API_KEY: marker,
     CONCLAVE_DATA_KEYS: marker,
     CONCLAVE_RECEIPT_SIGNER_SEED_HEX: marker,
     CONCLAVE_SOLANA_RPC_URL: `https://rpc.example/${marker}`,
@@ -1157,10 +1153,8 @@ void test('deploy: pure suites exclude the database suites, test:database and th
 void test('deploy: each step receives only the variables it needs', () => {
   const env = {
     PATH: '/usr/bin',
-    HOME: '/tmp/example-home',
-    GATEWAY_API_KEY: 'provider',
-    GATEWAY_API_ORIGIN: 'https://api.inference.invalid',
-    GATEWAY_EVIDENCE_ORIGINS: '["https://inference.invalid","https://www.inference.invalid"]',
+    HOME: '/home/operator',
+    PPQ_API_KEY: 'provider',
     CONCLAVE_DATABASE_URL: 'service',
     CONCLAVE_MIGRATION_DATABASE_URL: 'migration',
     CONCLAVE_TEST_DATABASE_URL: 'test',
@@ -1172,14 +1166,14 @@ void test('deploy: each step receives only the variables it needs', () => {
   assert.equal(stepEnvironment('test', env).CONCLAVE_TEST_DATABASE_URL, 'test');
   for (const kind of ['build', 'test']) {
     const given = stepEnvironment(kind, env);
-    for (const name of ['GATEWAY_API_KEY', 'CONCLAVE_DATABASE_URL', 'CLOUDFLARE_API_TOKEN', 'UNRELATED'])
+    for (const name of ['PPQ_API_KEY', 'CONCLAVE_DATABASE_URL', 'CLOUDFLARE_API_TOKEN', 'UNRELATED'])
       assert.equal(name in given, false, `${kind} ${name}`);
   }
   const migrate = stepEnvironment('migrate', env);
   assert.equal(migrate.CONCLAVE_DATABASE_URL, 'migration');
-  assert.equal('GATEWAY_API_KEY' in migrate, false);
+  assert.equal('PPQ_API_KEY' in migrate, false);
   const liveStep = stepEnvironment('live', env);
-  assert.equal(liveStep.GATEWAY_API_KEY, 'provider');
+  assert.equal(liveStep.PPQ_API_KEY, 'provider');
   assert.equal(liveStep.CONCLAVE_MIGRATION_DATABASE_URL, 'migration');
   assert.equal('CLOUDFLARE_API_TOKEN' in liveStep, false);
   assert.deepEqual(
@@ -1202,10 +1196,10 @@ void test('deploy: the environment step reports names only and enforces the expe
   assert.deepEqual(checkEnvironment(staging, complete, 'dry-run'), []);
   // The worker name placeholder only blocks a real deploy.
   assert.equal(checkEnvironment(staging, complete, 'confirm').length, 1);
-  const { GATEWAY_API_KEY: _omitted, ...partial } = complete;
+  const { PPQ_API_KEY: _omitted, ...partial } = complete;
   const missing = checkEnvironment(staging, partial, 'dry-run');
   assert.equal(missing.length, 1);
-  assert.match(missing[0], /GATEWAY_API_KEY/);
+  assert.match(missing[0], /PPQ_API_KEY/);
   const wrong = checkEnvironment(
     staging,
     { ...complete, CONCLAVE_SOLANA_CLUSTER: 'mainnet-beta' },
@@ -1216,7 +1210,8 @@ void test('deploy: the environment step reports names only and enforces the expe
     assert.equal(problem.includes('value-that-must-not-be-reported'), false);
 });
 
-void test('deploy: environment configuration lists names, clusters and schema only', () => {
+void test('deploy: the manifest file lists names, clusters and schema only', () => {
+  const example = readFileSync(webFile('.env.example'), 'utf8');
   assert.deepEqual(Object.keys(environments).sort(), ['production', 'staging']);
   assert.equal(environments.staging.expectedCluster, 'devnet');
   assert.equal(environments.production.expectedCluster, 'mainnet-beta');
@@ -1226,6 +1221,7 @@ void test('deploy: environment configuration lists names, clusters and schema on
     assert.match(environment.workerName, /^REPLACE_WITH_/);
     for (const name of environment.requiredEnvironment.worker) {
       assert.match(name, /^[A-Z][A-Z0-9_]*$/);
+      assert.ok(example.includes(`${name}=`), name);
     }
     for (const name of environment.requiredEnvironment.operator)
       assert.match(name, /^[A-Z][A-Z0-9_]*$/);

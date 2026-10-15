@@ -37,6 +37,17 @@ const suites = Object.freeze([
   'media-reader',
   'media-content-service',
   'media-receipt-service',
+  'second-look-service',
+  'second-look-token',
+  'second-look-wallet',
+  'second-look-planning',
+  'second-look-alerts-service',
+  'second-look-follow-service',
+  'second-look-cool-head-service',
+  'second-look-tax-steady',
+  'second-look-phase2-routes',
+  'second-look-phase2-readiness',
+  'second-look-push',
 ]);
 const generatedName = /^conclave_[0-9a-f]{32}_test$/;
 const webDirectory = fileURLToPath(new URL('../', import.meta.url));
@@ -47,7 +58,7 @@ const failedTitleLimit = 8;
 export function declaredTestTitles(source) {
   const titles = new Set();
   for (const match of source.matchAll(
-    /(?:^|\n)[ \t]*(?:void )?test\(\s*(['"])([A-Za-z0-9][A-Za-z0-9 ,;()'/_-]{0,179})\1\s*,/g,
+    /(?:^|\n)[ \t]*(?:(?:void|await) )?test\(\s*(['"])([A-Za-z0-9][A-Za-z0-9 ,;()'/_-]{0,179})\1\s*,/g,
   ))
     if (safeTitle.test(match[2])) titles.add(match[2]);
   return titles;
@@ -181,9 +192,7 @@ async function runSuite(suite, connection, signal) {
           CONCLAVE_BURN_SHARE_BPS: undefined,
           CONCLAVE_INTERNAL_TESTING: undefined,
           CONCLAVE_INTERNAL_TEST_CREDIT_USD: undefined,
-          GATEWAY_API_KEY: undefined,
-          GATEWAY_API_ORIGIN: 'https://api.inference.invalid',
-          GATEWAY_EVIDENCE_ORIGINS: '["https://inference.invalid","https://www.inference.invalid"]',
+          PPQ_API_KEY: undefined,
           CONCLAVE_TEST_DATABASE_URL: connection,
           CONCLAVE_DATABASE_URL: connection,
           TZ: 'UTC',
@@ -342,12 +351,15 @@ function selfTest() {
     assert.throws(() => databaseIdentifier(value));
   const title = 'concurrent requests reserve exactly once';
   const declared = declaredTestTitles(
-    `test('${title}', () => {});\nvoid test(\n  "readonly results remain visible", () => {});\n` +
+    `test('${title}', () => {});\nvoid test(\n  "readonly results remain visible", () => {});\nawait test("async static case", () => {});\n` +
       'test(`dynamic ${value}`, () => {});\n' +
       "test('prefix' + value, () => {});\n" +
       "test('https://private.invalid', () => {});",
   );
-  assert.deepEqual([...declared], [title, 'readonly results remain visible']);
+  assert.deepEqual(
+    [...declared],
+    [title, 'readonly results remain visible', 'async static case'],
+  );
   const parser = tapSummary(declared);
   parser.write('TAP version 13\nnot o');
   parser.write(`k 1 - ${title}\r\n  ---\n  error: 'secret diagnostic'\n`);

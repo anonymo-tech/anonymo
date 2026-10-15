@@ -14,14 +14,14 @@ import {
 /** Logical encrypted payload limits. PostgreSQL indexes, row overhead, WAL and
  * backups require additional capacity; these are not a provider spending cap. */
 export type MediaStoragePolicy = Readonly<{
-  accountBytes: number;
+  accountBytes: number | null;
   globalBytes: number;
 }>;
 export const DEFAULT_MEDIA_STORAGE_POLICY: MediaStoragePolicy = Object.freeze({
-  // Three supported video models can reserve their worst-case output together.
-  // The shared allocation ceiling is unchanged; individual admission is atomic.
-  accountBytes: 384 * MEDIA_CHUNK_BYTES,
-  globalBytes: 512 * MEDIA_CHUNK_BYTES,
+  // No per-account storage quota. Admission still reserves real shared capacity
+  // atomically before charging, so a paid generation always has space to land.
+  accountBytes: null,
+  globalBytes: 400 * MEDIA_CHUNK_BYTES,
 });
 export type MediaAssetState = 'reserved' | 'ready' | 'released' | 'deleted';
 type AssetRow = {
@@ -73,17 +73,17 @@ export function mediaStoragePolicy(
   const data = value as Record<string, unknown>;
   requireCondition(
     Object.keys(data).sort().join(',') === 'accountBytes,globalBytes' &&
-      Number.isSafeInteger(data.accountBytes) &&
+      (data.accountBytes === null || (Number.isSafeInteger(data.accountBytes) &&
+        Number(data.accountBytes) > 0 && Number(data.globalBytes) >= Number(data.accountBytes))) &&
       Number.isSafeInteger(data.globalBytes) &&
-      Number(data.accountBytes) > 0 &&
-      Number(data.globalBytes) >= Number(data.accountBytes) &&
+      Number(data.globalBytes) > 0 &&
       Number(data.globalBytes) <= 1024 * 1024 * MEDIA_CHUNK_BYTES,
     503,
     'MEDIA_STORAGE_CONFIGURATION_REQUIRED',
     'Media storage limits require a valid server configuration.',
   );
   return Object.freeze({
-    accountBytes: Number(data.accountBytes),
+    accountBytes: data.accountBytes === null ? null : Number(data.accountBytes),
     globalBytes: Number(data.globalBytes),
   });
 }
@@ -189,7 +189,8 @@ export async function reserveMediaStorageInTransaction(
     'Media storage is unavailable.',
   );
   requireCondition(
-    BigInt(usage.owned) + BigInt(requested) <= BigInt(limits.accountBytes),
+    limits.accountBytes === null ||
+      BigInt(usage.owned) + BigInt(requested) <= BigInt(limits.accountBytes),
     409,
     'MEDIA_ACCOUNT_STORAGE_LIMIT',
     'This account has insufficient media storage.',

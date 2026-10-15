@@ -5,7 +5,7 @@ import { createDatabase, transaction } from '../server/db/database.ts';
 
 export async function migrate(pool) {
   const directory = fileURLToPath(new URL('../server/db/migrations/', import.meta.url));
-  const files = (await readdir(directory)).filter((name) => /^\d{3}-[a-z0-9-]+\.sql$/.test(name)).sort();
+  const files = (await readdir(directory)).filter((name) => /^(?:\d{3}-[a-z0-9-]+|\d{14}_[a-z0-9_]+)\.sql$/.test(name)).sort();
   await transaction(pool, async (client) => {
     await client.query("SELECT pg_advisory_xact_lock(hashtext('conclave_schema_migration'))");
     await client.query('CREATE TABLE IF NOT EXISTS schema_migrations(name text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())');

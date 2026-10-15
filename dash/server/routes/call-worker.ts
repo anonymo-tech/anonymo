@@ -1,7 +1,8 @@
+import { CHAT_LIMITS } from '../../lib/chat-limits.ts';
 import type { Pool, PoolClient } from 'pg';
 import { one, transaction } from '../db/database.ts';
-import { claimJob, heartbeatJob, type Job } from '../db/jobs.ts';
-import { GatewayError, type GatewayClient, type GatewayUsage } from '../gateway/index.ts';
+import { claimJob, heartbeatJob, type Job, type JobScope } from '../db/jobs.ts';
+import { PpqError, type PpqClient, type PpqUsage } from '../ppq/index.ts';
 import {
   encryptText,
   decryptText,
@@ -89,7 +90,7 @@ async function persistOutput(
 
 type Observation = {
   costUsd6: string | null;
-  usage: GatewayUsage | null;
+  usage: PpqUsage | null;
   stopped: boolean;
 };
 
@@ -155,6 +156,8 @@ async function complete(
 }
 
 export type CallWorkerOptions = {
+  /** The deployed worker admits only released chat families and excludes held tools at claim time. */
+  jobScope?: JobScope;
   /** How often a running call checks for a cancellation request (ms). */
   cancelPollMs?: number;
   /**
@@ -171,20 +174,21 @@ const LEASE_SECONDS = 120;
 // A failed renewal query is not a lost lease. Give up only well before the
 // last successful renewal could expire and let recovery take over.
 const LEASE_RENEWAL_LIMIT_MS = 90_000;
-// The provider's own deadline fires first and keeps its outcome (GATEWAY_TIMEOUT);
+// The provider's own deadline fires first and keeps its outcome (PPQ_TIMEOUT);
 // this backstop only bounds a provider that never ends its stream.
 const DEADLINE_GRACE_MS = 5_000;
-const DEFAULT_CHAT_TIMEOUT_MS = 240_000;
+const DEFAULT_CHAT_TIMEOUT_MS = CHAT_LIMITS.generationMs;
 
 /** Milliseconds a stopped call may keep draining, measured from the stop. */
 export function drainBoundMs(input: {
   dispatchedAt: number;
   stoppedAt: number;
   chatTimeoutMs?: number;
+  idleTimeout?: boolean;
   drainTimeoutMs?: number;
 }) {
   const deadline =
-    input.dispatchedAt +
+    (input.idleTimeout ? input.stoppedAt : input.dispatchedAt) +
     (input.chatTimeoutMs ?? DEFAULT_CHAT_TIMEOUT_MS) +
     DEADLINE_GRACE_MS;
   return Math.max(
@@ -199,7 +203,7 @@ export function drainBoundMs(input: {
 function option(value: number | undefined, fallback: number) {
   if (value === undefined) return fallback;
   requireCondition(
-    Number.isInteger(value) && value >= 5 && value <= 300_000,
+    Number.isInteger(value) && value >= 5 && value <= CHAT_LIMITS.generationMs,
     500,
     'INVALID_WORKER_CONFIGURATION',
     'The worker configuration is invalid.',
@@ -217,7 +221,7 @@ function marked(costUsd6: number, markupBps: number) {
 
 export async function runNextCall(
   pool: Pool,
-  provider: GatewayClient,
+  provider: PpqClient,
   keyring: DataKeyring,
   options: CallWorkerOptions = {},
 ): Promise<boolean> {
@@ -231,7 +235,12 @@ export async function runNextCall(
     typeof provider.chatTimeoutMs === 'number'
       ? provider.chatTimeoutMs
       : DEFAULT_CHAT_TIMEOUT_MS;
-  const job = await claimJob(pool, ['inference'], LEASE_SECONDS);
+  const job = await claimJob(
+    pool,
+    ['inference'],
+    LEASE_SECONDS,
+    options.jobScope,
+  );
   if (!job) return false;
   const call = await one<CallRecord>(
     pool,
@@ -251,15 +260,17 @@ export async function runNextCall(
   let dispatched = false,
     output = '',
     savedLength = 0,
+    lastSavedAt = 0,
     finalCost: number | null = null,
     markupBps = 0;
+  let responseLimited = false;
   let finished = false,
     providerReference: string | null = null;
   // A cancellation freezes delivered output; the stream keeps draining so the
   // final usage can settle the hold exactly.
   let stopping = false,
     drainTimedOut = false;
-  let lastUsage: GatewayUsage | null = null,
+  let lastUsage: PpqUsage | null = null,
     lastSettlement: number | null = null;
   let heartbeatBusy = false,
     pollBusy = false,
@@ -281,6 +292,7 @@ export async function runNextCall(
         dispatchedAt,
         stoppedAt: Date.now(),
         chatTimeoutMs,
+        idleTimeout: provider.chatTimeoutMode === 'idle',
         drainTimeoutMs,
       }),
     );
@@ -410,11 +422,12 @@ export async function runNextCall(
       messages: input.messages,
       maxOutputTokens: input.maxOutputTokens,
       privacy: input.privacy,
-      // Settle at GATEWAY's reported cost; reviewed prices price usage only when
+      // Settle at PPQ's reported cost; reviewed prices price usage only when
       // no provider cost is reported.
       pricing: {
         inputPerMillionUsd6: route.pricing.inputPerMillionUsd6,
         outputPerMillionUsd6: route.pricing.outputPerMillionUsd6,
+        ...(route.pricing.cacheReadPerMillionUsd6 === undefined ? {} : {cacheReadPerMillionUsd6: route.pricing.cacheReadPerMillionUsd6}),
       },
       signal: controller.signal,
       requestId: call.id,
@@ -441,15 +454,17 @@ export async function runNextCall(
       }
       if ((event.type === 'text' || event.type === 'refusal') && !stopping) {
         output += event.text;
-        if (output.length > 500_000)
-          throw new GatewayError('response_too_large', true);
-        if (output.length - savedLength >= 256) {
+        if (output.length > CHAT_LIMITS.outputCharacters)
+          throw new PpqError('response_too_large', true);
+        if (output.length - savedLength >= 256 && Date.now() - lastSavedAt >= 500) {
           if (await persistOutput(pool, job, call, output, keyring)) stop();
           savedLength = output.length;
+          lastSavedAt = Date.now();
         }
       }
       if (event.type === 'done') {
         finished = true;
+        responseLimited = event.finishReason === 'length';
         finalCost = event.costUsd6;
         if (typeof event.providerId === 'string')
           providerReference ??= event.providerId;
@@ -471,18 +486,18 @@ export async function runNextCall(
         state: stopping ? 'cancelled' : 'succeeded',
         actualUsd6: marked(finalCost, markupBps),
         providerReference,
-        errorCode: null,
+        errorCode: !stopping && responseLimited ? 'OUTPUT_LIMIT_REACHED' : null,
       });
     }
   } catch (error) {
     if (error instanceof ServiceError && error.code === 'JOB_LEASE_LOST')
       return true;
     const ambiguous =
-      dispatched && (!(error instanceof GatewayError) || error.billingAmbiguous);
+      dispatched && (!(error instanceof PpqError) || error.billingAmbiguous);
     const errorCode = drainTimedOut
       ? 'CANCEL_DRAIN_TIMEOUT'
-      : error instanceof GatewayError
-        ? `GATEWAY_${error.code.toUpperCase()}`
+      : error instanceof PpqError
+        ? `PPQ_${error.code.toUpperCase()}`
         : error instanceof ServiceError
           ? error.code
           : 'REQUEST_FAILED';

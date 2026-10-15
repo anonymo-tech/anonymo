@@ -1,3 +1,5 @@
+import { CHINESE_CHAT_MODELS } from '../../lib/chinese-models.ts';
+import { modelReleased } from '../../lib/model-release.ts';
 import type { BriefDocument } from '../../lib/brief-document';
 
 export interface Answer {
@@ -99,6 +101,7 @@ const modelNames: Readonly<Record<string, string>> = {
   deepseek: 'DeepSeek',
   qwen: 'Qwen',
   llama: 'Llama',
+  ...Object.fromEntries(CHINESE_CHAT_MODELS.filter(model => !['deepseek', 'qwen'].includes(model.key)).map(model => [model.key, model.name])),
 };
 const defaultModels = ['claude', 'gemini'];
 type SampleAnswer = Pick<Answer, 'heading' | 'paragraphs'>;
@@ -227,7 +230,8 @@ function makeTurn(prompt: string, modelIds: string[], turnId: string): Turn {
     typeof prompt !== 'string' ||
     !prompt.trim() ||
     prompt.length > canvasLimits.prompt ||
-    !modelSelection(modelIds)
+    !modelSelection(modelIds) ||
+    modelIds.some((modelId) => !modelReleased(modelId))
   ) {
     throw new RangeError(
       'Enter a question within the length limit and choose one to four available models.',

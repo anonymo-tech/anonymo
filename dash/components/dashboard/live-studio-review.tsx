@@ -127,7 +127,7 @@ export function LiveStudioReview({
             <dt>{t('Privacy route')}</dt>
             <dd>
               {t(
-                'Standard · The inference gateway and the upstream model provider receive the description in plaintext.',
+                'Standard · The inference gateway and the model host receive the description in plaintext.',
               )}
             </dd>
           </div>
@@ -232,7 +232,7 @@ export function LiveStudioReview({
       </p>
       {error && (
         <output className="ct-note" role="alert">
-          {error}
+          {studioMessage(error, t)}
         </output>
       )}
       <div className="ct-actions">

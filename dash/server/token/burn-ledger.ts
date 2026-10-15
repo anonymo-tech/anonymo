@@ -27,7 +27,7 @@ export type TokenBurnRecordInput = {
   tokenProgram: TokenProgramKind;
   tokenDecimals: number;
   priceUsd6PerToken: bigint;
-  priceSource: TokenPriceQuote['source'];
+  priceSource: TokenPriceQuote['source'] | 'verified-swap';
   tokensBoughtRaw: bigint;
   tokensBurnedRaw: bigint;
   swapSignature: string | null;
@@ -48,7 +48,7 @@ export type TokenBurnRecord = {
   tokenProgram: TokenProgramKind;
   tokenDecimals: number;
   priceUsd6PerToken: string;
-  priceSource: TokenPriceQuote['source'];
+  priceSource: TokenPriceQuote['source'] | 'verified-swap';
   tokensBoughtRaw: string;
   tokensBurnedRaw: string;
   swapSignature: string | null;

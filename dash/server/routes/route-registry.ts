@@ -1,7 +1,4 @@
-import {
-  gatewayCatalogUrl,
-  gatewayEvidenceOrigins,
-} from '../gateway/origin.ts';
+import { CHAT_LIMITS } from '../../lib/chat-limits.ts';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { Pool } from 'pg';
@@ -10,30 +7,23 @@ import { one, transaction } from '../db/database.ts';
 import { usd6 } from '../ledger/money.ts';
 import {
   normalizeCatalog,
-  GATEWAY_MODEL_ALLOWLIST,
-  type GatewayCatalogModel,
-} from '../gateway/catalog.ts';
-import { parseProviderJson } from '../gateway/codec.ts';
+  PPQ_MODEL_ALLOWLIST,
+  type PpqCatalogModel,
+} from '../ppq/catalog.ts';
+import { parseProviderJson } from '../ppq/codec.ts';
 import {
   parseRoutingProfile,
   routingProfileFresh,
   type RoutingProfile,
 } from '../../lib/model-routing.ts';
 
-export function routeCatalogUrl(): string {
-  const url = gatewayCatalogUrl();
-  if (!url)
-    throw new ServiceError(
-      503,
-      'ROUTE_CATALOG_UNAVAILABLE',
-      'The model catalog origin is not configured.',
-    );
-  return url;
-}
+export const ROUTE_CATALOG_URL = 'https://api.ppq.ai/v1/models?type=all';
 const MAX_REVIEW_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_CATALOG_AGE_MS = 15 * 60 * 1000;
 const MAX_CATALOG_BYTES = 4 * 1024 * 1024;
 const evidenceOrigins = new Set([
+  'https://ppq.ai',
+  'https://www.ppq.ai',
   'https://openrouter.ai',
   'https://www.anthropic.com',
   'https://privacy.anthropic.com',
@@ -52,7 +42,7 @@ const evidenceOrigins = new Set([
 export type ReviewedRouteCard = {
   level: 'unverified';
   reviewed: true;
-  provider: 'gateway';
+  provider: 'ppq';
   upstreamProviders: string[];
   plaintextVisibility: 'gateway_and_upstream';
   retentionDays: number | null;
@@ -69,11 +59,13 @@ export type ReviewedRouteCard = {
 export type ReviewedRoutePricing = {
   inputPerMillionUsd6: string;
   outputPerMillionUsd6: string;
+  cacheReadPerMillionUsd6?: string;
   markupBps: number;
   maxOutputTokens: number;
   maxInputBytes: number;
   /** Reviewed per-request reasoning token cap (0 for non-reasoning models). */
   maxReasoningTokens?: number;
+  contextTokens?: number;
 };
 export type ReviewedRoute = {
   id: string;
@@ -88,10 +80,10 @@ export type ReviewedRoute = {
   pricing: ReviewedRoutePricing;
 };
 export type RouteCatalogSnapshot = {
-  sourceUrl: string;
+  sourceUrl: typeof ROUTE_CATALOG_URL;
   fetchedAt: string;
   sha256: string;
-  models: GatewayCatalogModel[];
+  models: PpqCatalogModel[];
 };
 type CatalogEvidence = Omit<RouteCatalogSnapshot, 'models'> & {
   priceCheck: 'matched';
@@ -174,15 +166,12 @@ function evidence(value: unknown, intermediary = false): string {
   try {
     const url = new URL(text(value, 8, 2048));
     if (
-      !(
-        evidenceOrigins.has(url.origin) ||
-        gatewayEvidenceOrigins().includes(url.origin)
-      ) ||
+      !evidenceOrigins.has(url.origin) ||
       url.username ||
       url.password ||
       url.hash ||
       url.search ||
-      (intermediary && !gatewayEvidenceOrigins().includes(url.origin))
+      (intermediary && url.origin !== 'https://ppq.ai')
     )
       return invalid();
     return url.toString();
@@ -228,7 +217,7 @@ export function validateRouteReview(
     document.version !== 1 ||
     !Array.isArray(document.routes) ||
     document.routes.length < 1 ||
-    document.routes.length > 32
+    document.routes.length > 256
   )
     return invalid();
   const ids = new Set<string>(),
@@ -260,10 +249,10 @@ export function validateRouteReview(
     ids.add(id);
     routes.add(routeId);
     const family = text(entry.family, 1, 40);
-    if (!Object.hasOwn(GATEWAY_MODEL_ALLOWLIST, family))
+    if (!Object.hasOwn(PPQ_MODEL_ALLOWLIST, family))
       return invalid('ROUTE_MODEL_UNAVAILABLE');
     const allowed =
-      GATEWAY_MODEL_ALLOWLIST[family as keyof typeof GATEWAY_MODEL_ALLOWLIST];
+      PPQ_MODEL_ALLOWLIST[family as keyof typeof PPQ_MODEL_ALLOWLIST];
     if (entry.modality !== 'chat' || allowed.modality !== 'chat')
       return invalid('ROUTE_MODALITY_UNAVAILABLE');
     if (entry.modelId !== allowed.id) return invalid('ROUTE_MODEL_UNAVAILABLE');
@@ -293,7 +282,7 @@ export function validateRouteReview(
     if (
       rawCard.level !== 'unverified' ||
       rawCard.reviewed !== true ||
-      rawCard.provider !== 'gateway' ||
+      rawCard.provider !== 'ppq' ||
       rawCard.plaintextVisibility !== 'gateway_and_upstream'
     )
       return invalid('ROUTE_PRIVACY_UNSUPPORTED');
@@ -356,7 +345,7 @@ export function validateRouteReview(
     const card: ReviewedRouteCard = {
       level: 'unverified',
       reviewed: true,
-      provider: 'gateway',
+      provider: 'ppq',
       upstreamProviders,
       plaintextVisibility: 'gateway_and_upstream',
       retentionDays:
@@ -393,22 +382,20 @@ export function validateRouteReview(
         'maxOutputTokens',
         'maxInputBytes',
       ],
-      ['maxReasoningTokens'],
+      ['maxReasoningTokens', 'contextTokens', 'cacheReadPerMillionUsd6'],
     );
     const pricing: ReviewedRoutePricing = {
       inputPerMillionUsd6: amount(rawPricing.inputPerMillionUsd6),
       outputPerMillionUsd6: amount(rawPricing.outputPerMillionUsd6),
+      ...(rawPricing.cacheReadPerMillionUsd6 === undefined ? {} : {cacheReadPerMillionUsd6: amount(rawPricing.cacheReadPerMillionUsd6)}),
       markupBps: integer(rawPricing.markupBps, 0, 10000),
-      maxOutputTokens: integer(rawPricing.maxOutputTokens, 1, 8192),
-      maxInputBytes: integer(rawPricing.maxInputBytes, 1, 32768),
+      maxOutputTokens: integer(rawPricing.maxOutputTokens, 1, CHAT_LIMITS.outputTokens),
+      maxInputBytes: integer(rawPricing.maxInputBytes, 1, CHAT_LIMITS.inputBytes),
+      ...(rawPricing.contextTokens === undefined ? {} : { contextTokens: integer(rawPricing.contextTokens, 1, 10000000) }),
       ...(rawPricing.maxReasoningTokens === undefined
         ? {}
         : {
-            maxReasoningTokens: integer(
-              rawPricing.maxReasoningTokens,
-              0,
-              65536,
-            ),
+            maxReasoningTokens: integer(rawPricing.maxReasoningTokens, 0, CHAT_LIMITS.outputTokens),
           }),
     };
     return {
@@ -452,7 +439,6 @@ export async function fetchRouteCatalog(
     timeoutMs?: number;
   } = {},
 ): Promise<RouteCatalogSnapshot> {
-  const catalogUrl = routeCatalogUrl();
   const timeout = options.timeoutMs ?? 20000;
   if (!Number.isInteger(timeout) || timeout < 1 || timeout > 30000)
     return invalid();
@@ -465,7 +451,7 @@ export async function fetchRouteCatalog(
   try {
     if (typeof window !== 'undefined' || signal.aborted) throw new Error();
     const response = await interrupted(
-      (options.fetch ?? fetch)(catalogUrl, {
+      (options.fetch ?? fetch)(ROUTE_CATALOG_URL, {
         method: 'GET',
         headers: { Accept: 'application/json' },
         credentials: 'omit',
@@ -478,7 +464,6 @@ export async function fetchRouteCatalog(
     if (
       !response.ok ||
       response.redirected ||
-      (response.url && response.url !== catalogUrl) ||
       !/^application\/json(?:\s*;|$)/i.test(
         response.headers.get('content-type') ?? '',
       ) ||
@@ -507,7 +492,7 @@ export async function fetchRouteCatalog(
     const body = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     const models = normalizeCatalog(parseProviderJson(body));
     return {
-      sourceUrl: catalogUrl,
+      sourceUrl: ROUTE_CATALOG_URL,
       fetchedAt: new Date().toISOString(),
       sha256: createHash('sha256').update(bytes).digest('hex'),
       models,
@@ -536,7 +521,7 @@ export function validateRouteCatalog(
   const now = Date.parse(utc(checkedAt));
   const observed = Date.parse(utc(snapshot.fetchedAt));
   if (
-    snapshot.sourceUrl !== routeCatalogUrl() ||
+    snapshot.sourceUrl !== ROUTE_CATALOG_URL ||
     !/^[0-9a-f]{64}$/.test(snapshot.sha256) ||
     observed > now ||
     now - observed > MAX_CATALOG_AGE_MS
@@ -559,18 +544,22 @@ export function validateRouteCatalog(
       !Number.isSafeInteger(input) ||
       !Number.isSafeInteger(output) ||
       String(input) !== route.pricing.inputPerMillionUsd6 ||
-      String(output) !== route.pricing.outputPerMillionUsd6
+      String(output) !== route.pricing.outputPerMillionUsd6 ||
+      (route.pricing.cacheReadPerMillionUsd6 !== undefined &&
+        (!Number.isSafeInteger(model.pricing.cacheReadPerMillionUsd6) || model.pricing.cacheReadPerMillionUsd6! < 0 ||
+         model.pricing.cacheReadPerMillionUsd6! > input ||
+         String(model.pricing.cacheReadPerMillionUsd6) !== route.pricing.cacheReadPerMillionUsd6))
     )
       return invalid('ROUTE_CATALOG_PRICE_MISMATCH');
-    const allowance =
-      route.pricing.maxInputBytes +
-      40 * 256 +
-      1024 +
-      route.pricing.maxOutputTokens;
+    // Native routes disclose context in tokens; legacy byte-bounded reviews remain valid.
+    const allowance = route.pricing.contextTokens ??
+      (route.pricing.maxInputBytes + 40 * 256 + 1024 + route.pricing.maxOutputTokens);
     if (
       model.contextLength === null ||
       !Number.isSafeInteger(model.contextLength) ||
-      allowance > model.contextLength
+      allowance > model.contextLength ||
+      (route.pricing.contextTokens !== undefined && route.pricing.contextTokens !== model.contextLength) ||
+      route.pricing.maxOutputTokens >= model.contextLength
     )
       return invalid('ROUTE_CONTEXT_UNAVAILABLE');
   }
@@ -629,7 +618,7 @@ export async function installReviewedRoutes(
     const result = { installed: 0, replayed: 0, enabled: 0 };
     for (const route of routes) {
       const existing = await client.query<StoredRoute>(
-        'SELECT * FROM route_versions WHERE id=$1 OR (route_id=$2 AND version=$3) FOR UPDATE',
+        'SELECT * FROM route_versions WHERE id=$1 OR (route_id=$2 AND version=$3)',
         [route.id, route.routeId, route.version],
       );
       if (existing.rows.length) {

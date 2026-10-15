@@ -1,4 +1,3 @@
-import { gatewayApiOrigin } from '../server/gateway/origin.ts';
 import { createDatabase } from '../server/db/database.ts';
 import { serviceConfig, requireService } from '../server/core/config.ts';
 import { configuredKeyring } from '../server/core/encryption.ts';
@@ -14,10 +13,9 @@ try {
   const args = process.argv.slice(2);
   if (args.length > 1 || (args.length === 1 && args[0] !== '--once'))
     throw new Error();
-  if (!gatewayApiOrigin()) throw new Error();
   const config = requireService(serviceConfig());
   const keys = configuredKeyring();
-  // No GATEWAY credential is needed: this worker cannot generate or re-submit.
+  // No PPQ credential is needed: this worker cannot generate or re-submit.
   pool = createDatabase(config.databaseUrl, 2);
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);

@@ -253,7 +253,6 @@ void test('routes require exact catalog tuples and integer costs with bounded pr
     '01',
     '-1',
     1000000,
-    '10000000',
     '9000000000000001',
   ])
     changes.push((r) => {
@@ -277,6 +276,7 @@ void test('quotes match the exact input snapshot and cannot claim private media 
     { maximumUsd6: '2000001' },
     { deliveryReady: true },
     { privacy: { ...privacy, level: 'private' } },
+    { privacy: { ...privacy, provider: 'unknown' } },
   ])
     assert.throws(
       () => parseMediaQuote({ ...quote(), ...change }, expected),
@@ -687,4 +687,15 @@ void test('owned asset deletion uses DELETE and verifies the exact deleted ident
       }).deleteAsset(assetId),
       MediaClientError,
     );
+});
+
+void test('large catalog prices survive route quote approval and final job parsing unchanged', () => {
+  const r = route(); r.pricing.variants[0].providerUsd6 = '12500000';
+  assert.equal(parseMediaRoute(r).pricing.variants[0].providerUsd6, '12500000');
+  const q = {...quote(), providerMaximumUsd6: '12500000', maximumUsd6: '13125000'};
+  const checked = parseMediaQuote(q, {projectId, routeVersionId, input: input()});
+  assert.equal(checked.maximumUsd6, '13125000');
+  assert.equal(makeMediaApproval(checked, key, Date.parse(at)).approvedMaximumUsd6, '13125000');
+  const j = completed(); j.billing.maximumUsd6 = '13125000'; j.billing.actualUsd6 = '13125000';
+  assert.equal(parseMediaJob(j).billing.actualUsd6, '13125000');
 });

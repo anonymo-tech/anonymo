@@ -1,3 +1,6 @@
+import { CHINESE_CHAT_MODELS } from './chinese-models.ts';
+export const MAX_ROUTING_CANDIDATES = 256;
+import { CHAT_LIMITS } from './chat-limits.ts';
 export const ROUTING_TASKS = [
   'general',
   'code',
@@ -29,7 +32,10 @@ export type RouteRecommendation = {
 };
 
 /** Structural validation only. The registry also checks evidence origins and review freshness. */
-export function parseRoutingProfile(value: unknown): RoutingProfile {
+export function parseRoutingProfile(
+  value: unknown,
+  options: { allowWithheldEvidence?: true } = {},
+): RoutingProfile {
   const invalid = (): never => {
     throw new Error('INVALID_ROUTING_PROFILE');
   };
@@ -60,6 +66,15 @@ export function parseRoutingProfile(value: unknown): RoutingProfile {
     )
   )
     return invalid();
+  // Public cards may withhold a gateway policy URL. Registry validation never
+  // opts into this: internal terms still require the original HTTPS evidence.
+  if (entry.evidenceUrl === '' && options.allowWithheldEvidence === true)
+    return {
+      version: 1,
+      tasks: [...entry.tasks] as RoutingTask[],
+      evidenceUrl: '',
+      reviewedAt: entry.reviewedAt,
+    };
   try {
     const url = new URL(entry.evidenceUrl);
     if (
@@ -122,6 +137,7 @@ const aliases = new Set([
   'deepseek',
   'qwen',
   'llama',
+  ...CHINESE_CHAT_MODELS.map(model => model.key),
 ]);
 
 /**
@@ -135,10 +151,10 @@ export function resolveModelMentions(
   routes: readonly MentionRoute[],
   nowMs = Date.now(),
 ): { prompt: string; routeVersionIds: string[]; mentions: string[] } {
-  if (typeof source !== 'string' || source.length > 6000 || !source.trim())
+  if (typeof source !== 'string' || new TextEncoder().encode(source).byteLength > CHAT_LIMITS.inputBytes || !source.trim())
     throw new ModelRoutingError(
       'INVALID_PROMPT',
-      'Enter a question of 1–6,000 characters.',
+      'Enter a question within the supported request size.',
     );
   const routeVersionIds: string[] = [],
     mentions: string[] = [],

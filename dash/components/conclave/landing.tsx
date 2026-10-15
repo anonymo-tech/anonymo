@@ -13,47 +13,31 @@ import {
   Check,
   Plus,
   Minus,
-} from 'lucide-react';
-import { EngravedHero } from './engraved-hero';
-import { AnimatedHeroTitle } from '@/components/animated-hero-title';
-import { HeroScrollDrift } from '@/components/hero-scroll-drift';
-import { Brand, Ornament, OrnateFrame } from './ornament';
-import { Wordmark } from './wordmark';
-import { Closing } from './closing';
-import { AboutFilm } from './about-film';
-import { UiMorph } from './ui-morph';
-import { EngravedIcon } from './engraved-icon';
-import { HalftoneVideo } from './halftone-video';
-import { FilmMorph } from './film-morph';
-import { ModelBanner } from './model-banner';
-import { useT } from '@/lib/i18n';
-import { LanguageToggle } from '@/components/language-toggle';
+} from "lucide-react";
+import { EngravedHero } from "./engraved-hero";
+import { AnimatedHeroTitle } from "@/components/animated-hero-title";
+import { HeroScrollDrift } from "@/components/hero-scroll-drift";
+import { Brand, Ornament, OrnateFrame } from "./ornament";
+import { Wordmark } from "./wordmark";
+import { Closing } from "./closing";
+import { AboutFilm } from "./about-film";
+import { UiMorph } from "./ui-morph";
+import { EngravedIcon } from "./engraved-icon";
+import { HalftoneVideo } from "./halftone-video";
+import { FilmMorph } from "./film-morph";
+import { ModelBanner } from "./model-banner";
+import { ContractAddress } from "./contract-address";
+import { useT } from "@/lib/i18n";
+import { LanguageToggle } from "@/components/language-toggle";
 
 const questions = [
-  [
-    'What is Conclave?',
-    'A multi-model AI chat built for Solana. Ask seven models in one room, take a single answer or compare up to four side by side, and follow up with the context intact. Sign in with a Solana wallet or a passkey and start asking.',
-  ],
-  [
-    'Does every model have the same privacy?',
-    "No. Each model is hosted by its own maker, and every request travels through one inference provider rather than running on your device. Treat anything you type as shared with that provider and the model's host. Per-route privacy labels and strict refusal are planned, not yet available.",
-  ],
-  [
-    'Which models can I ask?',
-    'Seven today: Claude, GPT, Gemini, Grok, DeepSeek, Qwen and Llama, all reached through one provider. Pick one model, mention several with @ to compare them, or choose Auto and let the room pick a model for the question. Model names belong to their makers.',
-  ],
-  [
-    'How do credits work?',
-    'You prepay one credit balance in US dollars. Before a request runs you see a quote, and the quote shows a 5% platform fee on top of model usage. The actual cost is settled afterwards against that quote. USDC deposits on Solana are planned and not yet available.',
-  ],
-  [
-    'Can Conclave sign or execute transactions?',
-    'No. Signing in with a wallet means signing a short message that proves the account is yours; the message says it authorizes no transaction or payment. Conclave never asks you to sign a transaction to chat, and no model can act on-chain for you.',
-  ],
-  [
-    'Can I use the workspace now?',
-    'Yes. Open the chat, sign in with a wallet or a passkey, and ask. Single answers, side-by-side comparison, @mentions, Auto routing and follow-ups are live. Chapters for teams, Cross-Check, Briefs and media generation are planned and not part of this release.',
-  ],
+  ["What is Conclave?", "A multi-model AI workspace built around one connected project. Compare perspectives, develop ideas and carry the useful work into the next step. Use Claude, GPT, Gemini, Grok, DeepSeek, Qwen and Llama with your project context today."],
+  ["What is Second Look?", "The next Conclave expansion: an AI second opinion for Solana social traders. The roadmap covers token checks, trader research, wallet records, personal reminders and an optional Guarded Wallet, with mobile and agent access."],
+  ["How does Conclave handle privacy?", "Hosted model requests pass through an inference gateway and the selected model’s host, which process the submitted content. Their retention and training policies vary. Conclave’s direction is to make those choices clear before you send."],
+  ["Which models are part of the experience?", "Claude, GPT, Gemini, Grok, DeepSeek, Qwen and Llama are available for live text requests. Sample conversations remain available to explore before signing in."],
+  ["How does pricing work?", "Pricing is usage-based. Review the quote before approving a model request, then see the settled cost. Add native USDC on Solana mainnet to your Common Purse; credit appears after finalized payment verification. Conclave shows the estimated network fee and any account-creation rent before you sign."],
+  ["How does wallet sign-in work?", "Sign in with a supported Solana wallet by approving an account-ownership message. It does not transfer funds. A USDC top-up requires a separate transaction that you review and approve in your wallet."],
+  ["What can I explore today?", "Use live chat with seven model families, Projects, Canvas, the Library and saved decisions. Fund usage through the Common Purse with Solana mainnet USDC. Studio, Second Look and the other roadmap tools are not released yet."],
 ];
 
 function ComparePreview() {
@@ -157,46 +141,14 @@ function ComparePreview() {
 
 function CostPreview() {
   const t = useT();
-  const [usage, setUsage] = useState(20);
-  const [sealed, setSealed] = useState(false);
-  const fee = 0.05;
+  const [kind, setKind] = useState(0);
+  const types = ["Text", "Image", "Video"];
+  const details = ["The model, input and response length shape the quote.", "Planned for Studio: the model, image size and output count shape the quote.", "Planned for Studio: the model, duration and resolution shape the quote."];
   return (
-    <div className="cost-preview">
-      <div className="cost-options">
-        <button aria-pressed={!sealed} onClick={() => setSealed(false)}>
-          {t('One answer')}
-        </button>
-        <button aria-pressed={sealed} onClick={() => setSealed(true)}>
-          {t('Side by side')}
-        </button>
-      </div>
-      <label htmlFor="usage">
-        {t('ILLUSTRATIVE MODEL USAGE')} <span>{usage.toFixed(2)} USD</span>
-      </label>
-      <input
-        id="usage"
-        type="range"
-        min="5"
-        max="100"
-        step="5"
-        value={usage}
-        onChange={(e) => setUsage(Number(e.target.value))}
-      />
-      <div className="cost-total">
-        <span>
-          {(usage * (1 + fee)).toFixed(2)}
-          <small>USD</small>
-        </span>
-        <p>
-          {t.rich('Model usage + {fee}%{br}One visible total.', {
-            fee: fee * 100,
-            br: <br />,
-          })}
-        </p>
-      </div>
-      <p className="fineprint">
-        {t('Illustrative amounts, not a quote. No deposit or charge.')}
-      </p>
+    <div className="cost-preview cost-preview--dynamic">
+      <div className="cost-options">{types.map((type, index) => <button key={type} aria-pressed={kind === index} onClick={() => setKind(index)}>{t(type)}</button>)}</div>
+      <div className="cost-total"><span>{t("By usage")}<small>{t("ONE CLEAR QUOTE")}</small></span><p>{t.rich("Your chosen model.{br}Your requested output.", { br: <br /> })}</p></div>
+      <p className="fineprint">{t("{detail} Review it before a paid request.", { detail: t(details[kind]) })}</p>
     </div>
   );
 }
@@ -240,9 +192,8 @@ function LandingNav({
         <Link href="#workspace" onClick={() => setOpen(false)}>
           {t('Workspace')}
         </Link>
-        <Link href="/docs">
-          {t('Field guide')} <ArrowUpRight size={12} />
-        </Link>
+        <Link href="/whitepaper">{t("White paper")} <ArrowUpRight size={12} /></Link>
+        <Link href="/roadmap">{t("Roadmap")} <ArrowUpRight size={12} /></Link>
       </nav>
       <div className="nav-actions">
         <LanguageToggle className="nav-language" />
@@ -339,7 +290,7 @@ export function ConclaveLanding() {
   };
   return (
     <div
-      className={`conclave-site ${loaded ? 'loaded' : ''} ${still ? 'motion-paused' : ''}`}
+      className={`conclave-site conclave-site--contract-top ${loaded ? "loaded" : ""} ${still ? "motion-paused" : ""}`}
     >
       {/* The heading face is preloaded only where it renders above the fold;
           React hoists this link into the document head. */}
@@ -366,6 +317,9 @@ export function ConclaveLanding() {
       <Link className="skip-link" href="#main-content">
         {t('Skip to content')}
       </Link>
+      <aside className="cl-contract-strip" aria-label={t("Conclave contract address")}>
+        <ContractAddress />
+      </aside>
       <LandingNav still={still} onMotion={() => setStill(!still)} />
       <main className="site-stage" id="main-content">
         <section
@@ -406,7 +360,6 @@ export function ConclaveLanding() {
             <Link href="/dashboard">
               {t('OPEN THE CHAT')} <ArrowUpRight size={20} />
             </Link>
-            <small>{t('SEVEN MODELS · ONE ROOM')}</small>
           </div>
           <Link
             href="#manifesto"
@@ -509,9 +462,7 @@ export function ConclaveLanding() {
                   })}
                 </h3>
                 <p>
-                  {t(
-                    'A prepaid credit balance, a quote before you run, and the settled cost afterwards. USDC deposits are planned.',
-                  )}
+                  {t("A prepaid credit balance, a quote before you run, and the settled cost afterwards. Top up with native USDC on Solana mainnet; credit follows finalized payment verification.")}
                 </p>
                 <Link href="/dashboard#chat">
                   {t('EXPLORE THE BALANCE')} <ArrowUpRight size={17} />
@@ -615,8 +566,8 @@ export function ConclaveLanding() {
             <div className="workflow-notes">
               <div>
                 <EngravedIcon name="gauntlet" />
-                <h4>{t('Assemble')}</h4>
-                <p>{t('Choose your models, or let Auto pick one.')}</p>
+                <h4>{t("Assemble")}</h4>
+                <p>{t("Choose up to four models for your question.")}</p>
               </div>
               <div>
                 <EngravedIcon name="key" />
@@ -655,44 +606,36 @@ export function ConclaveLanding() {
                 })}
               </h2>
               <p>
-                {t(
-                  'Privacy should be legible. Your prompts and the answers travel through one inference provider to each model’s host. Nothing runs on your device, and Conclave does not pretend otherwise.',
-                )}
+                {t("Clear information supports better choices. Hosted requests travel through an inference gateway to the selected model’s host, which process the content you submit.")}
               </p>
               <div className="privacy-rows">
                 <Link href="/docs#routes">
                   <EngravedIcon name="key" />
                   <div>
-                    <h4>{t('Where requests go')}</h4>
-                    <p>
-                      {t('One provider, then the model’s host. Nothing local.')}
-                    </p>
+                    <h4>{t("Where requests go")}</h4>
+                    <p>{t("Understand the path from your question to its answer.")}</p>
                   </div>
                   <ArrowUpRight />
                 </Link>
                 <Link href="/docs#guards">
                   <EngravedIcon name="gauntlet" />
                   <div>
-                    <h4>{t('Guards, planned')}</h4>
-                    <p>
-                      {t('Secret checks before sending are not available yet.')}
-                    </p>
+                    <h4>{t("Thoughtful request controls")}</h4>
+                    <p>{t("In development: review sensitive content before sending.")}</p>
                   </div>
                   <ArrowUpRight />
                 </Link>
                 <Link href="/dashboard#chat">
                   <EngravedIcon name="shield" />
                   <div>
-                    <h4>{t('Sign-in, not signing')}</h4>
-                    <p>{t('A wallet signs a message, never a transaction.')}</p>
+                    <h4>{t("Access on your terms")}</h4>
+                    <p>{t("Sign in with a supported Solana wallet.")}</p>
                   </div>
                   <ArrowUpRight />
                 </Link>
               </div>
               <p className="guard-note">
-                {t(
-                  'Different hosts keep different policies. Treat anything you type as shared with the provider and the model’s host.',
-                )}
+                {t("Hosted content is shared with the gateway and model host. Retention and training policies vary by service.")}
               </p>
             </div>
           </section>
@@ -707,9 +650,7 @@ export function ConclaveLanding() {
                 <span>✳</span>
                 <span>✳</span>
               </div>
-              <span className="eyebrow">
-                {t('PLANNED · NOT YET AVAILABLE')}
-              </span>
+              <span className="eyebrow">{t("THE NEXT CHAPTER")}</span>
               <h2>
                 {t.rich('A common purpose.{br}{conclave}', {
                   br: <br />,
@@ -717,9 +658,7 @@ export function ConclaveLanding() {
                 })}
               </h2>
               <p>
-                {t(
-                  'Chapters will bring your team into one Conclave: shared rooms, defined roles, and a clear allowance for every member. They are on the roadmap and not part of this release.',
-                )}
+                {t("Chapters will bring your team into one Conclave: shared rooms, defined roles, and a clear allowance for every member. A shared space to develop ideas and move good work forward.")}
               </p>
               <Link className="ink-button" href="/dashboard#chat">
                 {t('OPEN THE CHAT TODAY')} <ArrowUpRight size={18} />
@@ -745,9 +684,7 @@ export function ConclaveLanding() {
                 })}
               </h2>
               <p>
-                {t(
-                  'No mystery bundle. One prepaid credit balance, a quote before each request, and a 5% platform fee shown on that quote.',
-                )}
+                {t("Pricing follows your model and usage. Review the quote before the request and the settled cost afterwards. Fund your prepaid balance with native USDC on Solana mainnet.")}
               </p>
               <Link className="text-link" href="/docs#billing">
                 {t('READ THE BILLING PRINCIPLES')} <ArrowUpRight size={17} />
@@ -773,42 +710,42 @@ export function ConclaveLanding() {
                 </h2>
               </div>
               <p>
-                {t.rich(
-                  'The intended path from a considered{br}workspace to a shared intelligence layer.',
-                  { br: <br /> },
-                )}
+                {t.rich("The workspace. Second Look. A wallet built around your rules.{br}{roadmap}", {
+                  br: <br />,
+                  roadmap: <Link href="/roadmap">{t("Explore the full roadmap ↗")}</Link>,
+                })}
               </p>
             </div>
             <div className="roadmap-line">
               {[
                 {
-                  n: 'I',
-                  title: 'Open the room',
-                  state: 'AVAILABLE NOW',
+                  n: "I",
+                  title: "Think & create",
+                  state: "THE AI WORKSPACE",
                   items: [
-                    'Seven models through one provider',
-                    'Single answers & four side by side',
-                    'Wallet or passkey sign-in & prepaid credits',
+                    "Multi-model Chat, Concur and a shared account",
+                    "Canvas, Studio image and video, and Briefs",
+                    "Specialist agents, Chapters and shared projects",
                   ],
                 },
                 {
-                  n: 'II',
-                  title: 'Establish trust',
-                  state: 'PLANNED',
+                  n: "II",
+                  title: "Take a second look",
+                  state: "THE NEXT EXPANSION",
                   items: [
-                    'USDC deposits on Solana',
-                    'Verified receipts for every call',
-                    'Per-route privacy labels & guards',
+                    "Before You Buy and Signature Firewall",
+                    "Follow Check, True P&L and tax records",
+                    "Cool Head, Why It Moved and Exit Plans",
                   ],
                 },
                 {
-                  n: 'III',
-                  title: 'Think together',
-                  state: 'PRODUCT DIRECTION',
+                  n: "III",
+                  title: "Make it yours",
+                  state: "THE WIDER VISION",
                   items: [
-                    'Chapters & shared allowances',
-                    'Evidence-led Cross-Check',
-                    'Briefs, Studio media & APIs',
+                    "Optional Guarded Wallet with on-chain limits",
+                    "Rooms with timestamped calls and outcomes",
+                    "Telegram, mobile, API, MCP and wider chain research",
                   ],
                 },
               ].map((item) => (

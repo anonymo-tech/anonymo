@@ -1,3 +1,5 @@
+import { CHAT_LIMITS } from '../../lib/chat-limits.ts';
+import { publicInferenceErrorCode, publicRouteCard } from './public-inference.ts';
 import type { Pool, PoolClient } from 'pg';
 import { one, transaction } from '../db/database.ts';
 import {
@@ -27,7 +29,6 @@ import { requireProject } from './projects.ts';
 import {
   assertUsableRoute,
   callRequestHash,
-  CHAT_REQUEST_BUDGET_USD6,
   parseChatInput,
   quoteMaximum,
   type ChatInput,
@@ -196,7 +197,7 @@ export async function readComparison(
         modelId: hideIdentity ? null : call.model_id,
         family: hideIdentity ? null : call.family,
         state: call.state,
-        errorCode: call.error_code,
+        errorCode: publicInferenceErrorCode(call.error_code),
         cancelRequested: call.cancel_requested,
         output: outputTruncated ? output.slice(0, outputLimit) : output,
         outputTruncated,
@@ -245,7 +246,7 @@ export async function comparisonRoutes(
     (path === 'comparison-quotes' || path === 'comparisons') &&
     request.method === 'POST'
   ) {
-    const body = await readJson(request, 786432),
+    const body = await readJson(request, 4 * CHAT_LIMITS.requestBytes),
       projectId = uuidField(body.projectId);
     const items = await selections(body, projectId, path === 'comparisons');
     requireCondition(
@@ -279,7 +280,7 @@ export async function comparisonRoutes(
             platformFee,
             reservation,
           } = priceQuoteMaximum(quoteMaximum(route, item.input), {
-            limitUsd6: CHAT_REQUEST_BUDGET_USD6,
+            
           });
           const quoteId = crypto.randomUUID();
           const quote = await one(
@@ -304,7 +305,7 @@ export async function comparisonRoutes(
             markupBps: route.pricing.markupBps,
             modelId: route.model_id,
             family: route.family,
-            card: route.card,
+            card: publicRouteCard(route.card),
             maximumUsd6: maximum,
             ...platformFeeFields(platformFee),
             ...reservationFields(reservation),

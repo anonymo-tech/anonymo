@@ -1,3 +1,5 @@
+import { CHAT_LIMITS } from '../../lib/chat-limits.ts';
+import { publicRouteCard } from './public-inference.ts';
 import type { Pool } from 'pg';
 import { one, transaction } from '../db/database.ts';
 import { jsonResponse, readJson, uuidField } from '../core/http.ts';
@@ -5,6 +7,7 @@ import { configuredKeyring } from '../core/encryption.ts';
 import { requireCondition, ServiceError } from '../core/errors.ts';
 import { scanPrompt } from '../../lib/guards/index.ts';
 import {
+  MAX_ROUTING_CANDIDATES,
   ROUTING_TASKS,
   ROUTING_TASK_LABELS,
   type RoutingTask,
@@ -32,9 +35,9 @@ import {
 } from '../ledger/platform-fee.ts';
 
 export const AUTO_ROUTING_LIMITS = Object.freeze({
-  candidates: 16,
-  inputBytesPerCandidate: 32768,
-  bodyBytes: 3200000,
+  candidates: MAX_ROUTING_CANDIDATES,
+  inputBytesPerCandidate: CHAT_LIMITS.inputBytes,
+  bodyBytes: 16 * CHAT_LIMITS.requestBytes,
   maximumUsd6: '10000000',
   quoteSeconds: 120,
 });
@@ -92,7 +95,7 @@ function parse(body: Record<string, unknown>) {
       body.candidates.length <= AUTO_ROUTING_LIMITS.candidates,
     400,
     'ROUTING_CANDIDATES_INVALID',
-    'Provide between one and sixteen candidate routes.',
+    'Provide between one and 256 candidate routes.',
   );
   const candidates: Candidate[] = body.candidates.map((raw) => {
     const item = exact(raw, [
@@ -117,12 +120,11 @@ function parse(body: Record<string, unknown>) {
     candidates.every(
       (c) =>
         c.input.messages.at(-1)!.content === first.messages.at(-1)!.content &&
-        c.input.maxOutputTokens === first.maxOutputTokens &&
         c.input.privacy === body.privacy,
     ),
     400,
     'ROUTING_CANDIDATE_MISMATCH',
-    'Every candidate must use the same current question, output limit and privacy requirement.',
+    'Every candidate must use the same current question and privacy requirement.',
   );
   const seen = new Set<string>();
   for (const candidate of candidates)
@@ -340,7 +342,7 @@ export async function autoRoutingRoutes(
           markupBps: selected.route.pricing.markupBps,
           modelId: selected.route.model_id,
           family: selected.route.family,
-          card: selected.route.card,
+          card: publicRouteCard(selected.route.card),
           ...platformFeeFields(selected.platformFee),
           ...reservationFields(selected.reservation),
         },

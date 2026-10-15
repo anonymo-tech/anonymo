@@ -167,22 +167,22 @@ void test('unavailable or unknown explicit mentions stop before an Auto fallback
   );
 });
 
-void test('Auto uses task-reviewed fresh candidates with equal output limits and never silently lowers them', () => {
+void test('Auto uses each task-reviewed model native output limit without silently lowering it', () => {
   const catalog = copy(routes);
   catalog[0].pricing.maxOutputTokens = 1024;
   catalog[2].card.routing.tasks = ['writing'];
   const plan = build('A question', ['claude'], catalog);
   assert.deepEqual(
     plan.routes.map((route) => route.family),
-    ['gemini'],
+    ['claude', 'gemini'],
   );
-  assert.equal(plan.conversation.items[0].maxOutputTokens, 2048);
+  assert.deepEqual(plan.conversation.items.map(i => i.maxOutputTokens), [1024, 4096]);
   assert.equal(plan.auto.budgetUsd6, '3000');
   for (const mutate of [
     (r) => delete r.card.routing,
     (r) => (r.card.routing.reviewedAt = new Date(now - 86400001).toISOString()),
     (r) => (r.card.routing.tasks = ['writing']),
-    (r) => (r.pricing.maxOutputTokens = 1000),
+    (r) => (r.pricing.maxOutputTokens = 0),
   ]) {
     const changed = copy(routes);
     changed.forEach(mutate);
@@ -300,11 +300,11 @@ void test('mismatched candidate questions, output limits, duplicate versions and
   });
   for (const mutate of [
     (v) => (v.candidates[1].messages[0].content = 'Changed'),
-    (v) => (v.candidates[1].maxOutputTokens = 1024),
+    (v) => (v.candidates[1].maxOutputTokens = 0),
     (v) => (v.candidates[1].privacy = 'sealed'),
     (v) => v.candidates.push(v.candidates[0]),
     (v) =>
-      (v.candidates = Array.from({ length: 17 }, (_, i) => ({
+      (v.candidates = Array.from({ length: 257 }, (_, i) => ({
         ...v.candidates[0],
         routeVersionId: uuid(50 + i),
       }))),
@@ -367,7 +367,7 @@ void test('Grok and other reviewed live families participate in mentions and Aut
     ...copy(routes[0]),
     versionId: uuid(71),
     id: 'new-route',
-    family: 'newfamily',
+    family: 'deepseek',
     modelId: 'new-provider/model',
   };
   const catalog = [...routes, grok, newer];
@@ -407,16 +407,16 @@ void test('Grok and other reviewed live families participate in mentions and Aut
       },
     ],
   });
-  assert.equal(turn.answers[0].modelId, 'newfamily');
+  assert.equal(turn.answers[0].modelId, 'deepseek');
   assert.equal(turn.answers[0].live.modelName, 'new-provider/model');
 });
 
-void test('Auto never silently drops a reviewed seventeenth eligible candidate', () => {
-  const catalog = Array.from({ length: 17 }, (_, index) => ({
+void test('Auto never silently drops a reviewed 257th eligible candidate', () => {
+  const catalog = Array.from({ length: 257 }, (_, index) => ({
     ...copy(routes[0]),
     versionId: uuid(100 + index),
     modelId: `test/model-${index}`,
-    family: `family-${index}`,
+    family: 'claude',
   }));
   assert.throws(
     () => build('Review it', ['claude'], catalog),
@@ -441,4 +441,12 @@ void test('mentions keep the Auto reservation budget and reject an excessive man
       .budgetUsd6,
     null,
   );
+});
+
+void test('a real user question beyond 6000 characters reaches native route preparation unchanged', () => {
+ const prompt = 'Explain the architecture tradeoffs in detail. '.repeat(200);
+ const result = build(prompt, ['claude'], routes, {...prefs, mode:'manual'});
+ assert.equal(result.prompt, prompt.trim());
+ assert.equal(result.conversation.items[0].messages[0].content, prompt.trim());
+ assert.equal(result.conversation.items[0].maxOutputTokens, routes[0].pricing.maxOutputTokens);
 });

@@ -10,6 +10,7 @@ import account from './account.ts';
 import deposits from './deposits.ts';
 import solanaBriefs from './solana-briefs.ts';
 import studio from './studio.ts';
+import production from './production.ts';
 
 /** Every area's strings in one table. An English key that appears in two areas takes the later entry. */
 const zh: Dictionary = {
@@ -24,6 +25,7 @@ const zh: Dictionary = {
   ...studio,
   ...chatParts,
   ...chat,
+  ...production,
 };
 
 export default zh;

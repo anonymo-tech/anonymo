@@ -1,4 +1,3 @@
-import { gatewayConfigured } from '../gateway/origin.ts';
 import type { Pool, PoolClient } from 'pg';
 import { one, transaction } from '../db/database.ts';
 import { enqueue } from '../db/jobs.ts';
@@ -41,7 +40,7 @@ export function briefSynthesisConfigured(
     env.CONCLAVE_MODE !== 'service' ||
     env.CONCLAVE_BRIEF_SYNTHESIS_ENABLED !== 'true' ||
     env.CONCLAVE_INFERENCE_ENABLED !== 'true' ||
-    !gatewayConfigured(env) ||
+    !env.PPQ_API_KEY ||
     !env.CONCLAVE_APP_ORIGIN ||
     !env.CONCLAVE_DATABASE_URL
   )

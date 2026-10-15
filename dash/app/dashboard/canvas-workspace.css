@@ -650,7 +650,7 @@
 .cw-model-options {
   margin: 10px -6px;
 }
-.cw-model-options > button {
+.cw-model-options .cw-model-option {
   display: flex !important;
   align-items: center;
   gap: 10px !important;
@@ -667,7 +667,7 @@
   color: #7b7e75;
   margin-top: 1px;
 }
-.cw-model-options > button > span:nth-child(2) {
+.cw-model-options .cw-model-option > span:nth-child(2) {
   flex: 1;
   text-align: left;
 }
@@ -727,7 +727,7 @@
 }
 .cw-menu > button,
 .cw-menu > a,
-.cw-model-options > button {
+.cw-model-options .cw-model-option {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -738,7 +738,7 @@
 }
 .cw-menu > button:hover,
 .cw-menu > a:hover,
-.cw-model-options > button:hover {
+.cw-model-options .cw-model-option:hover {
   background: #f5f5f1;
 }
 .cw-menu-label {
@@ -1717,6 +1717,21 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* A compact, searchable collection within the existing floating-dock picker. */
+.cw-chinese-models { border-top: 1px solid #ececec; margin-top: 9px; padding-top: 10px; }
+.cw-chinese-models h3 { display: flex; align-items: center; justify-content: space-between; margin: 0 6px 7px; font-size: 11px; font-weight: 600; color: #666; letter-spacing: .02em; }
+.cw-chinese-models h3 > span, .cw-model-variants summary > span { color: #999; font-size: 10px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.cw-model-options .cw-model-option { width: 100%; border: 0; background: #fff; border-radius: 7px; }
+.cw-model-options .cw-model-option > span:nth-child(2) { min-width: 0; }
+.cw-model-options .cw-choice { flex-shrink: 0; }
+.cw-model-options .cw-model-option:focus-visible, .cw-model-variants summary:focus-visible { outline: 2px solid var(--cw-red); outline-offset: 2px; }
+.cw-model-options .cw-model-option:disabled { opacity: .45; cursor: not-allowed; }
+.cw-model-variants summary { cursor: pointer; padding: 11px 6px; font-size: 12px; color: #555; }
+.cw-model-variants summary > span { margin-left: 5px; }
+.cw-model-variants[open] summary { border-bottom: 1px solid #f1f1f1; margin-bottom: 5px; }
+.cw-model-empty { padding: 16px 6px; font-size: 12px; color: #777; }
+.cw-model-menu .cw-search { position: sticky; top: -18px; z-index: 2; background: #fff; }
 .cw-menu-language {
   display: none;
 }

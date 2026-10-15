@@ -75,6 +75,9 @@ void test('committed thresholds parse and describe exactly the known alerts', as
   assert.equal(config.uncaptured_overage.parameters.windowHours, 24);
   const raw = rawConfig();
   assert.equal(raw.pages, 'the operator');
+  // The README catalogue documents every alert by id.
+  const readme = read('../deploy/README.md');
+  for (const id of alertIds) assert.ok(readme.includes(`\`${id}\``), id);
 });
 
 void test('no alerts: nothing is printed and the exit code is zero', async () => {

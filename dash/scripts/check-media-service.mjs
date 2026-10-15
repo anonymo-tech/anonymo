@@ -20,7 +20,7 @@ import {
 } from '../server/media/worker.ts';
 import { mediaRoutes } from '../server/routes/media.ts';
 import { handleApi } from '../server/core/http.ts';
-import { GatewayError } from '../server/gateway/index.ts';
+import { PpqError } from '../server/ppq/index.ts';
 import { mediaRequestHash } from '../server/media/contract.ts';
 
 const connection = process.env.CONCLAVE_TEST_DATABASE_URL;
@@ -45,9 +45,7 @@ const env = {
   CONCLAVE_DATABASE_URL: connection,
   CONCLAVE_INFERENCE_ENABLED: 'true',
   CONCLAVE_MEDIA_ENABLED: 'true',
-  GATEWAY_API_KEY: randomBytes(16).toString('hex'),
-  GATEWAY_API_ORIGIN: 'https://api.inference.invalid',
-  GATEWAY_EVIDENCE_ORIGINS: '["https://inference.invalid","https://www.inference.invalid"]',
+  PPQ_API_KEY: randomBytes(16).toString('hex'),
   CONCLAVE_ACTIVE_DATA_KEY: 'test',
   CONCLAVE_DATA_KEYS: JSON.stringify(keyring.keys),
 };
@@ -95,13 +93,13 @@ async function fixture(modality = 'image') {
   const card = {
     level: 'unverified',
     reviewed: true,
-    provider: 'gateway',
+    provider: 'ppq',
     plaintextVisibility: 'gateway_and_upstream',
     retentionDisclosure: 'Gateway and upstream may process plaintext.',
-    evidenceUrl: 'https://inference.invalid/privacy',
+    evidenceUrl: 'https://ppq.ai/privacy',
     lastVerifiedAt: now,
     catalogVerification: {
-      sourceUrl: 'https://api.inference.invalid/v1/models?type=all',
+      sourceUrl: 'https://api.ppq.ai/v1/models?type=all',
       fetchedAt: now,
       sha256: 'a'.repeat(64),
       priceCheck: 'matched',
@@ -109,7 +107,7 @@ async function fixture(modality = 'image') {
     mediaTerms: {
       reviewed: true,
       commercialUse: 'allowed',
-      evidenceUrls: ['https://inference.invalid/terms'],
+      evidenceUrls: ['https://ppq.ai/terms'],
       reviewedAt: now,
     },
   };
@@ -183,7 +181,7 @@ const imageResult = (jobId, cost = 50000) => ({
   status: 'completed',
   media: [
     {
-      url: 'https://api.inference.invalid/v1/media/test_media/0?sig=example&exp=1',
+      url: 'https://api.ppq.ai/v1/media/test_media/0?sig=example&exp=1',
       contentType: 'image/png',
     },
   ],
@@ -196,7 +194,7 @@ const videoResult = (id, status = 'pending', cost = null) => ({
   media:
     status === 'completed'
       ? {
-          url: 'https://api.inference.invalid/v1/media/test_video/0?sig=example&exp=1',
+          url: 'https://api.ppq.ai/v1/media/test_video/0?sig=example&exp=1',
           contentType: 'video/mp4',
         }
       : null,
@@ -401,7 +399,7 @@ void test('approval requires the exact quote and source stays encrypted with no 
   assert.equal(job.mediaAssetState, 'pending_storage');
   assert.equal(job.deliveryReady, false);
   assert.equal(job.billing.actualUsd6, '55000');
-  assert.ok(!JSON.stringify(job).includes('api.inference.invalid'));
+  assert.ok(!JSON.stringify(job).includes('api.ppq.ai'));
   assert.ok(!JSON.stringify(job).includes('sig='));
   assert.equal((await getBalance(pool, f.accountId)).reservedUsd6, '0');
 });
@@ -434,7 +432,7 @@ void test('image submission ambiguity recovers only by the persisted key and doe
   const p = provider({
     generateImage: async () => {
       posts++;
-      throw new GatewayError('timeout', true);
+      throw new PpqError('timeout', true);
     },
     recoverImage: async (key) => {
       reads++;
@@ -460,7 +458,7 @@ void test('ambiguous video submission with no durable provider identity requires
     provider({
       submitVideo: async () => {
         posts++;
-        throw new GatewayError('timeout', true);
+        throw new PpqError('timeout', true);
       },
     }),
     keyring,

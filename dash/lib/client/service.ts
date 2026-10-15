@@ -17,6 +17,11 @@ export type AccountSession = {
   accountId: string;
   identities: { kind: 'solana' | 'passkey'; subject: string }[];
 };
+export type WalletWelcomeCredit = {
+  amountUsd6: string;
+  transactionId: string;
+  replayed: boolean;
+};
 export type IdentityCapabilities = { configured: boolean };
 export type WalletChallenge = {
   id: string;
@@ -249,10 +254,27 @@ export async function requestWalletChallenge(
 export async function verifyWalletProof(
   proof: WalletProof,
   options: RequestOptions = {},
-) {
+): Promise<AccountSession & { welcomeCredit?: WalletWelcomeCredit }> {
   const data = record(await request('auth/verify', proof, options));
   if (typeof data?.accountId !== 'string' || !uuid.test(data.accountId))
     invalidResponse();
+  let welcomeCredit: WalletWelcomeCredit | undefined;
+  if (data.welcomeCredit !== undefined && data.welcomeCredit !== null) {
+    const credit = record(data.welcomeCredit);
+    if (
+      !credit ||
+      typeof credit.amountUsd6 !== 'string' ||
+      !/^[1-9]\d{0,14}$/.test(credit.amountUsd6) ||
+      typeof credit.transactionId !== 'string' ||
+      !uuid.test(credit.transactionId) ||
+      typeof credit.replayed !== 'boolean'
+    ) invalidResponse();
+    welcomeCredit = {
+      amountUsd6: credit.amountUsd6,
+      transactionId: credit.transactionId,
+      replayed: credit.replayed,
+    };
+  }
   const session = await getAccountSession(options);
   if (
     !session ||
@@ -267,7 +289,7 @@ export async function verifyWalletProof(
       'The server session could not be confirmed. Refresh account status before continuing.',
     );
   }
-  return session;
+  return welcomeCredit ? { ...session, welcomeCredit } : session;
 }
 export async function signOutAccount(options: RequestOptions = {}) {
   try {

@@ -41,9 +41,7 @@ const env = {
   CONCLAVE_DATABASE_URL: connection,
   CONCLAVE_INFERENCE_ENABLED: 'true',
   CONCLAVE_MEDIA_ENABLED: 'true',
-  GATEWAY_API_KEY: randomBytes(16).toString('hex'),
-  GATEWAY_API_ORIGIN: 'https://api.inference.invalid',
-  GATEWAY_EVIDENCE_ORIGINS: '["https://inference.invalid","https://www.inference.invalid"]',
+  PPQ_API_KEY: randomBytes(16).toString('hex'),
   CONCLAVE_ACTIVE_DATA_KEY: 'test',
   CONCLAVE_DATA_KEYS: JSON.stringify(keyring.keys),
 };
@@ -91,13 +89,13 @@ async function fixture(modality = 'image') {
   const card = {
     level: 'unverified',
     reviewed: true,
-    provider: 'gateway',
+    provider: 'ppq',
     plaintextVisibility: 'gateway_and_upstream',
     retentionDisclosure: 'Gateway and upstream may process plaintext.',
-    evidenceUrl: 'https://inference.invalid/privacy',
+    evidenceUrl: 'https://ppq.ai/privacy',
     lastVerifiedAt: now,
     catalogVerification: {
-      sourceUrl: 'https://api.inference.invalid/v1/models?type=all',
+      sourceUrl: 'https://api.ppq.ai/v1/models?type=all',
       fetchedAt: now,
       sha256: 'a'.repeat(64),
       priceCheck: 'matched',
@@ -105,7 +103,7 @@ async function fixture(modality = 'image') {
     mediaTerms: {
       reviewed: true,
       commercialUse: 'allowed',
-      evidenceUrls: ['https://inference.invalid/terms'],
+      evidenceUrls: ['https://ppq.ai/terms'],
       reviewedAt: now,
     },
   };
@@ -179,7 +177,7 @@ const imageResult = (jobId, cost = 50000) => ({
   status: 'completed',
   media: [
     {
-      url: 'https://api.inference.invalid/v1/media/test_media/0?sig=example&exp=1',
+      url: 'https://api.ppq.ai/v1/media/test_media/0?sig=example&exp=1',
       contentType: 'image/png',
     },
   ],
@@ -246,7 +244,7 @@ void test('canonical import stores owned encrypted bytes without changing the ca
         gets++;
         assert.equal(init.method, 'GET');
         assert.equal(init.credentials, 'omit');
-        assert.equal(new URL(url).origin, 'https://api.inference.invalid');
+        assert.equal(new URL(url).origin, 'https://api.ppq.ai');
         return fetched();
       },
     }),

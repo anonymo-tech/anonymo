@@ -24,7 +24,7 @@ import {
 } from '../server/core/encryption.ts';
 import { runNextCall } from '../server/routes/call-worker.ts';
 import { creditVerifiedDeposit, getBalance } from '../server/ledger/ledger.ts';
-import { GatewayError } from '../server/gateway/index.ts';
+import { PpqError } from '../server/ppq/index.ts';
 
 const connection = process.env.CONCLAVE_TEST_DATABASE_URL;
 if (!connection)
@@ -402,7 +402,7 @@ void test('missing configuration returns honest capabilities without exposing cr
 });
 
 async function quotedCall(options = {}) {
-  process.env.GATEWAY_API_KEY = 'fixture-not-a-provider-key';
+  process.env.PPQ_API_KEY = 'fixture-not-a-provider-key';
   process.env.CONCLAVE_INFERENCE_ENABLED = 'true';
   const user = await signIn();
   const projectId = randomUUID(),
@@ -427,8 +427,8 @@ async function quotedCall(options = {}) {
     inputPerMillionUsd6: '1000000',
     outputPerMillionUsd6: '1000000',
     markupBps: 0,
-    maxOutputTokens: 2048,
-    maxInputBytes: 32768,
+    maxOutputTokens: options.native ? 128000 : 2048,
+    maxInputBytes: options.native ? 16777216 : 32768,
     // A non-reasoning fixture route: exact amounts below assume no reasoning reserve.
     maxReasoningTokens: 0,
   };
@@ -440,9 +440,9 @@ async function quotedCall(options = {}) {
   const body = {
     projectId,
     routeVersionId,
-    messages: [{ role: 'user', content: 'Explain a binary search.' }],
+    messages: [{ role: 'user', content: options.native ? 'Explain binary search with a detailed worked example. '.repeat(200) : 'Explain a binary search.' }],
     privacy: 'standard',
-    maxOutputTokens: 1000,
+    maxOutputTokens: options.native ? 128000 : 1000,
   };
   const quoteResponse = await dispatch(
     request('quotes', { method: 'POST', cookie: user.cookie, body }),
@@ -611,7 +611,7 @@ void test('interrupted or unpriced provider output retains funds and never dispa
         calls++;
         yield { type: 'text', text: 'Partial answer.' };
         if (failure === 'interrupt')
-          throw new GatewayError('stream_interrupted', true);
+          throw new PpqError('stream_interrupted', true);
         yield {
           type: 'done',
           finishReason: 'stop',
@@ -815,7 +815,7 @@ void test('cancel before dispatch and provider rejection safely release the full
   const provider = {
     async *chat() {
       dispatches++;
-      if (dispatches > 0) throw new GatewayError('authentication', false);
+      if (dispatches > 0) throw new PpqError('authentication', false);
       yield { type: 'text', text: '' };
     },
   };
@@ -985,7 +985,7 @@ void test('recovery releases provably undispatched holds; stale workers cannot o
           [`inference:${during.call.id}`],
         );
         await recoverExpiredJobs(pool);
-        throw new GatewayError('cancelled', true);
+        throw new PpqError('cancelled', true);
       },
     },
     configuredKeyring(),
@@ -1223,4 +1223,26 @@ void test('RPC-spending routes stop at the shared RPC ceiling before any network
     globalThis.fetch = originalFetch;
     await pool.query("DELETE FROM rate_limits WHERE bucket='solana-rpc:global'");
   }
+});
+
+void test('native 128k budget stores a complete long answer and settles actual usage', async () => {
+  const call = await quotedCall({ native: true });
+  const output = 'A complete model answer. '.repeat(100000);
+  let dispatched;
+  const provider = { configured: true, chatTimeoutMs: 100, chatTimeoutMode: 'idle', async *chat(input) {
+    dispatched = input;
+    yield { type: 'text', text: output };
+    yield { type: 'done', finishReason: 'stop', usage: null, costUsd6: 123 };
+  }};
+  assert.equal(await runNextCall(pool, provider, configuredKeyring()), true);
+  assert.equal(dispatched.maxOutputTokens, 128000);
+  assert.ok(dispatched.messages[0].content.length > 6000);
+  const saved = await dispatch(request(`calls/${call.call.id}`, { cookie: call.cookie }));
+  const payload = await saved.json();
+  assert.equal(payload.call.output, output);
+  assert.equal(payload.call.state, 'succeeded');
+  assert.equal(payload.call.billing.actualUsd6, '123');
+  const balance = await getBalance(pool, call.account.accountId);
+  assert.equal(balance.reservedUsd6, '0');
+  assert.equal(balance.availableUsd6, '999877');
 });

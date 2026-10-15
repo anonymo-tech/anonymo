@@ -1064,7 +1064,7 @@ export function LiveCrossCheckPanel({
                       'The approval outcome is uncertain. Recovery uses the same request key and quoted amount; it does not request a new execution.',
                     )
                   : t(
-                      '{count} independent reviewer calls. The inference gateway and each upstream provider receive these claims and sources in plaintext.',
+                      '{count} independent reviewer calls. The inference gateway and each model host receive these claims and sources in plaintext.',
                       { count: pending.quote.reviewCount },
                     )}
               </p>

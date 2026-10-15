@@ -4,7 +4,7 @@ import test, { after, before } from 'node:test';
 import { createDatabase } from '../server/db/database.ts';
 import { migrate } from './migrate.mjs';
 import {
-  routeCatalogUrl,
+  ROUTE_CATALOG_URL,
   fetchRouteCatalog,
   installReviewedRoutes,
   validateRouteCatalog,
@@ -49,7 +49,7 @@ function fixture() {
         card: {
           level: 'unverified',
           reviewed: true,
-          provider: 'gateway',
+          provider: 'ppq',
           upstreamProviders: ['Unknown processing provider'],
           plaintextVisibility: 'gateway_and_upstream',
           retentionDays: null,
@@ -58,7 +58,7 @@ function fixture() {
           legalHold: 'unknown',
           retentionDisclosure:
             'The gateway and upstream processors can read this request. Exact retention is unverified.',
-          evidenceUrl: 'https://inference.invalid/privacy',
+          evidenceUrl: 'https://ppq.ai/privacy',
           upstreamEvidenceUrls: [],
           evidenceDate: now.slice(0, 10),
           lastVerifiedAt: now,
@@ -76,7 +76,7 @@ function fixture() {
 }
 function catalog() {
   return {
-    sourceUrl: routeCatalogUrl(),
+    sourceUrl: ROUTE_CATALOG_URL,
     fetchedAt: new Date().toISOString(),
     sha256: 'a'.repeat(64),
     models: [
@@ -159,10 +159,10 @@ void test('invalid money, unknown fields, unsupported IDs, media and sealed clai
       r.pricing.markupBps = 10001;
     },
     (r) => {
-      r.pricing.maxOutputTokens = 8193;
+      r.pricing.maxOutputTokens = 450001;
     },
     (r) => {
-      r.pricing.maxReasoningTokens = 65537;
+      r.pricing.maxReasoningTokens = 450001;
     },
     (r) => {
       r.pricing.maxReasoningTokens = -1;
@@ -171,7 +171,7 @@ void test('invalid money, unknown fields, unsupported IDs, media and sealed clai
       r.pricing.maxReasoningTokens = '0';
     },
     (r) => {
-      r.pricing.maxInputBytes = 32769;
+      r.pricing.maxInputBytes = 16 * 1024 * 1024 + 1;
     },
     (r) => {
       r.modelId = 'unreviewed-model';
@@ -239,10 +239,10 @@ void test('evidence fields and one-day review expiry reject stale, future, insec
       r.card.evidenceDate = '2026-02-30';
     },
     (r) => {
-      r.card.evidenceUrl = 'http://inference.invalid/privacy';
+      r.card.evidenceUrl = 'http://ppq.ai/privacy';
     },
     (r) => {
-      r.card.evidenceUrl = 'https://inference.invalid@127.0.0.1/privacy';
+      r.card.evidenceUrl = 'https://ppq.ai@127.0.0.1/privacy';
     },
     (r) => {
       r.card.evidenceUrl = 'https://example.com/privacy';
@@ -306,7 +306,7 @@ void test('catalog GET has a fixed public endpoint, no key or credentials, and p
   const snapshot = await fetchRouteCatalog({
     fetch: async (url, options) => {
       calls++;
-      assert.equal(url, routeCatalogUrl());
+      assert.equal(url, ROUTE_CATALOG_URL);
       assert.equal(options.method, 'GET');
       assert.equal(options.redirect, 'error');
       assert.equal(options.credentials, 'omit');

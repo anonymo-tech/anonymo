@@ -27,9 +27,7 @@ Object.assign(process.env, {
     test: randomBytes(32).toString('base64'),
   }),
   CONCLAVE_ACTIVE_DATA_KEY: 'test',
-  GATEWAY_API_KEY: 'synthetic-provider-fixture',
-  GATEWAY_API_ORIGIN: 'https://api.inference.invalid',
-  GATEWAY_EVIDENCE_ORIGINS: '["https://inference.invalid","https://www.inference.invalid"]',
+  PPQ_API_KEY: 'synthetic-provider-fixture',
   CONCLAVE_INFERENCE_ENABLED: 'true',
 });
 const pool = createDatabase(connection, 12);
@@ -73,7 +71,7 @@ async function route(options = {}) {
   const card = {
     reviewed: true,
     retentionDisclosure: 'Synthetic reviewed route terms.',
-    evidenceUrl: 'https://inference.invalid/privacy',
+    evidenceUrl: 'https://ppq.ai/privacy',
     evidenceDate: new Date().toISOString().slice(0, 10),
     ...(options.routing === null
       ? {}
@@ -174,7 +172,7 @@ function reviewFixture() {
         card: {
           level: 'unverified',
           reviewed: true,
-          provider: 'gateway',
+          provider: 'ppq',
           upstreamProviders: ['Synthetic upstream'],
           plaintextVisibility: 'gateway_and_upstream',
           retentionDays: null,
@@ -183,7 +181,7 @@ function reviewFixture() {
           legalHold: 'unknown',
           retentionDisclosure:
             'The gateway and upstream can read plaintext; retention is unverified.',
-          evidenceUrl: 'https://inference.invalid/privacy',
+          evidenceUrl: 'https://ppq.ai/privacy',
           upstreamEvidenceUrls: [],
           evidenceDate: now.slice(0, 10),
           lastVerifiedAt: now,
@@ -302,7 +300,7 @@ void test('equal exact quotes use stable version identifier ordering regardless 
       expected,
     );
 });
-void test('candidate questions output budgets and privacy must match without silent clipping', async () => {
+void test('candidate questions and privacy must match while native output budgets may differ', async () => {
   const f = await fixture(),
     a = await route(),
     b = await route();
@@ -316,10 +314,7 @@ void test('candidate questions output budgets and privacy must match without sil
     ),
     code('ROUTING_CANDIDATE_MISMATCH'),
   );
-  await assert.rejects(
-    recommend(f, body(f, [candidate(a), candidate(b, undefined, 1024)])),
-    code('ROUTING_CANDIDATE_MISMATCH'),
-  );
+
   await assert.rejects(
     recommend(f, body(f, [candidate(a)], { privacy: 'strict' })),
     code('PRIVACY_ROUTE_UNAVAILABLE'),
@@ -510,7 +505,7 @@ void test('input and output limits exclude incompatible routes while preserving 
     recommend(
       f,
       body(f, [
-        candidate(full, [{ role: 'user', content: 'x'.repeat(32769) }]),
+        candidate(full, [{ role: 'user', content: 'x'.repeat(16 * 1024 * 1024 + 1) }]),
       ]),
     ),
     code('PROMPT_TOO_LARGE'),
@@ -674,7 +669,7 @@ void test('duplicate canonical identifiers malformed bodies and provider-disable
       f,
       body(
         f,
-        Array.from({ length: 17 }, () => candidate(r)),
+        Array.from({ length: 257 }, () => candidate(r)),
       ),
     ),
     code('ROUTING_CANDIDATES_INVALID'),

@@ -6,8 +6,7 @@ import pg from 'pg';
 import { serviceConfig, requireService } from '../server/core/config.ts';
 import { configuredKeyring } from '../server/core/encryption.ts';
 import { createDatabase, poolConfiguration } from '../server/db/database.ts';
-import { createGatewayClient } from '../server/gateway/index.ts';
-import { gatewayConfigured } from '../server/gateway/origin.ts';
+import { createPpqClient } from '../server/ppq/index.ts';
 import { crossCheckExecutionConfigured } from '../server/crosscheck/execution.ts';
 import {
   configuredReceiptSigner,
@@ -498,7 +497,7 @@ export async function checkReadiness(env = process.env, options = {}) {
   if (
     Object.keys(env).some(
       (name) =>
-        /^(NEXT_PUBLIC_|VITE_).*(?:GATEWAY|DATABASE|DATA_KEYS|SIGNER|PRIVATE_KEY|SECRET|RPC_URL)/i.test(
+        /^(NEXT_PUBLIC_|VITE_).*(?:PPQ|DATABASE|DATA_KEYS|SIGNER|PRIVATE_KEY|SECRET|RPC_URL)/i.test(
           name,
         ) && present(env[name]),
     )
@@ -674,11 +673,10 @@ export async function checkReadiness(env = process.env, options = {}) {
   }
 
   let providerConfigured = false;
-  if (present(env.GATEWAY_API_KEY)) {
+  if (present(env.PPQ_API_KEY)) {
     try {
-      providerConfigured = gatewayConfigured(env) && createGatewayClient({
-        apiKey: env.GATEWAY_API_KEY,
-        apiOrigin: env.GATEWAY_API_ORIGIN,
+      providerConfigured = createPpqClient({
+        apiKey: env.PPQ_API_KEY,
         fetch: noNetwork,
       }).configured;
     } catch {
@@ -688,14 +686,14 @@ export async function checkReadiness(env = process.env, options = {}) {
       'PROVIDER_KEY',
       providerConfigured ? 'pass' : 'error',
       providerConfigured
-        ? 'The provider key and HTTPS endpoint settings pass local syntax validation; validity, balance and account permissions are unverified.'
-        : 'Configure GATEWAY_API_KEY, GATEWAY_API_ORIGIN and GATEWAY_EVIDENCE_ORIGINS correctly. No provider request was made.',
+        ? 'The provider key passes local syntax validation; validity, balance and account permissions are unverified.'
+        : 'PPQ_API_KEY failed local syntax validation. No provider request was made.',
     );
   } else
     add(
       'PROVIDER_KEY',
       wantsInference ? 'error' : 'pending',
-      'No GATEWAY_API_KEY is configured. Inference must remain unavailable.',
+      'No PPQ_API_KEY is configured. Inference must remain unavailable.',
     );
   const inferenceConfigured = !!(
     config?.mode === 'service' &&

@@ -26,7 +26,7 @@ const rejects = (prompt, code, catalog = routes) =>
 const profile = () => ({
   version: 1,
   tasks: ['general', 'code'],
-  evidenceUrl: 'https://inference.invalid/api-docs',
+  evidenceUrl: 'https://ppq.ai/api-docs',
   reviewedAt: '2026-10-10T09:00:00.000Z',
 });
 
@@ -129,7 +129,7 @@ void test('four unique models are allowed and five fail rather than truncate', (
   rejects('Ask @claude @gpt @gemini @deepseek @qwen', 'MODEL_MENTION_LIMIT');
 });
 void test('empty or excessive questions fail and ordinary prompts stay unchanged', () => {
-  for (const source of ['', '   ', '@claude', 'x'.repeat(6001)])
+  for (const source of ['', '   ', '@claude', 'x'.repeat(16 * 1024 * 1024 + 1)])
     rejects(source, 'INVALID_PROMPT');
   assert.equal(
     resolve('Explain ordinary text.').prompt,
@@ -153,11 +153,11 @@ void test('profile validation rejects unsupported duplicate malformed and extra 
     { tasks: [] },
     { tasks: ['vision'] },
     { tasks: ['code', 'code'] },
-    { evidenceUrl: 'http://inference.invalid/api-docs' },
-    { evidenceUrl: 'https://user:password@inference.invalid/api-docs' },
-    { evidenceUrl: 'https://inference.invalid/?query=value' },
-    { evidenceUrl: 'https://inference.invalid/#fragment' },
-    { evidenceUrl: 'https://inference.invalid/\napi-docs' },
+    { evidenceUrl: 'http://ppq.ai/api-docs' },
+    { evidenceUrl: 'https://user:password@ppq.ai/api-docs' },
+    { evidenceUrl: 'https://ppq.ai/?query=value' },
+    { evidenceUrl: 'https://ppq.ai/#fragment' },
+    { evidenceUrl: 'https://ppq.ai/\napi-docs' },
     { reviewedAt: '2026-10-10T09:00:00-01:00' },
     { reviewedAt: '2026-02-31T00:00:00.000Z' },
     { extra: true },

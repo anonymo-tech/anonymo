@@ -7,9 +7,9 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import test, { after, before } from 'node:test';
 import { createDatabase } from '../server/db/database.ts';
-import { GATEWAY_MODEL_ALLOWLIST } from '../server/gateway/catalog.ts';
+import { PPQ_MODEL_ALLOWLIST } from '../server/ppq/catalog.ts';
 import {
-  routeCatalogUrl,
+  ROUTE_CATALOG_URL,
   installReviewedRoutes,
 } from '../server/routes/route-registry.ts';
 import {
@@ -67,7 +67,7 @@ function fixture() {
         expiresAt: new Date(now + 1800000).toISOString(),
         reviewers: ['gpt', 'claude', 'deepseek'].map((family) => ({
           routeVersionId: randomUUID(),
-          modelId: GATEWAY_MODEL_ALLOWLIST[family].id,
+          modelId: PPQ_MODEL_ALLOWLIST[family].id,
           family,
           modelVersion: 'reviewed-fixture-v1',
           distribution: family === 'deepseek' ? 'open-weight' : 'proprietary',
@@ -93,7 +93,7 @@ function routeDocument(document, enabled = false) {
         card: {
           level: 'unverified',
           reviewed: true,
-          provider: 'gateway',
+          provider: 'ppq',
           upstreamProviders: ['Unverified upstream'],
           plaintextVisibility: 'gateway_and_upstream',
           retentionDays: null,
@@ -102,7 +102,7 @@ function routeDocument(document, enabled = false) {
           legalHold: 'unknown',
           retentionDisclosure:
             'Test only. The gateway and upstream can read this request; retention is unverified.',
-          evidenceUrl: 'https://inference.invalid/privacy',
+          evidenceUrl: 'https://ppq.ai/privacy',
           upstreamEvidenceUrls: [],
           evidenceDate: now.slice(0, 10),
           lastVerifiedAt: now,
@@ -120,7 +120,7 @@ function routeDocument(document, enabled = false) {
 }
 function catalog(routes) {
   return {
-    sourceUrl: routeCatalogUrl(),
+    sourceUrl: ROUTE_CATALOG_URL,
     fetchedAt: new Date(Date.now() - 1000).toISOString(),
     sha256: 'a'.repeat(64),
     models: routes.map((route) => ({
@@ -317,7 +317,7 @@ void test('declared family, distribution and version cannot manufacture independ
       r.reviewers[2] = {
         ...r.reviewers[2],
         family: 'grok',
-        modelId: GATEWAY_MODEL_ALLOWLIST.grok.id,
+        modelId: PPQ_MODEL_ALLOWLIST.grok.id,
         distribution: 'proprietary',
       };
     },
@@ -365,9 +365,7 @@ void test('default CLI validates without a database, provider request, token exp
   document.rosters[0].enabled = true;
   const result = await cli(document, [], {
     CONCLAVE_DATABASE_URL: 'invalid-do-not-connect',
-    GATEWAY_API_KEY: 'fixture-sensitive-marker',
-    GATEWAY_API_ORIGIN: 'https://api.inference.invalid',
-    GATEWAY_EVIDENCE_ORIGINS: '["https://inference.invalid","https://www.inference.invalid"]',
+    PPQ_API_KEY: 'fixture-sensitive-marker',
     CONCLAVE_CROSSCHECK_ENABLED: 'false',
   });
   assert.equal(result.code, 0);
@@ -573,7 +571,7 @@ void test('catalog evidence with wrong source, future time or stale time cannot 
     const routes = routeDocument(document, true);
     for (const route of routes.routes)
       route.card.catalogVerification = {
-        sourceUrl: routeCatalogUrl(),
+        sourceUrl: ROUTE_CATALOG_URL,
         fetchedAt: new Date(Date.now() - 1000).toISOString(),
         sha256: 'a'.repeat(64),
         priceCheck: 'matched',

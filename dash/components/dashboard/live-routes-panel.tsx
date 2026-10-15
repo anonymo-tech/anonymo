@@ -63,7 +63,7 @@ export function LiveRoutesPanel({
             <dt>{t('Processing')}</dt>
             <dd>
               {t(
-                'The inference gateway and the upstream model provider receive your request in plaintext.',
+                'The inference gateway and the model host receive your request in plaintext.',
               )}
             </dd>
           </div>

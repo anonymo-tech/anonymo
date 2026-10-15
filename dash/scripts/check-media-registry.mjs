@@ -8,7 +8,7 @@ import test, { before, after } from 'node:test';
 import { createDatabase } from '../server/db/database.ts';
 import { migrate } from './migrate.mjs';
 import { testEndpoint } from './check-database.mjs';
-import { routeCatalogUrl } from '../server/routes/route-registry.ts';
+import { ROUTE_CATALOG_URL } from '../server/routes/route-registry.ts';
 import { assertUsableMediaRoute } from '../server/media/contract.ts';
 import {
   fetchMediaCatalog,
@@ -96,7 +96,7 @@ function fixture(families = ['runway']) {
         card: {
           level: 'unverified',
           reviewed: true,
-          provider: 'gateway',
+          provider: 'ppq',
           upstreamProviders: ['Synthetic processor'],
           plaintextVisibility: 'gateway_and_upstream',
           retentionDays: null,
@@ -105,14 +105,14 @@ function fixture(families = ['runway']) {
           legalHold: 'unknown',
           retentionDisclosure:
             'The gateway and upstream can read this input; retention remains unverified.',
-          evidenceUrl: 'https://inference.invalid/privacy',
+          evidenceUrl: 'https://ppq.ai/privacy',
           upstreamEvidenceUrls: [],
           evidenceDate: now.slice(0, 10),
           lastVerifiedAt: now,
           mediaTerms: {
             reviewed: true,
             commercialUse: 'allowed',
-            evidenceUrls: ['https://inference.invalid/terms', `${d.origin}/terms`],
+            evidenceUrls: ['https://ppq.ai/terms', `${d.origin}/terms`],
             reviewedAt: now,
           },
         },
@@ -135,7 +135,7 @@ function fixture(families = ['runway']) {
 }
 function catalog(families = Object.keys(definitions)) {
   return {
-    sourceUrl: routeCatalogUrl(),
+    sourceUrl: ROUTE_CATALOG_URL,
     fetchedAt: new Date().toISOString(),
     sha256: 'a'.repeat(64),
     models: families.map((family) => {
@@ -201,28 +201,28 @@ void test('media review rejects unknown IDs fields accessor properties and incom
       r.card.mediaTerms.reviewed = false;
     },
     (r) => {
-      r.card.mediaTerms.evidenceUrls = ['https://inference.invalid/terms'];
+      r.card.mediaTerms.evidenceUrls = ['https://ppq.ai/terms'];
     },
     (r) => {
       r.card.mediaTerms.evidenceUrls = ['https://runwayml.com/terms'];
     },
     (r) => {
       r.card.mediaTerms.evidenceUrls = [
-        'https://inference.invalid/terms',
+        'https://ppq.ai/terms',
         'https://example.test/terms',
       ];
     },
     (r) => {
       r.card.mediaTerms.evidenceUrls = [
-        'https://inference.invalid/terms',
+        'https://ppq.ai/terms',
         'https://policies.google.com/terms',
       ];
     },
     (r) => {
-      r.card.evidenceUrl = 'http://inference.invalid/privacy';
+      r.card.evidenceUrl = 'http://ppq.ai/privacy';
     },
     (r) => {
-      r.card.evidenceUrl = 'https://inference.invalid/privacy?key=fixture';
+      r.card.evidenceUrl = 'https://ppq.ai/privacy?key=fixture';
     },
     (r) => {
       r.card.trainingUse = 'not_used';
@@ -415,7 +415,7 @@ void test('public catalog fetch is one bounded credential-free GET and preserves
   const snapshot = await fetchMediaCatalog({
     fetch: async (url, init) => {
       count++;
-      assert.equal(url, routeCatalogUrl());
+      assert.equal(url, ROUTE_CATALOG_URL);
       assert.equal(init.method, 'GET');
       assert.equal(init.credentials, 'omit');
       assert.equal(init.redirect, 'error');

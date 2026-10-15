@@ -19,6 +19,8 @@ import {
 } from './validation.ts';
 import {
   buildDepositTransaction,
+  depositRecipientTokenAddress,
+  depositTransactionCreatesRecipientAccount,
   decodeTransactionBase64,
   encodeTransactionBase64,
   validateUnsignedDepositTransaction,
@@ -37,6 +39,7 @@ export type StoredPayment = {
   last_valid_block_height: string;
   context_slot: string;
   fee_lamports: string;
+  account_creation_lamports: string;
   prepared_at: Date;
   expires_at: Date;
   signed_transaction: string | null;
@@ -52,6 +55,9 @@ export type StoredPayment = {
   settlement_verified_at: Date | null;
   settlement_signature: string | null;
   source_linked: boolean;
+  source_wallet: string;
+  reference: string;
+  amount_usd6: string;
 };
 
 async function account(db: Queryable, accountId: string, exclusive = false) {
@@ -79,7 +85,7 @@ export async function ownedPayment(
   await ownedDeposit(db, accountId, intentId);
   return one<StoredPayment>(
     db,
-    `SELECT p.*,i.state AS intent_state,i.expires_at AS intent_expires_at,i.policy,e.verified_at AS settlement_verified_at,e.signature AS settlement_signature,
+    `SELECT p.*,i.state AS intent_state,i.expires_at AS intent_expires_at,i.policy,i.source_wallet,i.reference,i.amount_usd6,e.verified_at AS settlement_verified_at,e.signature AS settlement_signature,
       EXISTS(SELECT 1 FROM identities identity WHERE identity.account_id=p.account_id AND identity.kind='solana' AND identity.subject=i.source_wallet AND identity.revoked_at IS NULL) AS source_linked
       FROM deposit_payments p JOIN deposit_intents i ON i.id=p.intent_id AND i.account_id=p.account_id
       LEFT JOIN deposit_events e ON e.intent_id=i.id
@@ -93,6 +99,22 @@ export function paymentView(row: StoredPayment, intent?: StoredDeposit) {
     now = Date.now();
   const credited = (intent?.state ?? row.intent_state) === 'credited';
   const policy = intent?.policy ?? row.policy;
+  const terms = paymentTerms(
+    intent ?? {
+      source_wallet: row.source_wallet,
+      reference: row.reference,
+      amount_usd6: row.amount_usd6,
+      policy,
+    },
+    row,
+  );
+  const accountCreationLamports = String(row.account_creation_lamports ?? '0');
+  requireSolana(
+    terms.createRecipientAccount
+      ? BigInt(accountCreationLamports) > 0n
+      : accountCreationLamports === '0',
+    'invalid_response',
+  );
   const window =
     Math.min(
       row.expires_at.getTime(),
@@ -123,6 +145,11 @@ export function paymentView(row: StoredPayment, intent?: StoredDeposit) {
     lastValidBlockHeight: row.last_valid_block_height,
     contextSlot: row.context_slot,
     feeLamports: row.fee_lamports,
+    createRecipientAccount: terms.createRecipientAccount === true,
+    recipientWallet: terms.createRecipientAccount
+      ? policy.recipientWallet
+      : null,
+    accountCreationLamports,
     preparedAt: row.prepared_at.toISOString(),
     expiresAt: row.expires_at.toISOString(),
     signature: row.signature,
@@ -154,10 +181,16 @@ export async function getOwnedPayment(
 }
 
 export function paymentTerms(
-  intent: StoredDeposit,
-  row: Pick<StoredPayment, 'source_token_account' | 'recent_blockhash'>,
+  intent: Pick<
+    StoredDeposit,
+    'source_wallet' | 'reference' | 'amount_usd6' | 'policy'
+  >,
+  row: Pick<
+    StoredPayment,
+    'source_token_account' | 'recent_blockhash' | 'unsigned_transaction'
+  >,
 ): DepositTransactionTerms {
-  return {
+  const terms = {
     sourceWallet: intent.source_wallet,
     sourceTokenAccount: row.source_token_account,
     recipientTokenAccount: intent.policy.recipientTokenAccount,
@@ -165,7 +198,38 @@ export function paymentTerms(
     reference: intent.reference,
     amountUsd6: intent.amount_usd6,
     recentBlockhash: row.recent_blockhash,
+    recipientWallet: intent.policy.recipientWallet,
   };
+  return {
+    ...terms,
+    createRecipientAccount: depositTransactionCreatesRecipientAccount(
+      decodeTransactionBase64(row.unsigned_transaction),
+      terms,
+    ),
+  };
+}
+
+/** Recheck the disclosed rent before signing or relaying the retained message. */
+export async function assertAccountCreationRent(
+  rpc: PaymentRpc,
+  accountCreationLamports: string,
+  signal?: AbortSignal,
+) {
+  if (accountCreationLamports === '0') return;
+  const rent = uint(
+    await rpc.call(
+      'getMinimumBalanceForRentExemption',
+      [165, { commitment: 'confirmed' }],
+      signal,
+    ),
+    10_000_000,
+  );
+  requireCondition(
+    rent > 0 && BigInt(rent) === BigInt(accountCreationLamports),
+    409,
+    'DEPOSIT_RENT_CHANGED',
+    'The account-creation estimate changed. Do not sign or send this saved payment.',
+  );
 }
 function configured(intent: StoredDeposit) {
   const config = depositConfiguration();
@@ -340,6 +404,11 @@ export async function prepareOwnedPayment(
   await rpc.verifyGenesis(signal);
   if (snapshot.payment) {
     await assertPaymentBlockhash(rpc, snapshot.payment, signal);
+    await assertAccountCreationRent(
+      rpc,
+      String(snapshot.payment.account_creation_lamports ?? '0'),
+      signal,
+    );
     return transaction(pool, async (db) => {
       await account(db, accountId, true);
       const intent = await ownedDeposit(db, accountId, intentId),
@@ -441,7 +510,10 @@ export async function prepareOwnedPayment(
   minimum = group.slot;
   const values = list(group.value, 4);
   requireSolana(
-    values.length === 4 && values.every((value) => value !== null),
+    values.length === 4 &&
+      values[0] !== null &&
+      values[1] !== null &&
+      values[3] !== null,
     'invalid_response',
   );
   const mint = binaryAccount(values[0], 82, TOKEN_PROGRAM).bytes,
@@ -455,14 +527,35 @@ export async function prepareOwnedPayment(
     'DEPOSIT_SOURCE_UNAVAILABLE',
     'The selected USDC token account is unavailable or its balance changed.',
   );
-  const recipient = tokenAccount(values[2]);
-  requireSolana(
-    recipient.mint === intent.policy.usdcMint &&
-      recipient.owner === intent.policy.recipientWallet &&
-      recipient.state === 1 &&
-      recipient.native === 0,
-    'deposit_mismatch',
-  );
+  const createRecipientAccount = values[2] === null;
+  let accountCreationLamports = 0;
+  if (createRecipientAccount) {
+    requireSolana(
+      depositRecipientTokenAddress(
+        intent.policy.recipientWallet,
+        intent.policy.usdcMint,
+      ) === intent.policy.recipientTokenAccount,
+      'deposit_mismatch',
+    );
+    accountCreationLamports = uint(
+      await rpc.call(
+        'getMinimumBalanceForRentExemption',
+        [165, { commitment: 'confirmed' }],
+        signal,
+      ),
+      10_000_000,
+    );
+    requireSolana(accountCreationLamports > 0, 'invalid_response');
+  } else {
+    const recipient = tokenAccount(values[2]);
+    requireSolana(
+      recipient.mint === intent.policy.usdcMint &&
+        recipient.owner === intent.policy.recipientWallet &&
+        recipient.state === 1 &&
+        recipient.native === 0,
+      'deposit_mismatch',
+    );
+  }
   const wallet = binaryAccount(values[3], 0, SYSTEM_PROGRAM);
   const built = buildDepositTransaction({
     sourceWallet: intent.source_wallet,
@@ -472,6 +565,8 @@ export async function prepareOwnedPayment(
     reference: intent.reference,
     amountUsd6: intent.amount_usd6,
     recentBlockhash,
+    createRecipientAccount,
+    recipientWallet: intent.policy.recipientWallet,
   });
   const messageBase64 = encodeTransactionBase64(built.message),
     unsignedTransaction = encodeTransactionBase64(built.unsignedTransaction);
@@ -493,10 +588,10 @@ export async function prepareOwnedPayment(
   const feeLamports = uint(fee.value, 1_000_000);
   requireSolana(feeLamports > 0, 'invalid_response');
   requireCondition(
-    wallet.lamports >= feeLamports,
+    wallet.lamports >= feeLamports + accountCreationLamports,
     409,
     'DEPOSIT_FEE_BALANCE_REQUIRED',
-    'The source wallet needs enough SOL for the exact network fee.',
+    'The source wallet needs enough SOL for the network fee and any disclosed account-creation rent.',
   );
   const simulation = context(
     await rpc.call(
@@ -535,9 +630,15 @@ export async function prepareOwnedPayment(
     simulated.innerInstructions !== null
   )
     requireSolana(
-      list(simulated.innerInstructions, 1).every(
-        (value) => list(record(value).instructions, 0).length === 0,
-      ),
+      list(simulated.innerInstructions, 2).every((value) => {
+        const entry = record(value);
+        // Only the exact, locally-built ATA creation may invoke CPI. Finalized
+        // credit independently validates the supported inner account-creation instructions.
+        return (
+          list(entry.instructions, 8).length === 0 ||
+          (createRecipientAccount && uint(entry.index) === 0)
+        );
+      }),
       'unsupported_instruction',
     );
   if (simulated.fee !== undefined && simulated.fee !== null)
@@ -576,8 +677,8 @@ export async function prepareOwnedPayment(
     requireSolana(!signal.aborted, 'cancelled');
     await db.query(
       `INSERT INTO deposit_payments(id,intent_id,account_id,source_token_account,message_base64,unsigned_transaction,
-      recent_blockhash,last_valid_block_height,context_slot,fee_lamports,prepared_at,expires_at)
-      SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,at,LEAST(at+interval '90 seconds',$11)
+      recent_blockhash,last_valid_block_height,context_slot,fee_lamports,account_creation_lamports,prepared_at,expires_at)
+      SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$12,at,LEAST(at+interval '90 seconds',$11)
       FROM (SELECT clock_timestamp() AS at) clock`,
       [
         crypto.randomUUID(),
@@ -591,6 +692,7 @@ export async function prepareOwnedPayment(
         minimum,
         feeLamports,
         current.expires_at,
+        accountCreationLamports,
       ],
     );
     const row = await ownedPayment(db, accountId, intentId);

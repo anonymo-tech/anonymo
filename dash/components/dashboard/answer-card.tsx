@@ -5,10 +5,13 @@ import Image from 'next/image';
 import { useRef } from 'react';
 import { MotionIcon } from './motion-icon';
 import { MODELS } from './data';
+import { chineseModelByKey } from '../../lib/chinese-models';
 import type { Answer } from './canvas-state';
 import { formatAccountUsd6 } from '../../lib/client/account-records';
 import { CANCEL_DRAIN_TIMEOUT } from '../../lib/client/workspace';
 import '../../app/dashboard/answer-card.css';
+import { fomoAnalysisBody } from '../../lib/second-look/fomo-score';
+import { ResearchMarkdown } from '../second-look/chat/research-markdown';
 
 const providerAssets: Record<string, string> = {
   claude: 'claude',
@@ -22,9 +25,14 @@ const providerAssets: Record<string, string> = {
   sora: 'openai',
   kling: 'kling',
 };
+const chineseProviderAssets: Record<string, string> = {
+  deepseek: 'deepseek.svg', qwen: 'qwen.svg', kimi: 'kimi.png', glm: 'glm.svg', minimax: 'minimax.ico', stepfun: 'stepfun.svg', mimo: 'mimo.ico', hunyuan: 'hunyuan.svg', seed: 'seed.ico', ling: 'ling.png', longcat: 'longcat.svg',
+};
 /** Provider marks; models without a bundled mark use their monogram, never a third-party logo. */
 export function ProviderIcon({ id, size = 28 }: { id: string; size?: number }) {
-  const monogram = providerAssets[id]
+  const chineseProvider = chineseModelByKey.get(id)?.provider;
+  const asset = chineseProvider ? chineseProviderAssets[chineseProvider] : providerAssets[id] ? `${providerAssets[id]}.svg` : undefined;
+  const monogram = asset
     ? null
     : MODELS.find((model) => model.id === id)?.monogram;
   if (monogram)
@@ -41,7 +49,7 @@ export function ProviderIcon({ id, size = 28 }: { id: string; size?: number }) {
         {monogram}
       </span>
     );
-  if (!providerAssets[id])
+  if (!asset)
     return (
       <span
         aria-hidden="true"
@@ -59,7 +67,8 @@ export function ProviderIcon({ id, size = 28 }: { id: string; size?: number }) {
   return (
     <Image
       className="cw-provider-icon"
-      src={`/brand/providers/${providerAssets[id] || 'openai'}.svg`}
+      src={`/brand/providers/${asset}`}
+      style={{ objectFit: 'contain' }}
       width={size}
       height={size}
       alt=""
@@ -87,12 +96,15 @@ export function AnswerCard({
   actions,
   variant = 'canvas',
   peers,
+  researchMarkdown = false,
 }: {
   answer: Answer;
   actions: AnswerActions;
   variant?: 'canvas' | 'chat';
   /** Answers in this turn; a stop applies to every answer still running. */
   peers?: number;
+  /** Display-only formatting for detected FOMO research; ordinary answers stay unchanged. */
+  researchMarkdown?: boolean;
 }) {
   const t = useT();
   const model = MODELS.find((item) => item.id === answer.modelId);
@@ -153,12 +165,8 @@ export function AnswerCard({
   }
   return (
     <article
-      className={`cw-answer cw-node-drag${selected ? ' is-selected' : ''}${isChat ? ' is-chat-answer' : ''}`}
-      aria-label={
-        answer.live
-          ? t('{name} answer', { name: modelName })
-          : t('{name} sample answer', { name: modelName })
-      }
+      className={`cw-answer cw-node-drag${selected ? ' is-selected' : ''}${isChat ? ' is-chat-answer' : ''}${researchMarkdown ? ' is-fomo-answer' : ''}`}
+      aria-label={answer.live ? t('{name} answer', { name: modelName }) : t('{name} sample answer', { name: modelName })}
       aria-busy={active}
     >
       {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Overflowing answers must be keyboard-scrollable. */}
@@ -167,9 +175,9 @@ export function AnswerCard({
         tabIndex={isChat ? undefined : 0}
       >
         {answer.heading && <h2>{t(answer.heading)}</h2>}
-        {answer.paragraphs.map((paragraph, index) => (
+        {researchMarkdown ? <ResearchMarkdown text={fomoAnalysisBody(answer.paragraphs.join('\n\n'))} /> : answer.paragraphs.map((paragraph, index) => (
           <p key={index}>
-            {t(
+            {answer.live?.output ? paragraph : t(
               answer.heading === 'No live model result.' &&
                 paragraph ===
                   'Use a prepared example to explore the comparison, or keep this question in your room for later.'
@@ -178,6 +186,10 @@ export function AnswerCard({
             )}
           </p>
         ))}
+        {answer.live?.state === 'succeeded' && answer.live.errorCode === 'OUTPUT_LIMIT_REACHED' && (
+          /* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- Preserve the production paragraph styling and status announcement. */
+          <p role="status">{t('This answer reached the model’s maximum response length. Ask “continue” to pick up where it stopped.')}</p>
+        )}
         {answer.live?.outputTruncated && (
           <button
             className="ct-button"

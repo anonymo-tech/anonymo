@@ -32,7 +32,7 @@ const routeCard = {
   level: 'unverified',
   reviewed: true,
   retentionDisclosure: 'Gateway and upstream receive plaintext.',
-  evidenceUrl: 'https://inference.invalid/privacy',
+  evidenceUrl: 'https://ppq.ai/privacy',
   evidenceDate: now,
   plaintextVisibility: 'gateway_and_upstream',
   trainingUse: 'unknown',
@@ -226,7 +226,7 @@ void test('submit checks owned project, prompt and requested comparison mode bef
   }
 });
 
-void test('raw model HTML remains literal text; complete 500k bodies are preserved, oversized bodies rejected', () => {
+void test('raw model HTML remains literal text and native answers beyond the old 500k cap are preserved', () => {
   const value = fixture();
   value.calls[0].output = '<script>untrusted()</script>\n# Plain model text';
   value.calls[0].outputLength = value.calls[0].output.length;
@@ -237,7 +237,7 @@ void test('raw model HTML remains literal text; complete 500k bodies are preserv
   assert.equal(parseComparison(value).calls[0].output.length, 500000);
   value.calls[0].output += 'x';
   value.calls[0].outputLength++;
-  assert.throws(() => parseComparison(value), WorkspaceError);
+  assert.equal(parseComparison(value).calls[0].output.length, 500001);
 });
 
 void test('blind identities and price fingerprints are rejected until reveal', () => {
@@ -721,7 +721,7 @@ void test('continuity uses only complete succeeded live replies from the matchin
   );
 });
 
-void test('continuity retains a recent suffix within message/UTF-8 byte budgets and never drops the new question', () => {
+void test('continuity retains all complete exchanges and refuses oversized context without silent clipping', () => {
   const template = fixture();
   template.calls[0].state = 'succeeded';
   template.calls[0].output = 'Reply';
@@ -747,17 +747,14 @@ void test('continuity retains a recent suffix within message/UTF-8 byte budgets 
     pricing: { maxInputBytes: 32768, maxOutputTokens: 100 },
   };
   const result = conversationItems(room, 'Newest question', [route]);
-  assert.equal(result.items[0].messages.length, 39);
-  assert.equal(result.contexts[0].includedExchanges, 19);
-  assert.equal(result.contexts[0].omittedExchanges, 11);
-  assert.deepEqual(result.contexts[0].omittedReasons, { sizeLimit: 11 });
+  assert.equal(result.items[0].messages.length, 61);
+  assert.equal(result.contexts[0].includedExchanges, 30);
+  assert.equal(result.contexts[0].omittedExchanges, 0);
+  assert.deepEqual(result.contexts[0].omittedReasons, {});
   assert.equal(result.items[0].messages.at(-1).content, 'Newest question');
-  const restricted = conversationItems(room, 'Newest question', [
+  assert.throws(() => conversationItems(room, 'Newest question', [
     { ...route, pricing: { ...route.pricing, maxInputBytes: 20 } },
-  ]);
-  assert.equal(restricted.items[0].messages.length, 1);
-  assert.equal(restricted.contexts[0].omittedExchanges, 30);
-  assert.deepEqual(restricted.contexts[0].omittedReasons, { sizeLimit: 30 });
+  ]), error => error.code === 'PROMPT_TOO_LARGE');
   assert.throws(
     () =>
       conversationItems(room, '🌍🌍🌍🌍🌍🌍', [

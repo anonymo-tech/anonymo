@@ -17,14 +17,14 @@ import { splitPlatformFee } from '../server/ledger/platform-fee.ts';
 import { configuredKeyring } from '../server/core/encryption.ts';
 import { dispatch } from '../server/routes/dispatch.ts';
 import { drainBoundMs, runNextCall } from '../server/routes/call-worker.ts';
-import { createGatewayClient } from '../server/gateway/index.ts';
+import { createPpqClient } from '../server/ppq/index.ts';
 import { reconcileFromCli } from './reconcile-holds.mjs';
 import {
   recordedStream,
   recordedStreams,
   recordedText,
   reviewedPricing,
-} from './fixtures/gateway-recorded.mjs';
+} from './fixtures/ppq-recorded.mjs';
 
 const connection = testEndpoint(process.env.CONCLAVE_TEST_DATABASE_URL).href;
 Object.assign(process.env, {
@@ -35,9 +35,7 @@ Object.assign(process.env, {
     test: randomBytes(32).toString('base64'),
   }),
   CONCLAVE_ACTIVE_DATA_KEY: 'test',
-  GATEWAY_API_KEY: 'synthetic-provider-fixture',
-  GATEWAY_API_ORIGIN: 'https://api.inference.invalid',
-  GATEWAY_EVIDENCE_ORIGINS: '["https://inference.invalid","https://www.inference.invalid"]',
+  PPQ_API_KEY: 'synthetic-provider-fixture',
   CONCLAVE_INFERENCE_ENABLED: 'true',
 });
 // Every test starts fee-free and opts in explicitly.
@@ -224,7 +222,7 @@ function controlledProvider(timeouts) {
   const encoder = new TextEncoder();
   let stream;
   let requests = 0;
-  const provider = createGatewayClient({
+  const provider = createPpqClient({
     apiKey: 'test-key-not-a-credential',
     ...(timeouts ? { timeouts } : {}),
     fetch: async (_url, init) => {
@@ -315,7 +313,7 @@ void test('every recorded model settles exactly through the worker, with the pla
       );
       const call = await queued(user, routeVersionId);
       let requests = 0;
-      const provider = createGatewayClient({
+      const provider = createPpqClient({
         apiKey: 'test-key-not-a-credential',
         fetch: async () => {
           requests++;
@@ -377,7 +375,7 @@ void test('route markup applies to the canonical cost before the platform fee', 
   const call = await queued(user, routeVersionId);
   await runNextCall(
     pool,
-    createGatewayClient({
+    createPpqClient({
       apiKey: 'test-key-not-a-credential',
       fetch: async () =>
         new Response(recordedStream(entry), {
@@ -558,10 +556,10 @@ void test('a drain that times out or drops falls back to reconciliation pending 
   await second;
   const pending = await state(dropped.callId);
   assert.equal(pending.state, 'reconciliation_pending');
-  assert.equal(pending.error_code, 'GATEWAY_PROVIDER_UNAVAILABLE');
+  assert.equal(pending.error_code, 'PPQ_PROVIDER_UNAVAILABLE');
   assert.equal(pending.provider_reference, 'gen-fixture-dropped');
   assert.deepEqual(await reconciliation(dropped.holdId), {
-    reason_code: 'GATEWAY_PROVIDER_UNAVAILABLE',
+    reason_code: 'PPQ_PROVIDER_UNAVAILABLE',
     observed: '13',
     input_tokens: 19,
     output_tokens: 35,
@@ -597,7 +595,7 @@ void test('a stopped call drains until its own chat deadline, never a fixed boun
     7000,
   );
   // A fake provider without a declared deadline uses the client default.
-  assert.equal(drainBoundMs({ dispatchedAt: 0, stoppedAt: 0 }), 245_000);
+  assert.equal(drainBoundMs({ dispatchedAt: 0, stoppedAt: 0 }), 605_000);
   // drainTimeoutMs is only an optional, tighter cap.
   assert.equal(
     drainBoundMs({
@@ -616,9 +614,9 @@ void test('a stopped call drains until its own chat deadline, never a fixed boun
     }),
     0,
   );
-  assert.equal(createGatewayClient({ apiKey: 'k' }).chatTimeoutMs, 240_000);
+  assert.equal(createPpqClient({ apiKey: 'k' }).chatTimeoutMs, 600_000);
   assert.equal(
-    createGatewayClient({ apiKey: 'k', timeouts: { chatMs: 2500 } }).chatTimeoutMs,
+    createPpqClient({ apiKey: 'k', timeouts: { chatMs: 2500 } }).chatTimeoutMs,
     2500,
   );
 });
@@ -721,11 +719,11 @@ void test('when the overall chat deadline fires during a drain the call stays pe
   await run;
   const result = await state(call.callId);
   assert.equal(result.state, 'reconciliation_pending');
-  assert.equal(result.error_code, 'GATEWAY_TIMEOUT');
+  assert.equal(result.error_code, 'PPQ_TIMEOUT');
   assert.equal(result.hold_state, 'reconciliation_pending');
   assert.equal(result.provider_reference, 'gen-fixture-deadline');
   const record = await reconciliation(call.holdId);
-  assert.equal(record.reason_code, 'GATEWAY_TIMEOUT');
+  assert.equal(record.reason_code, 'PPQ_TIMEOUT');
   assert.equal(record.stopped, true);
   assert.equal(
     (await getBalance(pool, user.id)).reservedUsd6,
@@ -770,7 +768,7 @@ void test('the provider reference is stored from the first chunk even when the s
   const call = await queued(user, routeVersionId);
   await runNextCall(
     pool,
-    createGatewayClient({
+    createPpqClient({
       apiKey: 'test-key-not-a-credential',
       fetch: async () =>
         new Response(
@@ -784,11 +782,11 @@ void test('the provider reference is stored from the first chunk even when the s
   );
   const result = await state(call.callId);
   assert.equal(result.state, 'reconciliation_pending');
-  assert.equal(result.error_code, 'GATEWAY_INVALID_RESPONSE');
+  assert.equal(result.error_code, 'PPQ_INVALID_RESPONSE');
   assert.equal(result.provider_reference, 'gen-fixture-first-frame');
   assert.equal(
     (await reconciliation(call.holdId)).reason_code,
-    'GATEWAY_INVALID_RESPONSE',
+    'PPQ_INVALID_RESPONSE',
   );
 });
 
@@ -908,7 +906,7 @@ void test('reconcile CLI is operator-only and resolves each action exactly once 
       const call = await queued(user, routeVersionId);
       await runNextCall(
         pool,
-        createGatewayClient({
+        createPpqClient({
           apiKey: 'test-key-not-a-credential',
           fetch: async () =>
             new Response(frames, {
@@ -952,7 +950,7 @@ void test('reconcile CLI is operator-only and resolves each action exactly once 
     assert.equal(listed.count, 4);
     const byHold = new Map(listed.pending.map((hold) => [hold.holdId, hold]));
     const a = byHold.get(usageSeen.holdId);
-    assert.equal(a.reasonCode, 'GATEWAY_STREAM_INTERRUPTED');
+    assert.equal(a.reasonCode, 'PPQ_STREAM_INTERRUPTED');
     assert.equal(a.observedUsd6, '13');
     assert.equal(a.providerReference, 'gen-fixture-a');
     assert.deepEqual(a.usage, {
@@ -980,7 +978,7 @@ void test('reconcile CLI is operator-only and resolves each action exactly once 
     });
     assert.equal(
       byHold.get(interrupted.holdId).reasonCode,
-      'GATEWAY_STREAM_INTERRUPTED',
+      'PPQ_STREAM_INTERRUPTED',
     );
     assert.equal(byHold.get(overrun.holdId).observedUsd6, '5500000');
     assert.equal(
@@ -1123,7 +1121,7 @@ void test('reconcile CLI is operator-only and resolves each action exactly once 
     assert.equal(released.hold_state, 'released');
     assert.equal(released.captured, '0');
     assert.equal(released.state, 'failed');
-    assert.equal(released.error_code, 'GATEWAY_STREAM_INTERRUPTED');
+    assert.equal(released.error_code, 'PPQ_STREAM_INTERRUPTED');
     assert.equal(await feeRow(interrupted.holdId), null);
     assert.equal(
       (await reconciliation(interrupted.holdId)).resolution,
@@ -1176,7 +1174,7 @@ void test('a stopped legacy hold is resolved as cancelled; maintenance reports p
     [legacy.holdId],
   );
   await pool.query(
-    "UPDATE calls SET state='reconciliation_pending',error_code='GATEWAY_CANCELLED' WHERE id=$1",
+    "UPDATE calls SET state='reconciliation_pending',error_code='PPQ_CANCELLED' WHERE id=$1",
     [legacy.callId],
   );
   await pool.query("UPDATE jobs SET state='dead' WHERE reference=$1", [
@@ -1185,7 +1183,7 @@ void test('a stopped legacy hold is resolved as cancelled; maintenance reports p
   const second = await queued(user, routeVersionId);
   await runNextCall(
     pool,
-    createGatewayClient({
+    createPpqClient({
       apiKey: 'test-key-not-a-credential',
       fetch: async () =>
         new Response(
@@ -1200,7 +1198,7 @@ void test('a stopped legacy hold is resolved as cancelled; maintenance reports p
   );
   assert.equal(
     (await state(second.callId)).error_code,
-    'GATEWAY_STREAM_INTERRUPTED',
+    'PPQ_STREAM_INTERRUPTED',
   );
   const { stdout } = await promisify(execFile)(
     process.execPath,
@@ -1212,8 +1210,8 @@ void test('a stopped legacy hold is resolved as cancelled; maintenance reports p
   );
   const report = JSON.parse(stdout.trim().split('\n').at(-1));
   assert.equal(report.pending_holds, '2');
-  assert.equal(report.pending_holds_gateway_cancelled, '1');
-  assert.equal(report.pending_holds_gateway_stream_interrupted, '1');
+  assert.equal(report.pending_holds_ppq_cancelled, '1');
+  assert.equal(report.pending_holds_ppq_stream_interrupted, '1');
   assert.equal(
     report.pending_reserved_usd6,
     (
@@ -1230,10 +1228,10 @@ void test('a stopped legacy hold is resolved as cancelled; maintenance reports p
     operatorEnv,
   );
   assert.equal(result.results[0].callState, 'cancelled');
-  assert.equal(result.results[0].reasonCode, 'GATEWAY_CANCELLED');
+  assert.equal(result.results[0].reasonCode, 'PPQ_CANCELLED');
   const resolved = await state(legacy.callId);
   assert.equal(resolved.state, 'cancelled');
-  assert.equal(resolved.error_code, 'GATEWAY_CANCELLED');
+  assert.equal(resolved.error_code, 'PPQ_CANCELLED');
   assert.equal(resolved.captured, legacy.quote.maximumUsd6);
   assert.deepEqual(
     {
@@ -1241,7 +1239,7 @@ void test('a stopped legacy hold is resolved as cancelled; maintenance reports p
       stopped: (await reconciliation(legacy.holdId)).stopped,
       resolution: (await reconciliation(legacy.holdId)).resolution,
     },
-    { reason: 'GATEWAY_CANCELLED', stopped: true, resolution: 'settled_max' },
+    { reason: 'PPQ_CANCELLED', stopped: true, resolution: 'settled_max' },
   );
   await ledgerHealthy();
 });
@@ -1308,4 +1306,8 @@ void test('an account whose recent settlements overran their reservations beyond
   } finally {
     delete process.env.CONCLAVE_MAX_ACCOUNT_OVERAGE_USD6;
   }
+});
+
+void test('stopping a long native stream still allows time to reconcile its final usage', () => {
+ assert.equal(drainBoundMs({dispatchedAt:0, stoppedAt:3600000, chatTimeoutMs:600000, idleTimeout:true}),605000);
 });

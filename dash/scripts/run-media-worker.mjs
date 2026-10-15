@@ -1,8 +1,7 @@
-import { gatewayConfigured } from '../server/gateway/origin.ts';
 import { createDatabase } from '../server/db/database.ts';
 import { serviceConfig, requireService } from '../server/core/config.ts';
 import { configuredKeyring } from '../server/core/encryption.ts';
-import { createGatewayClient } from '../server/gateway/index.ts';
+import { createPpqClient } from '../server/ppq/index.ts';
 import { mediaStorageConfigured } from '../server/media/contract.ts';
 import {
   recoverExpiredMediaJobs,
@@ -19,13 +18,12 @@ try {
   const args = process.argv.slice(2);
   if (args.length > 1 || (args.length === 1 && args[0] !== '--once'))
     throw new Error('Invalid worker arguments.');
-  if (!gatewayConfigured()) throw new Error();
   const config = requireService(serviceConfig());
   const keys = configuredKeyring();
   const storageReady = mediaStorageConfigured();
-  if (!config.gatewayKey || !/^[\x21-\x7e]{1,512}$/.test(config.gatewayKey))
+  if (!config.ppqKey || !/^[\x21-\x7e]{1,512}$/.test(config.ppqKey))
     throw new Error('Provider configuration is unavailable.');
-  const provider = createGatewayClient({ apiKey: config.gatewayKey });
+  const provider = createPpqClient({ apiKey: config.ppqKey });
   pool = createDatabase(config.databaseUrl, 2);
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);

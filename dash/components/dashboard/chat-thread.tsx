@@ -1,7 +1,8 @@
 'use client';
 
 import { useT } from '@/lib/i18n';
-import { useId, useLayoutEffect, useRef, type KeyboardEvent } from 'react';
+import { useId, useLayoutEffect, useMemo, useRef, type KeyboardEvent } from 'react';
+import { fomoPromptPresentation } from '../../lib/second-look/fomo-presentation';
 import { AnswerCard, ProviderIcon, type AnswerActions } from './answer-card';
 import type { Turn } from './canvas-state';
 import { MODELS } from './data';
@@ -57,6 +58,7 @@ export function ChatTurn({
   const activeAnswerId = activeAnswer?.id || '';
   const comparing = Boolean(preference?.comparing && turn.answers.length > 1);
   const questionId = `${id}-question`;
+  const researchPrompt = useMemo(() => fomoPromptPresentation(turn.prompt), [turn.prompt]);
   const active = turn.answers.filter(
     (answer) =>
       answer.live?.state === 'queued' || answer.live?.state === 'running',
@@ -111,8 +113,14 @@ export function ChatTurn({
     >
       <p className="cw-chat-prompt" id={questionId}>
         <span className="cw-chat-sr-only">{t('You: ')}</span>
-        {t(turn.prompt)}
+        {researchPrompt?.title ?? t(turn.prompt)}
       </p>
+      {researchPrompt && (
+        <details className="cw-chat-source-prompt">
+          <summary>View source prompt</summary>
+          <pre>{researchPrompt.sourcePrompt}</pre>
+        </details>
+      )}
       {activeAnswer && (
         <>
           <div className="cw-chat-response-bar">
@@ -273,6 +281,7 @@ export function ChatTurn({
                   actions={actions}
                   variant="chat"
                   peers={turn.answers.length}
+                  researchMarkdown={researchPrompt !== null}
                 />
               </div>
             ))}

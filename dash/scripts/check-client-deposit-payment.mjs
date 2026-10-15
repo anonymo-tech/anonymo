@@ -126,7 +126,7 @@ const failure = (code, unknown) => (error) =>
 
 void test('prepared transfer binds exact intent, message, fee and review expiry', () => {
   const p = prepared();
-  assert.deepEqual(parseDepositPayment(p, intent()), p);
+  assert.deepEqual(parseDepositPayment(p, intent()), {...p, createRecipientAccount:false, recipientWallet:null, accountCreationLamports:"0"});
   for (const change of [
     { intentId: uuid(8) },
     { messageBase64: 'AAAA' },

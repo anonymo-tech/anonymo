@@ -1,0 +1,63 @@
+.fomo-markdown {
+  color: #262626;
+  font-size: 15px;
+  line-height: 1.75;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.fomo-markdown p,
+.cw-shell .cw-chat-thread .cw-answer.is-fomo-answer .cw-answer-body .fomo-markdown p {
+  margin: 0 0 16px;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: -.1px;
+}
+.fomo-markdown :is(h2,h3,h4),
+.cw-shell .cw-chat-thread .cw-answer.is-fomo-answer .cw-answer-body .fomo-markdown :is(h2,h3,h4) {
+  margin: 30px 0 12px;
+  color: #111;
+  line-height: 1.3;
+  letter-spacing: -.45px;
+  font-weight: 650;
+  text-wrap: balance;
+}
+.fomo-markdown h2,
+.cw-shell .cw-chat-thread .cw-answer.is-fomo-answer .cw-answer-body .fomo-markdown h2 { font-size: 25px; }
+.fomo-markdown h3,
+.cw-shell .cw-chat-thread .cw-answer.is-fomo-answer .cw-answer-body .fomo-markdown h3 { font-size: 19px; }
+.fomo-markdown h4,
+.cw-shell .cw-chat-thread .cw-answer.is-fomo-answer .cw-answer-body .fomo-markdown h4 { font-size: 16px; }
+.fomo-markdown > :first-child,
+.cw-shell .cw-chat-thread .cw-answer.is-fomo-answer .cw-answer-body .fomo-markdown > :first-child { margin-top: 0; }
+.fomo-markdown > :last-child,
+.cw-shell .cw-chat-thread .cw-answer.is-fomo-answer .cw-answer-body .fomo-markdown > :last-child { margin-bottom: 0; }
+.fomo-markdown strong { color: #171717; font-weight: 650; }
+.fomo-markdown :is(ul,ol) { margin: 12px 0 20px; padding-left: 23px; }
+.fomo-markdown li { padding-left: 4px; margin: 7px 0; }
+.fomo-markdown li::marker { color: #898989; font-size: .88em; }
+.fomo-markdown li > p,
+.cw-shell .cw-chat-thread .cw-answer.is-fomo-answer .cw-answer-body .fomo-markdown li > p { margin: 0 0 7px; }
+.fomo-markdown li :is(ul,ol) { margin: 6px 0 9px; }
+.fomo-markdown a { color: #ca2319; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: #ca23194d; }
+.fomo-markdown a:hover { text-decoration-color: currentColor; }
+.fomo-markdown :is(a,.fomo-markdown-table):focus-visible { outline: 2px solid #e93125; outline-offset: 4px; }
+.fomo-markdown code { font: .86em/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; background: #f5f5f5; border: 1px solid #ededed; border-radius: 4px; padding: 2px 4px; }
+.fomo-markdown pre { max-width: 100%; margin: 20px 0; padding: 16px 18px; overflow: auto; background: #f8f8f8; border: 1px solid #e8e8e8; border-radius: 8px; white-space: pre; }
+.fomo-markdown pre code { padding: 0; border: 0; background: none; }
+.fomo-markdown blockquote { margin: 20px 0; padding: 3px 0 3px 18px; border-left: 2px solid #e93125; color: #555; }
+.fomo-markdown blockquote > :last-child { margin-bottom: 0; }
+.fomo-markdown hr { margin: 26px 0; border: 0; border-top: 1px solid #ececec; }
+.fomo-markdown .fomo-markdown-table { max-width: 100%; margin: 20px 0 24px; overflow: auto; border: 1px solid #e8e8e8; border-radius: 8px; background: #fff; }
+.fomo-markdown table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.55; }
+.fomo-markdown :is(th,td) { min-width: 105px; padding: 12px 14px; border-bottom: 1px solid #ededed; vertical-align: top; }
+.fomo-markdown th { color: #626262; font-weight: 550; background: #f8f8f8; white-space: normal; }
+.fomo-markdown td { color: #292929; }
+.fomo-markdown tr:last-child td { border-bottom: 0; }
+@media (max-width: 680px) {
+  .fomo-markdown { font-size: 14px; }
+  .fomo-markdown h2,
+  .cw-shell .cw-chat-thread .cw-answer.is-fomo-answer .cw-answer-body .fomo-markdown h2 { font-size: 22px; }
+  .fomo-markdown :is(th,td) { padding: 10px 12px; }
+}

@@ -24,6 +24,7 @@ import { featureOn } from './feature-switches';
 import { renderBriefPrintHtml } from '../../lib/brief-document';
 import { useT, type Translator } from '@/lib/i18n';
 import '@/app/dashboard/workspace-pages.css';
+import { LiveWorkspaceServices } from './live-workspace-services';
 
 export type PageView =
   | 'rooms'
@@ -1776,7 +1777,7 @@ export function WorkspacePages(props: WorkspacePagesProps) {
         <RoomsPage {...props} />
       </div>
       <div className="cp-view" hidden={props.view !== 'agents'}>
-        <AgentsPage {...props} />
+        {props.view === 'agents' && <LiveWorkspaceServices view="agents" accountId={props.account?.accountId ?? null} />}
       </div>
       <div className="cp-view" hidden={props.view !== 'library'}>
         <LibraryPage {...props} />
@@ -1785,7 +1786,7 @@ export function WorkspacePages(props: WorkspacePagesProps) {
         <DecisionsPage {...props} />
       </div>
       <div className="cp-view" hidden={props.view !== 'connections'}>
-        <ConnectionsPage {...props} />
+        {props.view === 'connections' && <LiveWorkspaceServices view="connections" accountId={props.account?.accountId ?? null} />}
       </div>
       <div className="cp-view" hidden={props.view !== 'purse'}>
         {props.account ? (
@@ -1801,7 +1802,7 @@ export function WorkspacePages(props: WorkspacePagesProps) {
         )}
       </div>
       <div className="cp-view" hidden={props.view !== 'chapters'}>
-        <ChaptersPage {...props} />
+        {props.view === 'chapters' && <LiveWorkspaceServices view="chapters" accountId={props.account?.accountId ?? null} />}
       </div>
     </>
   );

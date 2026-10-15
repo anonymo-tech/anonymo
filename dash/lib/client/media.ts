@@ -401,7 +401,7 @@ export function parseMediaRoute(value: unknown): MediaRoute {
           'catalogSize',
         ]),
         options = parseMediaOptions(item.options, modelId);
-      const providerUsd6 = amount(item.providerUsd6, false, 10_000_000n);
+      const providerUsd6 = amount(item.providerUsd6, false);
       if (
         item.catalogQuality !==
           (options.kind === 'image' ? 'standard' : options.quality) ||
@@ -410,7 +410,7 @@ export function parseMediaRoute(value: unknown): MediaRoute {
             ? options.resolution
             : `${options.aspectRatio}_${options.duration}`) ||
         (BigInt(providerUsd6) * BigInt(10000 + markupBps) + 9999n) / 10000n >
-          10_000_000n
+          9_000_000_000_000_000n
       )
         return invalid();
       return {
@@ -452,8 +452,8 @@ export function parseMediaQuote(
     routeVersionId: id(v.routeVersionId),
     modelId,
     input: parseMediaInput(v.input, modelId),
-    maximumUsd6: amount(v.maximumUsd6, false, 10_000_000n),
-    providerMaximumUsd6: amount(v.providerMaximumUsd6, false, 10_000_000n),
+    maximumUsd6: amount(v.maximumUsd6, false),
+    providerMaximumUsd6: amount(v.providerMaximumUsd6, false),
     expiresAt: date(v.expiresAt),
     privacy: privacy(v.privacy),
     mediaAssetState: 'pending_storage',
@@ -496,13 +496,13 @@ export function makeMediaApproval(
   );
 }
 function parseApproval(value: unknown): MediaApproval {
-  const v = exact(value, ['quoteId', 'approvedMaximumUsd6', 'idempotencyKey']),
+  const v = exact(value, ['quoteId', 'idempotencyKey', 'approvedMaximumUsd6']),
     key = text(v.idempotencyKey, 128);
   if (!/^[A-Za-z0-9_-]{16,128}$/.test(key)) return invalid();
   return {
     quoteId: id(v.quoteId),
     idempotencyKey: key,
-    approvedMaximumUsd6: amount(v.approvedMaximumUsd6, false, 10_000_000n),
+    approvedMaximumUsd6: amount(v.approvedMaximumUsd6, false),
   };
 }
 export function parseMediaJob(
@@ -566,7 +566,7 @@ export function parseMediaJob(
     deliveryReady: bool(v.deliveryReady),
     asset,
     billing: {
-      maximumUsd6: amount(billing.maximumUsd6, false, 10_000_000n),
+      maximumUsd6: amount(billing.maximumUsd6, false),
       actualUsd6: nullable(billing.actualUsd6, (m) => amount(m, true)),
       state: oneOf(billing.state, [
         'held',

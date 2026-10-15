@@ -1,4 +1,5 @@
 'use client';
+import { modelReleased, releasedModelSelection } from '../../lib/model-release.ts';
 
 import {
   lazy,
@@ -32,6 +33,7 @@ import {
   type WorkspaceState,
 } from './canvas-state';
 import { ProviderIcon, type AnswerActions } from './answer-card';
+import { ModelPickerOptions } from './model-picker-options';
 import { ChatThread, type ChatTurnPreference } from './chat-thread';
 import { WorkspacePages } from './workspace-pages';
 import { featureOn, type FeatureName } from './feature-switches';
@@ -58,10 +60,19 @@ import { useLiveStudio } from './use-live-studio';
 import { LiveStudioReview } from './live-studio-review';
 import { LiveStudioPage } from './live-studio-page';
 import '@/app/dashboard/conversation-bar.css';
-import '@/app/dashboard/sign-in.css';
+import type {
+  ComposerControl,
+  ComposerState,
+} from '../second-look/second-look-workspace';
+const SecondLookWorkspace = lazy(() =>
+  import('../second-look/second-look-workspace').then((module) => ({
+    default: module.SecondLookWorkspace,
+  })),
+);
 
 const CanvasBoard = lazy(() => import('./canvas-board'));
 const views = [
+  'second-look',
   'canvas',
   'chat',
   'rooms',
@@ -92,6 +103,10 @@ type Tool = (typeof tools)[number];
  * points: dock and menu buttons, deep links and in-chat actions.
  */
 const FEATURE_SURFACES: Record<FeatureName, readonly (View | Tool)[]> = {
+  frontRow: [],
+  flywheel: [],
+  moreModels: [],
+  secondLook: ['second-look'],
   projects: ['rooms'],
   canvas: ['canvas'],
   library: ['library'],
@@ -144,6 +159,7 @@ const navigation = (
     { id: 'rooms', label: 'Projects' },
     { id: 'chat', label: 'Chat' },
     { id: 'canvas', label: 'Canvas' },
+    { id: 'second-look', label: 'FOMO' },
     { id: 'studio', label: 'Studio' },
     { id: 'agents', label: 'Agents' },
   ] as const
@@ -267,111 +283,47 @@ function Dialog({
   title,
   children,
   onClose,
-  account = false,
+  variant,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
-  account?: boolean;
+  variant?: 'account';
 }) {
   const t = useT();
   const ref = useRef<HTMLDialogElement>(null);
-  const outsidePointer = useRef(false);
   useEffect(() => {
     const el = ref.current;
-    const opener =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    const overflow = document.body.style.overflow;
+    const previousFocus = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
     el?.showModal();
-    if (account) {
-      document.body.style.overflow = 'hidden';
-      el?.querySelector<HTMLElement>('#signin-title')?.focus({
-        preventScroll: true,
-      });
-    }
     return () => {
       el?.close();
-      if (account) {
-        document.body.style.overflow = overflow;
-        if (opener?.isConnected) opener.focus();
-        else
-          document
-            .querySelector<HTMLButtonElement>('.cw-signin-button')
-            ?.focus();
+      if (variant === 'account') {
+        const target = previousFocus?.isConnected && previousFocus !== document.body
+          ? previousFocus
+          : document.querySelector<HTMLButtonElement>('.cw-account-anchor > .cw-avatar');
+        target?.focus({ preventScroll: true });
       }
     };
-  }, [account]);
-  function isOutside(event: { clientX: number; clientY: number }) {
-    const bounds = ref.current?.getBoundingClientRect();
-    return (
-      !!bounds &&
-      (event.clientX < bounds.left ||
-        event.clientX > bounds.right ||
-        event.clientY < bounds.top ||
-        event.clientY > bounds.bottom)
-    );
-  }
+  }, [variant]);
   return (
     <dialog
       ref={ref}
-      className={`cw-dialog${account ? ' cw-signin-dialog' : ''}`}
-      aria-labelledby={account ? 'signin-title' : 'cw-dialog-title'}
-      onCancel={(event) => {
-        event.preventDefault();
-        onClose();
-      }}
-      onPointerDown={(event) => {
-        outsidePointer.current = account && isOutside(event);
-      }}
-      onPointerUp={(event) => {
-        if (outsidePointer.current && isOutside(event)) onClose();
-        outsidePointer.current = false;
-      }}
-      onKeyDown={(event) => {
-        if (!account || event.key !== 'Tab') return;
-        const controls = Array.from(
-          event.currentTarget.querySelectorAll<HTMLElement>(
-            'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]',
-          ),
-        ).filter((element) => element.getClientRects().length > 0);
-        const first = controls[0],
-          last = controls[controls.length - 1];
-        if (!first || !last) return;
-        if (
-          event.shiftKey &&
-          (document.activeElement === first ||
-            document.activeElement?.id === 'signin-title')
-        ) {
-          event.preventDefault();
-          last.focus();
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault();
-          first.focus();
-        }
-      }}
+      className={`cw-dialog${variant === 'account' ? ' ca-dialog' : ''}`}
+      aria-labelledby="cw-dialog-title"
+      onCancel={onClose}
     >
       <header>
-        {account ? (
-          <Image
-            width={100}
-            height={36}
-            unoptimized
-            className="signin-wordmark"
-            src="/brand/conclave-wordmark.svg"
-            alt="Conclave"
-          />
-        ) : (
-          <h2 id="cw-dialog-title">{title}</h2>
-        )}
+        <h2 id="cw-dialog-title">{title}</h2>
         <button
           data-icon-trigger
           className="cw-icon-button"
           onClick={onClose}
           aria-label={t('Close dialog')}
         >
-          {account ? <X size={19} /> : <MotionIcon name="close" size={21} />}
+          {variant === 'account' ? <X size={19} /> : <MotionIcon name="close" size={21} />}
         </button>
       </header>
       <div className="cw-dialog-content">{children}</div>
@@ -395,7 +347,10 @@ function CanvasWorkspaceShell({
   const t = useT();
   const [localState, setState] = useState<WorkspaceState>(initialWorkspace);
   const checkContent = useContentGuard();
+  const [fomoResult, setFomoResult] = useState<{subjectId:string;projectId:string;title:string}|null>(null);
   const checkingContent = useRef(false);
+  const shellActive = useRef(true);
+  useEffect(() => { shellActive.current = true; return () => { shellActive.current = false; }; }, []);
 
   const state = live.active ? live.state : localState;
   const localStateRef = useRef(localState);
@@ -448,12 +403,38 @@ function CanvasWorkspaceShell({
   const room =
     state.rooms.find((item) => item.id === state.activeRoomId) ||
     state.rooms[0];
-  const routing = routingByProject[room.id] ?? DEFAULT_ROUTING_PREFERENCES;
+  const routing = isVisible('routes')
+    ? routingByProject[room.id] ?? DEFAULT_ROUTING_PREFERENCES
+    : DEFAULT_ROUTING_PREFERENCES;
   const updateRouting = (value: WorkspaceRoutingPreferences) =>
     setRoutingByProject((current) => ({ ...current, [room.id]: value }));
   const isConversation = view === 'canvas' || view === 'chat';
   const isStudio = view === 'studio';
-  const isComposerView = isConversation || isStudio;
+  const isSecondLook = featureOn('secondLook') && view === 'second-look';
+  const [secondLookDraftStore, setSecondLookDraftStore] = useState<{
+    accountId: string | null;
+    value: string;
+  }>({ accountId: null, value: '' });
+  const secondLookDraft =
+    secondLookDraftStore.accountId === (live.account?.accountId ?? null)
+      ? secondLookDraftStore.value
+      : '';
+  const setSecondLookDraft = useCallback(
+    (value: string) =>
+      setSecondLookDraftStore({
+        accountId: live.account?.accountId ?? null,
+        value,
+      }),
+    [live.account?.accountId],
+  );
+  const [secondLookComposer, setSecondLookComposer] = useState<ComposerState>({
+    placeholder: 'Paste a FOMO callout or profile link…',
+    label: 'Research FOMO',
+    busy: false,
+  });
+  const secondLookControl = useRef<ComposerControl | null>(null);
+
+  const isComposerView = isConversation || isStudio || isSecondLook;
   const studio = useStudioSession(room.id);
   // Hidden Studio reads nothing: without an account scope the hook makes no media requests.
   const liveStudio = useLiveStudio({
@@ -464,16 +445,22 @@ function CanvasWorkspaceShell({
     projectId: live.active && room.live && isVisible('studio') ? room.id : null,
     active: live.active && isStudio,
   });
-  const composerDraft = isStudio ? studio.draft.prompt : room.draft;
+  const composerDraft = isSecondLook
+    ? secondLookDraft
+    : isStudio
+      ? studio.draft.prompt
+      : room.draft;
   const composerModelIds = isStudio
     ? studio.draft.modelIds
-    : room.selectedModels;
-  const composerModels = isStudio ? STUDIO_MODELS : MODELS;
-  const composerAttachments = isStudio
-    ? studio.draft.reference
-      ? [studio.draft.reference.name]
-      : []
-    : attached;
+    : releasedModelSelection(room.selectedModels, live.active ? [] : ['claude', 'gemini']);
+  const composerModels = isStudio ? STUDIO_MODELS : MODELS.filter((model) => modelReleased(model.id));
+  const composerAttachments = isSecondLook
+    ? []
+    : isStudio
+      ? studio.draft.reference
+        ? [studio.draft.reference.name]
+        : []
+      : attached;
   const composerStrict = isStudio ? studio.draft.strict : strict;
   const submissionVersion = JSON.stringify({
     account: live.account?.accountId,
@@ -625,6 +612,7 @@ function CanvasWorkspaceShell({
         new URLSearchParams(location.search).get('view');
       const hash = requested || DEFAULT_VIEW;
       const aliases: Record<string, View> = {
+        fomo: 'second-look',
         projects: 'rooms',
         room: 'chat',
         compare: 'canvas',
@@ -649,6 +637,7 @@ function CanvasWorkspaceShell({
           ? (candidate as View)
           : DEFAULT_VIEW;
       setView(next);
+      setSecondLookDraftStore({ accountId: null, value: '' });
       setGuardMessage('');
       setRedacted(null);
       setModelQuery('');
@@ -809,6 +798,7 @@ function CanvasWorkspaceShell({
   function navigate(requested: View) {
     const next = isVisible(requested) ? requested : DEFAULT_VIEW;
     setView(next);
+    setSecondLookDraftStore({ accountId: null, value: '' });
     setGuardMessage('');
     setRedacted(null);
     setModelQuery('');
@@ -844,7 +834,7 @@ function CanvasWorkspaceShell({
     const draft = currentRoom.draft
       ? `${currentRoom.draft}\n\n${suggestion}`
       : suggestion;
-    if (draft.length > canvasLimits.draft) {
+    if (!live.active && draft.length > canvasLimits.draft) {
       notify(
         'Your current draft is too long to add this question. Your text has been kept unchanged.',
       );
@@ -919,6 +909,7 @@ function CanvasWorkspaceShell({
     setPopup(null);
   }
   function toggleModel(id: string) {
+    if (!isStudio && !modelReleased(id)) return;
     if (live.active && !isStudio && routing.mode === 'auto') {
       updateRouting({ ...routing, mode: 'manual' });
       if (composerModelIds.includes(id)) return;
@@ -942,9 +933,25 @@ function CanvasWorkspaceShell({
     else updateRoom({ selectedModels: next });
   }
   function setComposerDraft(draft: string) {
+    if (isSecondLook) {
+      setSecondLookDraft(draft);
+      return true;
+    }
     return isStudio ? studio.update({ prompt: draft }) : updateRoom({ draft });
   }
   async function submit() {
+    if (isSecondLook) {
+      if (!secondLookDraft.trim() || secondLookComposer.busy) return;
+      if (containsSecret(secondLookDraft)) {
+        setGuardMessage(
+          'Remove private keys or recovery phrases before continuing.',
+        );
+        return;
+      }
+      setGuardMessage('');
+      await secondLookControl.current?.submit(secondLookDraft);
+      return;
+    }
     if (live.status === 'loading') {
       notify('Checking workspace availability. Try again in a moment.');
       return;
@@ -1010,7 +1017,7 @@ function CanvasWorkspaceShell({
         }
         await live.quotePrompt({
           prompt: composerDraft,
-          modelIds: pickerOrder(room.selectedModels, MODELS),
+          modelIds: pickerOrder(composerModelIds, composerModels),
           blind: blindComparison && routing.mode !== 'auto',
           routing,
           onProjectCreated: (projectId) =>
@@ -1063,7 +1070,7 @@ function CanvasWorkspaceShell({
       );
       return;
     }
-    const nextTurn = createSampleTurn(prompt, room.selectedModels);
+    const nextTurn = createSampleTurn(prompt, composerModelIds);
     if (
       !updateRoom({
         turns: [...room.turns, nextTurn],
@@ -1127,7 +1134,7 @@ function CanvasWorkspaceShell({
       const draft = currentRoom.draft
         ? `${currentRoom.draft}\n\n${followUp}`
         : followUp;
-      if (draft.length > canvasLimits.draft) {
+      if (!live.active && draft.length > canvasLimits.draft) {
         notify(
           'Your current draft is too long to add this follow-up. Your text has been kept unchanged.',
         );
@@ -1358,7 +1365,11 @@ function CanvasWorkspaceShell({
           aria-label={t(item.label)}
           aria-current={view === item.id ? 'page' : undefined}
         >
-          <MotionIcon name={item.id} size={44} active={view === item.id} />
+          <MotionIcon
+            name={item.id === 'second-look' ? 'search' : item.id}
+            size={44}
+            active={view === item.id}
+          />
           <span className="cw-tooltip">{t(item.label)}</span>
         </button>
       ))}
@@ -1493,15 +1504,21 @@ function CanvasWorkspaceShell({
           data-icon-trigger
           className="cw-attach"
           onClick={() => attachment.current?.click()}
-          aria-label={t('Add files to this project')}
-          title={t('Add files locally')}
+          aria-label={
+            isSecondLook
+              ? t('Read a text request from a file')
+              : t('Add files to this project')
+          }
+          title={
+            isSecondLook ? t('Read a text request locally') : t('Add files locally')
+          }
         >
           <MotionIcon name="attach" size={22} />
         </button>
         <textarea
           ref={composer}
           rows={1}
-          maxLength={canvasLimits.draft}
+          maxLength={isSecondLook ? 50000 : live.active ? undefined : canvasLimits.draft}
           value={composerDraft}
           onChange={(event) => {
             if (setComposerDraft(event.target.value)) {
@@ -1509,13 +1526,19 @@ function CanvasWorkspaceShell({
               setRedacted(null);
             }
           }}
-          aria-label={t('Message to selected models')}
+          aria-label={
+            isSecondLook
+              ? t(secondLookComposer.label)
+              : t('Message to selected models')
+          }
           placeholder={
-            isStudio
-              ? t('Describe your next scene…')
-              : room.turns.length
-                ? t('Ask a follow-up…')
-                : t('Ask anything…')
+            isSecondLook
+              ? t(secondLookComposer.placeholder)
+              : isStudio
+                ? t('Describe your next scene…')
+                : room.turns.length
+                  ? t('Ask a follow-up…')
+                  : t('Ask anything…')
           }
           onKeyDown={(event) => {
             if (
@@ -1529,194 +1552,160 @@ function CanvasWorkspaceShell({
           }}
         />
 
-        <div data-cw-popover className="cw-model-anchor">
-          <button
-            data-icon-trigger
-            className="cw-selected-models"
-            aria-label={t('Choose models')}
-            aria-expanded={popup === 'models'}
-            title={composerModelIds
-              .map(
-                (id) => composerModels.find((model) => model.id === id)?.name,
-              )
-              .join(', ')}
-            onClick={() => setPopup(popup === 'models' ? null : 'models')}
-          >
-            <span
-              className={`cw-model-stack${composerModelIds.length >= 3 ? ' is-grid' : ''}${composerModelIds.length === 3 ? ' is-pyramid' : ''}`}
-              aria-hidden="true"
+        {isSecondLook ? (
+          <span className="sl-composer-mode">
+            <Shield size={14} />
+            {secondLookComposer.busy ? t('Checking…') : t(secondLookComposer.label)}
+          </span>
+        ) : (
+          <div data-cw-popover className="cw-model-anchor">
+            <button
+              data-icon-trigger
+              className="cw-selected-models"
+              aria-label={t('Choose models')}
+              aria-expanded={popup === 'models'}
+              title={composerModelIds
+                .map(
+                  (id) => composerModels.find((model) => model.id === id)?.name,
+                )
+                .join(', ')}
+              onClick={() => setPopup(popup === 'models' ? null : 'models')}
             >
-              {composerModelIds.map((id) => (
-                <ProviderIcon key={id} id={id} size={20} />
-              ))}
-            </span>
-            <ChevronDown size={13} />
-          </button>
-          {popup === 'models' && (
-            <div className="cw-model-menu cw-menu">
-              <div className="cw-model-menu-head">
-                <h2>
-                  {isStudio
-                    ? t('One direction. Different takes.')
-                    : t('A few different perspectives.')}
-                </h2>
-                <p>
-                  {isStudio
-                    ? live.active
-                      ? t(
-                          'Choose reviewed video routes. Formats and costs appear before approval.',
-                        )
-                      : t('Choose up to four video models for your draft.')
-                    : live.active
-                      ? t('Choose up to {count} connected models.', {
-                          count: canvasLimits.modelsPerTurn,
-                        })
-                      : t('Choose up to {count} sample models.', {
-                          count: canvasLimits.modelsPerTurn,
-                        })}
-                </p>
-              </div>
-              {live.active && !isStudio && (
-                <LiveRoutingOptions
-                  value={routing}
-                  onChange={updateRouting}
-                  availableUsd6={live.balance?.availableUsd6 ?? null}
+              <span
+                className={`cw-model-stack${composerModelIds.length >= 3 ? ' is-grid' : ''}${composerModelIds.length === 3 ? ' is-pyramid' : ''}`}
+                aria-hidden="true"
+              >
+                {composerModelIds.map((id) => (
+                  <ProviderIcon key={id} id={id} size={20} />
+                ))}
+              </span>
+              <ChevronDown size={13} />
+            </button>
+            {popup === 'models' && (
+              <div className="cw-model-menu cw-menu">
+                <div className="cw-model-menu-head">
+                  <h2>
+                    {isStudio
+                      ? t('One direction. Different takes.')
+                      : t('Models')}
+                  </h2>
+                  <p>
+                    {isStudio
+                      ? live.active
+                        ? t('Choose reviewed video routes. Formats and costs appear before approval.')
+                        : t('Choose up to four video models for your draft.')
+                      : live.active
+                        ? t('Choose up to {count} connected models.', {
+                            count: canvasLimits.modelsPerTurn,
+                          })
+                        : t('Choose up to {count} sample models.', {
+                            count: canvasLimits.modelsPerTurn,
+                          })}
+                  </p>
+                </div>
+                {live.active && !isStudio && isVisible('routes') && (
+                  <LiveRoutingOptions
+                    value={routing}
+                    onChange={updateRouting}
+                    availableUsd6={live.balance?.availableUsd6 ?? null}
+                  />
+                )}
+                <label className="cw-search" data-icon-field>
+                  <MotionIcon name="search" size={17} />
+                  <input
+                    aria-label={t('Find a model')}
+                    placeholder={t('Find a model…')}
+                    value={modelQuery}
+                    onChange={(event) => setModelQuery(event.target.value)}
+                  />
+                </label>
+                <ModelPickerOptions
+                  accountScope={live.active ? live.account?.accountId ?? "signed-out" : "preview"}
+                  models={composerModels}
+                  selected={composerModelIds}
+                  available={live.active ? (isStudio ? liveStudio.availableModels : live.availableModels) : null}
+                  query={modelQuery}
+                  studio={isStudio}
+                  onToggle={toggleModel}
                 />
-              )}
-              <label className="cw-search" data-icon-field>
-                <MotionIcon name="search" size={17} />
-                <input
-                  aria-label={t('Find a model')}
-                  placeholder={t('Find a model…')}
-                  value={modelQuery}
-                  onChange={(event) => setModelQuery(event.target.value)}
-                />
-              </label>
-              <div className="cw-model-options">
-                {composerModels
-                  .filter((model) =>
-                    `${model.name} ${model.family}`
-                      .toLowerCase()
-                      .includes(modelQuery.toLowerCase()),
-                  )
-                  .map((model) => (
-                    <button
-                      data-icon-trigger
-                      key={model.id}
-                      disabled={
-                        live.active &&
-                        !composerModelIds.includes(model.id) &&
-                        !(
-                          isStudio
-                            ? liveStudio.availableModels
-                            : live.availableModels
-                        ).includes(model.id)
+                {isStudio && (
+                  <StudioDraftOptions
+                    draft={studio.draft}
+                    onChange={studio.update}
+                    connected={live.active}
+                  />
+                )}
+                {live.active && !isStudio && (
+                  <label className="cw-strict">
+                    <input
+                      type="checkbox"
+                      checked={
+                        blindComparison &&
+                        composerModelIds.length > 1 &&
+                        routing.mode !== 'auto'
                       }
-                      aria-pressed={composerModelIds.includes(model.id)}
-                      onClick={() => toggleModel(model.id)}
-                    >
-                      <ProviderIcon id={model.id} />
-                      <span>
-                        <strong>{model.name}</strong>
-                        <small>
-                          {live.active && isStudio
-                            ? liveStudio.availableModels.includes(model.id)
-                              ? t('Reviewed video route')
-                              : t('No available video route')
-                            : live.active &&
-                                !isStudio &&
-                                ['qwen', 'llama'].includes(model.id)
-                              ? t('Open model · hosted route')
-                              : t(model.specialty)}
-                        </small>
-                      </span>
-                      <span
-                        className={`cw-choice${composerModelIds.includes(model.id) ? ' checked' : ''}`}
-                      >
-                        {composerModelIds.includes(model.id) && (
-                          <Check size={13} />
-                        )}
-                      </span>
-                    </button>
-                  ))}
-              </div>
-              {isStudio && (
-                <StudioDraftOptions
-                  draft={studio.draft}
-                  onChange={studio.update}
-                  connected={live.active}
-                />
-              )}
-              {live.active && !isStudio && (
+                      disabled={
+                        composerModelIds.length < 2 || routing.mode === 'auto'
+                      }
+                      onChange={(event) =>
+                        setBlindComparison(event.target.checked)
+                      }
+                    />
+                    <span>
+                      {t('Blind comparison')}
+                      <small>{t('Hide reply labels until you vote or reveal.')}</small>
+                    </span>
+                  </label>
+                )}
                 <label className="cw-strict">
                   <input
                     type="checkbox"
-                    checked={
-                      blindComparison &&
-                      composerModelIds.length > 1 &&
-                      routing.mode !== 'auto'
-                    }
-                    disabled={
-                      composerModelIds.length < 2 || routing.mode === 'auto'
-                    }
+                    checked={composerStrict}
                     onChange={(event) =>
-                      setBlindComparison(event.target.checked)
+                      isStudio
+                        ? studio.update({ strict: event.target.checked })
+                        : setStrict(event.target.checked)
                     }
                   />
                   <span>
-                    {t('Blind comparison')}
+                    {live.active && !isStudio
+                      ? t('Require sealed execution')
+                      : t('Require a verified route')}
                     <small>
-                      {t('Hide reply labels until you vote or reveal.')}
+                      {live.active && !isStudio
+                        ? t('Only attested routes. No fallback.')
+                        : t('Unverified routes will be blocked.')}
                     </small>
                   </span>
                 </label>
-              )}
-              <label className="cw-strict">
-                <input
-                  type="checkbox"
-                  checked={composerStrict}
-                  onChange={(event) =>
-                    isStudio
-                      ? studio.update({ strict: event.target.checked })
-                      : setStrict(event.target.checked)
-                  }
-                />
-                <span>
-                  {live.active && !isStudio
-                    ? t('Require sealed execution')
-                    : t('Require a verified route')}
-                  <small>
-                    {live.active && !isStudio
-                      ? t('Only attested routes. No fallback.')
-                      : t('Unverified routes will be blocked.')}
-                  </small>
-                </span>
-              </label>
-              {!isStudio && isVisible('routes') && (
-                <button
-                  data-icon-trigger
-                  className="cw-route-link"
-                  onClick={() => openTool('routes')}
-                >
-                  <MotionIcon name="route" size={18} />
-                  {t('Inspect model routes')}
-                  <MotionIcon name="forward" size={14} />
-                </button>
-              )}
-            </div>
-          )}
-        </div>
+                {!isStudio && isVisible('routes') && (
+                  <button
+                    data-icon-trigger
+                    className="cw-route-link"
+                    onClick={() => openTool('routes')}
+                  >
+                    <MotionIcon name="route" size={18} />
+                    {t('Inspect model routes')}
+                    <MotionIcon name="forward" size={14} />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         <button
           data-icon-trigger
           className="cw-send"
           aria-label={
-            isStudio
-              ? live.active
-                ? t('Review video generation')
-                : t('Review Studio draft')
-              : live.active
-                ? t('Review model request')
-                : t('Send sample prompt')
+            isSecondLook
+              ? t(secondLookComposer.label)
+              : isStudio
+                ? live.active
+                  ? t('Review video generation')
+                  : t('Review Studio draft')
+                : live.active
+                  ? t('Review model request')
+                  : t('Send sample prompt')
           }
           title={
             isStudio
@@ -1728,6 +1717,7 @@ function CanvasWorkspaceShell({
           onClick={submit}
           disabled={
             !composerDraft.trim() ||
+            (isSecondLook && secondLookComposer.busy) ||
             (live.active && isStudio && liveStudio.busy)
           }
         >
@@ -1825,14 +1815,6 @@ function CanvasWorkspaceShell({
         </div>
         <div className="cw-account-anchor" data-cw-popover>
           <LanguageToggle className="cw-language" />
-          {!live.signedIn && (
-            <button
-              className="cw-signin-button"
-              onClick={() => openTool('identity')}
-            >
-              {t('Sign in')}
-            </button>
-          )}
           <button
             data-icon-trigger
             className="cw-avatar"
@@ -1906,6 +1888,9 @@ function CanvasWorkspaceShell({
                               {t('Internal test credit · not USDC')}
                             </small>
                           )}
+                          {live.balance.welcomeCreditUsd6 !== undefined && (
+                            <small>{t('Welcome usage credit · not USDC')}</small>
+                          )}
                         </span>
                       ) : (
                         t('Unavailable · Refresh')
@@ -1977,7 +1962,7 @@ function CanvasWorkspaceShell({
             );
         }}
       >
-        {live.active && live.status !== 'ready' && (
+        {!isSecondLook && live.active && live.status !== 'ready' && (
           <div className="cw-loading">
             <p>
               {live.status === 'loading'
@@ -2132,6 +2117,42 @@ function CanvasWorkspaceShell({
               onToast={notify}
             />
           ))}
+        {isSecondLook && (
+          <Suspense
+            fallback={<div className="cw-loading">{t('Opening FOMO…')}</div>}
+          >
+            <SecondLookWorkspace
+              accountId={live.account?.accountId ?? null}
+              controlRef={secondLookControl}
+              onComposer={setSecondLookComposer}
+              onDraft={setSecondLookDraft}
+              onSignIn={() => openTool('identity')}
+              onToast={notify}
+              analysis={{
+                models: MODELS.filter(model=>live.availableModels.includes(model.id)),
+                defaultModelIds: composerModelIds,
+                available: live.callsAvailable && !live.busy,
+                analyze: async ({title,prompt,modelIds,subjectId}) => {
+                  if (!live.signedIn) { openTool('identity'); return false; }
+                  const version = latestSubmission.current;
+                  const checked=await checkContent(prompt);
+                  if (!shellActive.current || latestSubmission.current !== version) return false;
+                  const blocked=checked.findings.find(finding=>finding.severity==='block');
+                  if (blocked) {notify(blocked.message); return false;}
+                  return live.quotePrompt({prompt,modelIds,researchTitle:title,onProjectCreated:projectId=>setFomoResult({subjectId,projectId,title})});
+                },
+                resultSubjectId: fomoResult?.subjectId,
+                turns: fomoResult ? state.rooms.find(item=>item.id===fomoResult.projectId)?.turns ?? [] : [],
+                results: fomoResult ? <ChatThread
+                  turns={state.rooms.find(item=>item.id===fomoResult.projectId)?.turns ?? []}
+                  actions={actions}
+                  preferences={chatPreferences[fomoResult.projectId] ?? {}}
+                  onPreferenceChange={updateChatPreference}
+                /> : null,
+              }}
+            />
+          </Suspense>
+        )}
         {pageViews.some(isVisible) && (
           <WorkspacePages
             account={
@@ -2143,7 +2164,7 @@ function CanvasWorkspaceShell({
                   }
                 : undefined
             }
-            view={isConversation ? undefined : view}
+            view={isConversation || view === 'second-look' ? undefined : view}
             state={state}
             query={query}
             onOpenRoom={openRoom}
@@ -2243,14 +2264,43 @@ function CanvasWorkspaceShell({
         ref={attachment}
         hidden
         type="file"
-        multiple={!isStudio}
+        multiple={!isStudio && !isSecondLook}
         accept={
-          isStudio
-            ? 'image/jpeg,image/png,image/webp,image/gif'
-            : '.txt,.md,.csv,.json,image/*'
+          isSecondLook
+            ? '.txt,.json'
+            : isStudio
+              ? 'image/jpeg,image/png,image/webp,image/gif'
+              : '.txt,.md,.csv,.json,image/*'
         }
         onChange={(event) => {
           const files = Array.from(event.target.files || []);
+          if (isSecondLook) {
+            const file = files[0];
+            event.target.value = '';
+            if (!file) return;
+            if (file.size > 50000) {
+              notify('Choose a text request smaller than 50 KB.');
+              return;
+            }
+            const version = latestSubmission.current;
+            void file.text().then(
+              (text) => {
+                if (latestSubmission.current !== version) return;
+                if (containsSecret(text)) {
+                  notify(
+                    'This file appears to contain a secret and was not loaded.',
+                  );
+                  return;
+                }
+                setSecondLookDraft(text);
+                notify(
+                  'Request loaded in this tab. Review it before inspecting.',
+                );
+              },
+              () => notify('This file could not be read.'),
+            );
+            return;
+          }
           if (isStudio) {
             const message = studio.attach(files[0]);
             if (message) notify(message);
@@ -2323,8 +2373,8 @@ function CanvasWorkspaceShell({
       )}
       {dialog && (
         <Dialog
-          title={t(dialogTitles[dialog])}
-          account={dialog === 'identity' && !live.signedIn}
+          title={t(dialog === 'identity' && !live.signedIn ? 'Connect to Conclave' : dialogTitles[dialog])}
+          variant={dialog === 'identity' ? 'account' : undefined}
           onClose={() => setDialog(null)}
         >
           {dialog === 'studio-review' ? (

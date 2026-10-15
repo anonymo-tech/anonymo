@@ -1,3 +1,4 @@
+import { publicInferenceErrorCode } from './public-inference.ts';
 import { createDatabase, one } from '../db/database.ts';
 import { getSession } from './session.ts';
 import { uuidField } from '../core/http.ts';
@@ -103,7 +104,7 @@ export async function callEventStream(
                 {
                   id,
                   state: call.state,
-                  errorCode: call.error_code,
+                  errorCode: publicInferenceErrorCode(call.error_code),
                   output,
                   // Additive: true once a stop was requested. A running call
                   // with this flag is settling: output is frozen while the

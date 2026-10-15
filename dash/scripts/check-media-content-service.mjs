@@ -39,9 +39,7 @@ const settings = {
   CONCLAVE_ACTIVE_DATA_KEY: keys.active,
   CONCLAVE_INFERENCE_ENABLED: 'false',
   CONCLAVE_MEDIA_ENABLED: 'false',
-  GATEWAY_API_KEY: undefined,
-  GATEWAY_API_ORIGIN: 'https://api.inference.invalid',
-  GATEWAY_EVIDENCE_ORIGINS: '["https://inference.invalid","https://www.inference.invalid"]',
+  PPQ_API_KEY: undefined,
 };
 const previous = Object.fromEntries(
   Object.keys(settings).map((key) => [key, process.env[key]]),
@@ -193,7 +191,7 @@ void test('owned content streams through real session authorization without prov
   assert.equal(chunks.length, 3);
   assert.deepEqual(Buffer.concat(chunks), f.bytes);
   assert.equal(networkCalls, 0);
-  assert.equal(process.env.GATEWAY_API_KEY, undefined);
+  assert.equal(process.env.PPQ_API_KEY, undefined);
 });
 
 void test('real boundary and suffix ranges deliver exact owned bytes and download headers', async () => {

@@ -24,7 +24,10 @@ export interface Translator {
   locale: Locale;
 }
 
-type Snapshot = { readonly locale: Locale; readonly dictionary: Dictionary | null };
+type Snapshot = {
+  readonly locale: Locale;
+  readonly dictionary: Dictionary | null;
+};
 
 const STORAGE_KEY = 'conclave-locale';
 const SERVER: Snapshot = { locale: 'en', dictionary: null };
@@ -93,8 +96,10 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production')
 
 function lookup(state: Snapshot, text: string): string {
   if (state.locale !== 'zh' || !state.dictionary) return text;
-  const found = state.dictionary[text];
-  if (found !== undefined) return found;
+  const found = Object.hasOwn(state.dictionary, text)
+    ? state.dictionary[text]
+    : undefined;
+  if (typeof found === 'string') return found;
   if (text.trim()) missing.add(text);
   return text;
 }
@@ -102,7 +107,7 @@ function lookup(state: Snapshot, text: string): string {
 const fill = (template: string, vars?: Vars) =>
   vars
     ? template.replace(/\{(\w+)\}/g, (match, name: string) =>
-        name in vars ? String(vars[name]) : match,
+        Object.hasOwn(vars, name) ? String(vars[name]) : match,
       )
     : template;
 
@@ -116,7 +121,7 @@ function richly(
       ? createElement(
           Fragment,
           { key: index },
-          part in nodes ? nodes[part] : `{${part}}`,
+          Object.hasOwn(nodes, part) ? nodes[part] : `{${part}}`,
         )
       : part,
   );

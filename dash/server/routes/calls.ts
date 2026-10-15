@@ -1,3 +1,5 @@
+import { CHAT_LIMITS } from '../../lib/chat-limits.ts';
+import { publicInferenceErrorCode } from './public-inference.ts';
 import type { Pool } from 'pg';
 import {
   jsonResponse,
@@ -25,7 +27,6 @@ import { requireProject } from './projects.ts';
 import {
   assertUsableRoute,
   callRequestHash,
-  CHAT_REQUEST_BUDGET_USD6,
   parseChatInput,
   quoteMaximum,
   type RouteVersion,
@@ -52,7 +53,7 @@ export async function callRoutes(
   providerConfigured: boolean,
 ): Promise<Response | null> {
   if ((path === 'quotes' || path === 'calls') && request.method === 'POST') {
-    const body = await readJson(request, 196608);
+    const body = await readJson(request, CHAT_LIMITS.requestBytes);
     const projectId = uuidField(body.projectId),
       routeVersionId = uuidField(body.routeVersionId);
     const input = parseChatInput(body);
@@ -114,7 +115,7 @@ export async function callRoutes(
           platformFee,
           reservation,
         } = priceQuoteMaximum(quoteMaximum(route, input), {
-          limitUsd6: CHAT_REQUEST_BUDGET_USD6,
+          
         }),
         id = crypto.randomUUID();
       const result = await transaction(pool, async (client) => {
@@ -260,7 +261,7 @@ export async function callRoutes(
         call: {
           id,
           state: call.state,
-          errorCode: call.error_code,
+          errorCode: publicInferenceErrorCode(call.error_code),
           output,
           cancelRequested: call.cancel_requested,
           updatedAt: call.updated_at,

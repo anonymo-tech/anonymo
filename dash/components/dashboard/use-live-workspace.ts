@@ -1,4 +1,6 @@
 'use client';
+import { MAX_ROUTING_CANDIDATES } from '../../lib/model-routing.ts';
+import { CHAT_LIMITS } from '../../lib/chat-limits.ts';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AccountSession } from '../../lib/client/service.ts';
@@ -31,6 +33,7 @@ import type {
   WorkspaceState,
 } from './canvas-state.ts';
 import { MODELS } from './data.ts';
+import { modelReleased } from '../../lib/model-release.ts';
 import {
   ModelRoutingError,
   resolveModelMentions,
@@ -46,6 +49,7 @@ export type LiveStatus =
   | 'ready'
   | 'error';
 export type LiveRequestReview = {
+  researchTitle?: string;
   projectId: string;
   prompt: string;
   blind: boolean;
@@ -119,6 +123,7 @@ const available = (routes: ServiceRoute[], nowMs = Date.now()) =>
   routes.filter(
     (route) =>
       route.available &&
+      modelReleased(route.family) &&
       route.modality === 'chat' &&
       route.card.reviewed &&
       Date.parse(route.expiresAt) > nowMs,
@@ -136,7 +141,7 @@ export function conversationItems(
     : [];
   const contexts: LiveRequestReview['contexts'] = [];
   const items = routes.map((route) => {
-    const budget = Math.min(32768, route.pricing.maxInputBytes);
+    const budget = Math.min(CHAT_LIMITS.inputBytes, route.pricing.maxInputBytes);
     let bytes = encoder.encode(prompt).byteLength;
     if (bytes > budget)
       throw new WorkspaceError(
@@ -184,9 +189,8 @@ export function conversationItems(
       const pairBytes =
         encoder.encode(turn.prompt).byteLength +
         encoder.encode(output).byteLength;
-      if (messages.length + 2 > 40 || bytes + pairBytes > budget) {
-        omit('sizeLimit', i + 1);
-        break;
+      if (messages.length + 2 > CHAT_LIMITS.messages || bytes + pairBytes > budget) {
+        throw new WorkspaceError('PROMPT_TOO_LARGE', 'This conversation exceeds the safe request size. Start a new chat to continue. Your saved history is unchanged.');
       }
       messages.unshift(
         { role: 'user', content: turn.prompt },
@@ -205,7 +209,7 @@ export function conversationItems(
     return {
       routeVersionId: route.versionId,
       messages,
-      maxOutputTokens: Math.min(2048, route.pricing.maxOutputTokens),
+      maxOutputTokens: route.pricing.maxOutputTokens,
       privacy: 'standard' as const,
     };
   });
@@ -243,16 +247,16 @@ export function prepareWorkspaceRouting(
   if (auto) {
     selected = catalog.filter(
       (route) =>
-        route.pricing.maxOutputTokens >= 2048 &&
+        route.pricing.maxOutputTokens >= 1 &&
         route.card.routing?.tasks.includes(preferences.task) &&
         routingProfileFresh(route.card.routing, nowMs, route.expiresAt) &&
         new TextEncoder().encode(prompt).byteLength <=
           route.pricing.maxInputBytes,
     );
-    if (selected.length > 16)
+    if (selected.length > MAX_ROUTING_CANDIDATES)
       throw new WorkspaceError(
         'AUTO_ROUTE_LIMIT',
-        'More than sixteen reviewed routes match this task. Choose models manually rather than omitting candidates.',
+        'More than 256 reviewed routes match this task. Choose models manually rather than omitting candidates.',
       );
     if (!selected.length)
       throw new WorkspaceError(
@@ -301,6 +305,38 @@ export function prepareWorkspaceRouting(
       : null,
     overridesAuto: !!mentions.length && preferences?.mode === 'auto',
     budgetUsd6,
+  };
+}
+
+/** Research uses exactly four explicit picks with no unrelated conversation history. */
+export function prepareFomoComparison(
+  room: Room,
+  prompt: string,
+  models: string[],
+  routes: ServiceRoute[],
+  nowMs = Date.now(),
+): ReturnType<typeof prepareWorkspaceRouting> {
+  if (models.length !== 4 || new Set(models).size !== 4)
+    throw new WorkspaceError(
+      'INVALID_MODELS',
+      'Choose four different models for this analysis.',
+    );
+  const catalog = available(routes, nowMs);
+  const selected = models.map((id) => catalog.find((route) => route.family === id));
+  if (selected.some((route) => !route))
+    throw new WorkspaceError(
+      'ROUTE_UNAVAILABLE',
+      'One of the chosen models is unavailable. Choose a replacement.',
+    );
+  const resolved = selected as ServiceRoute[];
+  return {
+    prompt,
+    mentions: [],
+    routes: resolved,
+    conversation: conversationItems({ ...room, turns: [], live: undefined }, prompt, resolved),
+    auto: null,
+    overridesAuto: false,
+    budgetUsd6: null,
   };
 }
 
@@ -1100,7 +1136,7 @@ export function useLiveWorkspace({
       if (
         !accountRef.current ||
         typeof draft !== 'string' ||
-        draft.length > 6000
+        new TextEncoder().encode(draft).byteLength > CHAT_LIMITS.inputBytes
       )
         return;
       commit((current) => ({
@@ -1144,6 +1180,7 @@ export function useLiveWorkspace({
         modelIds?: string[];
         blind?: boolean;
         routing?: WorkspaceRoutingPreferences;
+        researchTitle?: string;
         onProjectCreated?: (projectId: string) => void;
       } = {},
     ) =>
@@ -1160,7 +1197,32 @@ export function useLiveWorkspace({
         )!;
         const draft = options.prompt ?? room.draft,
           models = options.modelIds ?? room.selectedModels;
-        const planned = prepareWorkspaceRouting(
+        if (!options.researchTitle) {
+          // History pages contain previews. Load every eligible exchange before quoting,
+          // so scrolling the UI cannot change the context sent to a model.
+          const cursors = new Set<string>();
+          while (room.live?.historyCursor) {
+            const cursor = room.live.historyCursor;
+            if (cursors.has(cursor)) throw new WorkspaceError('INVALID_RESPONSE', 'Conversation history could not be loaded. Please retry.');
+            cursors.add(cursor);
+            const page = await ctx.client.comparisons(room.id, cursor);
+            if (!ctx.current()) return false;
+            room = { ...room, turns: mergeHistory(room.turns, page.items),
+              live: { ...room.live, historyCursor: page.nextCursor } };
+          }
+          for (const turn of room.turns) {
+            if (turn.live?.blind && !turn.live.revealedAt) continue;
+            if (turn.answers.some((a) => a.live?.state === 'succeeded' && a.live.outputTruncated)) {
+              const full = await ctx.client.comparison(turn.id);
+              if (!ctx.current()) return false;
+              room = { ...room, turns: mergeHistory(room.turns, [full]) };
+            }
+          }
+          const loadedRoom = room;
+          commit((current) => ({ ...current, rooms: current.rooms.map((item) =>
+            item.id === loadedRoom.id ? { ...item, turns: loadedRoom.turns, live: loadedRoom.live } : item) }));
+        }
+        const planned = options.researchTitle ? prepareFomoComparison(room, draft, models, routesRef.current) : prepareWorkspaceRouting(
           room,
           draft,
           models,
@@ -1169,12 +1231,12 @@ export function useLiveWorkspace({
         );
         const { prompt } = planned;
         // A project is created only as part of this explicit send action or createProject.
-        if (room.id === emptyId) {
-          const project = await ctx.client.createProject(DEFAULT_PROJECT_TITLE);
+        if (room.id === emptyId || options.researchTitle) {
+          const project = await ctx.client.createProject(options.researchTitle?.slice(0, 80) ?? DEFAULT_PROJECT_TITLE);
           if (!ctx.current()) return false;
           const created = {
             ...projectRoom(project, models),
-            draft:
+            draft: options.researchTitle ? '' :
               stateRef.current.rooms.find((item) => item.id === emptyId)
                 ?.draft ?? room.draft,
           };
@@ -1260,6 +1322,7 @@ export function useLiveWorkspace({
           quotes.quotes[0].expiresAt,
         );
         const review: LiveRequestReview = {
+          ...(options.researchTitle ? { researchTitle: options.researchTitle } : {}),
           projectId: room.id,
           prompt,
           blind: input.blind,

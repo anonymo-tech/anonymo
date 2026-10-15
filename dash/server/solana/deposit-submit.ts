@@ -2,7 +2,12 @@ import type { Pool } from 'pg';
 import { one, transaction } from '../db/database.ts';
 import { requireCondition, ServiceError } from '../core/errors.ts';
 import { ownedDeposit, getOwnedDeposit } from './deposit-store.ts';
-import { ownedPayment, getOwnedPayment } from './deposit-payment.ts';
+import {
+  ownedPayment,
+  getOwnedPayment,
+  paymentTerms,
+  assertAccountCreationRent,
+} from './deposit-payment.ts';
 import { depositConfiguration, sameDepositPolicy } from './deposit-config.ts';
 import { createPaymentRpc, type PaymentRpc } from './payment-rpc.ts';
 import { record, uint } from './validation.ts';
@@ -64,15 +69,7 @@ export async function submitOwnedPayment(
     try {
       const checked = validateSignedDepositTransaction(
         decodeTransactionBase64(signedTransaction),
-        {
-          sourceWallet: intent.source_wallet,
-          sourceTokenAccount: payment.source_token_account,
-          recipientTokenAccount: intent.policy.recipientTokenAccount,
-          mint: intent.policy.usdcMint,
-          reference: intent.reference,
-          amountUsd6: intent.amount_usd6,
-          recentBlockhash: payment.recent_blockhash,
-        },
+        paymentTerms(intent, payment),
       );
       signature = checked.signature;
       signedTransaction = encodeTransactionBase64(checked.signedTransaction);
@@ -92,8 +89,16 @@ export async function submitOwnedPayment(
       'Another signature is already retained for this payment. Recover that original transfer.',
     );
     if (intent.state === 'credited') return { settled: true as const };
-    requireCondition(await one(db, "SELECT id FROM identities WHERE account_id=$1 AND kind='solana' AND subject=$2 AND revoked_at IS NULL", [input.accountId, intent.source_wallet]),
-      409, 'DEPOSIT_SOURCE_UNAVAILABLE', 'The deposit source wallet is no longer linked. Recover existing transfers before continuing.');
+    requireCondition(
+      await one(
+        db,
+        "SELECT id FROM identities WHERE account_id=$1 AND kind='solana' AND subject=$2 AND revoked_at IS NULL",
+        [input.accountId, intent.source_wallet],
+      ),
+      409,
+      'DEPOSIT_SOURCE_UNAVAILABLE',
+      'The deposit source wallet is no longer linked. Recover existing transfers before continuing.',
+    );
     const config = depositConfiguration();
     requireCondition(
       config.capability.walletSubmission && config.policy && config.rpcUrl,
@@ -136,6 +141,7 @@ export async function submitOwnedPayment(
       recentBlockhash: payment.recent_blockhash,
       lastValidBlockHeight: payment.last_valid_block_height,
       contextSlot: payment.context_slot,
+      accountCreationLamports: String(payment.account_creation_lamports ?? '0'),
       rpcUrl: config.rpcUrl,
       cluster: intent.policy.cluster,
       policy: intent.policy,
@@ -158,6 +164,11 @@ export async function submitOwnedPayment(
     );
     try {
       await rpc.verifyGenesis(options.signal);
+      await assertAccountCreationRent(
+        rpc,
+        pinned.accountCreationLamports,
+        options.signal,
+      );
       const contextSlot = Number(pinned.contextSlot);
       const valid = record(
         await rpc.call(
@@ -219,8 +230,16 @@ export async function submitOwnedPayment(
           'The saved signature changed. Recover the original payment.',
         );
         if (intent.state === 'credited') return true;
-        requireCondition(await one(db, "SELECT id FROM identities WHERE account_id=$1 AND kind='solana' AND subject=$2 AND revoked_at IS NULL", [input.accountId, intent.source_wallet]),
-          409, 'DEPOSIT_SOURCE_UNAVAILABLE', 'The deposit source wallet is no longer linked. Recover existing transfers before continuing.');
+        requireCondition(
+          await one(
+            db,
+            "SELECT id FROM identities WHERE account_id=$1 AND kind='solana' AND subject=$2 AND revoked_at IS NULL",
+            [input.accountId, intent.source_wallet],
+          ),
+          409,
+          'DEPOSIT_SOURCE_UNAVAILABLE',
+          'The deposit source wallet is no longer linked. Recover existing transfers before continuing.',
+        );
         requireCondition(
           saved.state === 'submitted',
           409,

@@ -599,13 +599,13 @@ function PursePanels({
         </g>
         <path d="M61 64h228" className="morph-rule" />
         <text x="61" y="88" className="morph-muted">
-          {t("Model usage")}
+          {t("Reserved usage")}
         </text>
         <text x="289" y="88" textAnchor="end" className="morph-strong">
-          20.00
+          21.00
         </text>
         <text x="61" y="114" className="morph-muted">
-          {t("Service fee · 5%")}
+          {t("Unused balance released")}
         </text>
         <text x="289" y="114" textAnchor="end" className="morph-strong">
           1.00
@@ -615,10 +615,10 @@ function PursePanels({
           {t("Total")}
         </text>
         <text x="289" y="159" textAnchor="end" className="morph-large">
-          21.00 USDC
+          20.00 USD
         </text>
         <text x="61" y="192" className="morph-small morph-muted">
-          {t("Illustrative total · no charge")}
+          {t("Illustrative usage receipt")}
         </text>
       </Panel>
     </>

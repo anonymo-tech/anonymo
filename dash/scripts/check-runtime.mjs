@@ -11,7 +11,7 @@ import {
 import { serviceConfig, requireService } from '../server/core/config.ts';
 import { configuredKeyring } from '../server/core/encryption.ts';
 import { configuredReceiptSigner } from '../server/receipts/service.ts';
-import { createGatewayClient } from '../server/gateway/index.ts';
+import { createPpqClient } from '../server/ppq/index.ts';
 import { crossCheckExecutionConfigured } from '../server/crosscheck/execution.ts';
 import { callRoutes } from '../server/routes/calls.ts';
 import { comparisonRoutes } from '../server/routes/comparisons.ts';
@@ -23,7 +23,7 @@ const uuid = '00000000-0000-4000-8000-000000000001';
 async function environment(values, run) {
   const names = new Set([
     ...Object.keys(process.env).filter(
-      (name) => name.startsWith('CONCLAVE_') || name === 'GATEWAY_API_KEY',
+      (name) => name.startsWith('CONCLAVE_') || name === 'PPQ_API_KEY',
     ),
     ...Object.keys(values),
   ]);
@@ -141,9 +141,7 @@ void test('integrated media capability requires service storage and explicit gen
       CONCLAVE_MODE: 'service',
       CONCLAVE_APP_ORIGIN: 'https://conclave.test',
       CONCLAVE_DATABASE_URL: 'postgresql://runtime_test@127.0.0.1/runtime_test',
-      GATEWAY_API_KEY: 'synthetic-provider-key',
-      GATEWAY_API_ORIGIN: 'https://api.inference.invalid',
-      GATEWAY_EVIDENCE_ORIGINS: '["https://inference.invalid","https://www.inference.invalid"]',
+      PPQ_API_KEY: 'synthetic-provider-key',
       CONCLAVE_INFERENCE_ENABLED: 'true',
       CONCLAVE_MEDIA_ENABLED: 'true',
       CONCLAVE_DATA_KEYS: JSON.stringify({
@@ -171,9 +169,7 @@ void test('capabilities return flags without serializing synthetic server creden
       CONCLAVE_MODE: 'service',
       CONCLAVE_APP_ORIGIN: 'https://conclave.test',
       CONCLAVE_DATABASE_URL: secret,
-      GATEWAY_API_KEY: secret,
-      GATEWAY_API_ORIGIN: 'https://api.inference.invalid',
-      GATEWAY_EVIDENCE_ORIGINS: '["https://inference.invalid","https://www.inference.invalid"]',
+      PPQ_API_KEY: secret,
       CONCLAVE_DATA_KEYS: secret,
       CONCLAVE_RECEIPT_SIGNER_SEED_HEX: secret,
     },
@@ -246,7 +242,7 @@ void test('missing provider, encryption and signer configuration fail before net
     assert.equal(depositFlags.configured, false);
     assert.equal(depositFlags.recoveryConfigured, false);
     assert.equal(depositFlags.networkVerified, false);
-    const client = createGatewayClient({
+    const client = createPpqClient({
       fetch: async () => {
         touched = true;
         throw new Error('Unexpected network access');
@@ -272,9 +268,7 @@ void test('Cross-Check paid execution requires every explicit gate and a valid e
     CONCLAVE_MODE: 'service',
     CONCLAVE_CROSSCHECK_ENABLED: 'true',
     CONCLAVE_INFERENCE_ENABLED: 'true',
-    GATEWAY_API_KEY: 'synthetic-test-only',
-    GATEWAY_API_ORIGIN: 'https://api.inference.invalid',
-    GATEWAY_EVIDENCE_ORIGINS: '["https://inference.invalid","https://www.inference.invalid"]',
+    PPQ_API_KEY: 'synthetic-test-only',
     CONCLAVE_APP_ORIGIN: 'https://conclave.test',
     CONCLAVE_DATABASE_URL: 'synthetic-test-only',
     CONCLAVE_ACTIVE_DATA_KEY: 'test',
@@ -307,7 +301,7 @@ void test(
           const body = await readFile(file, 'utf8');
           for (const marker of [
             'CONCLAVE_DATABASE_URL',
-            'GATEWAY_API_KEY',
+            'PPQ_API_KEY',
             'CONCLAVE_DATA_KEYS',
             'CONCLAVE_RECEIPT_SIGNER_SEED_HEX',
             'CONCLAVE_PLATFORM_FEE_BPS',

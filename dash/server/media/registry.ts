@@ -1,12 +1,11 @@
-import { gatewayEvidenceOrigins } from '../gateway/origin.ts';
 import { isDeepStrictEqual } from 'node:util';
 import type { Pool } from 'pg';
 import { one, transaction } from '../db/database.ts';
 import { ServiceError, requireCondition } from '../core/errors.ts';
-import { GATEWAY_MODEL_ALLOWLIST } from '../gateway/catalog.ts';
+import { PPQ_MODEL_ALLOWLIST } from '../ppq/catalog.ts';
 import {
   fetchRouteCatalog,
-  routeCatalogUrl,
+  ROUTE_CATALOG_URL,
   type ReviewedRouteCard,
   type RouteCatalogSnapshot,
 } from '../routes/route-registry.ts';
@@ -129,7 +128,7 @@ function url(value: unknown, family: string, gatewayOnly = false): string {
   try {
     const parsed = new URL(text(value, 8, 2048));
     const allowed = [
-      ...gatewayEvidenceOrigins(),
+      'https://ppq.ai',
       ...(gatewayOnly ? [] : (upstreamOrigins[family] ?? [])),
     ];
     if (
@@ -189,7 +188,7 @@ function card(
   if (
     r.level !== 'unverified' ||
     r.reviewed !== true ||
-    r.provider !== 'gateway' ||
+    r.provider !== 'ppq' ||
     r.plaintextVisibility !== 'gateway_and_upstream'
   )
     return invalid('MEDIA_PRIVACY_UNSUPPORTED');
@@ -242,9 +241,7 @@ function card(
     return invalid('MEDIA_TERMS_REQUIRED');
   const evidenceUrls = urls(terms.evidenceUrls, family);
   if (
-    !evidenceUrls.some((value) =>
-      gatewayEvidenceOrigins().includes(new URL(value).origin),
-    ) ||
+    !evidenceUrls.some((value) => new URL(value).origin === 'https://ppq.ai') ||
     !evidenceUrls.some((value) =>
       upstreamOrigins[family].includes(new URL(value).origin),
     )
@@ -253,7 +250,7 @@ function card(
   return {
     level: 'unverified',
     reviewed: true,
-    provider: 'gateway',
+    provider: 'ppq',
     upstreamProviders,
     plaintextVisibility: 'gateway_and_upstream',
     retentionDays:
@@ -338,11 +335,11 @@ export function validateMediaReview(
     names.add(routeId);
     if (
       !Object.hasOwn(upstreamOrigins, family) ||
-      !Object.hasOwn(GATEWAY_MODEL_ALLOWLIST, family)
+      !Object.hasOwn(PPQ_MODEL_ALLOWLIST, family)
     )
       return invalid('MEDIA_MODEL_UNAVAILABLE');
     const allowed =
-      GATEWAY_MODEL_ALLOWLIST[family as keyof typeof GATEWAY_MODEL_ALLOWLIST];
+      PPQ_MODEL_ALLOWLIST[family as keyof typeof PPQ_MODEL_ALLOWLIST];
     if (
       allowed.modality === 'chat' ||
       r.modality !== allowed.modality ||
@@ -403,7 +400,7 @@ export function validateMediaCatalog(
   const now = Date.parse(utc(checkedAt)),
     fetched = Date.parse(utc(snapshot.fetchedAt));
   if (
-    snapshot.sourceUrl !== routeCatalogUrl() ||
+    snapshot.sourceUrl !== ROUTE_CATALOG_URL ||
     !/^[a-f0-9]{64}$/.test(snapshot.sha256) ||
     fetched > now ||
     now - fetched > CATALOG_MS
@@ -441,7 +438,7 @@ export function validateMediaCatalog(
     }
   }
   return {
-    sourceUrl: routeCatalogUrl(),
+    sourceUrl: ROUTE_CATALOG_URL,
     fetchedAt: snapshot.fetchedAt,
     sha256: snapshot.sha256,
     priceCheck: 'matched',

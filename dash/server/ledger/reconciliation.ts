@@ -158,7 +158,7 @@ function pendingHold(row: PendingRow): PendingHold {
     // Holds stopped before this record existed carry the legacy cancel code.
     stopped:
       row.stopped === true ||
-      ['GATEWAY_CANCELLED', 'CANCEL_DRAIN_TIMEOUT'].includes(row.error_code ?? ''),
+      ['PPQ_CANCELLED', 'CANCEL_DRAIN_TIMEOUT'].includes(row.error_code ?? ''),
     providerReference: row.provider_reference,
     pendingSince: row.updated_at.toISOString(),
   };

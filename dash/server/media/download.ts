@@ -1,5 +1,4 @@
-import { gatewayApiOrigin, parseGatewayOrigin } from '../gateway/origin.ts';
-import type { GatewayMedia } from '../gateway/index.ts';
+import type { PpqMedia } from '../ppq/index.ts';
 
 export const MEDIA_DOWNLOAD_LIMITS = Object.freeze({
   imageBytes: 20 * 1024 * 1024,
@@ -37,7 +36,6 @@ export class MediaDownloadError extends Error {
 export type MediaDownloadOptions = {
   /** Test/runtime dependency injection only; never take this from a request. */
   fetch?: typeof globalThis.fetch;
-  apiOrigin?: string;
   signal?: AbortSignal;
   /** May shorten, but cannot increase, the acquisition deadline. */
   timeoutMs?: number;
@@ -45,13 +43,16 @@ export type MediaDownloadOptions = {
 
 export type AcquiredMedia = {
   bytes: Uint8Array;
-  contentType: GatewayMedia['contentType'];
+  contentType: PpqMedia['contentType'];
 };
 
-function approvedUrl(value: unknown, apiOrigin: string): string {
+function approvedUrl(value: unknown): string {
   if (
     typeof value !== 'string' ||
     value.length > MEDIA_DOWNLOAD_LIMITS.urlCharacters ||
+    !/^https:\/\/api\.ppq\.ai\/v1\/media\/[A-Za-z0-9_-]{1,128}\/(?:0|[1-9][0-9]{0,8})\?/.test(
+      value,
+    ) ||
     /[\s\\]/.test(value) ||
     Array.from(value).some(
       (character) =>
@@ -66,7 +67,7 @@ function approvedUrl(value: unknown, apiOrigin: string): string {
     const expiry = url.searchParams.get('exp');
     if (
       url.href !== value ||
-      url.origin !== apiOrigin ||
+      url.origin !== 'https://api.ppq.ai' ||
       url.username ||
       url.password ||
       url.hash ||
@@ -84,7 +85,7 @@ function approvedUrl(value: unknown, apiOrigin: string): string {
       url.searchParams.toString() !== url.search.slice(1)
     )
       throw new MediaDownloadError('invalid_url');
-    // Expiry is enforced by GATEWAY, not by the worker's clock.
+    // Expiry is enforced by PPQ, not by the worker's clock.
     return url.href;
   } catch {
     throw new MediaDownloadError('invalid_url');
@@ -96,7 +97,7 @@ function ascii(bytes: Uint8Array, start: number, end: number) {
 }
 
 /** A format signature check, not a decoder, metadata scrubber or safety audit. */
-function hasSignature(bytes: Uint8Array, type: GatewayMedia['contentType']) {
+function hasSignature(bytes: Uint8Array, type: PpqMedia['contentType']) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (type === 'image/png')
     return (
@@ -151,22 +152,18 @@ function hasSignature(bytes: Uint8Array, type: GatewayMedia['contentType']) {
 }
 
 /**
- * Acquire only an owned generation's server-persisted GATEWAY result, never a
+ * Acquire only an owned generation's server-persisted PPQ result, never a
  * client-supplied URL. The bytes are UNSANITIZED and must not be stored as a
  * deliverable or sent to a browser until the separate sanitizer accepts them.
  * This GET never generates media and must not change inference billing state.
  */
-export async function downloadGatewayMedia(
-  media: GatewayMedia,
+export async function downloadPpqMedia(
+  media: PpqMedia,
   options: MediaDownloadOptions = {},
 ): Promise<AcquiredMedia> {
-  const apiOrigin =
-    options.apiOrigin === undefined
-      ? gatewayApiOrigin()
-      : parseGatewayOrigin(options.apiOrigin);
-  if (typeof window !== 'undefined' || !apiOrigin)
+  if (typeof window !== 'undefined')
     throw new MediaDownloadError('unavailable');
-  const url = approvedUrl(media?.url, apiOrigin);
+  const url = approvedUrl(media?.url);
   const type = media?.contentType;
   if (!['image/png', 'image/jpeg', 'image/webp', 'video/mp4'].includes(type))
     throw new MediaDownloadError('invalid_request');

@@ -72,7 +72,7 @@ export function useContentGuard() {
         }
         return new Promise((resolve) => {
           const id = crypto.randomUUID();
-          const timer = setTimeout(stop, 5000);
+          const timer = setTimeout(stop, 30000);
           pending.current.set(id, { resolve, timer });
           worker.current!.postMessage({ id, text });
         });

@@ -40,9 +40,7 @@ Object.assign(process.env, {
     test: randomBytes(32).toString('base64'),
   }),
   CONCLAVE_ACTIVE_DATA_KEY: 'test',
-  GATEWAY_API_KEY: 'fixture-not-a-provider-key',
-  GATEWAY_API_ORIGIN: 'https://api.inference.invalid',
-  GATEWAY_EVIDENCE_ORIGINS: '["https://inference.invalid","https://www.inference.invalid"]',
+  PPQ_API_KEY: 'fixture-not-a-provider-key',
   CONCLAVE_INFERENCE_ENABLED: 'true',
 });
 const pool = createDatabase(connection, 12);

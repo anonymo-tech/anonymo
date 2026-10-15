@@ -2,24 +2,24 @@
   isolation: isolate;
   overflow: clip;
   background: #30342e;
-  color: #eee9dc;
+  color: #ffffff;
 }
 .conclave-site .conclave-hero:after { background: none; }
 .conclave-site .conclave-nav:not(.nav-scrolled) {
-  color: #eee9dc;
-  border-color: #eee9dc55;
+  color: #ffffff;
+  border-color: #ffffff55;
 }
-.conclave-nav:not(.nav-scrolled) .nav-enter { border-color: #eee9dc80; }
-.conclave-nav:not(.nav-scrolled) .nav-enter:hover { background: #eee9dc; color: #171713; }
+.conclave-nav:not(.nav-scrolled) .nav-enter { border-color: #ffffff80; }
+.conclave-nav:not(.nav-scrolled) .nav-enter:hover { background: #ffffff; color: #171713; }
 .conclave-site .conclave-hero .hero-description {
-  color: #eee9dc;
+  color: #ffffff;
   text-shadow: none;
   padding: 15px 17px;
   background: #171713e8;
   border-left: 2px solid #ee281c;
 }
-.conclave-hero .hero-entry > a { border-color: #eee9dc80; }
-.conclave-hero .hero-entry > a:hover { color: #eee9dc; }
+.conclave-hero .hero-entry > a { border-color: #ffffff80; }
+.conclave-hero .hero-entry > a:hover { color: #ffffff; }
 .engraved-hero {
   position: absolute;
   z-index: -2;

@@ -24,7 +24,7 @@ import {
   getBalance,
   settleHold,
 } from '../server/ledger/ledger.ts';
-import { GatewayError, GATEWAY_MODEL_ALLOWLIST } from '../server/gateway/index.ts';
+import { PpqError, PPQ_MODEL_ALLOWLIST } from '../server/ppq/index.ts';
 import {
   saveProvidedSource,
   prepareOwnedCrossCheck,
@@ -56,7 +56,7 @@ process.env.CONCLAVE_DATA_KEYS = JSON.stringify({
   test: randomBytes(32).toString('base64'),
 });
 process.env.CONCLAVE_ACTIVE_DATA_KEY = 'test';
-process.env.GATEWAY_API_KEY = 'fixture-not-a-provider-key';
+process.env.PPQ_API_KEY = 'fixture-not-a-provider-key';
 process.env.CONCLAVE_INFERENCE_ENABLED = 'true';
 const keyring = configuredKeyring();
 const pool = createDatabase(connection, 12);
@@ -109,7 +109,7 @@ async function roster(options = {}) {
       [
         routeVersionId,
         randomUUID(),
-        GATEWAY_MODEL_ALLOWLIST[family].id,
+        PPQ_MODEL_ALLOWLIST[family].id,
         family,
         {
           reviewed: true,
@@ -243,10 +243,10 @@ function provider(options = {}) {
       assert.equal(input.messages[1].role, 'user');
       const data = JSON.parse(input.messages[1].content),
         source = data.sources[0];
-      const altered = input.modelId === GATEWAY_MODEL_ALLOWLIST.deepseek.id;
-      if (options.fail && altered) throw new GatewayError('invalid_request', false);
+      const altered = input.modelId === PPQ_MODEL_ALLOWLIST.deepseek.id;
+      if (options.fail && altered) throw new PpqError('invalid_request', false);
       if (options.ambiguous && altered)
-        throw new GatewayError('stream_interrupted', true);
+        throw new PpqError('stream_interrupted', true);
       const verdict = options.dissent && altered ? 'contradicted' : 'supported';
       yield {
         type: 'text',
@@ -600,6 +600,10 @@ void test('ambiguous provider outcome keeps execution incomplete and never retri
   const stub = provider({ ambiguous: true });
   await finishCalls(stub);
   await runCrossCheckSweep(pool, keyring);
+  const status = await crossCheckExecutionStatus(pool, f.accountId, f.runId);
+  assert.ok(status.calls.some((call) => call.errorCode === 'PROVIDER_STREAM_INTERRUPTED'));
+  assert.ok(status.calls.every((call) => !/PPQ/.test(call.errorCode ?? '')));
+  assert.equal((await pool.query('SELECT error_code FROM calls WHERE account_id=$1 AND error_code IS NOT NULL', [f.accountId])).rows[0].error_code, 'PPQ_STREAM_INTERRUPTED');
   assert.equal(
     (await crossCheckExecutionStatus(pool, f.accountId, f.runId)).state,
     'incomplete',

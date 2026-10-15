@@ -31,6 +31,9 @@ export type DepositPayment = {
   lastValidBlockHeight: string;
   contextSlot: string;
   feeLamports: string;
+  createRecipientAccount: boolean;
+  recipientWallet: string | null;
+  accountCreationLamports: string;
   preparedAt: string;
   expiresAt: string;
   signature: string | null;
@@ -116,7 +119,8 @@ const timestamp = (v: unknown): string => {
 const nullable = <T>(v: unknown, parse: (v: unknown) => T): T | null =>
   v === null ? null : parse(v);
 export function depositPaymentTerms(
-  payment: Pick<DepositPayment, 'sourceTokenAccount' | 'recentBlockhash'>,
+  payment: Pick<DepositPayment, 'sourceTokenAccount' | 'recentBlockhash'> &
+    Partial<Pick<DepositPayment, 'createRecipientAccount' | 'recipientWallet'>>,
   intent: DepositIntent,
 ): DepositTransactionTerms {
   return {
@@ -127,6 +131,8 @@ export function depositPaymentTerms(
     reference: intent.reference,
     amountUsd6: intent.amountUsd6,
     recentBlockhash: payment.recentBlockhash,
+    createRecipientAccount: payment.createRecipientAccount ?? false,
+    recipientWallet: intent.recipientWallet,
   };
 }
 export function parseDepositPayment(
@@ -155,6 +161,18 @@ export function parseDepositPayment(
     lastValidBlockHeight: uint(v.lastValidBlockHeight),
     contextSlot: uint(v.contextSlot),
     feeLamports: uint(v.feeLamports),
+    createRecipientAccount:
+      v.createRecipientAccount === undefined
+        ? false
+        : boolean(v.createRecipientAccount),
+    recipientWallet:
+      v.recipientWallet === undefined
+        ? null
+        : nullable(v.recipientWallet, address),
+    accountCreationLamports:
+      v.accountCreationLamports === undefined
+        ? '0'
+        : uint(v.accountCreationLamports),
     preparedAt: timestamp(v.preparedAt),
     expiresAt: timestamp(v.expiresAt),
     signature: nullable(v.signature, (v) => address(v, 64)),
@@ -168,6 +186,13 @@ export function parseDepositPayment(
     canSubmit: boolean(v.canSubmit),
   };
   if (
+    (payment.createRecipientAccount &&
+      (payment.recipientWallet !== intent.recipientWallet ||
+        payment.accountCreationLamports === '0')) ||
+    (!payment.createRecipientAccount &&
+      payment.accountCreationLamports !== '0') ||
+    (payment.recipientWallet !== null &&
+      payment.recipientWallet !== intent.recipientWallet) ||
     payment.intentId !== intent.id ||
     Date.parse(payment.preparedAt) < Date.parse(intent.createdAt) ||
     Date.parse(payment.preparedAt) >= Date.parse(intent.expiresAt) ||
@@ -227,6 +252,9 @@ export function sameDepositPayment(
         'lastValidBlockHeight',
         'contextSlot',
         'feeLamports',
+        'createRecipientAccount',
+        'recipientWallet',
+        'accountCreationLamports',
         'preparedAt',
         'expiresAt',
       ] as const
@@ -239,6 +267,11 @@ export function formatLamports(value: string) {
   return `${amount / 1_000_000_000n}.${(amount % 1_000_000_000n).toString().padStart(9, '0')}`;
 }
 export function depositPaymentErrorMessage(error: unknown): string {
+  if (
+    error instanceof DepositPaymentError &&
+    error.code === 'DEPOSIT_RENT_CHANGED'
+  )
+    return 'The account-creation rent estimate changed. Check the saved payment status before continuing; do not create another transfer.';
   return error instanceof DepositPaymentError
     ? error.message
     : 'The payment request did not finish. Read the saved payment status before continuing.';

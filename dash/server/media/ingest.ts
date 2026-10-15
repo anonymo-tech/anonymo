@@ -1,15 +1,14 @@
-import { gatewayApiOrigin, parseGatewayOrigin } from '../gateway/origin.ts';
 import type { Pool, PoolClient } from 'pg';
 import { one, transaction } from '../db/database.ts';
 import { decryptText, type DataKeyring } from '../core/encryption.ts';
 import { requireCondition, ServiceError } from '../core/errors.ts';
-import type { GatewayMedia } from '../gateway/index.ts';
+import type { PpqMedia } from '../ppq/index.ts';
 import { encryptMedia } from './asset-crypto.ts';
 import {
   finalizeMediaAssetInTransaction,
   releaseFailedMediaIngestStorageInTransaction,
 } from './assets.ts';
-import { downloadGatewayMedia, MediaDownloadError } from './download.ts';
+import { downloadPpqMedia, MediaDownloadError } from './download.ts';
 import { sanitizeMedia, MediaSanitizeError } from './sanitize.ts';
 import { lockMediaOwner } from './store.ts';
 
@@ -28,7 +27,6 @@ type ImportLease = {
 export type MediaIngestOptions = {
   /** Trusted worker/test dependencies only. No browser-supplied URL or processor. */
   fetch?: typeof globalThis.fetch;
-  apiOrigin?: string;
   signal?: AbortSignal;
   sanitize?: typeof sanitizeMedia;
 };
@@ -73,7 +71,7 @@ async function ownLease(db: PoolClient, job: ImportLease) {
 async function savedMedia(
   job: ImportLease,
   keyring: DataKeyring,
-): Promise<GatewayMedia> {
+): Promise<PpqMedia> {
   const value: unknown = JSON.parse(
     await decryptText(
       job.result_ciphertext,
@@ -144,10 +142,10 @@ async function savedMedia(
     'MEDIA_RESULT_MISMATCH',
     'The saved media type does not match this job.',
   );
-  // downloadGatewayMedia independently verifies the complete signed provider URL.
+  // downloadPpqMedia independently verifies the complete signed provider URL.
   return {
     url: item.url,
-    contentType: item.contentType as GatewayMedia['contentType'],
+    contentType: item.contentType as PpqMedia['contentType'],
   };
 }
 
@@ -159,16 +157,6 @@ export async function runNextMediaIngest(
   options: MediaIngestOptions = {},
 ): Promise<boolean> {
   if (options.signal?.aborted) return false;
-  const apiOrigin =
-    options.apiOrigin === undefined
-      ? gatewayApiOrigin()
-      : parseGatewayOrigin(options.apiOrigin);
-  requireCondition(
-    apiOrigin,
-    503,
-    'MEDIA_CONFIGURATION_REQUIRED',
-    'The media acquisition origin is not configured.',
-  );
   const job = await claim(pool);
   if (!job) return false;
   const controller = new AbortController();
@@ -195,9 +183,8 @@ export async function runNextMediaIngest(
   }, 2000);
   try {
     const media = await savedMedia(job, keyring);
-    const acquired = await downloadGatewayMedia(media, {
+    const acquired = await downloadPpqMedia(media, {
       fetch: options.fetch,
-      apiOrigin,
       signal: controller.signal,
     });
     const processed = await (options.sanitize ?? sanitizeMedia)(acquired, {

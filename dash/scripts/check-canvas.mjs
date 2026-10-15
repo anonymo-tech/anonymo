@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { MODELS } from '../components/dashboard/data.ts';
+import { modelReleased } from '../lib/model-release.ts';
 import {
   canvasLimits,
   canvasPrompts,
@@ -93,8 +94,8 @@ void test('drafts, conversation order, model choices and saved artifacts round t
   );
 });
 
-void test('all catalog models can be selected, but custom text never receives a fabricated result', () => {
-  for (const { id } of MODELS) {
+void test('released catalog models can be selected, but custom text never receives a fabricated result', () => {
+  for (const { id } of MODELS.filter((model) => modelReleased(model.id))) {
     const turn = createSampleTurn('Evaluate my unpublished plan in detail.', [
       id,
     ]);

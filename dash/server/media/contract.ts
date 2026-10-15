@@ -1,14 +1,9 @@
-import {
-  gatewayCatalogUrl,
-  gatewayConfigured,
-  gatewayEvidenceUrl,
-} from '../gateway/origin.ts';
 import { requireCondition, ServiceError } from '../core/errors.ts';
 import { serviceConfig } from '../core/config.ts';
 import { configuredKeyring } from '../core/encryption.ts';
 import { digestText } from '../core/digest.ts';
 import { usd6, ceilRatio } from '../ledger/money.ts';
-import { GATEWAY_MODEL_ALLOWLIST, validateModel } from '../gateway/catalog.ts';
+import { PPQ_MODEL_ALLOWLIST, validateModel } from '../ppq/catalog.ts';
 import { scanPrompt } from '../../lib/guards/index.ts';
 import { uuidField } from '../core/http.ts';
 import type { MediaStoragePolicy } from './assets.ts';
@@ -273,15 +268,8 @@ export function validateMediaPricing(
       'The catalog variant does not match these media options.',
     );
     const providerUsd6 = usd6(v.providerUsd6).toString();
-    requireCondition(
-      ceilRatio(
-        BigInt(providerUsd6) * BigInt(10000 + Number(p.markupBps)),
-        10000n,
-      ) <= 10_000_000n,
-      409,
-      'MEDIA_BUDGET_EXCEEDED',
-      'This media option exceeds the supported budget.',
-    );
+    // Accept the exact catalog price at any funded amount representable by the ledger.
+    usd6(ceilRatio(BigInt(providerUsd6) * BigInt(10000 + Number(p.markupBps)), 10000n).toString());
     return {
       options,
       providerUsd6,
@@ -348,7 +336,7 @@ export function assertUsableMediaRoute(
     'MEDIA_ROUTE_UNAVAILABLE',
     'This media route is unavailable or expired.',
   );
-  const allowed = Object.entries(GATEWAY_MODEL_ALLOWLIST).find(
+  const allowed = Object.entries(PPQ_MODEL_ALLOWLIST).find(
     ([family, model]) =>
       family === route.family &&
       model.id === route.model_id &&
@@ -365,11 +353,11 @@ export function assertUsableMediaRoute(
     card &&
       card.level === 'unverified' &&
       card.reviewed === true &&
-      card.provider === 'gateway' &&
+      card.provider === 'ppq' &&
       card.plaintextVisibility === 'gateway_and_upstream' &&
       typeof card.retentionDisclosure === 'string' &&
       card.retentionDisclosure.length >= 20 &&
-      gatewayEvidenceUrl(card.evidenceUrl),
+      evidenceUrl(card.evidenceUrl),
     409,
     'MEDIA_REVIEW_REQUIRED',
     'This media route requires a current review.',
@@ -385,8 +373,7 @@ export function assertUsableMediaRoute(
       termsTime !== null &&
       route.expires_at.getTime() <=
         Math.min(reviewed, catalogTime, termsTime) + day &&
-      gatewayCatalogUrl() !== null &&
-      catalog?.sourceUrl === gatewayCatalogUrl() &&
+      catalog?.sourceUrl === 'https://api.ppq.ai/v1/models?type=all' &&
       catalog.priceCheck === 'matched' &&
       typeof catalog.sha256 === 'string' &&
       /^[a-f0-9]{64}$/.test(catalog.sha256) &&
@@ -395,8 +382,7 @@ export function assertUsableMediaRoute(
       Array.isArray(terms.evidenceUrls) &&
       terms.evidenceUrls.length >= 1 &&
       terms.evidenceUrls.length <= 8 &&
-      terms.evidenceUrls.every(evidenceUrl) &&
-      terms.evidenceUrls.some((value) => gatewayEvidenceUrl(value)),
+      terms.evidenceUrls.every(evidenceUrl),
     409,
     'MEDIA_REVIEW_REQUIRED',
     'Current terms and exact catalog pricing must be reviewed.',
@@ -472,7 +458,8 @@ export function mediaCapability(
         !!c.databaseUrl &&
         c.inferenceEnabled &&
         env.CONCLAVE_MEDIA_ENABLED === 'true' &&
-        gatewayConfigured(env);
+        !!c.ppqKey &&
+        /^[\x21-\x7e]{1,512}$/.test(c.ppqKey);
       reason = configured ? 'MEDIA_CONFIGURED' : 'MEDIA_CONFIGURATION_REQUIRED';
     }
   } catch {

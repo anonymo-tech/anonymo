@@ -1668,7 +1668,7 @@ function Briefs({
                 inspectable workflows, and sealed execution. Those are
                 complementary priorities, not a universal ranking.
               </p>
-              <h3>04 — Sources &amp; limits</h3>
+              <h3>04 — Sources & limits</h3>
               <p>
                 Conclave product overview (sample source). Product
                 specifications, not independent evidence.{" "}
@@ -3023,7 +3023,7 @@ function Settings({
                 className="dw-text-button"
                 onClick={onIdentity}
               >
-                Wallet &amp; passkey status <ArrowUpRight size={13} />
+                Wallet & passkey status <ArrowUpRight size={13} />
               </button>
               <button type="submit" className="dw-button dw-button-dark">
                 Save name <Check size={15} />

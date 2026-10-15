@@ -43,9 +43,7 @@ Object.assign(process.env, {
     test: randomBytes(32).toString('base64'),
   }),
   CONCLAVE_ACTIVE_DATA_KEY: 'test',
-  GATEWAY_API_KEY: 'synthetic-provider-fixture',
-  GATEWAY_API_ORIGIN: 'https://api.inference.invalid',
-  GATEWAY_EVIDENCE_ORIGINS: '["https://inference.invalid","https://www.inference.invalid"]',
+  PPQ_API_KEY: 'synthetic-provider-fixture',
   CONCLAVE_INFERENCE_ENABLED: 'true',
   CONCLAVE_BRIEF_SYNTHESIS_ENABLED: 'true',
 });
@@ -565,6 +563,15 @@ void test('gate-off queued execution fails before provider dispatch and releases
   const run = await getBriefSynthesis(pool, f.accountId, q.plan.id, keys);
   assert.equal(run.state, 'failed');
   assert.equal(run.billing.actualUsd6, '0');
+});
+void test('public synthesis metadata hides gateway labels while preserving stored evidence', async () => {
+  const f = await fixture(), q = await quote(f), accepted = await approve(f, q);
+  await pool.query("UPDATE calls SET error_code='PPQ_TIMEOUT' WHERE id=$1", [accepted.run.callId]);
+  assert.equal((await api(f, `brief-syntheses/${q.plan.id}`)).body.run.errorCode, 'PROVIDER_TIMEOUT');
+  assert.equal((await api(f, `briefs/${f.briefId}/syntheses`)).body.runs[0].errorCode, 'PROVIDER_TIMEOUT');
+  assert.equal((await pool.query('SELECT error_code FROM calls WHERE id=$1', [accepted.run.callId])).rows[0].error_code, 'PPQ_TIMEOUT');
+  await api(f, `brief-syntheses/${q.plan.id}/cancel`, {});
+  await drain();
 });
 void test('metadata pages omit full generated analysis and full reads restore it', async () => {
   const f = await fixture(),

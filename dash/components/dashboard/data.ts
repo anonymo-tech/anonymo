@@ -1,3 +1,4 @@
+import { CHINESE_CHAT_MODELS } from '../../lib/chinese-models.ts';
 export type View =
   | "room"
   | "compare"
@@ -86,8 +87,8 @@ export const MODELS: DemoModel[] = [
     name: "DeepSeek",
     family: "DeepSeek",
     monogram: "D",
-    kind: "Private",
-    level: "ZDR",
+    kind: "Hosted",
+    level: "UNVERIFIED",
     specialty: "Code & structured thinking",
     cost: 0.003,
     open: true,
@@ -98,9 +99,9 @@ export const MODELS: DemoModel[] = [
     name: "Qwen",
     family: "Qwen",
     monogram: "Q",
-    kind: "Sealed",
-    level: "E2EE_TO_SEALED",
-    specialty: "Open model · Sanctum sample",
+    kind: "Hosted",
+    level: "UNVERIFIED",
+    specialty: "Open-weight model",
     cost: 0.005,
     open: true,
     color: "#76609b",
@@ -110,13 +111,18 @@ export const MODELS: DemoModel[] = [
     name: "Llama",
     family: "Meta",
     monogram: "L",
-    kind: "Sealed",
-    level: "E2EE_TO_SEALED",
-    specialty: "Open model · Sanctum sample",
+    kind: "Hosted",
+    level: "UNVERIFIED",
+    specialty: "Open-weight model",
     cost: 0.004,
     open: true,
     color: "#287a93",
   },
+  ...CHINESE_CHAT_MODELS.filter(model => !['deepseek', 'qwen'].includes(model.key)).map(model => ({
+    id: model.key, name: model.name, family: model.publisher, monogram: model.name.charAt(0),
+    kind: 'Hosted' as const, level: 'UNVERIFIED' as const, specialty: model.publisher,
+    cost: 0, open: false, color: '#333333',
+  })),
 ];
 
 export const VIEW_NAMES: Record<View, string> = {

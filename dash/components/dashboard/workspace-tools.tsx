@@ -562,8 +562,8 @@ function SettingsPanel() {
   );
 }
 
-function IdentityPanel() {
-  return <LiveIdentityPanel />;
+function IdentityPanel({ onClose }: { onClose: () => void }) {
+  return <LiveIdentityPanel onClose={onClose} />;
 }
 
 function HelpPanel() {
@@ -630,7 +630,7 @@ export function ToolsContent({
 }: ToolsContentProps) {
   const t = useT();
   return (
-    <div className="ct-tools">
+    <div className={`ct-tools${view === 'identity' ? ' ca-tools' : ''}`}>
       {view === 'routes' &&
         (service ? (
           <LiveRoutesPanel routes={service.routes} modelId={modelId} />
@@ -657,7 +657,7 @@ export function ToolsContent({
         ))}
       {view === 'settings' &&
         (service ? <LiveSettingsPanel service={service} /> : <SettingsPanel />)}
-      {view === 'identity' && <IdentityPanel />}
+      {view === 'identity' && <IdentityPanel onClose={onClose} />}
       {view === 'help' && <HelpPanel />}
       {view !== 'identity' && (
         <div className="ct-footer">

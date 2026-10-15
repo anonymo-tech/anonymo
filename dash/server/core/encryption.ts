@@ -1,3 +1,4 @@
+import { CHAT_LIMITS } from '../../lib/chat-limits.ts';
 import { ServiceError } from './errors.ts';
 
 export type DataKeyring = { active: string; keys: Record<string, string> };
@@ -24,7 +25,7 @@ function aad(scope: string) {
 
 export async function encryptText(text: string, scope: string, keyring: DataKeyring) {
   const bytes = new TextEncoder().encode(text);
-  if (bytes.byteLength > 2_000_000) throw new ServiceError(413, 'CONTENT_TOO_LARGE', 'This content is too large to save.');
+  if (bytes.byteLength > Math.max(CHAT_LIMITS.requestBytes, CHAT_LIMITS.outputBytes)) throw new ServiceError(413, 'CONTENT_TOO_LARGE', 'This content is too large to save.');
   const key = await crypto.subtle.importKey('raw', Buffer.from(keyring.keys[keyring.active], 'base64'), 'AES-GCM', false, ['encrypt']);
   const nonce = crypto.getRandomValues(new Uint8Array(12));
   const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce, additionalData: aad(scope) }, key, bytes);
@@ -33,7 +34,7 @@ export async function encryptText(text: string, scope: string, keyring: DataKeyr
 
 export async function decryptText(value: string, scope: string, keyring: DataKeyring) {
   try {
-    if (value.length > 2_700_000) throw new Error();
+    if (value.length > Math.ceil(Math.max(CHAT_LIMITS.requestBytes, CHAT_LIMITS.outputBytes) * 4 / 3) + 256) throw new Error();
     const parts = value.split('.');
     if (parts.length !== 4 || parts[0] !== 'v1' || !keyring.keys[parts[1]] || !/^[\w-]{16}$/.test(parts[2]) || !/^[\w-]{22,}$/.test(parts[3])) throw new Error();
     const key = await crypto.subtle.importKey('raw', Buffer.from(keyring.keys[parts[1]], 'base64'), 'AES-GCM', false, ['decrypt']);

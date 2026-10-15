@@ -163,7 +163,7 @@ export function LiveRequestReview({
                 'The question below and each model’s included prior exchanges are sent. Attached files are not included. Context counts are listed per model.',
               )}
         </p>
-        <p className="ct-code">{review.prompt}</p>
+        <p className="ct-code">{review.researchTitle ?? review.prompt}</p>
         <dl className="ct-facts">
           <div>
             <dt>{t('Maximum reservation')}</dt>
@@ -187,7 +187,7 @@ export function LiveRequestReview({
             <dt>{t('Privacy route')}</dt>
             <dd>
               {t(
-                'Standard · The inference gateway and the model provider receive the question in plaintext.',
+                'Standard · The inference gateway and the model host receive the question in plaintext.',
               )}
             </dd>
           </div>
@@ -308,6 +308,14 @@ export function LiveRequestReview({
               <dd>{t(quote.card.level)}</dd>
             </div>
             <div>
+              <dt>{t('Processing')}</dt>
+              <dd>
+                {t(
+                  'The inference gateway and the model host receive your request in plaintext.',
+                )}
+              </dd>
+            </div>
+            <div>
               <dt>{t('Retention')}</dt>
               <dd>{t(quote.card.retentionDisclosure)}</dd>
             </div>
@@ -334,17 +342,25 @@ export function LiveRequestReview({
               </div>
             )}
           </dl>
-          {review.routing?.mode === 'auto' && quote.card.routing && (
-            <a
-              className="ct-source"
-              href={quote.card.routing.evidenceUrl}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {t('Read task review evidence')}{' '}
-              <MotionIcon name="open" size={18} />
-              <span className="ct-sr-only">{t(' (opens in a new tab)')}</span>
-            </a>
+          {review.routing?.mode === 'auto' &&
+            quote.card.routing?.evidenceUrl.startsWith('https://') && (
+              <a
+                className="ct-source"
+                href={quote.card.routing.evidenceUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {t('Read task review evidence')}{' '}
+                <MotionIcon name="open" size={18} />
+                <span className="ct-sr-only">{t(' (opens in a new tab)')}</span>
+              </a>
+            )}
+          {!quote.card.evidenceUrl && (
+            <p className="ct-note">
+              {t(
+                'The gateway policy reference is reviewed internally and is not published here. This does not establish private or attested execution.',
+              )}
+            </p>
           )}
           {quote.card.evidenceUrl.startsWith('https://') && (
             <a

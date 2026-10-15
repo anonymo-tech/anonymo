@@ -6,6 +6,7 @@ import { ArrowUpRight, ArrowUp } from "lucide-react";
 import { Flourish, Ornament } from "./ornament";
 import { HorseMark } from "./horse-mark";
 import { Wordmark } from "./wordmark";
+import { ContractAddress } from "./contract-address";
 import "./closing.css";
 
 function ClosingSeal({ className = "" }: { className?: string }) {
@@ -134,7 +135,7 @@ const footerGroups = [
     links: [
       ["Where requests go", "/dashboard#chat"],
       ["Sign in with a wallet", "/dashboard#chat"],
-      ["Guards, planned", "/docs#guards"],
+      ["Request controls", "/whitepaper#guards"],
       ["Clear accounts", "/docs#billing"],
     ],
   },
@@ -143,9 +144,10 @@ const footerGroups = [
     title: "The possibility",
     links: [
       ["Our thinking", "#manifesto"],
-      ["Chapters, planned", "/dashboard#chat"],
-      ["The road ahead", "#roadmap"],
-      ["The field guide", "/docs"],
+      ["Chapters", "/whitepaper#chapters"],
+      ["The roadmap", "/roadmap"],
+      ["The white paper", "/whitepaper"],
+      ["Usage flywheel", "/flywheel"],
     ],
   },
 ];
@@ -242,7 +244,7 @@ export function Closing() {
           <div className="cl-footer-edition-note">
             <span>{t("A NOTE ON THIS EDITION")}</span>
             <p>
-              {t.rich("An early release. Seven live models through one provider.{line}Prepaid credits today; USDC deposits are planned.", { line: <br /> })}
+              {t.rich("Seven model families. Solana USDC top-ups.{line}Sample conversations are labelled. More tools follow on the roadmap.", { line: <br /> })}
             </p>
             <Ornament />
           </div>
@@ -260,6 +262,7 @@ export function Closing() {
             <span />
           </div>
         </div>
+        <div className="cl-footer-contract"><ContractAddress /></div>
         <div className="cl-footer-colophon">
           <span>© 2026 CONCLAVE</span>
           <span>

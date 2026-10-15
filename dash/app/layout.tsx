@@ -11,7 +11,7 @@ import { LocaleSync } from '@/components/locale-sync';
 export const metadata: Metadata = {
   title: 'Conclave — See what one model misses.',
   description:
-    'A multi-model AI chat built for Solana. Ask seven models in one room, compare up to four side by side, and sign in with a wallet or a passkey.',
+    'Bring different AI perspectives into one connected workspace. Explore the Conclave preview and the vision for chat, Canvas, Studio and Briefs.',
   icons: { icon: '/favicon.svg' },
 };
 

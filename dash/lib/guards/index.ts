@@ -1,9 +1,10 @@
+import { CHAT_LIMITS } from '../chat-limits.ts';
 import { validateMnemonic } from '@scure/bip39';
 import bs58 from 'bs58';
 import { mnemonicWordlists } from './wordlists.ts';
 
 /** Limits are UTF-16 code units, matching JavaScript slice and browser selections. */
-export const MAX_PROMPT_LENGTH = 100_000;
+export const MAX_PROMPT_LENGTH = CHAT_LIMITS.inputBytes;
 export const MAX_FINDINGS = 4096;
 export const MAX_MNEMONIC_CHECKS = 4096;
 export const REDACTION = '[REDACTED SECRET]';

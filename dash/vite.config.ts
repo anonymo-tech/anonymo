@@ -14,6 +14,15 @@ export default defineConfig(async () => {
   process.env.WRANGLER_LOG_PATH ??= ".wrangler/logs";
   process.env.MINIFLARE_REGISTRY_PATH ??= ".wrangler/registry";
 
+  // Railway runs the production Node server; local/Workers builds keep their
+  // existing Cloudflare runtime.
+  if (process.env.CONCLAVE_DEPLOY_TARGET === "node") {
+    return {
+      css: { postcss: { plugins: [tailwindcss()] } },
+      plugins: [vinext()],
+    };
+  }
+
   // Wrangler snapshots its log path while the Cloudflare plugin is imported.
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
@@ -21,7 +30,7 @@ export default defineConfig(async () => {
     css: { postcss: { plugins: [tailwindcss()] } },
     server: {
       watch: {
-        ignored: ["**/internal/**", "**/tmp/**", "**/dist/**"],
+        ignored: ["**/tmp/**", "**/dist/**"],
       },
     },
     plugins: [

@@ -36,6 +36,33 @@
   border-bottom: 1px solid #dedfda;
 }
 
+.cw-chat-thread .cw-chat-source-prompt {
+  margin: -4px 0 18px;
+  color: #636363;
+  font-size: 12px;
+}
+
+.cw-chat-thread .cw-chat-source-prompt summary {
+  width: fit-content;
+  margin-left: auto;
+  padding: 6px 0;
+  cursor: pointer;
+}
+
+.cw-chat-thread .cw-chat-source-prompt pre {
+  max-height: 320px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 16px;
+  border: 1px solid #e5e5e5;
+  border-radius: 12px;
+  background: #fff;
+  color: #4b4b4b;
+  font: 11px/1.6 ui-monospace, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .cw-view-chat .cw-chat-thread .cw-chat-model-tabs {
   display: flex;
   flex: 1;

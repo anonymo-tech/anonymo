@@ -1,16 +1,15 @@
-import { gatewayConfigured } from '../server/gateway/origin.ts';
 import { createDatabase } from '../server/db/database.ts';
 import { recoverExpiredJobs } from '../server/db/jobs.ts';
 import { serviceConfig, requireService } from '../server/core/config.ts';
 import { configuredKeyring } from '../server/core/encryption.ts';
-import { createGatewayClient } from '../server/gateway/index.ts';
+import { createPpqClient } from '../server/ppq/index.ts';
 import { runNextCall } from '../server/routes/call-worker.ts';
 import { runCrossCheckSweep } from '../server/crosscheck/execution.ts';
 import { runBriefSynthesisSweep } from '../server/briefs/execution.ts';
 
 const config = requireService(serviceConfig());
-if (!config.gatewayKey || !gatewayConfigured())
-  throw new Error('GATEWAY_API_KEY is required to start the inference worker.');
+if (!config.ppqKey)
+  throw new Error('PPQ_API_KEY is required to start the inference worker.');
 if (!config.inferenceEnabled)
   throw new Error(
     'CONCLAVE_INFERENCE_ENABLED must be explicitly enabled for the inference worker.',
@@ -20,7 +19,7 @@ const concurrency = Number(process.env.CONCLAVE_WORKER_CONCURRENCY ?? '4');
 if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 4)
   throw new Error('CONCLAVE_WORKER_CONCURRENCY must be between one and four.');
 const pool = createDatabase(config.databaseUrl, 4);
-const provider = createGatewayClient({ apiKey: config.gatewayKey });
+const provider = createPpqClient({ apiKey: config.ppqKey });
 let stopping = false;
 let consecutiveFailures = 0;
 process.once('SIGINT', () => {

@@ -69,13 +69,13 @@
   --card-bg: #191a15;
 }
 .feature-card.card-cream {
-  --card-bg: #eee7d8;
+  --card-bg: #ffffff;
 }
 .feature-card:not(.card-ink):not(.card-cream) {
   --card-bg: #e93023;
 }
 .council-preview {
-  background: #eee7d8;
+  background: #ffffff;
   box-shadow: 12px 15px 0 #74130c18;
 }
 .chapters-frame {
@@ -83,7 +83,7 @@
   box-shadow: 0 20px 55px #791c1717;
 }
 .economics-card {
-  background: #eee7d8;
+  background: #ffffff;
   transform: rotate(1.5deg);
   box-shadow: 15px 18px 0 #751b1420;
   transition: transform 0.5s ease;

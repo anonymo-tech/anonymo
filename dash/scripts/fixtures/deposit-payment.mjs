@@ -9,6 +9,7 @@ import {
 } from '../../server/solana/validation.ts';
 import {
   encodeTransactionBase64,
+  depositRecipientTokenAddress,
   decodeTransactionBase64,
 } from '../../lib/solana/deposit-transaction.ts';
 
@@ -78,6 +79,11 @@ export async function depositPaymentFixture(pool, options = {}) {
     handlers: {},
     calls: [],
   };
+  if (options.createRecipientAccount)
+    f.recipientTokenAccount = depositRecipientTokenAddress(
+      f.recipientWallet,
+      f.mint,
+    );
   f.policy = {
     cluster: 'devnet',
     recipientWallet: f.recipientWallet,
@@ -131,18 +137,18 @@ export async function depositPaymentFixture(pool, options = {}) {
         });
       case 'getTokenAccountsByOwner':
         return context(
-          [...f.sourceAccounts]
-            .reverse()
-            .map((pubkey) => ({
-              pubkey,
-              account: tokenAccountFixture(f.mint, sourceWallet),
-            })),
+          [...f.sourceAccounts].reverse().map((pubkey) => ({
+            pubkey,
+            account: tokenAccountFixture(f.mint, sourceWallet),
+          })),
         );
       case 'getMultipleAccounts':
         return context([
           mintAccountFixture(),
           tokenAccountFixture(f.mint, sourceWallet),
-          tokenAccountFixture(f.mint, f.recipientWallet, 0n),
+          options.createRecipientAccount
+            ? null
+            : tokenAccountFixture(f.mint, f.recipientWallet, 0n),
           {
             data: ['', 'base64'],
             owner: SYSTEM_PROGRAM,
@@ -151,6 +157,8 @@ export async function depositPaymentFixture(pool, options = {}) {
             space: 0,
           },
         ]);
+      case 'getMinimumBalanceForRentExemption':
+        return 2039280;
       case 'getFeeForMessage':
         return context(f.fee);
       case 'simulateTransaction':

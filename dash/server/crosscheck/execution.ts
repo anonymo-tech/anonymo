@@ -1,4 +1,3 @@
-import { gatewayConfigured } from '../gateway/origin.ts';
 import type { Pool, PoolClient } from 'pg';
 import { one, transaction } from '../db/database.ts';
 import { enqueue } from '../db/jobs.ts';
@@ -9,6 +8,7 @@ import {
   type DataKeyring,
 } from '../core/encryption.ts';
 import { digestText } from '../core/digest.ts';
+import { publicInferenceErrorCode } from '../routes/public-inference.ts';
 import { reserveQuoteInTransaction } from '../ledger/ledger.ts';
 import { scanPrompt } from '../../lib/guards/index.ts';
 import {
@@ -59,7 +59,7 @@ export function crossCheckExecutionConfigured(
     env.CONCLAVE_MODE !== 'service' ||
     env.CONCLAVE_CROSSCHECK_ENABLED !== 'true' ||
     env.CONCLAVE_INFERENCE_ENABLED !== 'true' ||
-    !gatewayConfigured(env) ||
+    !env.PPQ_API_KEY ||
     !env.CONCLAVE_APP_ORIGIN ||
     !env.CONCLAVE_DATABASE_URL
   )
@@ -655,7 +655,10 @@ export async function crossCheckExecutionStatus(
           : 'awaiting_evaluation';
   return {
     state,
-    calls: calls.rows,
+    calls: calls.rows.map((call) => ({
+      ...call,
+      errorCode: publicInferenceErrorCode(call.errorCode),
+    })),
     maximumUsd6: row.approved_maximum_usd6,
     evaluationNeedsAttention: !row.has_result && Boolean(row.last_error_code),
     actualUsd6: calls.rows.every((call) => call.actualUsd6 !== null)

@@ -45,9 +45,7 @@ Object.assign(process.env, {
     test: randomBytes(32).toString('base64'),
   }),
   CONCLAVE_ACTIVE_DATA_KEY: 'test',
-  GATEWAY_API_KEY: 'synthetic-provider-fixture',
-  GATEWAY_API_ORIGIN: 'https://api.inference.invalid',
-  GATEWAY_EVIDENCE_ORIGINS: '["https://inference.invalid","https://www.inference.invalid"]',
+  PPQ_API_KEY: 'synthetic-provider-fixture',
   CONCLAVE_INFERENCE_ENABLED: 'true',
 });
 // Every suite starts fee-free and unbuffered; tests opt in explicitly.

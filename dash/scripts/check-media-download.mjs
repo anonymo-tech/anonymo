@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  downloadGatewayMedia,
+  downloadPpqMedia,
   MEDIA_DOWNLOAD_LIMITS,
   MediaDownloadError,
 } from '../server/media/download.ts';
 
 const url =
-  'https://api.inference.invalid/v1/media/gen_synthetic/0?sig=synthetic-signature&exp=1';
+  'https://api.ppq.ai/v1/media/gen_synthetic/0?sig=synthetic-signature&exp=1';
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZlGkAAAAASUVORK5CYII=',
   'base64',
@@ -38,7 +38,7 @@ const code = (expected) => (error) => {
 
 void test('anonymous fixed-origin GET preserves acquired bytes and does not imply sanitization', async () => {
   let observed;
-  const result = await downloadGatewayMedia(media(), {
+  const result = await downloadPpqMedia(media(), {
     fetch: async (address, init) => {
       observed = { address, init };
       return respond(png, 'image/png', {
@@ -73,21 +73,21 @@ void test('all four declared formats require their own binary signature', async 
   ]) {
     assert.equal(
       (
-        await downloadGatewayMedia(media(type), {
+        await downloadPpqMedia(media(type), {
           fetch: async () => respond(bytes, type),
         })
       ).contentType,
       type,
     );
     await assert.rejects(
-      downloadGatewayMedia(media(type), {
+      downloadPpqMedia(media(type), {
         fetch: async () => respond(Buffer.from('<html>not media</html>'), type),
       }),
       code('invalid_response'),
     );
   }
   await assert.rejects(
-    downloadGatewayMedia(media('image/png'), {
+    downloadPpqMedia(media('image/png'), {
       fetch: async () => respond(jpeg, 'image/png'),
     }),
     code('invalid_response'),
@@ -98,13 +98,13 @@ void test('arbitrary origins, parser-normalized addresses and ambiguous signed q
   let calls = 0;
   for (const address of [
     url.replace('https:', 'http:'),
-    url.replace('api.inference.invalid', 'api.inference.invalid.attacker.invalid'),
-    url.replace('api.inference.invalid', '127.0.0.1'),
-    url.replace('api.inference.invalid', '[::1]'),
-    url.replace('api.inference.invalid', 'api.inference.invalid:443'),
-    url.replace('api.inference.invalid', 'API.INFERENCE.INVALID'),
-    url.replace('api.inference.invalid', 'user@api.inference.invalid'),
-    url.replace('api.inference.invalid', 'api.inference.invalid.'),
+    url.replace('api.ppq.ai', 'api.ppq.ai.attacker.invalid'),
+    url.replace('api.ppq.ai', '127.0.0.1'),
+    url.replace('api.ppq.ai', '[::1]'),
+    url.replace('api.ppq.ai', 'api.ppq.ai:443'),
+    url.replace('api.ppq.ai', 'API.PPQ.AI'),
+    url.replace('api.ppq.ai', 'user@api.ppq.ai'),
+    url.replace('api.ppq.ai', 'api.ppq.ai.'),
     url.replace('/gen_', '/%67en_'),
     url.replace('/gen_', '/x/../gen_'),
     url.replace('/gen_', '\\gen_'),
@@ -122,7 +122,7 @@ void test('arbitrary origins, parser-normalized addresses and ambiguous signed q
     url.replace('synthetic-signature', 's'.repeat(1025)),
   ]) {
     await assert.rejects(
-      downloadGatewayMedia(media('image/png', address), {
+      downloadPpqMedia(media('image/png', address), {
         fetch: async () => {
           calls++;
           return respond();
@@ -134,9 +134,9 @@ void test('arbitrary origins, parser-normalized addresses and ambiguous signed q
   assert.equal(calls, 0);
 });
 
-void test('canonical encoded signature and either signed-field order are accepted, expired exp is left to GATEWAY', async () => {
+void test('canonical encoded signature and either signed-field order are accepted, expired exp is left to PPQ', async () => {
   for (const query of ['sig=abc%2Bdef%2Fghi%3D&exp=0', 'exp=1&sig=synthetic']) {
-    const result = await downloadGatewayMedia(
+    const result = await downloadPpqMedia(
       media('image/png', `${url.split('?')[0]}?${query}`),
       { fetch: async () => respond() },
     );
@@ -154,7 +154,7 @@ void test('redirect, changed final URL, partial content and error responses fail
     new Response(png, { status: 206 }),
   ])
     await assert.rejects(
-      downloadGatewayMedia(media(), { fetch: async () => response }),
+      downloadPpqMedia(media(), { fetch: async () => response }),
       code('unavailable_media'),
     );
   for (const property of [
@@ -165,12 +165,12 @@ void test('redirect, changed final URL, partial content and error responses fail
     for (const [name, value] of Object.entries(property))
       Object.defineProperty(response, name, { value });
     await assert.rejects(
-      downloadGatewayMedia(media(), { fetch: async () => response }),
+      downloadPpqMedia(media(), { fetch: async () => response }),
       code('unavailable_media'),
     );
   }
   await assert.rejects(
-    downloadGatewayMedia(media(), {
+    downloadPpqMedia(media(), {
       fetch: async () => {
         throw new Error(url);
       },
@@ -186,15 +186,15 @@ void test('strict MIME and transfer headers reject missing or misleading media t
     'image/png; charset=utf-8',
   ])
     await assert.rejects(
-      downloadGatewayMedia(media(), { fetch: async () => respond(png, type) }),
+      downloadPpqMedia(media(), { fetch: async () => respond(png, type) }),
       code('invalid_response'),
     );
   await assert.rejects(
-    downloadGatewayMedia(media(), { fetch: async () => new Response(png) }),
+    downloadPpqMedia(media(), { fetch: async () => new Response(png) }),
     code('invalid_response'),
   );
   await assert.rejects(
-    downloadGatewayMedia(media(), {
+    downloadPpqMedia(media(), {
       fetch: async () =>
         respond(png, 'image/png', { 'content-encoding': 'gzip' }),
     }),
@@ -213,7 +213,7 @@ void test('declared lengths are canonical, bounded and must match the actual byt
     '0',
   ])
     await assert.rejects(
-      downloadGatewayMedia(media(), {
+      downloadPpqMedia(media(), {
         fetch: async () =>
           respond(png, 'image/png', { 'content-length': value }),
       }),
@@ -225,7 +225,7 @@ void test('declared lengths are canonical, bounded and must match the actual byt
         ? MEDIA_DOWNLOAD_LIMITS.videoBytes
         : MEDIA_DOWNLOAD_LIMITS.imageBytes;
     await assert.rejects(
-      downloadGatewayMedia(media(type), {
+      downloadPpqMedia(media(type), {
         fetch: async () =>
           respond(png, type, { 'content-length': String(maximum + 1) }),
       }),
@@ -246,7 +246,7 @@ void test('actual stream bounds apply with absent content-length and cancel an o
       },
     });
     await assert.rejects(
-      downloadGatewayMedia(media(type), {
+      downloadPpqMedia(media(type), {
         fetch: async () =>
           new Response(stream, { headers: { 'content-type': type } }),
       }),
@@ -258,7 +258,7 @@ void test('actual stream bounds apply with absent content-length and cancel an o
 
 void test('deadline bounds both a stalled fetch and a stalled body even if the mock ignores abort', async () => {
   await assert.rejects(
-    downloadGatewayMedia(media(), {
+    downloadPpqMedia(media(), {
       timeoutMs: 10,
       fetch: async () => new Promise(() => {}),
     }),
@@ -274,7 +274,7 @@ void test('deadline bounds both a stalled fetch and a stalled body even if the m
     },
   });
   await assert.rejects(
-    downloadGatewayMedia(media(), {
+    downloadPpqMedia(media(), {
       timeoutMs: 10,
       fetch: async () =>
         new Response(stream, { headers: { 'content-type': 'image/png' } }),
@@ -286,7 +286,7 @@ void test('deadline bounds both a stalled fetch and a stalled body even if the m
 
 void test('late fetch completion after timeout cancels its body without publishing it', async () => {
   let finish;
-  const promise = downloadGatewayMedia(media(), {
+  const promise = downloadPpqMedia(media(), {
     timeoutMs: 10,
     fetch: async () =>
       new Promise((resolve) => {
@@ -313,7 +313,7 @@ void test('caller cancellation prevents initial dispatch and interrupts a pendin
   const before = new AbortController();
   before.abort();
   await assert.rejects(
-    downloadGatewayMedia(media(), {
+    downloadPpqMedia(media(), {
       signal: before.signal,
       fetch: async () => {
         throw new Error('must not fetch');
@@ -323,7 +323,7 @@ void test('caller cancellation prevents initial dispatch and interrupts a pendin
   );
   const during = new AbortController();
   let cancelled = false;
-  const pending = downloadGatewayMedia(media(), {
+  const pending = downloadPpqMedia(media(), {
     signal: during.signal,
     fetch: async () =>
       new Response(
@@ -351,7 +351,7 @@ void test('unsupported MIME, excessive deadlines and browser execution never dis
     return respond();
   };
   await assert.rejects(
-    downloadGatewayMedia(media('image/svg+xml'), { fetch }),
+    downloadPpqMedia(media('image/svg+xml'), { fetch }),
     code('invalid_request'),
   );
   for (const timeoutMs of [
@@ -362,13 +362,13 @@ void test('unsupported MIME, excessive deadlines and browser execution never dis
     MEDIA_DOWNLOAD_LIMITS.timeoutMs + 1,
   ])
     await assert.rejects(
-      downloadGatewayMedia(media(), { fetch, timeoutMs }),
+      downloadPpqMedia(media(), { fetch, timeoutMs }),
       code('invalid_request'),
     );
   globalThis.window = {};
   try {
     await assert.rejects(
-      downloadGatewayMedia(media(), { fetch }),
+      downloadPpqMedia(media(), { fetch }),
       code('unavailable'),
     );
   } finally {
@@ -381,7 +381,7 @@ void test('truncated headers, misleading MP4 brand and inconsistent RIFF lengths
   const quicktime = mp4.slice();
   quicktime.set(Buffer.from('qt  '), 8);
   await assert.rejects(
-    downloadGatewayMedia(media('video/mp4'), {
+    downloadPpqMedia(media('video/mp4'), {
       fetch: async () => respond(quicktime, 'video/mp4'),
     }),
     code('invalid_response'),
@@ -389,14 +389,14 @@ void test('truncated headers, misleading MP4 brand and inconsistent RIFF lengths
   const wrongRiff = webp.slice();
   new DataView(wrongRiff.buffer).setUint32(4, 0, true);
   await assert.rejects(
-    downloadGatewayMedia(media('image/webp'), {
+    downloadPpqMedia(media('image/webp'), {
       fetch: async () => respond(wrongRiff, 'image/webp'),
     }),
     code('invalid_response'),
   );
   for (const type of ['image/png', 'image/jpeg', 'image/webp', 'video/mp4'])
     await assert.rejects(
-      downloadGatewayMedia(media(type), {
+      downloadPpqMedia(media(type), {
         fetch: async () => respond(new Uint8Array(3), type),
       }),
       code('invalid_response'),

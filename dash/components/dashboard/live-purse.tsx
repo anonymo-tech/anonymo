@@ -26,6 +26,7 @@ const activity: Record<LedgerEntry['kind'], string> = {
   release: 'Unused reservation returned',
   refund: 'Refund credited',
   internal_test_credit: 'Internal test credit · not USDC',
+  promotional_credit: 'Welcome usage credit · not USDC',
 };
 const utc = (value: string, locale: 'en' | 'zh') =>
   new Intl.DateTimeFormat(locale === 'zh' ? 'zh-CN' : 'en', {
@@ -217,6 +218,12 @@ export function LivePurse({
                   ),
                 },
               )}
+            </p>
+          )}
+          {owner && account.balance?.welcomeCreditUsd6 && (
+            <p className="cp-fineprint">
+              Welcome credit: {formatAccountUsd6(account.balance.welcomeCreditUsd6)}{' '}
+              USD granted for model usage. Not USDC or a deposit; it cannot be withdrawn.
             </p>
           )}
         </div>

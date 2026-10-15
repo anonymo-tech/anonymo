@@ -26,13 +26,13 @@ function route() {
     card: {
       level: 'unverified',
       reviewed: true,
-      provider: 'gateway',
+      provider: 'ppq',
       plaintextVisibility: 'gateway_and_upstream',
       retentionDisclosure: 'Gateway and upstream may process plaintext.',
-      evidenceUrl: 'https://inference.invalid/privacy',
+      evidenceUrl: 'https://ppq.ai/privacy',
       lastVerifiedAt: now,
       catalogVerification: {
-        sourceUrl: 'https://api.inference.invalid/v1/models?type=all',
+        sourceUrl: 'https://api.ppq.ai/v1/models?type=all',
         fetchedAt: now,
         sha256: 'a'.repeat(64),
         priceCheck: 'matched',
@@ -40,7 +40,7 @@ function route() {
       mediaTerms: {
         reviewed: true,
         commercialUse: 'allowed',
-        evidenceUrls: ['https://inference.invalid/terms'],
+        evidenceUrls: ['https://ppq.ai/terms'],
         reviewedAt: now,
       },
     },
@@ -64,9 +64,7 @@ void test('media capability cannot be enabled by environment storage claims', ()
     CONCLAVE_MODE: 'service',
     CONCLAVE_APP_ORIGIN: 'https://app.example.invalid',
     CONCLAVE_DATABASE_URL: 'postgresql://fixture.example.invalid/db',
-    GATEWAY_API_KEY: randomBytes(16).toString('hex'),
-    GATEWAY_API_ORIGIN: 'https://api.inference.invalid',
-    GATEWAY_EVIDENCE_ORIGINS: '["https://inference.invalid","https://www.inference.invalid"]',
+    PPQ_API_KEY: randomBytes(16).toString('hex'),
     CONCLAVE_INFERENCE_ENABLED: 'true',
     CONCLAVE_MEDIA_ENABLED: 'true',
     CONCLAVE_MEDIA_STORAGE_READY: 'true',
@@ -79,7 +77,7 @@ void test('media capability cannot be enabled by environment storage claims', ()
   assert.equal(mediaCapability(env).reason, 'MEDIA_STORAGE_REQUIRED');
   assert.equal(mediaCapability(env, true).configured, true);
   for (const key of [
-    'GATEWAY_API_KEY',
+    'PPQ_API_KEY',
     'CONCLAVE_DATABASE_URL',
     'CONCLAVE_DATA_KEYS',
     'CONCLAVE_MEDIA_ENABLED',
@@ -91,14 +89,14 @@ void test('media capability cannot be enabled by environment storage claims', ()
     );
   assert.equal(mediaCapability(env, true).deliveryReady, true);
   assert.equal(
-    mediaCapability({ ...env, GATEWAY_API_KEY: '' }, true).deliveryReady,
+    mediaCapability({ ...env, PPQ_API_KEY: '' }, true).deliveryReady,
     true,
   );
   assert.equal(
     mediaCapability({ ...env, CONCLAVE_DATA_KEYS: '' }, true).deliveryReady,
     false,
   );
-  assert.ok(!JSON.stringify(mediaCapability(env)).includes(env.GATEWAY_API_KEY));
+  assert.ok(!JSON.stringify(mediaCapability(env)).includes(env.PPQ_API_KEY));
 });
 void test('strict exact media input refuses references, extra fields and oversized UTF-8 text', () => {
   const input = { prompt: 'A stone arch', privacy: 'standard', options: image };
@@ -161,7 +159,7 @@ void test('media pricing matches exact option labels and rejects cheaper variant
     (p) => (p.variants[0].catalogQuality = 'default'),
     (p) => p.variants.push(p.variants[0]),
     (p) => (p.variants[0].providerUsd6 = '0'),
-    (p) => (p.variants[0].providerUsd6 = '10000001'),
+    (p) => (p.variants[0].providerUsd6 = '9000000000000001'),
     (p) => (p.markupBps = -1),
     (p) => (p.maxInputBytes = 16001),
   ]) {
@@ -278,4 +276,14 @@ void test('media descriptions reject non-text controls before encryption while p
       }),
     (error) => error.code === 'INVALID_MEDIA_TEXT' && error.status === 400,
   );
+});
+
+void test('media quotes above ten dollars use exact catalog cost with no product budget cap', () => {
+  const r = route();
+  r.pricing.variants[0].providerUsd6 = '12500000';
+  assert.equal(validateMediaPricing(r.pricing, r.model_id).variants[0].providerUsd6, '12500000');
+  assert.deepEqual(mediaQuoteAmount(r, {prompt: 'A stone arch', privacy: 'standard', options: image}),
+    {providerUsd6: '12500000', maximumUsd6: '14062500'});
+  r.pricing.variants[0].providerUsd6 = '9000000000000000';
+  assert.throws(() => validateMediaPricing(r.pricing, r.model_id));
 });

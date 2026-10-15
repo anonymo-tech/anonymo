@@ -10,11 +10,11 @@ import { requireCondition, ServiceError } from '../core/errors.ts';
 import { settleHoldInTransaction } from '../ledger/ledger.ts';
 import { ceilRatio } from '../ledger/money.ts';
 import {
-  GatewayError,
-  type GatewayClient,
-  type GatewayImageResult,
-  type GatewayVideoJob,
-} from '../gateway/index.ts';
+  PpqError,
+  type PpqClient,
+  type PpqImageResult,
+  type PpqVideoJob,
+} from '../ppq/index.ts';
 import {
   assertUsableMediaRoute,
   mediaCapability,
@@ -32,7 +32,7 @@ import {
 
 type Lease = MediaJobRecord & { lease_token: string };
 export type MediaProvider = Pick<
-  GatewayClient,
+  PpqClient,
   | 'configured'
   | 'generateImage'
   | 'recoverImage'
@@ -119,7 +119,7 @@ async function saveResult(
   pool: Pool,
   job: Lease,
   route: MediaRoute,
-  result: GatewayImageResult | GatewayVideoJob,
+  result: PpqImageResult | PpqVideoJob,
   keyring: DataKeyring,
 ) {
   requireCondition(
@@ -131,10 +131,10 @@ async function saveResult(
   const reference =
     job.modality === 'image'
       ? `image:${job.id}`
-      : `video:${(result as GatewayVideoJob).id}`;
+      : `video:${(result as PpqVideoJob).id}`;
   if (job.modality === 'image')
     requireCondition(
-      (result as GatewayImageResult).clientRequestId === job.id,
+      (result as PpqImageResult).clientRequestId === job.id,
       409,
       'MEDIA_RESULT_MISMATCH',
       'The image result does not match its saved request.',
@@ -150,8 +150,8 @@ async function saveResult(
   if (complete)
     requireCondition(
       job.modality === 'image'
-        ? (result as GatewayImageResult).media.length === 1
-        : !!(result as GatewayVideoJob).media,
+        ? (result as PpqImageResult).media.length === 1
+        : !!(result as PpqVideoJob).media,
       409,
       'MEDIA_RESULT_MISMATCH',
       'The result has an unexpected number of assets.',
@@ -372,7 +372,7 @@ export async function runNextMediaJob(
           beating = false;
         });
     }, 2000);
-    let result: GatewayImageResult | GatewayVideoJob;
+    let result: PpqImageResult | PpqVideoJob;
     if (lookup) {
       if (job.modality === 'image')
         result = await provider.recoverImage(job.id, controller.signal);
@@ -393,7 +393,7 @@ export async function runNextMediaJob(
           controller.signal,
         );
         requireCondition(
-          (result as GatewayVideoJob).id === reference.slice(6),
+          (result as PpqVideoJob).id === reference.slice(6),
           409,
           'MEDIA_RESULT_MISMATCH',
           'The provider returned another operation.',
@@ -430,7 +430,7 @@ export async function runNextMediaJob(
     try {
       if (
         !dispatched ||
-        (!lookup && error instanceof GatewayError && !error.billingAmbiguous)
+        (!lookup && error instanceof PpqError && !error.billingAmbiguous)
       )
         await zero(
           pool,

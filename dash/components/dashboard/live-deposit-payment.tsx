@@ -25,6 +25,7 @@ import {
   formatDepositAmount,
   type DepositIntent,
 } from '../../lib/client/deposits';
+import { startDepositRecoveryPolling } from '../../lib/client/deposit-recovery-loop';
 import { watchWallet, type StandardWallet } from '../../lib/client/service';
 
 type Props = {
@@ -37,6 +38,12 @@ type Props = {
 };
 type Snapshot = { deposit: DepositIntent; payment: DepositPayment | null };
 const pageVisible = () => document.visibilityState !== 'hidden';
+const totalSolEstimate = (payment: DepositPayment) =>
+  formatLamports(
+    (
+      BigInt(payment.feeLamports) + BigInt(payment.accountCreationLamports)
+    ).toString(),
+  );
 export function LiveDepositPayment(props: Props) {
   return (
     <PaymentSession key={`${props.accountId}:${props.intent.id}`} {...props} />
@@ -63,7 +70,9 @@ function PaymentSession({
     [notice, setNotice] = useState(''),
     [uncertain, setUncertain] = useState(false),
     [cursor, setCursor] = useState<string | null>(null),
+    [automaticRecovery, setAutomaticRecovery] = useState<string | null>(null),
     [now, setNow] = useState(Date.now);
+  const lastRecoveryAt = useRef(0);
   const epoch = useRef(0),
     controller = useRef<AbortController | null>(null),
     blocked = useRef(false),
@@ -118,9 +127,11 @@ function PaymentSession({
       setNotice('');
       setUncertain(false);
       setCursor(null);
+      setAutomaticRecovery(null);
     };
     const hide = () => {
       if (pageVisible()) return;
+      setAutomaticRecovery(null);
       // External wallets may hide the browser during an explicit signing handoff.
       if (phase.current === 'connecting' || phase.current === 'signing') return;
       epoch.current++;
@@ -385,6 +396,8 @@ function PaymentSession({
             : 'The signed transfer is saved. Its network acceptance is not established; check status and recover this same transfer.',
         );
         if (result.deposit.state === 'credited') await onCredited();
+        else if (result.submitted && result.payment?.signature)
+          setAutomaticRecovery(result.payment.signature);
       },
     );
   }
@@ -413,35 +426,103 @@ function PaymentSession({
       if (!result || !current()) return;
       install(result);
       setUncertain(false);
+      if (result.deposit.state === 'credited') await onCredited();
+      else if (result.submitted && result.payment?.signature)
+        setAutomaticRecovery(result.payment.signature);
       setNotice(
         'The same signed transfer was checked for submission. No new wallet signature or payment was created. Check finalization before expecting credit.',
       );
     });
   }
-  async function recover(nextPage: boolean) {
+  async function recover(nextPage: boolean, automatic = false) {
+    let outcome: 'retry' | 'credited' | 'stop' = 'retry';
+    if (Date.now() - lastRecoveryAt.current < 15_000) {
+      if (!automatic)
+        setNotice(
+          'A finality check just ran. Please wait a few seconds before checking again.',
+        );
+      return outcome;
+    }
     await action('Checking finalized payment…', async (client, current) => {
-      const result = await client.recover(saved, nextPage ? cursor : null);
-      if (!current()) return;
-      onUpdated(result.deposit);
-      setSnapshot((previous) =>
-        previous ? { ...previous, deposit: result.deposit } : previous,
-      );
-      setCursor(result.search.nextCursor);
-      setNotice(
-        result.credited
-          ? 'Finalized payment verified and credited once.'
-          : result.search.status === 'incomplete'
-            ? 'The network check was incomplete. Continue this recovery check; this does not prove that no payment exists.'
-            : 'No matching finalized payment was found on this page. This does not prove that no payment exists.',
-      );
-      if (result.credited) {
-        setUncertain(false);
-        await onCredited();
+      lastRecoveryAt.current = Date.now();
+      try {
+        const result = await client.recover(saved, nextPage ? cursor : null);
+        if (!current()) return;
+        onUpdated(result.deposit);
+        setSnapshot((previous) =>
+          previous ? { ...previous, deposit: result.deposit } : previous,
+        );
+        setCursor(result.search.nextCursor);
+        setNotice(
+          result.credited
+            ? 'Finalized payment verified and credited once.'
+            : result.search.status === 'incomplete'
+              ? 'The network check was incomplete. Continue this recovery check; this does not prove that no payment exists.'
+              : 'No matching finalized payment was found on this page. This does not prove that no payment exists.',
+        );
+        if (result.credited) {
+          outcome = 'credited';
+          setAutomaticRecovery(null);
+          setUncertain(false);
+          await onCredited();
+        }
+        const read = await client.read(result.deposit, payment ?? undefined);
+        if (current()) install(read);
+      } catch (failure) {
+        if (
+          failure instanceof DepositPaymentError &&
+          [400, 401, 403, 404, 409, 422].includes(failure.status)
+        ) {
+          outcome = 'stop';
+          setAutomaticRecovery(null);
+        }
+        throw failure;
       }
-      const read = await client.read(result.deposit, payment ?? undefined);
-      if (current()) install(read);
     });
+    return outcome;
   }
+  const checkAutomaticRecovery = useEffectEvent(
+    async (): Promise<'retry' | 'credited' | 'stop'> => {
+      if (blocked.current || !visible || !pageVisible()) {
+        setAutomaticRecovery(null);
+        return 'stop';
+      }
+      if (saved.state === 'credited') {
+        setAutomaticRecovery(null);
+        return 'credited';
+      }
+      if (
+        !saved.canReconcile ||
+        !payment?.signature ||
+        payment.signature !== automaticRecovery
+      ) {
+        setAutomaticRecovery(null);
+        return 'stop';
+      }
+      if (working.current) return 'retry';
+      return recover(cursor !== null, true);
+    },
+  );
+  const exhaustedAutomaticRecovery = useEffectEvent(() => {
+    setAutomaticRecovery(null);
+    if (!blocked.current && saved.state !== 'credited')
+      setNotice(
+        'Confirmation is taking longer. Use Check finalized payment to continue; no additional transfer will be sent.',
+      );
+  });
+  useEffect(() => {
+    if (!automaticRecovery || !visible || sessionBlocked) return;
+    const lifetime = new AbortController();
+    const stop = startDepositRecoveryPolling({
+      signal: lifetime.signal,
+      check: checkAutomaticRecovery,
+      onExhausted: exhaustedAutomaticRecovery,
+    });
+    return () => {
+      lifetime.abort();
+      stop();
+    };
+  }, [automaticRecovery, visible, sessionBlocked]);
   if (!visible || sessionBlocked) return null;
   return (
     <section className="ct-example" aria-label={t('Wallet deposit payment')}>
@@ -454,7 +535,7 @@ function PaymentSession({
       </h3>
       <p className="cp-fineprint">
         {t(
-          'Conclave requests a signature for the exact transfer below, then submits it to the network. Your wallet must have USDC and SOL for the network fee. A network submission alone does not add service credit.',
+          'Conclave requests a signature for the exact transfer below, then submits it to the network. Your wallet must have USDC and SOL for the network fee. If the treasury USDC account needs creation, its rent is shown below before you sign. That rent is paid to Solana; it is not added to your Conclave balance. A network submission alone does not add service credit.',
         )}
       </p>
       {error && (
@@ -465,6 +546,13 @@ function PaymentSession({
       {notice && (
         <output className="cp-boundary-note" aria-live="polite">
           {t(notice)}
+        </output>
+      )}
+      {automaticRecovery && saved.state !== 'credited' && (
+        <output className="cp-fineprint">
+          {t(
+            'Checking Solana confirmation automatically for up to two minutes…',
+          )}
         </output>
       )}
       {busy && (
@@ -533,6 +621,18 @@ function PaymentSession({
               <dt>{t('Estimated network fee')}</dt>
               <dd>{formatLamports(payment.feeLamports)} SOL</dd>
             </div>
+            {payment.createRecipientAccount && (
+              <div>
+                <dt>{t('USDC account-creation rent estimate')}</dt>
+                <dd>{formatLamports(payment.accountCreationLamports)} SOL</dd>
+              </div>
+            )}
+            {payment.createRecipientAccount && (
+              <div>
+                <dt>{t('Estimated total SOL')}</dt>
+                <dd>{totalSolEstimate(payment)} SOL</dd>
+              </div>
+            )}
             <div>
               <dt>{t('Review expires')}</dt>
               <dd>
@@ -550,6 +650,16 @@ function PaymentSession({
                   : t(payment.state)}
               </dd>
             </div>
+            {payment.createRecipientAccount && (
+              <div>
+                <dt>{t('Included in this transaction')}</dt>
+                <dd>
+                  {t(
+                    'Create the treasury USDC account only if missing, then send your exact USDC amount. Account-creation rent may be zero if the account already exists when the transaction executes.',
+                  )}
+                </dd>
+              </div>
+            )}
             {payment.signature && (
               <div>
                 <dt>{t('Transaction signature')}</dt>
