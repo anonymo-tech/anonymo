@@ -14,6 +14,8 @@ import { fomoPromptPresentation } from '../../lib/second-look/fomo-presentation'
 import { AnswerCard, ProviderIcon, type AnswerActions } from './answer-card';
 import type { Turn } from './canvas-state';
 import { MODELS } from './data';
+import { featureOn } from './feature-switches';
+import { AskAgain, type ReuseQuestion } from './ask-again';
 import '../../app/dashboard/chat-thread.css';
 
 export type ChatTurnPreference = {
@@ -26,6 +28,7 @@ type ChatThreadProps = {
   actions: AnswerActions;
   preferences: Record<string, ChatTurnPreference>;
   onPreferenceChange: (turnId: string, preference: ChatTurnPreference) => void;
+  onReuseQuestion?: ReuseQuestion;
 };
 
 type ChatTurnProps = {
@@ -34,6 +37,7 @@ type ChatTurnProps = {
   actions: AnswerActions;
   preference?: ChatTurnPreference;
   onPreferenceChange: ChatThreadProps['onPreferenceChange'];
+  onReuseQuestion?: ReuseQuestion;
 };
 
 function sourceChain(turns: Turn[]) {
@@ -64,6 +68,7 @@ export function ChatTurn({
   actions,
   preference,
   onPreferenceChange,
+  onReuseQuestion,
 }: ChatTurnProps) {
   const t = useT();
   const id = useId();
@@ -135,6 +140,7 @@ export function ChatTurn({
         <span className="cw-chat-sr-only">{t('You: ')}</span>
         {paper?.question ?? researchPrompt?.title ?? t(turn.prompt)}
       </p>
+      {featureOn('askAgain') && onReuseQuestion && <AskAgain turn={turn} source={paper?.source ?? source} onReuse={onReuseQuestion} />}
       {turn.images?.length ? (
         <div
           className="eu-controls"
@@ -342,6 +348,7 @@ export function ChatThread({
   actions,
   preferences,
   onPreferenceChange,
+  onReuseQuestion,
 }: ChatThreadProps) {
   const sources = useMemo(() => sourceChain(turns), [turns]);
   return (
@@ -354,6 +361,7 @@ export function ChatThread({
           actions={actions}
           preference={preferences[turn.id]}
           onPreferenceChange={onPreferenceChange}
+          onReuseQuestion={onReuseQuestion}
         />
       ))}
     </div>

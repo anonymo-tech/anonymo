@@ -1,5 +1,7 @@
 'use client';
 import { modelReleased, releasedModelSelection } from '../../lib/model-release.ts';
+import { appendChatDraft, quotedReplyDraft } from '../../lib/chat-drafts';
+import type { ReuseQuestion } from './ask-again';
 
 import {
   lazy,
@@ -1222,12 +1224,53 @@ function CanvasWorkspaceShell({
     setRouteModel(id);
     setDialog('routes');
   }, []);
+  const quoteAnswer = useCallback((answer: Answer, text: string) => {
+    if (!featureOn('quoteReply') || !text.trim()) return;
+    const currentRoom = stateRef.current.rooms.find(item => item.id === stateRef.current.activeRoomId);
+    if (!currentRoom) return;
+    const name = answer.live?.modelName || answer.live?.label || MODELS.find(model => model.id === answer.modelId)?.name || 'this model';
+    const draft = quotedReplyDraft(currentRoom.draft, name, text);
+    if (!live.active && draft.length > canvasLimits.draft) {
+      notify('This quote would exceed the local draft limit. Your draft is unchanged.');
+      return;
+    }
+    if (live.active) live.setDraft(draft);
+    else if (!updateWorkspace(current => ({ ...current, rooms: current.rooms.map(item => item.id === currentRoom.id ? { ...item, draft, updatedAt: Date.now() } : item) }))) return;
+    setGuardMessage('');
+    setRedacted(null);
+    composer.current?.focus();
+    notify('Selected passage added to your draft. Add your question before sending.');
+  }, [live, notify, updateWorkspace]);
+  const reuseQuestion: ReuseQuestion = (turn, question, source) => {
+    if (!featureOn('askAgain')) return 'Ask Again is unavailable.';
+    if (!question.trim()) return 'Add a question first.';
+    const current = stateRef.current.rooms.find(item => item.id === stateRef.current.activeRoomId);
+    if (!current) return 'Open a project first.';
+    const draft = appendChatDraft(current.draft, question);
+    if (!live.active && draft.length > canvasLimits.draft) return 'This would exceed the local draft limit. Your existing draft is unchanged.';
+    const existingPaper = paperByRoom[current.id];
+    if (source && existingPaper && JSON.stringify(existingPaper) !== JSON.stringify(source)) return 'Your draft already has a different document. Remove it before reusing this question.';
+    const pictures = [...new Map([...(pictureByRoom[current.id] ?? []), ...(turn.images ?? [])].map(image => [image.dataUrl, image])).values()];
+    if (pictures.length > 4) return 'This would attach more than four pictures. Remove a picture from your draft first.';
+    if (source && !featureOn('paperTrail')) return 'The original document cannot be reused while Paper Trail is unavailable.';
+    if (turn.images?.length && !featureOn('pictureThis')) return 'The original pictures cannot be reused while Picture This is unavailable.';
+    if (live.active) live.setDraft(draft);
+    else if (!updateWorkspace(state => ({ ...state, rooms: state.rooms.map(item => item.id === current.id ? { ...item, draft, updatedAt: Date.now() } : item) }))) return 'The draft could not be saved. Your existing work is unchanged.';
+    if (source) setPaperByRoom(value => ({ ...value, [current.id]: source }));
+    if (pictures.length) setPictureByRoom(value => ({ ...value, [current.id]: pictures }));
+    setGuardMessage('');
+    setRedacted(null);
+    requestAnimationFrame(() => composer.current?.focus());
+    notify('Question added to your draft. Edit it or change models before sending.');
+    return null;
+  };
   const actions: AnswerActions = useMemo(
     () => ({
       selected: selection,
       onSelect: briefsVisible ? selectAnswer : undefined,
       onCopy: copyAnswer,
       onBranch: branchAnswer,
+      onQuote: featureOn('quoteReply') ? quoteAnswer : undefined,
       onRoute: isVisible('routes') ? inspectRoute : undefined,
       onLoadFull: (answer) => {
         const turn = room.turns.find((item) =>
@@ -1259,6 +1302,7 @@ function CanvasWorkspaceShell({
       selectAnswer,
       copyAnswer,
       branchAnswer,
+      quoteAnswer,
       inspectRoute,
       room.turns,
       live,
@@ -2159,7 +2203,9 @@ function CanvasWorkspaceShell({
                   }
                 >
                   <CanvasBoard
-                    key={room.id}
+                    key={`${live.account?.accountId ?? 'local'}:${room.id}`}
+                    accountScope={live.account?.accountId ?? 'local-preview'}
+                    projectId={room.id}
                     turns={room.turns}
                     actions={actions}
                   />
@@ -2171,6 +2217,7 @@ function CanvasWorkspaceShell({
                 actions={actions}
                 preferences={chatPreferences[room.id] ?? {}}
                 onPreferenceChange={updateChatPreference}
+                onReuseQuestion={reuseQuestion}
               />
             )}
           </>

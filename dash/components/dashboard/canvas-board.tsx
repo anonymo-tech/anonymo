@@ -17,6 +17,11 @@ import { MotionIcon } from './motion-icon';
 import { AnswerCard, type AnswerActions } from './answer-card';
 import { MODELS } from './data';
 import type { Answer, Turn } from './canvas-state';
+import { featureOn } from './feature-switches';
+import { canvasLayoutKey, parseCanvasLayout, snapshotCanvasLayout, type CanvasLayout } from '../../lib/canvas-layout';
+import '../../app/dashboard/canvas-extras.css';
+import { useDeviceSetting } from './use-device-setting';
+const validLayout = (value: unknown): value is CanvasLayout | null => value === null || parseCanvasLayout(value) !== null;
 
 type GraphData = { prompt?: string; answer?: Answer; actions: AnswerActions };
 type GraphNode = Node<GraphData>;
@@ -85,11 +90,28 @@ function graphNodes(
 export default function CanvasBoard({
   turns,
   actions,
+  accountScope,
+  projectId,
 }: {
+  accountScope: string;
+  projectId: string;
   turns: Turn[];
   actions: AnswerActions;
 }) {
   const t = useT();
+  const memoryEnabled = featureOn('canvasMemory');
+  const storageKey = canvasLayoutKey(accountScope, projectId);
+  const memory = useDeviceSetting<CanvasLayout | null>(storageKey, null, validLayout, memoryEnabled);
+  const memoryReady = !memoryEnabled || memory.loaded;
+  const restoredViewport = useRef(false);
+  const initialLayout = useRef<CanvasLayout | null>(null);
+  const initialLoaded = useRef(false);
+  useEffect(() => {
+    if (memoryReady && !initialLoaded.current) {
+      initialLayout.current = memory.value;
+      initialLoaded.current = true;
+    }
+  }, [memoryReady, memory.value]);
   const container = useRef<HTMLDivElement>(null);
   const mobileCanvas = useRef<HTMLDivElement>(null);
   const [instance, setInstance] = useState<ReactFlowInstance<GraphNode> | null>(
@@ -101,15 +123,16 @@ export default function CanvasBoard({
   const previousIds = useRef(ids);
 
   useEffect(() => {
+    if (!memoryReady) return;
     const next = graphNodes(turns, actions, t);
     setNodes((current) =>
       next.map((node) => ({
         ...node,
         position:
-          current.find((old) => old.id === node.id)?.position || node.position,
+          current.find((old) => old.id === node.id)?.position || initialLayout.current?.positions[node.id] || node.position,
       })),
     );
-  }, [turns, actions, setNodes, t]);
+  }, [turns, actions, setNodes, t, memoryReady]);
 
   const resetView = useCallback(() => {
     const el = container.current;
@@ -128,13 +151,31 @@ export default function CanvasBoard({
     );
   }, [instance]);
 
+  const remember = useCallback(() => {
+    if (!memoryEnabled || !memoryReady || !instance || !restoredViewport.current) return;
+    const snapshot = snapshotCanvasLayout(instance.getNodes(), instance.getViewport());
+    if (!snapshot) return;
+    if (JSON.stringify(snapshot) !== JSON.stringify(memory.value)) memory.save(snapshot);
+  }, [memoryEnabled, memoryReady, instance, memory]);
+
   useEffect(() => {
-    if (!container.current) return;
+    if (!container.current || !instance || !memoryReady) return;
+    if (!restoredViewport.current) {
+      restoredViewport.current = true;
+      if (memory.value) void instance.setViewport(memory.value.viewport);
+      else resetView();
+    }
+    if (memoryEnabled) return;
     const observer = new ResizeObserver(resetView);
     observer.observe(container.current);
-    resetView();
     return () => observer.disconnect();
-  }, [resetView]);
+  }, [resetView, instance, memoryReady, memoryEnabled, memory.value]);
+
+  useEffect(() => {
+    if (!nodes.length) return;
+    const timer = window.setTimeout(remember, 250);
+    return () => window.clearTimeout(timer);
+  }, [nodes, remember]);
 
   useEffect(() => {
     if (previousIds.current !== ids && turns.length > 1 && instance) {
@@ -198,6 +239,8 @@ export default function CanvasBoard({
           onNodesChange={onNodesChange}
           onInit={setInstance}
           onMove={(_, viewport) => setZoom(viewport.zoom)}
+          onMoveEnd={remember}
+          onNodeDragStop={remember}
           minZoom={0.25}
           maxZoom={1.8}
           nodesConnectable={false}
@@ -229,6 +272,9 @@ export default function CanvasBoard({
         >
           <Background gap={24} size={0.95} color="#cdd1ce" />
         </ReactFlow>
+        {memoryEnabled && <output className="cw-layout-note">
+          {memory.error || 'Layout saved on this device'}
+        </output>}
         <div className="cw-zoom">
           <button
             data-icon-trigger

@@ -5,6 +5,8 @@
   background: #fdfdfb;
   box-shadow: 0 2px 5px #17181603;
 }
+.cw-shell .cw-quote-reply { display: block; margin: 4px 0 14px; padding: 8px 11px; border: 1px solid #e2b1ac; border-radius: 6px; background: #fff; color: #ae241b; font: inherit; font-size: 13px; cursor: pointer; }
+.cw-shell .cw-quote-reply:focus-visible { outline: 2px solid #e93125; outline-offset: 3px; }
 
 .cw-shell .cw-board .cw-answer {
   cursor: grab;

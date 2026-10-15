@@ -4,6 +4,7 @@ import type {PaperSource} from '../../lib/paper-trail';
 import {PaperSources} from './paper-sources';
 import { featureOn } from './feature-switches';
 import { ReadToMe } from './read-to-me';
+import { QuoteReply } from './quote-reply';
 import '@/app/dashboard/everyday-updates.css';
 import { useT } from '@/lib/i18n';
 import Image from 'next/image';
@@ -88,6 +89,7 @@ export type AnswerActions = {
   onSelect?: (id: string) => void;
   onCopy: (answer: Answer) => void;
   onBranch: (answer: Answer) => void;
+  onQuote?: (answer: Answer, text: string) => void;
   /** Omitted when route inspection is hidden. */
   onRoute?: (id: string) => void;
   onCancel?: (answer: Answer) => void;
@@ -180,6 +182,7 @@ export function AnswerCard({
       {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Overflowing answers must be keyboard-scrollable. */}
       <div
         className="cw-answer-body nodrag nowheel"
+        data-quote-answer={featureOn('quoteReply') && actions.onQuote ? answer.id : undefined}
         tabIndex={isChat ? undefined : 0}
       >
         {answer.heading && <h2>{t(answer.heading)}</h2>}
@@ -210,6 +213,7 @@ export function AnswerCard({
           </button>
         )}
       </div>
+      {featureOn('quoteReply') && actions.onQuote && <QuoteReply answerId={answer.id} onQuote={text => actions.onQuote?.(answer, text)} />}
       {featureOn('paperTrail') && paperSource && <PaperSources source={paperSource} text={answer.paragraphs.join('\n\n')}/>}
       {featureOn('readToMe') && (!answer.live || (answer.live.state==='succeeded' && !answer.live.outputTruncated)) && <ReadToMe key={answer.id+answer.paragraphs.join('').length} text={answer.paragraphs.join('\n\n')} />}
       <footer className="cw-answer-footer">

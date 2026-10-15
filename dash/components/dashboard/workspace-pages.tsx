@@ -28,6 +28,8 @@ import '@/app/dashboard/workspace-pages.css';
 import { LiveWorkspaceServices } from './live-workspace-services';
 import { isStringList, useDeviceSetting } from './use-device-setting';
 import '@/app/dashboard/library-tools.css';
+import { PROJECT_VIEW_DEFAULT, isProjectView, sortProjects } from '../../lib/project-organizer';
+import '@/app/dashboard/project-organizer.css';
 const validProjectFilter = (value: unknown): value is string => typeof value === 'string' && value.length <= 160;
 
 export type PageView =
@@ -237,6 +239,7 @@ function RoomPreview({ room }: { room: Room }) {
 }
 
 function RoomsPage({
+  account,
   state,
   query,
   onOpenRoom,
@@ -246,6 +249,8 @@ function RoomsPage({
 }: WorkspacePagesProps) {
   const t = useT();
   const [filter, setFilter] = useState<'recent' | 'pinned'>('recent');
+  const projectView = useDeviceSetting(`conclave:project-view:v1:${account?.accountId ?? 'guest'}`, PROJECT_VIEW_DEFAULT, isProjectView, featureOn('projectView'));
+  const viewOptions = featureOn('projectView') ? projectView.value : PROJECT_VIEW_DEFAULT;
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const input = useRef<HTMLInputElement>(null);
@@ -253,15 +258,14 @@ function RoomsPage({
     if (creating) input.current?.focus();
   }, [creating]);
   const search = query.trim().toLowerCase();
-  const rooms = state.rooms
+  const rooms = sortProjects(state.rooms
     .filter(
       (room) =>
         (filter === 'recent' || room.pinned) &&
         `${room.name} ${room.turns.map((turn) => turn.prompt).join(' ')}`
           .toLowerCase()
           .includes(search),
-    )
-    .toSorted((a, b) => b.updatedAt - a.updatedAt);
+    ), viewOptions.sort);
   const create = (event: SubmitEvent) => {
     event.preventDefault();
     if (!name.trim()) return;
@@ -348,8 +352,18 @@ function RoomsPage({
             : t('{count} projects', { count: rooms.length })}
         </span>
       </div>
+      {featureOn('projectView') && <div className="po-controls">
+        <div className="cp-tabs" aria-label="Project layout">
+          <button type="button" aria-pressed={viewOptions.layout === 'cards'} onClick={() => projectView.save({...viewOptions, layout:'cards'})}>Cards</button>
+          <button type="button" aria-pressed={viewOptions.layout === 'list'} onClick={() => projectView.save({...viewOptions, layout:'list'})}>List</button>
+        </div>
+        <label>Sort <select value={viewOptions.sort} onChange={event => projectView.save({...viewOptions, sort:event.target.value as typeof viewOptions.sort})}>
+          <option value="recent">Recently updated</option><option value="name">Name A–Z</option><option value="oldest">Oldest update first</option>
+        </select></label>
+        {projectView.error && <output>{projectView.error}</output>}
+      </div>}
       {rooms.length ? (
-        <div className="cp-room-grid">
+        <div className={`cp-room-grid${viewOptions.layout === 'list' ? ' po-project-list' : ''}`}>
           {rooms.map((room) => (
             <article className="cp-room-card" key={room.id}>
               <div className="cp-card-actions">

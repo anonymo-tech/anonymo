@@ -1,0 +1,12 @@
+.po-controls {display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin:0 0 24px;}
+.po-controls label {display:flex;align-items:center;gap:8px;font-size:13px;color:#525252;}
+.po-controls select {background:#fff;border:1px solid #ddd;border-radius:8px;padding:9px 12px;color:#171717;}
+.po-controls output {font-size:12px;flex-basis:100%;}
+.cp-room-grid.po-project-list {display:flex;flex-direction:column;gap:10px;}
+.po-project-list .cp-room-card {min-height:86px;}
+.po-project-list .cp-room-preview {display:none;}
+.po-project-list .cp-room-open {display:block;width:100%;}
+.po-project-list .cp-room-caption {padding:20px 110px 20px 22px;}
+.po-project-list .cp-card-actions {top:20px;right:18px;}
+.po-project-list .cp-room-caption h2 {margin:0 0 8px;}
+@media(max-width:600px){.po-controls{gap:10px}.po-project-list .cp-room-caption{padding-left:16px;}}
