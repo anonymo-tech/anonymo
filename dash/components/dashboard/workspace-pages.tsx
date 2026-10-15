@@ -13,6 +13,7 @@ import {
   ChevronRight,
   LockKeyhole,
   ShieldCheck,
+  Star,
 } from 'lucide-react';
 import type { CanvasBrief, Room, WorkspaceState } from './canvas-state';
 import { MotionIcon } from './motion-icon';
@@ -25,6 +26,9 @@ import { renderBriefPrintHtml } from '../../lib/brief-document';
 import { useT, type Translator } from '@/lib/i18n';
 import '@/app/dashboard/workspace-pages.css';
 import { LiveWorkspaceServices } from './live-workspace-services';
+import { isStringList, useDeviceSetting } from './use-device-setting';
+import '@/app/dashboard/library-tools.css';
+const validProjectFilter = (value: unknown): value is string => typeof value === 'string' && value.length <= 160;
 
 export type PageView =
   | 'rooms'
@@ -636,11 +640,18 @@ function LibraryPage({
   const t = useT();
   const [filter, setFilter] = useState('All');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const stars = useDeviceSetting<string[]>(`conclave.brief-stars.v1:${account?.accountId ?? 'sample'}`, [], isStringList, featureOn('briefStars'));
+  const [onlyStars, setOnlyStars] = useState(false);
+  const projectSetting = useDeviceSetting(`conclave.library-project.v1:${account?.accountId ?? 'sample'}`, '', validProjectFilter, featureOn('libraryFilter'));
+  const projects = [...new Set(state.briefs.map(brief => brief.roomId))].map(id => ({id, name: state.rooms.find(room => room.id === id)?.name ?? 'Archived project'})).sort((a,b) => a.name.localeCompare(b.name));
+  const project = featureOn('libraryFilter') && projects.some(item => item.id === projectSetting.value) ? projectSetting.value : '';
   const search = query.trim().toLowerCase();
   const briefs = state.briefs
     .filter(
       (brief) =>
         (filter === 'All' || filter === 'Briefs') &&
+        (!project || brief.roomId === project) &&
+        (!featureOn('briefStars') || !onlyStars || stars.value.includes(brief.id)) &&
         `${brief.title} ${brief.body}`.toLowerCase().includes(search),
     )
     .toSorted((a, b) => b.createdAt - a.createdAt);
@@ -674,14 +685,28 @@ function LibraryPage({
             : t('{count} items', { count: briefs.length })}
         </span>
       </div>
+      {featureOn('libraryFilter') && <div className="cl-library-tools">
+        <label>Project
+          <select aria-label="Filter Library by project" value={project} onChange={event => projectSetting.save(event.target.value)}>
+            <option value="">All projects</option>
+            {projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+        </label>
+        {project && <button type="button" onClick={() => projectSetting.save('')}>Clear project filter</button>}
+        {projectSetting.error && <span role="status">{projectSetting.error}</span>}
+      </div>}
+      {featureOn('briefStars') && <div className="cl-library-tools">
+        <button className="cl-library-favorites" type="button" aria-pressed={onlyStars} onClick={() => setOnlyStars(!onlyStars)}><Star size={15} fill={onlyStars ? 'currentColor' : 'none'} /> Favorites{onlyStars ? ' only' : ''}</button>
+        <span>{stars.error || 'Favorites are saved on this device.'}</span>
+      </div>}
       <div className={`cp-library-layout${selected ? ' has-preview' : ''}`}>
         <div>
           {briefs.length ? (
             <div className="cp-library-grid">
               {briefs.map((brief) => (
+                <div key={brief.id} className="cl-library-item">
                 <button
                   data-icon-trigger
-                  key={brief.id}
                   type="button"
                   className={`cp-library-card${selected?.id === brief.id ? ' is-selected' : ''}`}
                   aria-pressed={selected?.id === brief.id}
@@ -725,6 +750,8 @@ function LibraryPage({
                     </span>
                   </div>
                 </button>
+                {featureOn('briefStars') && <button type="button" className="cl-brief-star" aria-label={`${stars.value.includes(brief.id) ? 'Unfavorite' : 'Favorite'} ${brief.title}`} aria-pressed={stars.value.includes(brief.id)} onClick={() => stars.save(stars.value.includes(brief.id) ? stars.value.filter(id => id !== brief.id) : [...stars.value.filter(id => state.briefs.some(item => item.id === id)).slice(-255), brief.id])}><Star size={17} fill={stars.value.includes(brief.id) ? 'currentColor' : 'none'} /></button>}
+                </div>
               ))}
             </div>
           ) : (
@@ -737,7 +764,7 @@ function LibraryPage({
                 )
               }
               title={
-                search
+                featureOn('briefStars') && onlyStars ? 'No favorites match' : project ? 'No Briefs match this project' : search
                   ? t('Nothing matches just yet')
                   : filter === 'Files' || filter === 'Media'
                     ? filter === 'Files'

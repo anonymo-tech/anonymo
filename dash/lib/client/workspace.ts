@@ -1,3 +1,4 @@
+import {parseChatImages,type ChatImage} from '../picture-this.ts';
 import { CHAT_LIMITS } from '../chat-limits.ts';
 import {
   MAX_ROUTING_CANDIDATES,
@@ -124,6 +125,7 @@ export type ComparisonCall = CallSnapshot & {
   outputLength: number;
 };
 export type ServiceComparison = {
+  images?: ChatImage[];
   id: string;
   projectId: string;
   prompt: string;
@@ -136,7 +138,7 @@ export type ServiceComparison = {
 };
 export type ComparisonItem = {
   routeVersionId: string;
-  messages: { role: 'user' | 'assistant'; content: string }[];
+  messages: { role: 'user' | 'assistant'; content: string; images?: ChatImage[] }[];
   maxOutputTokens: number;
   privacy: 'standard';
 };
@@ -492,6 +494,7 @@ export function parseComparison(v: unknown): ServiceComparison {
     id: id(r.id),
     projectId: id(r.projectId),
     prompt: text(r.prompt, CHAT_LIMITS.inputBytes),
+    ...(r.images===undefined ? {} : {images:parseChatImages(r.images)}),
     createdAt: date(r.createdAt),
     blind: bool(r.blind),
     revealedAt: nullable(r.revealedAt, date),

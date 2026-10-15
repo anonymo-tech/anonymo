@@ -1,6 +1,7 @@
 'use client';
 
 import { memo, type ReactNode } from 'react';
+import { CodeClip } from './code-clip';
 import './research-markdown.css';
 
 /** Model output is untrusted. Only explicit HTTPS links become interactive. */
@@ -105,7 +106,7 @@ function tableAlignment(line: string) {
     : null;
 }
 
-function blocks(lines: string[], depth = 0): ReactNode[] {
+function blocks(lines: string[], depth = 0, codeCopy = false): ReactNode[] {
   if (depth > 6) return [<p key="plain">{inline(lines.join('\n'))}</p>];
   const result: ReactNode[] = [];
   const startsBlock = (index: number) => !lines[index]?.trim() || heading.test(lines[index]) || fence.test(lines[index]) || rule.test(lines[index]) || listItem.test(lines[index]) || /^ {0,3}>/.test(lines[index]) || (lines[index].includes('|') && !!tableAlignment(lines[index + 1] ?? ''));
@@ -120,7 +121,7 @@ function blocks(lines: string[], depth = 0): ReactNode[] {
       const close = new RegExp(`^ {0,3}${code[1][0]}{${code[1].length},}\\s*$`);
       while (index < lines.length && !close.test(lines[index])) body.push(lines[index++]);
       if (index < lines.length) index++;
-      result.push(<pre key={key}><code>{body.join('\n')}</code></pre>);
+      result.push(codeCopy ? <CodeClip key={key} code={body.join('\n')} language={code[2]} /> : <pre key={key}><code>{body.join('\n')}</code></pre>);
       continue;
     }
     const title = heading.exec(line);
@@ -161,7 +162,7 @@ function blocks(lines: string[], depth = 0): ReactNode[] {
           if (leading <= indent) break;
           content.push(lines[index++].slice(Math.min(contentIndent, leading)));
         }
-        items.push(<li key={itemKey}>{blocks(content, depth + 1)}</li>);
+        items.push(<li key={itemKey}>{blocks(content, depth + 1, codeCopy)}</li>);
       }
       result.push(ordered ? <ol key={key} start={Number.parseInt(firstItem[2], 10)}>{items}</ol> : <ul key={key}>{items}</ul>);
       continue;
@@ -169,7 +170,7 @@ function blocks(lines: string[], depth = 0): ReactNode[] {
     if (/^ {0,3}>/.test(line)) {
       const quote: string[] = [];
       while (index < lines.length && /^ {0,3}>/.test(lines[index])) quote.push(lines[index++].replace(/^ {0,3}> ?/, ''));
-      result.push(<blockquote key={key}>{blocks(quote, depth + 1)}</blockquote>);
+      result.push(<blockquote key={key}>{blocks(quote, depth + 1, codeCopy)}</blockquote>);
       continue;
     }
     const paragraph = [line];
@@ -180,6 +181,6 @@ function blocks(lines: string[], depth = 0): ReactNode[] {
   return result;
 }
 
-export const ResearchMarkdown = memo(function ResearchMarkdown({ text }: { text: string }) {
-  return <div className="fomo-markdown">{blocks(text.replace(/\r\n?/g, '\n').split('\n'))}</div>;
+export const ResearchMarkdown = memo(function ResearchMarkdown({ text, codeCopy = false }: { text: string; codeCopy?: boolean }) {
+  return <div className="fomo-markdown">{blocks(text.replace(/\r\n?/g, '\n').split('\n'), 0, codeCopy)}</div>;
 });

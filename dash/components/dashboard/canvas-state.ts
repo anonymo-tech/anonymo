@@ -28,6 +28,7 @@ export interface Answer {
 }
 
 export interface Turn {
+  images?: import('../../lib/picture-this').ChatImage[];
   live?: {
     comparisonId: string;
     blind: boolean;

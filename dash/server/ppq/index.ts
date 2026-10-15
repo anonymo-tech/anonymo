@@ -1,3 +1,5 @@
+import { parseChatImages,imageCapable,type ChatImage } from '../../lib/picture-this.ts';
+import { featureOn } from '../../components/dashboard/feature-switches.ts';
 import { CHAT_LIMITS, CHAT_CAPACITY } from '../../lib/chat-limits.ts';
 import {
   cost,
@@ -51,6 +53,7 @@ export type PpqChatRequest = RequestContext & {
   messages: readonly {
     role: 'system' | 'user' | 'assistant';
     content: string;
+    images?: ChatImage[];
   }[];
   maxOutputTokens?: number;
   /**
@@ -548,7 +551,8 @@ export function createPpqClient(options: PpqOptions = {}) {
           message.content.length > CHAT_LIMITS.inputBytes
         )
           throw new PpqError('invalid_request');
-        return { role: message.role, content: message.content };
+        if(message.images){if(!featureOn('pictureThis')||message.role!=='user')throw new PpqError('invalid_request');try{parseChatImages(message.images);}catch{throw new PpqError('invalid_request');}}
+        return { role: message.role, content: message.content, ...(message.images?{images:message.images}:{}) };
       });
       if (
         !messages.some(
@@ -557,6 +561,7 @@ export function createPpqClient(options: PpqOptions = {}) {
       )
         throw new PpqError('invalid_request');
       const family = Object.entries(PPQ_MODEL_ALLOWLIST).find(([, model]) => model.id === input.modelId)?.[0];
+      if(messages.some(message=>message.images?.length) && (!family || !imageCapable(family)))throw new PpqError('invalid_request');
       const nativeMaximum = family ? CHAT_CAPACITY[family]?.outputTokens : undefined;
       const maxTokens = input.maxOutputTokens ?? nativeMaximum;
       if (maxTokens === undefined || nativeMaximum === undefined || maxTokens > nativeMaximum)
@@ -584,7 +589,7 @@ export function createPpqClient(options: PpqOptions = {}) {
         stream: true,
         body: {
           model: input.modelId,
-          messages,
+          messages: messages.map(message=>({role:message.role,content:message.images?.length?[{type:'text',text:message.content},...message.images.map((image:ChatImage)=>({type:'image_url',image_url:{url:image.dataUrl}}))]:message.content})),
           max_tokens: maxTokens,
           stream: true,
           stream_options: { include_usage: true },

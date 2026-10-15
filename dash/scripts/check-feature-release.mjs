@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
 export const featureNames = [
-  'frontRow', 'modelPanels', 'modelFinder', 'quickPhrases', 'recall', 'takeaway', 'sayIt', 'readToMe',
+  'cleanRead', 'codeClip', 'projectView', 'canvasMemory', 'libraryFilter', 'quoteReply', 'askAgain', 'projectLabels', 'tidyCanvas', 'briefStars', 'threadMap', 'runTotal', 'archiveRecovery', 'decisionDrafts', 'studioReuse', 'readingRoom', 'sendYourWay', 'decisionImport', 'decisionCompare', 'studioSearch',
+  'frontRow', 'modelPanels', 'modelFinder', 'quickPhrases', 'recall', 'takeaway', 'sayIt', 'readToMe', 'pictureThis', 'paperTrail',
   'flywheel',
   'moreModels',
   'secondLook',

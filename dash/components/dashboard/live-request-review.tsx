@@ -1,4 +1,5 @@
 'use client';
+import {readPaperPrompt} from '../../lib/paper-trail';
 
 import { useT, type Translator } from '@/lib/i18n';
 import { useEffect, useState } from 'react';
@@ -114,6 +115,7 @@ export function LiveRequestReview({
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
+  const paper=readPaperPrompt(review.prompt);
   const uncertain = review.phase === 'uncertain';
   const expired = Date.parse(review.expiresAt) <= now;
   const fee = quotePlatformFeeTotals(review.quotes);
@@ -155,7 +157,7 @@ export function LiveRequestReview({
           </span>
         </div>
         <p className="ct-note">
-          {single
+          {paper ? `The question and extracted text from all ${paper.source.pages.length} pages of ${paper.source.name} are sent to the selected models and saved with this conversation.` : review.imagesIncluded ? 'Your question, pictures and the included prior exchanges are sent to the selected models. Pictures are saved with this conversation. The reservation covers the model’s full input capacity; actual usage determines the charge.' : single
             ? t(
                 'The question below and the included prior exchanges are sent. Attached files are not included.',
               )
@@ -163,7 +165,7 @@ export function LiveRequestReview({
                 'The question below and each model’s included prior exchanges are sent. Attached files are not included. Context counts are listed per model.',
               )}
         </p>
-        <p className="ct-code">{review.researchTitle ?? review.prompt}</p>
+        <p className="ct-code">{paper?.question ?? review.researchTitle ?? review.prompt}</p>
         <dl className="ct-facts">
           <div>
             <dt>{t('Maximum reservation')}</dt>

@@ -1,7 +1,15 @@
 'use client';
 
+import { readPaperPrompt, type PaperSource } from '../../lib/paper-trail';
+import Image from 'next/image';
 import { useT } from '@/lib/i18n';
-import { useId, useLayoutEffect, useMemo, useRef, type KeyboardEvent } from 'react';
+import {
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type KeyboardEvent,
+} from 'react';
 import { fomoPromptPresentation } from '../../lib/second-look/fomo-presentation';
 import { AnswerCard, ProviderIcon, type AnswerActions } from './answer-card';
 import type { Turn } from './canvas-state';
@@ -21,11 +29,18 @@ type ChatThreadProps = {
 };
 
 type ChatTurnProps = {
+  source?: PaperSource;
   turn: Turn;
   actions: AnswerActions;
   preference?: ChatTurnPreference;
   onPreferenceChange: ChatThreadProps['onPreferenceChange'];
 };
+
+function sourceChain(turns: Turn[]) {
+  const sources: (PaperSource | undefined)[] = [];
+  for (const turn of turns) sources.push(readPaperPrompt(turn.prompt)?.source ?? sources.at(-1));
+  return sources;
+}
 
 function modelName(modelId: string) {
   return MODELS.find((model) => model.id === modelId)?.name || 'Model';
@@ -45,6 +60,7 @@ function revealTab(tab: HTMLButtonElement | null | undefined) {
 
 export function ChatTurn({
   turn,
+  source,
   actions,
   preference,
   onPreferenceChange,
@@ -58,7 +74,11 @@ export function ChatTurn({
   const activeAnswerId = activeAnswer?.id || '';
   const comparing = Boolean(preference?.comparing && turn.answers.length > 1);
   const questionId = `${id}-question`;
-  const researchPrompt = useMemo(() => fomoPromptPresentation(turn.prompt), [turn.prompt]);
+  const paper = readPaperPrompt(turn.prompt);
+  const researchPrompt = useMemo(
+    () => fomoPromptPresentation(turn.prompt),
+    [turn.prompt],
+  );
   const active = turn.answers.filter(
     (answer) =>
       answer.live?.state === 'queued' || answer.live?.state === 'running',
@@ -113,8 +133,30 @@ export function ChatTurn({
     >
       <p className="cw-chat-prompt" id={questionId}>
         <span className="cw-chat-sr-only">{t('You: ')}</span>
-        {researchPrompt?.title ?? t(turn.prompt)}
+        {paper?.question ?? researchPrompt?.title ?? t(turn.prompt)}
       </p>
+      {turn.images?.length ? (
+        <div
+          className="eu-controls"
+          aria-label="Pictures sent with this question"
+        >
+          {turn.images.map((image, index) => (
+            <Image
+              key={index}
+              src={image.dataUrl}
+              alt={`Attached picture ${index + 1}`}
+              width={160}
+              height={120}
+              unoptimized
+              style={{
+                objectFit: 'contain',
+                border: '1px solid #ddd',
+                borderRadius: 8,
+              }}
+            />
+          ))}
+        </div>
+      ) : null}
       {researchPrompt && (
         <details className="cw-chat-source-prompt">
           <summary>View source prompt</summary>
@@ -281,7 +323,10 @@ export function ChatTurn({
                   actions={actions}
                   variant="chat"
                   peers={turn.answers.length}
-                  researchMarkdown={researchPrompt !== null}
+                  paperSource={paper?.source ?? source}
+                  researchMarkdown={
+                    researchPrompt !== null || !!paper || !!source
+                  }
                 />
               </div>
             ))}
@@ -298,12 +343,14 @@ export function ChatThread({
   preferences,
   onPreferenceChange,
 }: ChatThreadProps) {
+  const sources = useMemo(() => sourceChain(turns), [turns]);
   return (
     <div className="cw-chat-thread">
-      {turns.map((turn) => (
+      {turns.map((turn, index) => (
         <ChatTurn
           key={turn.id}
           turn={turn}
+          source={sources[index]}
           actions={actions}
           preference={preferences[turn.id]}
           onPreferenceChange={onPreferenceChange}

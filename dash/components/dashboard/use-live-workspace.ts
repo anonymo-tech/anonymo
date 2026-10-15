@@ -1,4 +1,5 @@
 'use client';
+import {imageCapable,type ChatImage} from '../../lib/picture-this.ts';
 import { MAX_ROUTING_CANDIDATES } from '../../lib/model-routing.ts';
 import { CHAT_LIMITS } from '../../lib/chat-limits.ts';
 
@@ -49,6 +50,7 @@ export type LiveStatus =
   | 'ready'
   | 'error';
 export type LiveRequestReview = {
+  imagesIncluded?: boolean;
   researchTitle?: string;
   projectId: string;
   prompt: string;
@@ -193,7 +195,7 @@ export function conversationItems(
         throw new WorkspaceError('PROMPT_TOO_LARGE', 'This conversation exceeds the safe request size. Start a new chat to continue. Your saved history is unchanged.');
       }
       messages.unshift(
-        { role: 'user', content: turn.prompt },
+        { role: 'user', content: turn.prompt, ...(turn.images?{images:turn.images}:{}) },
         { role: 'assistant', content: output },
       );
       includedExchanges++;
@@ -400,6 +402,7 @@ export function comparisonTurn(comparison: ServiceComparison): Turn {
   return {
     id: comparison.id,
     prompt: comparison.prompt,
+    ...(comparison.images?{images:comparison.images}:{}),
     live: {
       comparisonId: comparison.id,
       blind: comparison.blind,
@@ -1201,6 +1204,8 @@ export function useLiveWorkspace({
     (
       options: {
         prompt?: string;
+        images?: ChatImage[];
+        composerDraft?: string;
         modelIds?: string[];
         blind?: boolean;
         routing?: WorkspaceRoutingPreferences;
@@ -1282,6 +1287,10 @@ export function useLiveWorkspace({
           blind: options.blind === true && selected.length > 1 && !planned.auto,
           items: conversation.items,
         };
+        if(options.images?.length){
+          if(planned.auto || selected.some(route=>!imageCapable(route.family)))throw new WorkspaceError('VISION_ROUTE_UNAVAILABLE','For pictures, select Claude, GPT, Gemini or Grok manually.');
+          input={...input,items:input.items.map(item=>({...item,messages:item.messages.map((message,index)=>index===item.messages.length-1?{...message,images:options.images}:message)}))};
+        }
         let routing: LiveRequestReview['routing'];
         let quotes;
         if (planned.auto) {
@@ -1346,6 +1355,7 @@ export function useLiveWorkspace({
           quotes.quotes[0].expiresAt,
         );
         const review: LiveRequestReview = {
+          imagesIncluded:input.items.some(item=>item.messages.some(message=>message.images?.length)),
           ...(options.researchTitle ? { researchTitle: options.researchTitle } : {}),
           projectId: room.id,
           prompt,
@@ -1360,7 +1370,7 @@ export function useLiveWorkspace({
         pendingRef.current = {
           review,
           input: quotedInput(input, quotes, crypto.randomUUID()),
-          draft,
+          draft:options.composerDraft ?? draft,
           attempted: false,
         };
         setRequestReview(review);

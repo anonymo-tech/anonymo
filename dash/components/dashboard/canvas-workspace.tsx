@@ -34,6 +34,10 @@ import {
 } from './canvas-state';
 import { ProviderIcon, type AnswerActions } from './answer-card';
 import { takeawayDocument } from '../../lib/takeaway';
+import { PaperTrail } from './paper-trail';
+import {paperPrompt,type PaperSource} from '../../lib/paper-trail';
+import { PictureThis } from './picture-this';
+import type { ChatImage } from '../../lib/picture-this';
 import { SayIt } from './say-it';
 import { Recall } from './recall';
 import { QuickPhrases } from './quick-phrases';
@@ -108,6 +112,27 @@ type Tool = (typeof tools)[number];
  * points: dock and menu buttons, deep links and in-chat actions.
  */
 const FEATURE_SURFACES: Record<FeatureName, readonly (View | Tool)[]> = {
+  cleanRead: [],
+  codeClip: [],
+  projectView: [],
+  canvasMemory: [],
+  libraryFilter: [],
+  quoteReply: [],
+  askAgain: [],
+  projectLabels: [],
+  tidyCanvas: [],
+  briefStars: [],
+  threadMap: [],
+  runTotal: [],
+  archiveRecovery: [],
+  decisionDrafts: [],
+  studioReuse: [],
+  readingRoom: [],
+  sendYourWay: [],
+  decisionImport: [],
+  decisionCompare: [],
+  studioSearch: [],
+
   frontRow: [],
   modelPanels: [],
   modelFinder: [],
@@ -116,6 +141,8 @@ const FEATURE_SURFACES: Record<FeatureName, readonly (View | Tool)[]> = {
   takeaway: [],
   sayIt: [],
   readToMe: [],
+  pictureThis: [],
+  paperTrail: [],
   flywheel: [],
   moreModels: [],
   secondLook: ['second-look'],
@@ -392,6 +419,8 @@ function CanvasWorkspaceShell({
   const [toast, setToast] = useState('');
   const [guardMessage, setGuardMessage] = useState('');
   const [redacted, setRedacted] = useState<string | null>(null);
+  const [paperByRoom,setPaperByRoom] = useState<Record<string,PaperSource|null>>({});
+  const [pictureByRoom,setPictureByRoom] = useState<Record<string,ChatImage[]>>({});
   const [attached, setAttached] = useState<string[]>([]);
   const [rename, setRename] = useState('');
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -486,6 +515,8 @@ function CanvasWorkspaceShell({
     blind: blindComparison,
     routing,
     attachments: composerAttachments,
+    pictures: pictureByRoom[room.id]??[],
+    paper:paperByRoom[room.id]??null,
   });
   const latestSubmission = useRef(submissionVersion);
   useLayoutEffect(() => {
@@ -521,7 +552,7 @@ function CanvasWorkspaceShell({
     });
   }, []);
 
-  useEffect(()=>{if(recalledTurn && view==='chat'){revealChatTurn(recalledTurn,false);setRecalledTurn(null);}},[recalledTurn,view,room.turns,revealChatTurn]);
+  useEffect(() => { if (!recalledTurn || view !== 'chat') return; const frame = requestAnimationFrame(() => { revealChatTurn(recalledTurn, false); setRecalledTurn(null); }); return () => cancelAnimationFrame(frame); }, [recalledTurn, view, room.turns, revealChatTurn]);
 
   // A room opens at its latest turn, unless this tab saved a position for it.
   // Only opening a room or view repositions here; new turns are handled below.
@@ -972,6 +1003,7 @@ function CanvasWorkspaceShell({
       notify('Checking workspace availability. Try again in a moment.');
       return;
     }
+    if(!live.active && (pictureByRoom[room.id]?.length || paperByRoom[room.id])){notify('Connect your account to ask models about attachments.');return;}
     const prompt = composerDraft.trim();
     if (!prompt) {
       setGuardMessage('');
@@ -1016,7 +1048,8 @@ function CanvasWorkspaceShell({
       checkingContent.current = true;
       const checkedVersion = submissionVersion;
       try {
-        const checked = await checkContent(composerDraft);
+        const requestPrompt=featureOn('paperTrail') && paperByRoom[room.id] ? paperPrompt(composerDraft,paperByRoom[room.id]!) : composerDraft;
+        const checked = await checkContent(requestPrompt);
         if (latestSubmission.current !== checkedVersion) {
           notify(
             'Your draft or project changed during the content check. Review it and send again.',
@@ -1032,17 +1065,22 @@ function CanvasWorkspaceShell({
           return;
         }
         await live.quotePrompt({
-          prompt: composerDraft,
+          images:featureOn('pictureThis') ? pictureByRoom[room.id] : undefined,
+          prompt: requestPrompt,
+          composerDraft,
           modelIds: pickerOrder(composerModelIds, composerModels),
           blind: blindComparison && routing.mode !== 'auto',
           routing,
-          onProjectCreated: (projectId) =>
+          onProjectCreated: (projectId) => {
+            setPictureByRoom(current => { const next = {...current, [projectId]: current['service-empty'] ?? []}; delete next['service-empty']; return next; });
+            setPaperByRoom(current => { const next = {...current, [projectId]: current['service-empty'] ?? null}; delete next['service-empty']; return next; });
             setRoutingByProject((current) => {
               const next = { ...current };
               delete next['service-empty'];
               next[projectId] ??= { ...routing };
               return next;
-            }),
+            });
+          },
         });
       } finally {
         checkingContent.current = false;
@@ -1316,7 +1354,7 @@ function CanvasWorkspaceShell({
     if(!target){notify('Allow a new tab to prepare your PDF.');return;}
     target.opener=null;
     target.document.body.textContent='Preparing your complete conversation…';
-    try {const complete=live.active?await live.prepareTakeaway(room.id):room;if(!complete)throw new Error('Unable to load complete conversation.');if(target.closed)return;target.document.open();target.document.write(takeawayDocument(complete,id=>MODELS.find(m=>m.id===id)?.name??id));target.document.close();target.document.getElementById('print')?.addEventListener('click',()=>target.print());target.focus();}
+    try {const complete=live.active?await live.prepareTakeaway(room.id):room;if(!complete)throw new Error('Unable to load complete conversation.');if(target.closed)return;const parsed = new DOMParser().parseFromString(takeawayDocument(complete,id=>MODELS.find(m=>m.id===id)?.name??id), 'text/html'); target.document.replaceChild(target.document.importNode(parsed.documentElement, true), target.document.documentElement);target.document.getElementById('print')?.addEventListener('click',()=>target.print());target.focus();}
     catch {if(!target.closed)target.document.body.textContent='The complete conversation could not be loaded. Close this tab and try again.';}
     setPopup(null);
   }
@@ -1525,6 +1563,12 @@ function CanvasWorkspaceShell({
           <span>{t('Local only · not read by sample models')}</span>
         </div>
       )}
+      {isConversation && ['quickPhrases','sayIt','pictureThis','paperTrail'].some(name=>featureOn(name as FeatureName)) && <div className="eu-composer-tools" aria-label="Message tools">
+        {isConversation && featureOn('paperTrail') && <div className="eu-controls"><PaperTrail key={room.id} value={paperByRoom[room.id]??null} onChange={source=>setPaperByRoom(current=>({...current,[room.id]:source}))}/></div>}
+        {isConversation && featureOn('pictureThis') && <div className="eu-controls"><PictureThis key={room.id} value={pictureByRoom[room.id]??[]} onChange={images=>setPictureByRoom(current=>({...current,[room.id]:images}))}/></div>}
+        {isConversation && featureOn('sayIt') && <div className="eu-controls"><SayIt onInsert={text=>appendSuggestion(text)}/></div>}
+        {isConversation && featureOn('quickPhrases') && <div className="eu-controls"><QuickPhrases scope={live.active ? live.account?.accountId ?? 'signed-out' : 'preview'} draft={room.draft} onChange={draft=>updateRoom({draft})}/></div>}
+      </div>}
       <div className="cw-compose-line">
         <button
           data-icon-trigger
@@ -1578,8 +1622,6 @@ function CanvasWorkspaceShell({
           }}
         />
 
-        {isConversation && featureOn('sayIt') && <div className="eu-controls"><SayIt onInsert={text=>appendSuggestion(text)}/></div>}
-        {isConversation && featureOn('quickPhrases') && <div className="eu-controls"><QuickPhrases scope={live.active ? live.account?.accountId ?? 'signed-out' : 'preview'} draft={room.draft} onChange={draft=>updateRoom({draft})}/></div>}
         {isSecondLook ? (
           <span className="sl-composer-mode">
             <Shield size={14} />
@@ -2370,7 +2412,15 @@ function CanvasWorkspaceShell({
             availableUsd6={live.balance?.availableUsd6 ?? null}
             busy={live.busy}
             error={live.error}
-            onApprove={() => void live.approveRequest()}
+            onApprove={() => {
+              const projectId = live.requestReview!.projectId;
+              const sentPicture = pictureByRoom[projectId], sentPaper = paperByRoom[projectId];
+              void live.approveRequest().then(accepted => {
+                if (!accepted) return;
+                setPictureByRoom(current => current[projectId] === sentPicture ? {...current, [projectId]: []} : current);
+                setPaperByRoom(current => current[projectId] === sentPaper ? {...current, [projectId]: null} : current);
+              });
+            }}
             onDismiss={live.dismissRequest}
           />
         </Dialog>

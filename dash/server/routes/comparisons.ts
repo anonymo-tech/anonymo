@@ -107,7 +107,7 @@ async function selections(
   );
   const question = items[0].input.messages.at(-1)?.content;
   requireCondition(
-    items.every((item) => item.input.messages.at(-1)?.content === question),
+    items.every((item) => item.input.messages.at(-1)?.content === question && JSON.stringify(item.input.messages.at(-1)?.images??[])===JSON.stringify(items[0].input.messages.at(-1)?.images??[])),
     400,
     'QUESTION_MISMATCH',
     'Every comparison model must receive the same question.',
@@ -217,6 +217,7 @@ export async function readComparison(
     id: row.id,
     projectId: row.project_id,
     prompt: input.messages.at(-1)?.content ?? '',
+    ...(input.messages.at(-1)?.images ? {images:input.messages.at(-1)!.images} : {}),
     createdAt: row.created_at,
     blind: row.blind,
     revealedAt: row.revealed_at,

@@ -1,0 +1,8 @@
+{
+  "status": "prepared-not-deployed",
+  "baseProductionCommit": "08ec3243c9a67a67e7701538a87404af80388c81",
+  "branch": "codex/everyday-updates",
+  "featuresHeld": ["frontRow", "modelPanels", "modelFinder", "quickPhrases", "recall", "takeaway", "sayIt", "readToMe", "pictureThis", "paperTrail"],
+  "releaseRule": "Enable only the individual feature explicitly approved by the owner. A video or source commit is not deployment approval.",
+  "productionSourceMetadata": "production-source.json describes the unchanged baseline deployment, not this prepared branch."
+}

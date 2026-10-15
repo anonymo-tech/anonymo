@@ -1,3 +1,5 @@
+import { featureOn } from '../../components/dashboard/feature-switches.ts';
+import {parseChatImages,imageCapable,type ChatImage} from '../../lib/picture-this.ts';
 import { CHAT_LIMITS } from '../../lib/chat-limits.ts';
 import { releasedChatRoute } from '../core/feature-release.ts';
 import { requireCondition, ServiceError } from '../core/errors.ts';
@@ -6,7 +8,7 @@ import { usd6, ceilRatio } from '../ledger/money.ts';
 import { validateModel } from '../ppq/catalog.ts';
 
 export type ChatInput = {
-  messages: { role: 'system' | 'user' | 'assistant'; content: string }[];
+  messages: { role: 'system' | 'user' | 'assistant'; content: string; images?: ChatImage[] }[];
   maxOutputTokens: number;
   privacy: 'standard';
 };
@@ -115,7 +117,14 @@ export function parseChatInput(
         'PROMPT_TOO_LARGE',
         'This conversation exceeds the current request limit.',
       );
-      return { role: entry.role, content: entry.content };
+      let images: ChatImage[] | undefined;
+      if(entry.images!==undefined){
+        requireCondition(featureOn('pictureThis') && entry.role==='user',404,'FEATURE_UNAVAILABLE','Image questions are unavailable.');
+        try{images=parseChatImages(entry.images);}catch{throw new ServiceError(400,'INVALID_CHAT_IMAGES','Choose a valid inline PNG, JPEG or WebP image.');}
+        bytes+=images.reduce((sum,image)=>sum+image.dataUrl.length,0);
+        requireCondition(bytes<=CHAT_LIMITS.inputBytes,413,'PROMPT_TOO_LARGE','The conversation contains too much image data.');
+      }
+      return { role: entry.role, content: entry.content, ...(images?{images}:{}) };
     },
   );
   if (options.trustedCrossCheck || options.trustedBriefSynthesis)
@@ -212,7 +221,9 @@ export function quoteMaximum(route: RouteVersion, input: ChatInput): string {
   // an unexpected excess is held for reconciliation, never an additional user debit.
   // Separate reasoning counts are reserved in addition to the completion maximum.
   // Included reasoning already lives inside that maximum.
-  const inputAllowance = BigInt(Math.min(bytes + input.messages.length * 256 + 1024,
+  const hasImages=input.messages.some(message=>message.images?.length);
+  if(hasImages)requireCondition(featureOn('pictureThis') && imageCapable(route.family) && Number.isSafeInteger(pricing.contextTokens) && pricing.contextTokens!>0,409,'VISION_ROUTE_UNAVAILABLE','Select a supported vision model with reviewed context pricing.');
+  const inputAllowance = hasImages ? BigInt(pricing.contextTokens!) : BigInt(Math.min(bytes + input.messages.length * 256 + 1024,
     pricing.contextTokens ?? Number.MAX_SAFE_INTEGER));
   const outputAllowance = BigInt(
     input.maxOutputTokens + reasoningAllowance(pricing, input.maxOutputTokens),

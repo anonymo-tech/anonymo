@@ -1,5 +1,7 @@
 'use client';
 
+import type {PaperSource} from '../../lib/paper-trail';
+import {PaperSources} from './paper-sources';
 import { featureOn } from './feature-switches';
 import { ReadToMe } from './read-to-me';
 import '@/app/dashboard/everyday-updates.css';
@@ -100,6 +102,7 @@ export function AnswerCard({
   variant = 'canvas',
   peers,
   researchMarkdown = false,
+  paperSource,
 }: {
   answer: Answer;
   actions: AnswerActions;
@@ -108,6 +111,7 @@ export function AnswerCard({
   peers?: number;
   /** Display-only formatting for detected FOMO research; ordinary answers stay unchanged. */
   researchMarkdown?: boolean;
+  paperSource?: PaperSource;
 }) {
   const t = useT();
   const model = MODELS.find((item) => item.id === answer.modelId);
@@ -127,6 +131,7 @@ export function AnswerCard({
       : null;
   const selected = actions.selected.includes(answer.id);
   const isChat = variant === 'chat';
+  const formatted = researchMarkdown || featureOn('cleanRead');
   const menu = useRef<HTMLDetailsElement>(null);
   const menuIconSize = isChat ? 18 : 20;
   const { onSelect, onRoute } = actions;
@@ -168,7 +173,7 @@ export function AnswerCard({
   }
   return (
     <article
-      className={`cw-answer cw-node-drag${selected ? ' is-selected' : ''}${isChat ? ' is-chat-answer' : ''}${researchMarkdown ? ' is-fomo-answer' : ''}`}
+      className={`cw-answer cw-node-drag${selected ? ' is-selected' : ''}${isChat ? ' is-chat-answer' : ''}${formatted ? ' is-fomo-answer' : ''}`}
       aria-label={answer.live ? t('{name} answer', { name: modelName }) : t('{name} sample answer', { name: modelName })}
       aria-busy={active}
     >
@@ -178,7 +183,7 @@ export function AnswerCard({
         tabIndex={isChat ? undefined : 0}
       >
         {answer.heading && <h2>{t(answer.heading)}</h2>}
-        {researchMarkdown ? <ResearchMarkdown text={fomoAnalysisBody(answer.paragraphs.join('\n\n'))} /> : answer.paragraphs.map((paragraph, index) => (
+        {formatted ? <ResearchMarkdown codeCopy={featureOn('codeClip')} text={researchMarkdown ? fomoAnalysisBody(answer.paragraphs.join('\n\n')) : answer.paragraphs.join('\n\n')} /> : answer.paragraphs.map((paragraph, index) => (
           <p key={index}>
             {answer.live?.output ? paragraph : t(
               answer.heading === 'No live model result.' &&
@@ -205,7 +210,8 @@ export function AnswerCard({
           </button>
         )}
       </div>
-      {featureOn('readToMe') && (!answer.live || (answer.live.state==='succeeded' && !answer.live.outputTruncated)) && <ReadToMe text={answer.paragraphs.join('\n\n')} />}
+      {featureOn('paperTrail') && paperSource && <PaperSources source={paperSource} text={answer.paragraphs.join('\n\n')}/>}
+      {featureOn('readToMe') && (!answer.live || (answer.live.state==='succeeded' && !answer.live.outputTruncated)) && <ReadToMe key={answer.id+answer.paragraphs.join('').length} text={answer.paragraphs.join('\n\n')} />}
       <footer className="cw-answer-footer">
         {!isChat && (
           <span className="cw-answer-attribution">

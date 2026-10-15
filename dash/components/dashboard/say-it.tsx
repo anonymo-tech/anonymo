@@ -1,15 +1,159 @@
 'use client';
-import {useEffect,useRef,useState} from 'react';
-import {EverydayDialog} from './everyday-dialog';
-type SpeechResult={isFinal:boolean;0:{transcript:string}};
-type Recognition={lang:string;continuous:boolean;interimResults:boolean;onresult:((event:{resultIndex:number;results:ArrayLike<SpeechResult>})=>void)|null;onerror:((event:{error:string})=>void)|null;onend:(()=>void)|null;start:()=>void;stop:()=>void;abort:()=>void};
-type SpeechWindow=Window&{SpeechRecognition?:new()=>Recognition;webkitSpeechRecognition?:new()=>Recognition};
-export function SayIt({onInsert}:{onInsert:(text:string)=>void}){
- const [supported,setSupported]=useState(false),[open,setOpen]=useState(false),[listening,setListening]=useState(false),[text,setText]=useState(''),[interim,setInterim]=useState(''),[error,setError]=useState('');
- const recognition=useRef<Recognition|null>(null);
- useEffect(()=>{const win=window as SpeechWindow;setSupported(!!(win.SpeechRecognition||win.webkitSpeechRecognition));return()=>{if(recognition.current){recognition.current.onresult=null;recognition.current.onend=null;recognition.current.onerror=null;recognition.current.abort();}};},[]);
- function stop(){recognition.current?.stop();setListening(false);}
- function close(){recognition.current?.abort();setListening(false);setOpen(false);}
- function start(){const win=window as SpeechWindow,Constructor=win.SpeechRecognition||win.webkitSpeechRecognition;if(!Constructor)return;const instance=new Constructor();recognition.current=instance;instance.lang=document.documentElement.lang.startsWith('zh')?'zh-CN':'en-US';instance.continuous=true;instance.interimResults=true;instance.onresult=event=>{let final='',pending='';for(let i=event.resultIndex;i<event.results.length;i++){const result=event.results[i];if(result.isFinal)final+=result[0].transcript+' ';else pending+=result[0].transcript;}if(final)setText(old=>old+final);setInterim(pending);};instance.onerror=event=>{setError(event.error==='not-allowed'?'Microphone access was declined. Allow it in your browser to dictate.':'Your browser could not transcribe the audio. Try again or type your message.');setListening(false);};instance.onend=()=>{setListening(false);setInterim('');};try{instance.start();setListening(true);setError('');}catch{setError('The microphone could not start. Try again.');}}
- return <><button type="button" disabled={!supported} title={supported?'Dictate a message':'Voice dictation is unavailable in this browser'} onClick={()=>{setText('');setInterim('');setError('');setOpen(true);}}>Say It</button>{open&&<EverydayDialog title="Say It" onClose={close}><p className="eu-note">Your browser’s speech service processes microphone audio. Review the words before adding them to your message.</p><div className="eu-controls"><button onClick={listening?stop:start}>{listening?'Stop listening':'Start microphone'}</button><span role="status">{listening?'Listening…':''}</span></div><textarea aria-label="Dictated text" value={text} onChange={e=>setText(e.target.value)} disabled={listening}/>{interim&&<p aria-live="polite" className="eu-note">{interim}</p>}<div className="eu-controls"><button disabled={listening||!text.trim()} onClick={()=>{onInsert(text.trim());close();}}>Add to message</button></div>{error&&<p role="alert" className="eu-error">{error}</p>}</EverydayDialog>}</>;
+import { useEffect, useRef, useState } from 'react';
+import {useClientReady} from './use-device-setting';
+import { EverydayDialog } from './everyday-dialog';
+type SpeechResult = { isFinal: boolean; 0: { transcript: string } };
+type Recognition = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult:
+    | ((event: {
+        resultIndex: number;
+        results: ArrayLike<SpeechResult>;
+      }) => void)
+    | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+type SpeechWindow = Window & {
+  SpeechRecognition?: new () => Recognition;
+  webkitSpeechRecognition?: new () => Recognition;
+};
+export function SayIt({ onInsert }: { onInsert: (text: string) => void }) {
+  const ready=useClientReady();
+  const supported=ready && !!((window as SpeechWindow).SpeechRecognition||(window as SpeechWindow).webkitSpeechRecognition);
+  const
+    [open, setOpen] = useState(false),
+    [listening, setListening] = useState(false),
+    [text, setText] = useState(''),
+    [interim, setInterim] = useState(''),
+    [error, setError] = useState('');
+  const recognition = useRef<Recognition | null>(null);
+  useEffect(() => {
+    return () => {
+      if (recognition.current) {
+        recognition.current.onresult = null;
+        recognition.current.onend = null;
+        recognition.current.onerror = null;
+        recognition.current.abort();
+      }
+    };
+  }, []);
+  function stop() {
+    recognition.current?.stop();
+    setListening(false);
+  }
+  function close() {
+    recognition.current?.abort();
+    setListening(false);
+    setOpen(false);
+  }
+  function start() {
+    const win = window as SpeechWindow,
+      Constructor = win.SpeechRecognition || win.webkitSpeechRecognition;
+    if (!Constructor) return;
+    const instance = new Constructor();
+    recognition.current = instance;
+    instance.lang = document.documentElement.lang.startsWith('zh')
+      ? 'zh-CN'
+      : 'en-US';
+    instance.continuous = true;
+    instance.interimResults = true;
+    instance.onresult = (event) => {
+      let final = '',
+        pending = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) final += result[0].transcript + ' ';
+        else pending += result[0].transcript;
+      }
+      if (final) setText((old) => old + final);
+      setInterim(pending);
+    };
+    instance.onerror = (event) => {
+      setError(
+        event.error === 'not-allowed'
+          ? 'Microphone access was declined. Allow it in your browser to dictate.'
+          : 'Your browser could not transcribe the audio. Try again or type your message.',
+      );
+      setListening(false);
+    };
+    instance.onend = () => {
+      setListening(false);
+      setInterim('');
+    };
+    try {
+      instance.start();
+      setListening(true);
+      setError('');
+    } catch {
+      setError('The microphone could not start. Try again.');
+    }
+  }
+  return (
+    <>
+      <button
+        type="button"
+        disabled={!supported}
+        title={
+          supported
+            ? 'Dictate a message'
+            : 'Voice dictation is unavailable in this browser'
+        }
+        onClick={() => {
+          setText('');
+          setInterim('');
+          setError('');
+          setOpen(true);
+        }}
+      >
+        Say It
+      </button>
+      {open && (
+        <EverydayDialog title="Say It" onClose={close}>
+          <p className="eu-note">
+            Your browser’s speech service processes microphone audio. Review the
+            words before adding them to your message.
+          </p>
+          <div className="eu-controls">
+            <button onClick={listening ? stop : start}>
+              {listening ? 'Stop listening' : 'Start microphone'}
+            </button>
+            <output>{listening ? 'Listening…' : ''}</output>
+          </div>
+          <textarea
+            aria-label="Dictated text"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            disabled={listening}
+          />
+          {interim && (
+            <p aria-live="polite" className="eu-note">
+              {interim}
+            </p>
+          )}
+          <div className="eu-controls">
+            <button
+              disabled={listening || !text.trim()}
+              onClick={() => {
+                onInsert(text.trim());
+                close();
+              }}
+            >
+              Add to message
+            </button>
+          </div>
+          {error && (
+            <p role="alert" className="eu-error">
+              {error}
+            </p>
+          )}
+        </EverydayDialog>
+      )}
+    </>
+  );
 }
