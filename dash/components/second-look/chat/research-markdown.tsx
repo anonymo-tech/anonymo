@@ -6,6 +6,7 @@ import './research-markdown.css';
 
 /** Model output is untrusted. Only explicit HTTPS links become interactive. */
 export function safeResearchHref(value: string): string | null {
+  // oxlint-disable-next-line typescript/no-misused-spread -- This checks ASCII control code points, not visible grapheme boundaries.
   if (value.length > 2048 || /[\s\\]/.test(value) || [...value].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) return null;
   try {
     const url = new URL(value);
@@ -140,11 +141,12 @@ function blocks(lines: string[], depth = 0, codeCopy = false): ReactNode[] {
         const rows: string[][] = [];
         index += 2;
         while (index < lines.length && lines[index].trim() && lines[index].includes('|')) rows.push(cells(lines[index++]));
-        result.push(<div className="fomo-markdown-table" key={key} role="region" aria-label="Analysis evidence table" tabIndex={0}>
+        // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Wide answer tables must be keyboard-scrollable.
+        result.push(<section className="fomo-markdown-table" key={key} aria-label="Answer table" tabIndex={0}>
           <table><thead><tr>{headers.map((cell, column) => <th key={column} scope="col" style={{ textAlign: alignment[column] }}>{inline(cell)}</th>)}</tr></thead>
             <tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{headers.map((_, column) => <td key={column} style={{ textAlign: alignment[column] }}>{inline(column === headers.length - 1 ? row.slice(column).join(' | ') : row[column] ?? '')}</td>)}</tr>)}</tbody>
           </table>
-        </div>);
+        </section>);
         continue;
       }
     }

@@ -32,3 +32,15 @@ test('decision import rejects oversized, malformed, unrecognized and unsafe-shap
  assert.throws(()=>parseDecisionImport('x'.repeat(DECISION_IMPORT_MAX_BYTES+1)));
  assert.throws(()=>parseDecisionImport('中'.repeat(DECISION_IMPORT_MAX_BYTES/2)));
 });
+import {decisionComparisonPrompt,appendDecisionDraft} from '../lib/decision-worksheet.ts';
+test('comparison handoff retains all worksheet evidence and keeps the existing composer draft',()=>{
+ const fields={...EMPTY_DECISION,question:'Vendor decision',input:'Vendor A costs 400. Vendor B costs 600.',criteria:'Reliability before cost',options:['Vendor A','Vendor B']};
+ const prompt=decisionComparisonPrompt(fields);
+ for(const text of [fields.question,fields.input,fields.criteria,'1. Vendor A','2. Vendor B'])assert.ok(prompt.includes(text));
+ const prior='Keep this unsent thought exactly.\n';assert.equal(appendDecisionDraft(prior,prompt,16000000),`${prior}\n\n${prompt}`);
+ assert.equal(appendDecisionDraft('',prompt,16000000),prompt);
+ assert.throws(()=>decisionComparisonPrompt(EMPTY_DECISION));
+ assert.throws(()=>appendDecisionDraft('original','too long',2));
+ assert.throws(()=>appendDecisionDraft('中','文',7));
+ assert.throws(()=>appendDecisionDraft('original','next',10000,4));
+});

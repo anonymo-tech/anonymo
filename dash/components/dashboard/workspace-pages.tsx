@@ -54,6 +54,7 @@ type WorkspacePagesProps = {
   onTogglePin: (id: string) => void;
   onDeleteRoom: (id: string) => void;
   onRestoreProject?: (id: string, revision: number) => Promise<boolean>;
+  onCompareDecision?: (prompt: string) => boolean;
   onDeleteBrief: (id: string) => void;
   onEditBrief?: (brief: CanvasBrief) => Promise<boolean>;
   onRefreshBrief?: (id: string) => Promise<boolean>;
@@ -1153,8 +1154,8 @@ function AgentsPage({ state, onToast }: WorkspacePagesProps) {
   );
 }
 
-function DecisionsPage({ account, onToast }: WorkspacePagesProps) {
-  return <DecisionWorkspace key={account?.accountId ?? 'guest'} accountId={account?.accountId ?? 'guest'} onToast={onToast} />;
+function DecisionsPage({ account, onToast, onCompareDecision }: WorkspacePagesProps) {
+  return <DecisionWorkspace key={account?.accountId ?? 'guest'} accountId={account?.accountId ?? 'guest'} onToast={onToast} onCompare={onCompareDecision} />;
 }
 
 const CONNECTIONS = [

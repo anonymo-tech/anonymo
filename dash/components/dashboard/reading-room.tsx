@@ -32,7 +32,7 @@ export function ReadingRoom({ scope, enabled, children }: { scope: string; enabl
         </select></label>
         <button type="button" onClick={() => setting.save(defaults)}>Reset</button>
       </div>
-      {setting.error && <p role="status">{setting.error}</p>}
+      {setting.error && <output>{setting.error}</output>}
     </details>
     {children}
   </div>;

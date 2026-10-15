@@ -17,3 +17,5 @@
 .dw-import p {font-size:13px;overflow-wrap:anywhere;}
 .dw-import small {color:#777;}
 .dw-import button+button {margin-left:8px;}
+.dw-compare {margin-top:18px;padding-top:18px;border-top:1px solid #ddd;}
+.dw-compare p {font-size:12px;line-height:1.6;color:#666;margin:10px 0 0;}

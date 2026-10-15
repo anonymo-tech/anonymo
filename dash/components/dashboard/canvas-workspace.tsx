@@ -4,6 +4,7 @@ import { appendChatDraft, quotedReplyDraft } from '../../lib/chat-drafts';
 import type { ReuseQuestion } from './ask-again';
 import { SendYourWay, useSendYourWay } from './send-your-way';
 import { shouldSubmitChatKey } from '../../lib/chat-send-key';
+import { CHAT_LIMITS } from '../../lib/chat-limits';
 
 import {
   lazy,
@@ -37,6 +38,8 @@ import {
   type WorkspaceState,
 } from './canvas-state';
 import { ProviderIcon, type AnswerActions } from './answer-card';
+import { appendDecisionDraft } from '../../lib/decision-worksheet';
+import { CHAT_LIMITS } from '../../lib/chat-limits';
 import { takeawayDocument } from '../../lib/takeaway';
 import { PaperTrail } from './paper-trail';
 import {paperPrompt,type PaperSource} from '../../lib/paper-trail';
@@ -897,6 +900,19 @@ function CanvasWorkspaceShell({
     setRedacted(null);
     composer.current?.focus();
   }
+  function compareDecision(prompt: string): boolean {
+    if (!featureOn('decisionCompare')) return false;
+    const currentRoom = stateRef.current.rooms.find(item => item.id === stateRef.current.activeRoomId);
+    if (!currentRoom || (live.active && !live.signedIn)) { notify('Sign in before adding this worksheet to chat.'); return false; }
+    try {
+      const draft = appendDecisionDraft(currentRoom.draft,prompt,CHAT_LIMITS.inputBytes,live.active ? Number.MAX_SAFE_INTEGER : canvasLimits.draft);
+      if (!updateRoom({draft})) return false;
+      navigate('chat');
+      notify('Worksheet added to your draft. Choose your models and review before sending.');
+      requestAnimationFrame(() => composer.current?.focus());
+      return true;
+    } catch (error) { notify(error instanceof Error ? error.message : 'The worksheet could not be added to chat.'); return false; }
+  }
   function openRoom(id: string) {
     chatScrollPositions.current.delete(id);
     if (live.active) {
@@ -1233,6 +1249,10 @@ function CanvasWorkspaceShell({
     if (!currentRoom) return;
     const name = answer.live?.modelName || answer.live?.label || MODELS.find(model => model.id === answer.modelId)?.name || 'this model';
     const draft = quotedReplyDraft(currentRoom.draft, name, text);
+    if (live.active && (!live.account || new TextEncoder().encode(draft).byteLength > CHAT_LIMITS.inputBytes)) {
+      notify('This quote cannot fit in the current account draft. Your existing draft is unchanged.');
+      return;
+    }
     if (!live.active && draft.length > canvasLimits.draft) {
       notify('This quote would exceed the local draft limit. Your draft is unchanged.');
       return;
@@ -1250,6 +1270,7 @@ function CanvasWorkspaceShell({
     const current = stateRef.current.rooms.find(item => item.id === stateRef.current.activeRoomId);
     if (!current) return 'Open a project first.';
     const draft = appendChatDraft(current.draft, question);
+    if (live.active && (!live.account || new TextEncoder().encode(draft).byteLength > CHAT_LIMITS.inputBytes)) return 'This question cannot fit in the current account draft. Your existing draft is unchanged.';
     if (!live.active && draft.length > canvasLimits.draft) return 'This would exceed the local draft limit. Your existing draft is unchanged.';
     const existingPaper = paperByRoom[current.id];
     if (source && existingPaper && JSON.stringify(existingPaper) !== JSON.stringify(source)) return 'Your draft already has a different document. Remove it before reusing this question.';
@@ -1658,8 +1679,10 @@ function CanvasWorkspaceShell({
                   : t('Ask anything…')
           }
           onKeyDown={(event) => {
+            // oxlint-disable-next-line typescript/no-deprecated -- Safari may clear isComposing on the final IME Enter; 229 preserves text entry.
+            const composing = event.nativeEvent.isComposing || event.keyCode === 229;
             if (
-              shouldSubmitChatKey({ key: event.key, shiftKey: event.shiftKey, altKey: event.altKey, ctrlKey: event.ctrlKey, metaKey: event.metaKey, isComposing: event.nativeEvent.isComposing || event.keyCode === 229 }, isConversation && featureOn('sendYourWay') ? sendSetting.value : 'enter')
+              shouldSubmitChatKey({ key: event.key, shiftKey: event.shiftKey, altKey: event.altKey, ctrlKey: event.ctrlKey, metaKey: event.metaKey, isComposing: composing }, isConversation && featureOn('sendYourWay') ? sendSetting.value : 'enter')
             ) {
               event.preventDefault();
               void submit();
@@ -2309,6 +2332,7 @@ function CanvasWorkspaceShell({
                 ),
               }))
             }
+            onCompareDecision={compareDecision}
             onRestoreProject={live.active ? live.restoreProject : undefined}
             onDeleteRoom={(id) => {
               setDeleteId(id);

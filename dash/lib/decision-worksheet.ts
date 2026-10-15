@@ -32,3 +32,20 @@ export function parseDecisionImport(source:string):DecisionFields {
  if(!isDecisionFields(fields))throw new Error('Check the worksheet type and field limits: question 400, evidence 6,000, criteria 2,000 characters and up to 30 options.');
  return {kind:fields.kind,question:fields.question,input:fields.input,criteria:fields.criteria,options:[...fields.options]};
 }
+
+export function decisionComparisonPrompt(value:DecisionFields):string {
+ if(!decisionReady(value))throw new Error('Complete the question, evidence and criteria before opening chat.');
+ return [
+  'Help me evaluate this decision. Use the supplied evidence, distinguish facts from assumptions, explain tradeoffs and flag what is missing. Do not treat a model recommendation as an action already taken.',
+  `Question\n${value.question.trim()}`,
+  `Evidence\n${value.input.trim()}`,
+  ...(value.kind==='choice'?[`Options\n${value.options.map(option=>option.trim()).filter(Boolean).map((option,index)=>`${index+1}. ${option}`).join('\n')}`]:[]),
+  `${value.kind==='score'?'Scoring rubric and range':'Criteria and review conditions'}\n${value.criteria.trim()}`,
+  value.kind==='score'?'Apply the supplied rubric and explain each score.':value.kind==='noul'?'Assess the proposition against the evidence, including counterarguments.':'Compare the options against the criteria and explain your recommendation.',
+ ].join('\n\n');
+}
+export function appendDecisionDraft(existing:string,worksheet:string,maxBytes:number,maxCharacters=Number.MAX_SAFE_INTEGER):string {
+ const next=existing?`${existing}\n\n${worksheet}`:worksheet;
+ if(next.length>maxCharacters||new TextEncoder().encode(next).byteLength>maxBytes)throw new Error('There is not enough space in this chat draft. Save or shorten the current draft first; your text is unchanged.');
+ return next;
+}

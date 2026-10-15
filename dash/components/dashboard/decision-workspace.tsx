@@ -4,10 +4,10 @@ import {ShieldCheck} from 'lucide-react';
 import {featureOn} from './feature-switches';
 import {useDeviceSetting} from './use-device-setting';
 import {scanPrompt} from '../../lib/guards';
-import {DECISION_IMPORT_MAX_BYTES,parseDecisionImport,EMPTY_DECISION,EMPTY_DECISION_DRAFTS,decisionReady,decisionDownload,isDecisionDrafts,saveDecisionDraft,type DecisionDraft,type DecisionFields} from '../../lib/decision-worksheet';
+import {DECISION_IMPORT_MAX_BYTES,parseDecisionImport,decisionComparisonPrompt,EMPTY_DECISION,EMPTY_DECISION_DRAFTS,decisionReady,decisionDownload,isDecisionDrafts,saveDecisionDraft,type DecisionDraft,type DecisionFields} from '../../lib/decision-worksheet';
 import '@/app/dashboard/decision-workspace.css';
 
-export function DecisionWorkspace({accountId,onToast}:{accountId:string;onToast:(message:string)=>void}){
+export function DecisionWorkspace({accountId,onToast,onCompare}:{accountId:string;onToast:(message:string)=>void;onCompare?:(prompt:string)=>boolean}){
  const [fields,setFields]=useState<DecisionFields>(EMPTY_DECISION),[name,setName]=useState(''),[activeId,setActiveId]=useState<string|null>(null),[selected,setSelected]=useState(''),[replacement,setReplacement]=useState<DecisionDraft|null>(null),[reviewed,setReviewed]=useState(false),[message,setMessage]=useState(''),[imported,setImported]=useState<DecisionFields|null>(null);
  const drafts=useDeviceSetting(`conclave:decision-drafts:v1:${accountId}`,EMPTY_DECISION_DRAFTS,isDecisionDrafts,featureOn('decisionDrafts'));
  function change(key:keyof DecisionFields,value:string|string[]){setFields(current=>({...current,[key]:value}));setReviewed(false);setMessage('');}
@@ -52,7 +52,8 @@ export function DecisionWorkspace({accountId,onToast}:{accountId:string;onToast:
     <button type="submit" className="cp-button cp-button--red" disabled={!ready}>Review worksheet</button>
    </form>
    <aside className="cp-decision-output"><div className="cp-paper-heading"><ShieldCheck size={20}/><h2>Review</h2></div>
-    {reviewed?<div className="cp-decision-result"><h3>{fields.question}</h3><p>{fields.input}</p>{fields.kind==='choice'&&<ol>{fields.options.filter(option=>option.trim()).map((option,index)=><li key={`${index}-${option}`}>{option}</li>)}</ol>}<h4>What matters</h4><p>{fields.criteria}</p><p>This is your worksheet. No model has evaluated it.</p><button type="button" className="cp-button cp-button--ink" onClick={download}>Download worksheet</button></div>:<div className="cp-empty"><h2>Start with the question</h2><p>Complete the worksheet to review the evidence and options together.</p></div>}
+    {reviewed?<div className="cp-decision-result"><h3>{fields.question}</h3><p>{fields.input}</p>{fields.kind==='choice'&&<ol>{fields.options.filter(option=>option.trim()).map((option,index)=><li key={`${index}-${option}`}>{option}</li>)}</ol>}<h4>What matters</h4><p>{fields.criteria}</p><p>This is your worksheet. No model has evaluated it.</p><button type="button" className="cp-button cp-button--ink" onClick={download}>Download worksheet</button>
+    {featureOn('decisionCompare')&&onCompare&&<div className="dw-compare"><button type="button" className="cp-button cp-button--red" onClick={()=>{try{if(!onCompare(decisionComparisonPrompt(fields)))setMessage('Your worksheet was kept here. Check the chat draft before trying again.');}catch(error){setMessage(error instanceof Error?error.message:'The worksheet could not be added to chat.');}}}>Compare with models</button><p>Add this worksheet to your chat draft. Choose up to four models and review before sending.</p></div>}</div>:<div className="cp-empty"><h2>Start with the question</h2><p>Complete the worksheet to review the evidence and options together.</p></div>}
    </aside>
   </div>
  </section>;

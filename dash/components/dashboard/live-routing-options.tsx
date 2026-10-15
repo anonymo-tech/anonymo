@@ -95,7 +95,7 @@ export function LiveRoutingOptions({
           {value.task === 'long_context' && (
             <p className="ct-note">
               {t(
-                'Current requests include at most 32 KiB of loaded context. The review lists any omitted exchanges.',
+                'Relevant saved conversation is loaded before review. Input limits depend on the selected model; the review explains any excluded exchanges.',
               )}
             </p>
           )}
