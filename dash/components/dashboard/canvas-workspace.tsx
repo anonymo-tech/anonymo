@@ -33,6 +33,11 @@ import {
   type WorkspaceState,
 } from './canvas-state';
 import { ProviderIcon, type AnswerActions } from './answer-card';
+import { takeawayDocument } from '../../lib/takeaway';
+import { SayIt } from './say-it';
+import { Recall } from './recall';
+import { QuickPhrases } from './quick-phrases';
+import { ModelPanels } from './model-panels';
 import { ModelPickerOptions } from './model-picker-options';
 import { ChatThread, type ChatTurnPreference } from './chat-thread';
 import { WorkspacePages } from './workspace-pages';
@@ -104,6 +109,13 @@ type Tool = (typeof tools)[number];
  */
 const FEATURE_SURFACES: Record<FeatureName, readonly (View | Tool)[]> = {
   frontRow: [],
+  modelPanels: [],
+  modelFinder: [],
+  quickPhrases: [],
+  recall: [],
+  takeaway: [],
+  sayIt: [],
+  readToMe: [],
   flywheel: [],
   moreModels: [],
   secondLook: ['second-look'],
@@ -367,6 +379,8 @@ function CanvasWorkspaceShell({
   const briefSubmission = useRef<{ fingerprint: string; key: string } | null>(
     null,
   );
+  const [recallOpen,setRecallOpen] = useState(false);
+  const [recalledTurn,setRecalledTurn] = useState<string|null>(null);
   const [query, setQuery] = useState('');
   const [modelQuery, setModelQuery] = useState('');
   const [strict, setStrict] = useState(false);
@@ -506,6 +520,8 @@ function CanvasWorkspaceShell({
           : 'instant',
     });
   }, []);
+
+  useEffect(()=>{if(recalledTurn && view==='chat'){revealChatTurn(recalledTurn,false);setRecalledTurn(null);}},[recalledTurn,view,room.turns,revealChatTurn]);
 
   // A room opens at its latest turn, unless this tab saved a position for it.
   // Only opening a room or view repositions here; new turns are handled below.
@@ -1295,6 +1311,15 @@ function CanvasWorkspaceShell({
     );
     navigate('library');
   }
+  async function printTakeaway(){
+    const target=window.open('about:blank','_blank');
+    if(!target){notify('Allow a new tab to prepare your PDF.');return;}
+    target.opener=null;
+    target.document.body.textContent='Preparing your complete conversation…';
+    try {const complete=live.active?await live.prepareTakeaway(room.id):room;if(!complete)throw new Error('Unable to load complete conversation.');if(target.closed)return;target.document.open();target.document.write(takeawayDocument(complete,id=>MODELS.find(m=>m.id===id)?.name??id));target.document.close();target.document.getElementById('print')?.addEventListener('click',()=>target.print());target.focus();}
+    catch {if(!target.closed)target.document.body.textContent='The complete conversation could not be loaded. Close this tab and try again.';}
+    setPopup(null);
+  }
   function exportRoom() {
     if (
       room.turns.some((turn) =>
@@ -1477,6 +1502,7 @@ function CanvasWorkspaceShell({
           </button>
         </div>
       )}
+      {recallOpen && featureOn('recall') && <Recall accountId={live.active ? live.account?.accountId ?? null : null} rooms={state.rooms} onClose={()=>setRecallOpen(false)} onOpen={async hit=>{if(live.active){if(!await live.openRecalledExchange(hit.projectId,hit.comparisonId))throw new Error('Unavailable');}else updateWorkspace(current=>({...current,activeRoomId:hit.projectId}));navigate('chat');setRecalledTurn(hit.comparisonId);}}/>}
       {composerAttachments.length > 0 && (
         <div className="cw-attachments">
           {composerAttachments.map((name, i) => (
@@ -1552,6 +1578,8 @@ function CanvasWorkspaceShell({
           }}
         />
 
+        {isConversation && featureOn('sayIt') && <div className="eu-controls"><SayIt onInsert={text=>appendSuggestion(text)}/></div>}
+        {isConversation && featureOn('quickPhrases') && <div className="eu-controls"><QuickPhrases scope={live.active ? live.account?.accountId ?? 'signed-out' : 'preview'} draft={room.draft} onChange={draft=>updateRoom({draft})}/></div>}
         {isSecondLook ? (
           <span className="sl-composer-mode">
             <Shield size={14} />
@@ -1619,7 +1647,9 @@ function CanvasWorkspaceShell({
                     onChange={(event) => setModelQuery(event.target.value)}
                   />
                 </label>
+                {!isStudio && featureOn('modelPanels') && <ModelPanels scope={live.active ? live.account?.accountId ?? 'signed-out' : 'preview'} selected={composerModelIds} available={live.active ? live.availableModels : composerModels.map(model=>model.id)} onApply={models=>{ updateRoom({selectedModels:models}); updateRouting({...routing,mode:'manual'}); }} />}
                 <ModelPickerOptions
+                  routes={live.routes}
                   accountScope={live.active ? live.account?.accountId ?? "signed-out" : "preview"}
                   models={composerModels}
                   selected={composerModelIds}
@@ -1787,6 +1817,8 @@ function CanvasWorkspaceShell({
                 <MotionIcon name="settings" size={16} />
                 {t('Rename project')}
               </button>
+              {featureOn('recall') && <button onClick={()=>{setRecallOpen(true);setPopup(null);}}>Recall</button>}
+              {featureOn('takeaway') && <button disabled={live.busy||!room.turns.length} onClick={()=>void printTakeaway()}>Takeaway · Save PDF</button>}
               <button data-icon-trigger onClick={exportRoom}>
                 <MotionIcon name="download" size={16} />
                 {t('Export conversation')}

@@ -5,6 +5,13 @@
  */
 export const FEATURE_SWITCHES = {
   frontRow: false,
+  modelPanels: false,
+  modelFinder: false,
+  quickPhrases: false,
+  recall: false,
+  takeaway: false,
+  sayIt: false,
+  readToMe: false,
   flywheel: true,
   moreModels: true,
   secondLook: true,

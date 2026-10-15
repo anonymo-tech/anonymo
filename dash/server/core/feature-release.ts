@@ -19,6 +19,7 @@ const atOrBelow = (path: string, root: string) =>
 export function endpointFeature(
   path: string,
 ): FeatureName | 'tokenFunding' | null {
+  if (atOrBelow(path, 'history/search')) return 'recall';
   if (atOrBelow(path, 'flywheel')) return 'flywheel';
   if (atOrBelow(path, 'second-look')) return 'secondLook';
   if (atOrBelow(path, 'media')) return 'studio';

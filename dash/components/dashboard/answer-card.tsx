@@ -1,5 +1,8 @@
 'use client';
 
+import { featureOn } from './feature-switches';
+import { ReadToMe } from './read-to-me';
+import '@/app/dashboard/everyday-updates.css';
 import { useT } from '@/lib/i18n';
 import Image from 'next/image';
 import { useRef } from 'react';
@@ -202,6 +205,7 @@ export function AnswerCard({
           </button>
         )}
       </div>
+      {featureOn('readToMe') && (!answer.live || (answer.live.state==='succeeded' && !answer.live.outputTruncated)) && <ReadToMe text={answer.paragraphs.join('\n\n')} />}
       <footer className="cw-answer-footer">
         {!isChat && (
           <span className="cw-answer-attribution">

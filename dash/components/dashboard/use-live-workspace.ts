@@ -1004,6 +1004,30 @@ export function useLiveWorkspace({
       }),
     [run, commit],
   );
+  const openRecalledExchange = useCallback((projectId:string,comparisonId:string)=>run(async(ctx)=>{
+    let project: ServiceProject | undefined;
+    let cursor: string | null = null;
+    do { const page=await ctx.client.projects(cursor); if(!ctx.current())return false; project=page.items.find(item=>item.id===projectId); cursor=page.nextCursor; } while(!project && cursor);
+    if(!project)return false;
+    const [history,selected]=await Promise.all([ctx.client.comparisons(projectId),ctx.client.comparison(comparisonId)]);
+    if(!ctx.current() || selected.projectId!==projectId)return false;
+    const found=project;
+    commit(current=>{const existing=current.rooms.find(room=>room.id===projectId);const room=projectRoom(found,defaults(available(routesRef.current)),existing);return {...current,activeRoomId:projectId,rooms:[...current.rooms.filter(room=>room.id!==projectId),{...room,turns:mergeHistory(room.turns,[...history.items,selected]),live:{revision:found.revision,historyCursor:history.nextCursor}}]};});
+    return true;
+  }),[run,commit]);
+  const prepareTakeaway = useCallback(async(projectId:string):Promise<Room|null>=>{
+    let result:Room|null=null;
+    await run(async ctx=>{
+      const room=stateRef.current.rooms.find(room=>room.id===projectId);
+      if(!room?.live)return false;
+      let cursor:string|null=null;const comparisons:ServiceComparison[]=[];
+      do {const page=await ctx.client.comparisons(projectId,cursor);if(!ctx.current())return false;comparisons.push(...page.items);cursor=page.nextCursor;}while(cursor);
+      for(let i=0;i<comparisons.length;i++){if(comparisons[i].calls.some(call=>call.outputTruncated)){comparisons[i]=await ctx.client.comparison(comparisons[i].id);if(!ctx.current())return false;}}
+      result={...room,turns:mergeHistory([],comparisons),live:{...room.live,historyCursor:null}};
+      return true;
+    });
+    return result;
+  },[run]);
   const renameProject = useCallback(
     (projectId: string, name: string) =>
       run(async (ctx) => {
@@ -1831,6 +1855,8 @@ export function useLiveWorkspace({
     refresh,
     createProject,
     openProject,
+    openRecalledExchange,
+    prepareTakeaway,
     renameProject,
     archiveProject,
     loadMoreProjects,

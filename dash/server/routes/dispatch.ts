@@ -13,6 +13,7 @@ import { authRoute } from "./auth.ts";
 import { getSession } from "./session.ts";
 import { labelledBalance } from "../ledger/test-credits.ts";
 import { ledgerRoutes } from "./ledger.ts";
+import { recallRoutes } from "./recall.ts";
 import { projectRoutes } from "./projects.ts";
 import { rateLimit } from "../core/rate-limit.ts";
 import { callRoutes } from "./calls.ts";
@@ -169,6 +170,8 @@ export async function dispatch(request: Request) {
       if (synthesis) return synthesis;
       const document = await briefDocumentRoutes(pool, request, path, session.accountId);
       if (document) return document;
+      const recall = await recallRoutes(pool, request, path, session.accountId);
+      if (recall) return recall;
       const projects = await projectRoutes(pool, request, path, session.accountId);
       if (projects) return projects;
       if (path.startsWith("media/")) {
