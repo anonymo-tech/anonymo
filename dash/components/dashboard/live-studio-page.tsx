@@ -17,7 +17,11 @@ import { STUDIO_MODELS } from './studio-page';
 import type { useLiveStudio } from './use-live-studio';
 import type { MediaJob } from '../../lib/client/media';
 import { formatAccountUsd6 } from '../../lib/client/account-records';
+import { featureOn } from './feature-switches';
+import { studioReuseDraft, type StudioReuseDraft } from '../../lib/studio-reuse';
 import '../../app/dashboard/studio-page.css';
+import '../../app/dashboard/studio-extras.css';
+import { filterStudioJobs, STUDIO_JOB_GROUPS, type StudioJobGroup } from '../../lib/studio-search';
 
 type Controller = ReturnType<typeof useLiveStudio>;
 function modelFor(job: MediaJob) {
@@ -61,7 +65,9 @@ export function LiveStudioPage({
   studio,
   active,
   onToast,
+  onReuse,
 }: {
+  onReuse: (draft: StudioReuseDraft) => void;
   studio: Controller;
   active: boolean;
   onToast: (message: string) => void;
@@ -69,7 +75,14 @@ export function LiveStudioPage({
   const t = useT();
   const title = useId();
   const [selection, setSelection] = useState('recent');
-  const jobs = studio.jobs.filter((job) => job.modality === 'video');
+  const [query, setQuery] = useState('');
+  const [modelFilter, setModelFilter] = useState('');
+  const [stateFilter, setStateFilter] = useState<StudioJobGroup>('all');
+  const searchEnabled = featureOn('studioSearch');
+  const loadedJobs = studio.jobs.filter((job) => job.modality === 'video');
+  const jobs = searchEnabled ? filterStudioJobs(loadedJobs, query, modelFilter, stateFilter) : loadedJobs;
+  const filtering = searchEnabled && (!!query.trim() || !!modelFilter || stateFilter !== 'all');
+  const groupLabels: Record<StudioJobGroup, string> = { all: 'Any status', saved: 'Saved clips', progress: 'In progress', attention: 'Needs attention', cancelled: 'Cancelled', deleted: 'Deleted clips' };
   const chosen =
     selection === 'recent'
       ? jobs.slice(0, 4)
@@ -108,6 +121,36 @@ export function LiveStudioPage({
       {studio.error && (
         <output className="cp-boundary-note">{studio.error}</output>
       )}
+      {searchEnabled && <div className="cs-search-tools">
+        <div className="cs-search-fields">
+          <label>
+            <span>Find a clip</span>
+            <input type="search" value={query} placeholder="Search prompts or models" maxLength={500}
+              onChange={event => { setQuery(event.target.value); setSelection('recent'); }} />
+          </label>
+          <label>
+            <span>Model</span>
+            <select value={modelFilter} onChange={event => { setModelFilter(event.target.value); setSelection('recent'); }}>
+              <option value="">All models</option>
+              {[...new Set(loadedJobs.map(job => job.modelId))].map(id => <option key={id} value={id}>{id}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Status</span>
+            <select value={stateFilter} onChange={event => {
+              const group = STUDIO_JOB_GROUPS.find(group => group === event.target.value);
+              if (group) { setStateFilter(group); setSelection('recent'); }
+            }}>
+              {STUDIO_JOB_GROUPS.map(group => <option key={group} value={group}>{groupLabels[group]}</option>)}
+            </select>
+          </label>
+          {filtering && <button type="button" onClick={() => { setQuery(''); setModelFilter(''); setStateFilter('all'); setSelection('recent'); }}>Clear filters</button>}
+        </div>
+        <output className="cs-search-count">
+          {jobs.length} of {loadedJobs.length} loaded clips{studio.nextCursor ? '. Load earlier results to search older clips.' : '.'}
+        </output>
+      </div>}
+
       {showing.length ? (
         <StudioPlayback
           key={showing
@@ -117,6 +160,7 @@ export function LiveStudioPage({
           studio={studio}
           active={active}
           onToast={onToast}
+          onReuse={onReuse}
         />
       ) : (
         <div className="cs-stage is-focused">
@@ -125,10 +169,10 @@ export function LiveStudioPage({
               <span>
                 {studio.status === 'loading'
                   ? t('Loading your saved results…')
-                  : t('Your next idea starts here')}
+                  : filtering ? 'No clips match these filters' : t('Your next idea starts here')}
               </span>
               <p>
-                {studio.status === 'unavailable'
+                {filtering ? 'Try a different prompt, model or status, or load earlier results.' : studio.status === 'unavailable'
                   ? t('Sign in to save and generate clips.')
                   : t(
                       'Describe a video in the bar below. Review each model’s format and cost before generating.',
@@ -167,7 +211,9 @@ function StudioPlayback({
   studio,
   active,
   onToast,
+  onReuse,
 }: {
+  onReuse: (draft: StudioReuseDraft) => void;
   jobs: MediaJob[];
   studio: Controller;
   active: boolean;
@@ -312,6 +358,7 @@ function StudioPlayback({
           const model = modelFor(job),
             source = studio.assetUrl(job),
             saved = !!source && job.asset?.contentType === 'video/mp4';
+          const reusable = featureOn('studioReuse') ? studioReuseDraft(job, studio.routes) : null;
           return (
             <article
               className="cs-tile"
@@ -465,6 +512,21 @@ function StudioPlayback({
                         ? t('Return to compare')
                         : t('Focus on this clip')}
                     </button>
+                    {featureOn('studioReuse') && <button
+                      type="button"
+                      disabled={studio.busy || !!studio.review || !reusable}
+                      title={!reusable ? 'This model or format is no longer available.' : undefined}
+                      onClick={() => {
+                        const current = studioReuseDraft(job, studio.routes);
+                        if (!current) { onToast('Refresh Studio to check the currently available formats.'); return; }
+                        pause();
+                        closeMenus();
+                        onReuse(current.draft);
+                        onToast(current.formatChanged
+                          ? `Prompt ready. The original format is unavailable; the draft uses ${current.format}. Review a fresh quote before generating.`
+                          : `Prompt and ${current.format} settings ready. Edit your draft, then review a fresh quote.`);
+                      }}
+                    >Use prompt again</button>}
                     {saved && (
                       <a
                         href={studio.assetUrl(job, true)!}

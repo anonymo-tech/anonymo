@@ -16,6 +16,9 @@ import type { Turn } from './canvas-state';
 import { MODELS } from './data';
 import { featureOn } from './feature-switches';
 import { AskAgain, type ReuseQuestion } from './ask-again';
+import { ThreadMap } from './thread-map';
+import { RunTotal } from './run-total';
+import { ReadingRoom } from './reading-room';
 import '../../app/dashboard/chat-thread.css';
 
 export type ChatTurnPreference = {
@@ -29,6 +32,10 @@ type ChatThreadProps = {
   preferences: Record<string, ChatTurnPreference>;
   onPreferenceChange: (turnId: string, preference: ChatTurnPreference) => void;
   onReuseQuestion?: ReuseQuestion;
+  hasEarlier?: boolean;
+  loadingHistory?: boolean;
+  onLoadEarlier?: () => void;
+  accountScope?: string;
 };
 
 type ChatTurnProps = {
@@ -134,6 +141,7 @@ export function ChatTurn({
     <section
       className="cw-chat-turn"
       data-chat-turn-id={turn.id}
+      tabIndex={featureOn('threadMap') ? -1 : undefined}
       aria-labelledby={questionId}
     >
       <p className="cw-chat-prompt" id={questionId}>
@@ -337,6 +345,7 @@ export function ChatTurn({
               </div>
             ))}
           </div>
+          {featureOn('runTotal') && <RunTotal turn={turn} />}
         </>
       )}
     </section>
@@ -349,10 +358,22 @@ export function ChatThread({
   preferences,
   onPreferenceChange,
   onReuseQuestion,
+  hasEarlier,
+  loadingHistory,
+  onLoadEarlier,
+  accountScope = 'preview',
 }: ChatThreadProps) {
   const sources = useMemo(() => sourceChain(turns), [turns]);
+  const root = useRef<HTMLDivElement>(null);
+  function jump(id: string) {
+    const target = root.current?.querySelector<HTMLElement>(`[data-chat-turn-id="${CSS.escape(id)}"]`);
+    target?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+    target?.focus({ preventScroll: true });
+  }
   return (
-    <div className="cw-chat-thread">
+    <ReadingRoom scope={accountScope} enabled={featureOn('readingRoom')}>
+    <div className="cw-chat-thread" ref={root}>
+      {featureOn('threadMap') && <ThreadMap turns={turns} onJump={jump} hasEarlier={hasEarlier} loading={loadingHistory} onLoadEarlier={onLoadEarlier} />}
       {turns.map((turn, index) => (
         <ChatTurn
           key={turn.id}
@@ -365,5 +386,6 @@ export function ChatThread({
         />
       ))}
     </div>
+    </ReadingRoom>
   );
 }

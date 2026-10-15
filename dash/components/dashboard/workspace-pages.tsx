@@ -12,7 +12,6 @@ import {
   Check,
   ChevronRight,
   LockKeyhole,
-  ShieldCheck,
   Star,
 } from 'lucide-react';
 import type { CanvasBrief, Room, WorkspaceState } from './canvas-state';
@@ -28,7 +27,10 @@ import '@/app/dashboard/workspace-pages.css';
 import { LiveWorkspaceServices } from './live-workspace-services';
 import { isStringList, useDeviceSetting } from './use-device-setting';
 import '@/app/dashboard/library-tools.css';
-import { PROJECT_VIEW_DEFAULT, isProjectView, sortProjects } from '../../lib/project-organizer';
+import { DecisionWorkspace } from './decision-workspace';
+
+import { ArchivedProjects } from './archived-projects';
+import { PROJECT_VIEW_DEFAULT, isProjectView, sortProjects, EMPTY_PROJECT_LABELS, PROJECT_LABELS, isProjectLabels, setProjectLabel } from '../../lib/project-organizer';
 import '@/app/dashboard/project-organizer.css';
 const validProjectFilter = (value: unknown): value is string => typeof value === 'string' && value.length <= 160;
 
@@ -51,6 +53,7 @@ type WorkspacePagesProps = {
   onCreateRoom: (name: string) => boolean;
   onTogglePin: (id: string) => void;
   onDeleteRoom: (id: string) => void;
+  onRestoreProject?: (id: string, revision: number) => Promise<boolean>;
   onDeleteBrief: (id: string) => void;
   onEditBrief?: (brief: CanvasBrief) => Promise<boolean>;
   onRefreshBrief?: (id: string) => Promise<boolean>;
@@ -246,11 +249,15 @@ function RoomsPage({
   onCreateRoom,
   onTogglePin,
   onDeleteRoom,
+  onRestoreProject,
+  onToast,
 }: WorkspacePagesProps) {
   const t = useT();
   const [filter, setFilter] = useState<'recent' | 'pinned'>('recent');
   const projectView = useDeviceSetting(`conclave:project-view:v1:${account?.accountId ?? 'guest'}`, PROJECT_VIEW_DEFAULT, isProjectView, featureOn('projectView'));
   const viewOptions = featureOn('projectView') ? projectView.value : PROJECT_VIEW_DEFAULT;
+  const projectLabels = useDeviceSetting(`conclave:project-labels:v1:${account?.accountId ?? 'guest'}`, EMPTY_PROJECT_LABELS, isProjectLabels, featureOn('projectLabels'));
+  const [labelFilter, setLabelFilter] = useState('');
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const input = useRef<HTMLInputElement>(null);
@@ -262,6 +269,7 @@ function RoomsPage({
     .filter(
       (room) =>
         (filter === 'recent' || room.pinned) &&
+        (!featureOn('projectLabels') || !labelFilter || projectLabels.value[room.id] === labelFilter) &&
         `${room.name} ${room.turns.map((turn) => turn.prompt).join(' ')}`
           .toLowerCase()
           .includes(search),
@@ -293,6 +301,7 @@ function RoomsPage({
           {t('New project')}
         </button>
       </PageHeading>
+      {featureOn('archiveRecovery') && account?.accountId && onRestoreProject && <ArchivedProjects key={account.accountId} accountId={account.accountId} onRestore={onRestoreProject} onOpen={onOpenRoom} />}
       {creating && (
         <form className="cp-create-strip" id="cp-new-room" onSubmit={create}>
           <label htmlFor="cp-room-name">{t('What are you working on?')}</label>
@@ -362,6 +371,11 @@ function RoomsPage({
         </select></label>
         {projectView.error && <output>{projectView.error}</output>}
       </div>}
+      {featureOn('projectLabels') && <div className="po-controls">
+        <label>Label <select value={labelFilter} onChange={event => setLabelFilter(event.target.value)}><option value="">All labels</option>{PROJECT_LABELS.map(label => <option key={label.id} value={label.id}>{label.name}</option>)}</select></label>
+        <small>Labels are saved on this device.</small>
+        {projectLabels.error && <output>{projectLabels.error}</output>}
+      </div>}
       {rooms.length ? (
         <div className={`cp-room-grid${viewOptions.layout === 'list' ? ' po-project-list' : ''}`}>
           {rooms.map((room) => (
@@ -391,6 +405,12 @@ function RoomsPage({
                   <MotionIcon name="remove" size={20} />
                 </button>
               </div>
+              {featureOn('projectLabels') && <label className="po-label-control" style={{borderColor: PROJECT_LABELS.find(label => label.id === projectLabels.value[room.id])?.color}}>
+                <span className="po-sr-only">Label for {roomLabel(room, t)}</span>
+                <select aria-label={`Label for ${roomLabel(room,t)}`} value={projectLabels.value[room.id] ?? ''} onChange={event => {
+                  try { projectLabels.save(setProjectLabel(projectLabels.value, room.id, event.target.value)); } catch { onToast('This project label could not be saved.'); }
+                }}><option value="">No label</option>{PROJECT_LABELS.map(label => <option key={label.id} value={label.id}>{label.name}</option>)}</select>
+              </label>}
               <button
                 data-icon-trigger
                 className="cp-room-open"
@@ -1133,231 +1153,8 @@ function AgentsPage({ state, onToast }: WorkspacePagesProps) {
   );
 }
 
-const DEFAULT_DECISION_OPTIONS = 'Billing\nAccount\nTechnical\nOther / review';
-
-function DecisionsPage({ onToast }: WorkspacePagesProps) {
-  const t = useT();
-  const [type, setType] = useState('choice');
-  const [question, setQuestion] = useState('');
-  const [evidence, setEvidence] = useState('');
-  const [options, setOptions] = useState(DEFAULT_DECISION_OPTIONS);
-  const [optionsEdited, setOptionsEdited] = useState(false);
-  const [criteria, setCriteria] = useState('');
-  const [reviewed, setReviewed] = useState(false);
-  const choices = options
-    .split('\n')
-    .map((option) => option.trim())
-    .filter(Boolean);
-  const ready = Boolean(
-    question.trim() &&
-    evidence.trim() &&
-    criteria.trim() &&
-    (type !== 'choice' || choices.length >= 2),
-  );
-  const edit = (setter: (value: string) => void, value: string) => {
-    setter(value);
-    setReviewed(false);
-  };
-  const exportDraft = () => {
-    downloadText(
-      'conclave-decision-draft.json',
-      JSON.stringify(
-        {
-          kind: type,
-          question: question.trim(),
-          input: evidence.trim(),
-          criteria: criteria.trim(),
-          ...(type === 'choice' ? { options: choices } : {}),
-          result: null,
-          requiresReview: true,
-          status: 'not_evaluated',
-        },
-        null,
-        2,
-      ),
-      'application/json;charset=utf-8',
-    );
-    onToast(t('Decision draft downloaded.'));
-  };
-  return (
-    <section className="cp-page cp-decisions">
-      <PageHeading
-        title={t('Decisions')}
-        description={t(
-          'A clear question. The right context. An explicit place for human judgment.',
-        )}
-      >
-        <span className="cp-status">
-          <span />
-          {t('Decision service not connected')}
-        </span>
-      </PageHeading>
-      <div className="cp-decision-layout">
-        <form
-          className="cp-form-paper"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (ready) setReviewed(true);
-          }}
-        >
-          <div className="cp-pills" aria-label={t('Decision type')}>
-            {[
-              { id: 'choice', name: 'Choice' },
-              { id: 'score', name: 'Score' },
-              { id: 'noul', name: 'Proposition' },
-            ].map((item) => (
-              <button
-                data-icon-trigger
-                type="button"
-                key={item.id}
-                aria-pressed={type === item.id}
-                onClick={() => edit(setType, item.id)}
-              >
-                {t(item.name)}
-              </button>
-            ))}
-          </div>
-          <label>
-            {type === 'noul' ? t('Proposition to evaluate') : t('The question')}
-            <input
-              value={question}
-              onChange={(event) => edit(setQuestion, event.target.value)}
-              maxLength={400}
-              placeholder={
-                type === 'choice'
-                  ? t('Which team should review this request?')
-                  : type === 'score'
-                    ? t('How well does this meet our rubric?')
-                    : t('The evidence supports this claim…')
-              }
-              required
-            />
-          </label>
-          <label>
-            {t('Input and evidence')}
-            <textarea
-              value={evidence}
-              onChange={(event) => edit(setEvidence, event.target.value)}
-              maxLength={6000}
-              placeholder={t(
-                'Add the actual state or source material the decision should consider.',
-              )}
-              required
-            />
-          </label>
-          {type === 'choice' && (
-            <label>
-              {t('Options')}
-              <span className="cp-label-note">
-                {t('One per line; keep an Other / review path.')}
-              </span>
-              <textarea
-                className="cp-options-input"
-                value={optionsEdited ? options : t(DEFAULT_DECISION_OPTIONS)}
-                onChange={(event) => {
-                  setOptionsEdited(true);
-                  edit(setOptions, event.target.value);
-                }}
-                maxLength={1000}
-                required
-              />
-            </label>
-          )}
-          <label>
-            {type === 'score'
-              ? t('Scoring rubric and range')
-              : t('Criteria and review conditions')}
-            <textarea
-              className="cp-short-input"
-              value={criteria}
-              onChange={(event) => edit(setCriteria, event.target.value)}
-              maxLength={2000}
-              placeholder={
-                type === 'score'
-                  ? t('Define the scale and what each score means.')
-                  : t('What matters? When should a person take a closer look?')
-              }
-              required
-            />
-          </label>
-          <button
-            data-icon-trigger
-            type="submit"
-            className="cp-button cp-button--red"
-            disabled={!ready}
-          >
-            {t('Review decision draft')}
-            <MotionIcon name="forward" size={20} />
-          </button>
-        </form>
-        <aside className="cp-decision-output">
-          <div className="cp-paper-heading">
-            <ShieldCheck size={20} />
-            <h2>{t('Review')}</h2>
-          </div>
-          {reviewed ? (
-            <div className="cp-decision-result">
-              <span className="cp-review-badge">{t('Needs evaluation')}</span>
-              <h3>{question}</h3>
-              <dl>
-                <div>
-                  <dt>{t('Type')}</dt>
-                  <dd>
-                    {type === 'noul'
-                      ? t('Proposition / Noul')
-                      : type === 'score'
-                        ? t('Score')
-                        : t('Choice')}
-                  </dd>
-                </div>
-                <div>
-                  <dt>{t('Result')}</dt>
-                  <dd>{t('Not evaluated')}</dd>
-                </div>
-                <div>
-                  <dt>{t('Confidence')}</dt>
-                  <dd>{t('Not available')}</dd>
-                </div>
-              </dl>
-              {type === 'choice' && (
-                <div className="cp-option-list">
-                  {choices.map((option, index) => (
-                    <span key={`${option}-${index}`}>
-                      <span>{String(index + 1).padStart(2, '0')}</span>
-                      {optionsEdited ? option : t(option)}
-                    </span>
-                  ))}
-                </div>
-              )}
-              <p>
-                {t(
-                  'The draft is complete. It has not been sent to a decision model, and no rule has been deployed.',
-                )}
-              </p>
-              <button
-                data-icon-trigger
-                className="cp-button cp-button--ink"
-                type="button"
-                onClick={exportDraft}
-              >
-                <MotionIcon name="download" size={20} />
-                {t('Download draft')}
-              </button>
-            </div>
-          ) : (
-            <EmptyState
-              icon={<ShieldCheck size={30} />}
-              title={t('A question before a conclusion')}
-            >
-              {t(
-                'Complete the worksheet to review its structure. Probabilities and scores need a connected, evaluated decision service.',
-              )}
-            </EmptyState>
-          )}
-        </aside>
-      </div>
-    </section>
-  );
+function DecisionsPage({ account, onToast }: WorkspacePagesProps) {
+  return <DecisionWorkspace key={account?.accountId ?? 'guest'} accountId={account?.accountId ?? 'guest'} onToast={onToast} />;
 }
 
 const CONNECTIONS = [

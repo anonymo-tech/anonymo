@@ -21,6 +21,7 @@ import { featureOn } from './feature-switches';
 import { canvasLayoutKey, parseCanvasLayout, snapshotCanvasLayout, type CanvasLayout } from '../../lib/canvas-layout';
 import '../../app/dashboard/canvas-extras.css';
 import { useDeviceSetting } from './use-device-setting';
+import { arrangeCanvas } from '../../lib/canvas-arrange';
 const validLayout = (value: unknown): value is CanvasLayout | null => value === null || parseCanvasLayout(value) !== null;
 
 type GraphData = { prompt?: string; answer?: Answer; actions: AnswerActions };
@@ -276,6 +277,19 @@ export default function CanvasBoard({
           {memory.error || 'Layout saved on this device'}
         </output>}
         <div className="cw-zoom">
+          {featureOn('tidyCanvas') && <button
+            type="button"
+            className="cw-tidy-button"
+            disabled={!instance || !nodes.length || nodes.some(node => !node.measured?.width || !node.measured?.height)}
+            onClick={() => {
+              if (!instance) return;
+              const arranged = arrangeCanvas(instance.getNodes(), turns);
+              if (!arranged) return;
+              setNodes(arranged);
+              requestAnimationFrame(() => void instance.fitView({ padding: 0.14, maxZoom: 1 }));
+            }}
+          >Tidy canvas</button>}
+
           <button
             data-icon-trigger
             onClick={resetView}

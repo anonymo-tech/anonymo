@@ -1098,6 +1098,12 @@ export function useLiveWorkspace({
       }),
     [run, commit],
   );
+  const restoreProject = useCallback((projectId: string, revision: number) => run(async ctx => {
+    const project = await ctx.client.restoreProject(projectId, revision);
+    if (!ctx.current()) return false;
+    commit(current => ({...current,rooms:[...current.rooms.filter(room => room.id !== project.id),projectRoom(project,defaults(available(routesRef.current)))]}));
+    return true;
+  }), [run,commit]);
   const loadMoreProjects = useCallback(
     () =>
       run(async (ctx) => {
@@ -1869,6 +1875,7 @@ export function useLiveWorkspace({
     prepareTakeaway,
     renameProject,
     archiveProject,
+    restoreProject,
     loadMoreProjects,
     loadMoreHistory,
     setDraft,

@@ -10,3 +10,13 @@ test('project sort supports names, recency and stable ties without mutating sour
  assert.equal(isProjectView({layout:'list',sort:'name'}),true);
  for(const value of [null,[],{layout:'table',sort:'name'},{layout:'cards',sort:'random'}])assert.equal(isProjectView(value),false);
 });
+import {isProjectLabels,setProjectLabel} from '../lib/project-organizer.ts';
+test('project labels accept only bounded IDs and known labels; removal preserves other projects',()=>{
+ const labels=setProjectLabel({},'project-a','work');
+ const withSecond=setProjectLabel(labels,'project-b','research');
+ assert.deepEqual(setProjectLabel(withSecond,'project-a',''),{'project-b':'research'});
+ assert.deepEqual(labels,{'project-a':'work'});
+ for(const value of [null,[],{'project-a':'invented'},{'<script>':'work'}])assert.equal(isProjectLabels(value),false);
+ assert.throws(()=>setProjectLabel({},'../project','work'));
+ assert.throws(()=>setProjectLabel({},'project','invented'));
+});

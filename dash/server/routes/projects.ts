@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
+import { featureOn } from '../../components/dashboard/feature-switches.ts';
 import { one, transaction } from '../db/database.ts';
 import {
   jsonResponse,
@@ -53,6 +54,33 @@ export async function projectRoutes(
   path: string,
   accountId: string,
 ): Promise<Response | null> {
+  if (path === 'projects/archived' && request.method === 'GET') {
+    requireCondition(featureOn('archiveRecovery'), 404, 'FEATURE_UNAVAILABLE', 'This feature is not available.');
+    const scope = `${accountId}:projects:archived`;
+    const cursor = readCursor(new URL(request.url).searchParams.get('cursor'), scope);
+    const result = await pool.query(
+      `SELECT id,title,revision,created_at AS "createdAt",updated_at AS "updatedAt",
+      to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "cursorTime"
+      FROM projects WHERE account_id=$1 AND archived_at IS NOT NULL AND ($2::timestamptz IS NULL OR (updated_at,id)<($2::timestamptz,$3::uuid))
+      ORDER BY updated_at DESC,id DESC LIMIT 51`,
+      [accountId, cursor?.time ?? null, cursor?.id ?? null],
+    );
+    return jsonResponse({projects: result.rows.slice(0,50).map(({cursorTime:_cursorTime,...project}) => project), nextCursor:nextCursor(result.rows,50,scope)});
+  }
+  const restoreMatch = /^projects\/([^/]+)\/restore$/.exec(path);
+  if (restoreMatch && request.method === 'POST') {
+    requireCondition(featureOn('archiveRecovery'), 404, 'FEATURE_UNAVAILABLE', 'This feature is not available.');
+    const id = uuidField(restoreMatch[1]), body = await readJson(request,2048);
+    requireCondition(Number.isSafeInteger(body.revision) && Number(body.revision)>0,400,'REVISION_REQUIRED','Send the archived project revision.');
+    return transaction(pool, async db => {
+      const previous = await one<{revision:number;archived_at:Date|null}>(db,'SELECT revision,archived_at FROM projects WHERE id=$1 AND account_id=$2 FOR UPDATE',[id,accountId]);
+      requireCondition(previous,404,'PROJECT_NOT_FOUND','This project is unavailable.');
+      requireCondition(previous.revision === body.revision,409,'REVISION_CONFLICT','The project changed. Refresh the archive before restoring.');
+      requireCondition(previous.archived_at,409,'PROJECT_NOT_ARCHIVED','This project is already active. Refresh the archive.');
+      const project = await one(db,`UPDATE projects SET archived_at=NULL,revision=revision+1,updated_at=now() WHERE id=$1 AND account_id=$2 RETURNING id,title,revision,created_at AS "createdAt",updated_at AS "updatedAt"`,[id,accountId]);
+      return jsonResponse({project});
+    });
+  }
   if (path === 'projects' && request.method === 'GET') {
     const scope = `${accountId}:projects`,
       cursor = readCursor(

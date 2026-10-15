@@ -2,6 +2,8 @@
 import { modelReleased, releasedModelSelection } from '../../lib/model-release.ts';
 import { appendChatDraft, quotedReplyDraft } from '../../lib/chat-drafts';
 import type { ReuseQuestion } from './ask-again';
+import { SendYourWay, useSendYourWay } from './send-your-way';
+import { shouldSubmitChatKey } from '../../lib/chat-send-key';
 
 import {
   lazy,
@@ -386,6 +388,7 @@ function CanvasWorkspaceShell({
   live: ReturnType<typeof useLiveWorkspace>;
 }) {
   const t = useT();
+  const sendSetting = useSendYourWay(live.active ? live.account?.accountId ?? 'signed-out' : 'preview', featureOn('sendYourWay'));
   const [localState, setState] = useState<WorkspaceState>(initialWorkspace);
   const checkContent = useContentGuard();
   const [fomoResult, setFomoResult] = useState<{subjectId:string;projectId:string;title:string}|null>(null);
@@ -1656,9 +1659,7 @@ function CanvasWorkspaceShell({
           }
           onKeyDown={(event) => {
             if (
-              event.key === 'Enter' &&
-              !event.shiftKey &&
-              !event.nativeEvent.isComposing
+              shouldSubmitChatKey({ key: event.key, shiftKey: event.shiftKey, altKey: event.altKey, ctrlKey: event.ctrlKey, metaKey: event.metaKey, isComposing: event.nativeEvent.isComposing || event.keyCode === 229 }, isConversation && featureOn('sendYourWay') ? sendSetting.value : 'enter')
             ) {
               event.preventDefault();
               void submit();
@@ -1828,7 +1829,7 @@ function CanvasWorkspaceShell({
               ? live.active
                 ? t('Review generation · Enter')
                 : t('Review draft · Enter')
-              : t('Send · Enter')
+              : isConversation && featureOn('sendYourWay') && sendSetting.value === 'modifier' ? 'Send · ⌘ / Ctrl + Enter' : t('Send · Enter')
           }
           onClick={submit}
           disabled={
@@ -1840,6 +1841,7 @@ function CanvasWorkspaceShell({
           <MotionIcon name="send" size={21} />
         </button>
       </div>
+      {isConversation && featureOn('sendYourWay') && <SendYourWay setting={sendSetting} />}
     </div>
   );
 
@@ -2218,6 +2220,10 @@ function CanvasWorkspaceShell({
                 preferences={chatPreferences[room.id] ?? {}}
                 onPreferenceChange={updateChatPreference}
                 onReuseQuestion={reuseQuestion}
+                hasEarlier={!!room.live?.historyCursor}
+                loadingHistory={live.busy}
+                onLoadEarlier={() => void live.loadMoreHistory()}
+                accountScope={live.active ? live.account?.accountId ?? 'signed-out' : 'preview'}
               />
             )}
           </>
@@ -2229,6 +2235,11 @@ function CanvasWorkspaceShell({
               studio={liveStudio}
               active={isStudio}
               onToast={notify}
+              onReuse={(draft) => {
+                studio.clearReference();
+                studio.update(draft);
+                requestAnimationFrame(() => composer.current?.focus());
+              }}
             />
           ) : (
             <StudioPage
@@ -2298,6 +2309,7 @@ function CanvasWorkspaceShell({
                 ),
               }))
             }
+            onRestoreProject={live.active ? live.restoreProject : undefined}
             onDeleteRoom={(id) => {
               setDeleteId(id);
               setDialog('delete');

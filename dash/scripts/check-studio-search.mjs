@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import { filterStudioJobs, studioJobGroup } from '../lib/studio-search.ts';
+const base = { modality: 'video', modelId: 'veo3', input: { prompt: 'The Ocean\n at Sunrise' }, state: 'completed', mediaAssetState: 'stored', processingState: 'completed' };
+const jobs = [base, { ...base, modelId: 'runway-gen4', input: { prompt: 'Forest at dusk' }, state: 'polling', mediaAssetState: 'none' }, { ...base, state: 'failed', mediaAssetState: 'unavailable' }];
+assert.equal(filterStudioJobs(jobs, 'ocean at sunrise', '', 'all').length, 2);
+assert.equal(filterStudioJobs(jobs, 'ＯＣＥＡＮ', '', 'all').length, 2);
+assert.equal(filterStudioJobs(jobs, '', 'veo3', 'saved').length, 1);
+assert.equal(filterStudioJobs(jobs, 'runway', '', 'progress').length, 1);
+assert.equal(filterStudioJobs(jobs, 'missing', '', 'all').length, 0);
+assert.equal(filterStudioJobs([{ ...base, modality: 'image' }], '', '', 'all').length, 0);
+assert.equal(studioJobGroup({ ...base, mediaAssetState: 'deleted' }), 'deleted');
+assert.equal(studioJobGroup({ ...base, mediaAssetState: 'none', state: 'reconciliation_pending' }), 'attention');
+assert.equal(studioJobGroup({ ...base, mediaAssetState: 'none', state: 'cancelled' }), 'cancelled');
+assert.equal(jobs.length, 3);
+console.log('Studio search: 10 prompt/model/status, Unicode, video-only and non-mutating checks passed.');

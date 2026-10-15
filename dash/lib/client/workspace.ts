@@ -908,6 +908,12 @@ export function createWorkspaceClient(options: ClientOptions = {}) {
         parseProject,
       );
     },
+    async archivedProjects(after?: string | null) {
+      return page(await request(`projects/archived${query({cursor:after})}`), 'projects', 50, parseProject);
+    },
+    async restoreProject(projectId: string, revision: number) {
+      return parseProject((await request(`projects/${id(projectId)}/restore`, 'POST', {revision})).project);
+    },
     async createProject(title: string) {
       return parseProject(
         (await request('projects', 'POST', { title })).project,
