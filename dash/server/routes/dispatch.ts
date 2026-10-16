@@ -1,6 +1,8 @@
 import { secondLookToolOn } from '../../lib/second-look/releases.ts';
 import { publicFomoRoute } from '../second-look/fomo-snapshots.ts';
 import { fomoRoutes } from '../second-look/fomo.ts';
+import { stockTokenRoutes } from '../second-look/stock-token-routes.ts';
+import { perpRoutes } from '../second-look/perp-routes.ts';
 import { cachedPublicFlywheel, ownerFlywheel } from "../flywheel/service.ts";
 import { assertEndpointReleased, releasedChatRoute } from "../core/feature-release.ts";
 import { publicListedRoute } from "./public-inference.ts";
@@ -131,6 +133,10 @@ export async function dispatch(request: Request) {
       if (path.startsWith("second-look/")) {
         const fomo = await fomoRoutes(pool, request, path, session.accountId);
         if (fomo) return fomo;
+        const stockToken = await stockTokenRoutes(pool, request, path, session.accountId);
+        if (stockToken) return stockToken;
+        const perp = await perpRoutes(pool, request, path, session.accountId);
+        if (perp) return perp;
         const planning = await planningRoutes(pool, request, path, session.accountId);
         if (planning) return planning;
         const token = await secondLookTokenRoutes(

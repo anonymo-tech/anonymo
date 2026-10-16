@@ -17,6 +17,9 @@ export const SECOND_LOOK_SWITCHES = {
   networks: false,
   telegram: false,
   mcp: false,
+  stockToken: true,
+  perp: true,
+  perpPlan: false,
 } satisfies Record<string, boolean>;
 export type SecondLookTool = keyof typeof SECOND_LOOK_SWITCHES;
 export function secondLookToolOn(tool: SecondLookTool) {
@@ -40,6 +43,9 @@ export function secondLookPathTool(path: string): SecondLookTool | null {
   if (root === 'networks') return 'networks';
   if (root === 'telegram') return 'telegram';
   if (root === 'mcp') return 'mcp';
+  if (root === 'stock-tokens') return 'stockToken';
+  if (root === 'perp') return 'perp';
+  if (root === 'perp-plan') return 'perpPlan';
   return null;
 }
 export function secondLookPathOn(path: string, method = 'GET') {

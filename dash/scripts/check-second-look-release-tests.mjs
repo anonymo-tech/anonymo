@@ -27,6 +27,9 @@ const paths = {
   networks: 'networks/robinhood/receipt',
   telegram: 'telegram/link',
   mcp: 'mcp',
+  stockToken: 'stock-tokens/check',
+  perp: 'perp/check',
+  perpPlan: 'perp-plan/check',
 };
 test('every Second Look tool remains held in the source and release manifest', () => {
   assert.equal(FEATURE_SWITCHES.secondLook, false);

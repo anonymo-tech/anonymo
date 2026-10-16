@@ -19,6 +19,10 @@ import blindRecord from './blind-record.ts';
 import failureReasons from './failure-reasons.ts';
 import explorerLinks from './explorer-links.ts';
 import pdfReferences from './pdf-references.ts';
+import secondLookTools from './second-look-tools.ts';
+import stockToken from './stock-token.ts';
+import perpCheck from './perp-check.ts';
+import perpPlan from './perp-plan.ts';
 
 /** Every area's strings in one table. An English key that appears in two areas takes the later entry. */
 const zh: Dictionary = {
@@ -42,6 +46,10 @@ const zh: Dictionary = {
   ...failureReasons,
   ...explorerLinks,
   ...pdfReferences,
+  ...secondLookTools,
+  ...stockToken,
+  ...perpCheck,
+  ...perpPlan,
 };
 
 export default zh;

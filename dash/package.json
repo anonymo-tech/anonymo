@@ -7,6 +7,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "test:stock-token": "node --experimental-strip-types scripts/check-stock-token.mjs",
     "dev": "vinext dev",
     "build": "node scripts/check-feature-release.mjs && vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
@@ -14,6 +15,8 @@
     "lint:portable": "oxlint -c .oxlintrc.portable.json",
     "typecheck": "tsc --noEmit",
     "test:demo": "node --experimental-strip-types scripts/check-demo.mjs",
+    "test:perp-plan": "node --experimental-strip-types scripts/check-perp-plan.mjs",
+    "test:perp-check": "node --experimental-strip-types scripts/check-perp-check.mjs",
     "format": "oxfmt",
     "test:explorer-links": "node --experimental-strip-types scripts/check-explorer-links.mjs",
     "test:canvas": "node --experimental-strip-types scripts/check-canvas.mjs",

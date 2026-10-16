@@ -51,7 +51,7 @@ test('FOMO-only approval opens only its endpoint and leaves every other SecondLo
   FEATURE_SWITCHES.secondLook=true;
   for(const name of Object.keys(SECOND_LOOK_SWITCHES))SECOND_LOOK_SWITCHES[name]=name==='fomo';
   assert.doesNotThrow(()=>assertEndpointReleased('second-look/fomo/analyze','POST'));
-  for(const path of ['tokens/check','wallets','planning','signature/inspect','follow/traders','why-moved','tax/fixture/export','alerts','steady/purchase','guarded/buy','rooms/calls','networks/robinhood/receipt','telegram/link','mcp'])assert.throws(()=>assertEndpointReleased('second-look/'+path,'POST'),{code:'FEATURE_UNAVAILABLE'});
+  for(const path of ['tokens/check','wallets','planning','signature/inspect','follow/traders','why-moved','tax/fixture/export','alerts','steady/purchase','guarded/buy','rooms/calls','networks/robinhood/receipt','telegram/link','mcp','stock-tokens/check','perp/check','perp-plan/check'])assert.throws(()=>assertEndpointReleased('second-look/'+path,'POST'),{code:'FEATURE_UNAVAILABLE'});
  }finally{FEATURE_SWITCHES.secondLook=outer;Object.assign(SECOND_LOOK_SWITCHES,saved)}
 });
 

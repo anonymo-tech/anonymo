@@ -19,6 +19,9 @@ export const secondLookTools = [
   'networks',
   'telegram',
   'mcp',
+  'stockToken',
+  'perp',
+  'perpPlan',
 ];
 export function checkSecondLookRelease(source, manifest, outerManifest) {
   assert.equal(manifest.schemaVersion, 1);

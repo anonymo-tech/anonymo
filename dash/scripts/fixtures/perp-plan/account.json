@@ -1,0 +1,32 @@
+{
+  "marginSummary": {
+    "accountValue": "2000",
+    "totalNtlPos": "10000",
+    "totalMarginUsed": "1000"
+  },
+  "withdrawable": "1000",
+  "assetPositions": [
+    {
+      "type": "oneWay",
+      "position": {
+        "coin": "BTC",
+        "szi": "0.2",
+        "entryPx": "49000",
+        "positionValue": "10000",
+        "unrealizedPnl": "200",
+        "returnOnEquity": "0.2",
+        "liquidationPx": "45000",
+        "marginUsed": "1000",
+        "leverage": {
+          "type": "cross",
+          "value": 10
+        },
+        "cumFunding": {
+          "allTime": "12",
+          "sinceOpen": "12",
+          "sinceChange": "0"
+        }
+      }
+    }
+  ]
+}

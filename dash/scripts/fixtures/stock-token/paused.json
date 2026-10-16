@@ -1,0 +1,74 @@
+{
+  "context": {
+    "slot": 321000000
+  },
+  "value": {
+    "data": {
+      "program": "spl-token-2022",
+      "parsed": {
+        "type": "mint",
+        "info": {
+          "decimals": 9,
+          "freezeAuthority": "2VDW9dFE1ZXz4zWAbaBDQFynNVdRpQ73HyfSHMzBSL6Z",
+          "isInitialized": true,
+          "mintAuthority": "2VDW9dFE1ZXz4zWAbaBDQFynNVdRpQ73HyfSHMzBSL6Z",
+          "supply": "18446744073709551615",
+          "extensions": [
+            {
+              "extension": "pausableConfig",
+              "state": {
+                "authority": "2VDW9dFE1ZXz4zWAbaBDQFynNVdRpQ73HyfSHMzBSL6Z",
+                "paused": true
+              }
+            },
+            {
+              "extension": "permanentDelegate",
+              "state": {
+                "delegate": "2VDW9dFE1ZXz4zWAbaBDQFynNVdRpQ73HyfSHMzBSL6Z"
+              }
+            },
+            {
+              "extension": "transferHook",
+              "state": {
+                "authority": "2VDW9dFE1ZXz4zWAbaBDQFynNVdRpQ73HyfSHMzBSL6Z",
+                "programId": "2Z8oHviEbrqDD5kg2sW8h8kYceqdVTnrrPL6Lk2nBfRG"
+              }
+            },
+            {
+              "extension": "scaledUiAmountConfig",
+              "state": {
+                "authority": "2VDW9dFE1ZXz4zWAbaBDQFynNVdRpQ73HyfSHMzBSL6Z",
+                "multiplier": "0.01",
+                "newMultiplier": "0.01",
+                "newMultiplierEffectiveTimestamp": 0
+              }
+            },
+            {
+              "extension": "tokenMetadata",
+              "state": {
+                "updateAuthority": "2VDW9dFE1ZXz4zWAbaBDQFynNVdRpQ73HyfSHMzBSL6Z",
+                "mint": "2RJD1KnDRGEkvuFfAGrJ7PD28LRE9LRDjZznDywagzmr",
+                "name": "Sample Equity Token",
+                "symbol": "DEMO",
+                "uri": "https://metadata.invalid/sample.json",
+                "additionalMetadata": []
+              }
+            },
+            {
+              "extension": "metadataPointer",
+              "state": {
+                "authority": "2VDW9dFE1ZXz4zWAbaBDQFynNVdRpQ73HyfSHMzBSL6Z",
+                "metadataAddress": "2RJD1KnDRGEkvuFfAGrJ7PD28LRE9LRDjZznDywagzmr"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "executable": false,
+    "lamports": 3000000,
+    "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "rentEpoch": 0,
+    "space": 700
+  }
+}

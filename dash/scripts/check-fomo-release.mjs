@@ -28,12 +28,17 @@ const paths = {
   networks: 'networks/robinhood/receipt',
   telegram: 'telegram/link',
   mcp: 'mcp',
+  stockToken: 'stock-tokens/check',
+  perp: 'perp/check',
+  perpPlan: 'perp-plan/check',
 };
-test('FOMO is released while every unrelated Second Look tool remains held', () => {
+// Released Second Look tools, in approval order. Every other tool must stay held.
+const released = ['fomo', 'stockToken', 'perp'];
+test('only explicitly released Second Look tools are on; every other tool remains held', () => {
   assert.equal(FEATURE_SWITCHES.secondLook, true);
-  assert.deepEqual(checkSecondLookReleaseFiles().approved, ['fomo']);
+  assert.deepEqual(checkSecondLookReleaseFiles().approved, released);
   for (const key of Object.keys(paths))
-    assert.equal(secondLookToolOn(key), key === 'fomo');
+    assert.equal(secondLookToolOn(key), released.includes(key));
 });
 test('one tool switch cannot expose another tool or shared purchase route', () => {
   const saved = { ...SECOND_LOOK_SWITCHES },
@@ -64,10 +69,13 @@ test('one tool switch cannot expose another tool or shared purchase route', () =
   }
 });
 test('build rejects unapproved switches umbrella-only release and missing dependencies', () => {
-  const source = readFileSync(
+  // Start from a source with every released tool turned off, so each case below controls approvals alone.
+  let source = readFileSync(
     new URL('../lib/second-look/releases.ts', import.meta.url),
     'utf8',
-  ).replace('fomo: true', 'fomo: false');
+  );
+  for (const tool of released)
+    source = source.replace(`  ${tool}: true,`, `  ${tool}: false,`);
   assert.throws(() =>
     checkSecondLookRelease(
       source.replace('token: false', 'token: true'),
@@ -99,7 +107,7 @@ test('build rejects unapproved switches umbrella-only release and missing depend
   );
 });
 test('actual dispatcher blocks held tool endpoints before configuration or database access', async () => {
-  for (const [tool,path] of Object.entries(paths).filter(([key]) => key !== 'fomo'))
+  for (const [tool,path] of Object.entries(paths).filter(([key]) => !released.includes(key)))
     for (const method of ['GET', 'POST']) {
       const r = await dispatch(
         new Request('https://conclave.example/api/second-look/' + path, {

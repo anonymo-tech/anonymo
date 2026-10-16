@@ -1,5 +1,6 @@
 'use client';
 import { modelReleased, releasedModelSelection } from '../../lib/model-release.ts';
+import { secondLookToolOn } from '../../lib/second-look/releases';
 import { appendChatDraft, quotedReplyDraft } from '../../lib/chat-drafts';
 import type { ReuseQuestion } from './ask-again';
 import { SendYourWay, useSendYourWay } from './send-your-way';
@@ -226,7 +227,11 @@ const navigation = (
     { id: 'rooms', label: 'Projects' },
     { id: 'chat', label: 'Chat' },
     { id: 'canvas', label: 'Canvas' },
-    { id: 'second-look', label: 'FOMO' },
+    {
+      id: 'second-look',
+      // FOMO was Second Look's only tool; with more tools released the dock names the whole space.
+      label: secondLookToolOn('stockToken') || secondLookToolOn('perp') ? 'Second Look' : 'FOMO',
+    },
     { id: 'studio', label: 'Studio' },
     { id: 'agents', label: 'Agents' },
   ] as const
