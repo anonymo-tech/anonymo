@@ -19,7 +19,7 @@ export const SECOND_LOOK_SWITCHES = {
   mcp: false,
   stockToken: true,
   perp: true,
-  perpPlan: false,
+  perpPlan: true,
 } satisfies Record<string, boolean>;
 export type SecondLookTool = keyof typeof SECOND_LOOK_SWITCHES;
 export function secondLookToolOn(tool: SecondLookTool) {

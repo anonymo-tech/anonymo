@@ -318,16 +318,22 @@ test('collector exact request bodies, four-call bound and no account calls witho
 });
 
 test('routes: held gates, authenticated, strict input, no DB writes, no-store, rate limits', async () => {
-  assert.equal(SECOND_LOOK_SWITCHES.perp, false);
-  assert.equal(SECOND_LOOK_SWITCHES.perpPlan, false);
-  for (const path of [
-    'second-look/perp-plan/check',
-    'second-look/perp-plan/markets',
-  ])
-    assert.throws(
-      () => assertEndpointReleased(path, 'POST'),
-      (e) => e.code === 'FEATURE_UNAVAILABLE',
-    );
+  // Check the held gate with the switches off, whatever the current release state is.
+  const saved = { perp: SECOND_LOOK_SWITCHES.perp, perpPlan: SECOND_LOOK_SWITCHES.perpPlan };
+  try {
+    SECOND_LOOK_SWITCHES.perp = false;
+    SECOND_LOOK_SWITCHES.perpPlan = false;
+    for (const path of [
+      'second-look/perp-plan/check',
+      'second-look/perp-plan/markets',
+    ])
+      assert.throws(
+        () => assertEndpointReleased(path, 'POST'),
+        (e) => e.code === 'FEATURE_UNAVAILABLE',
+      );
+  } finally {
+    Object.assign(SECOND_LOOK_SWITCHES, saved);
+  }
   const pool = {
     query() {
       assert.fail('Tool must never access the database');

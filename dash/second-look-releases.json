@@ -3,6 +3,7 @@
   "approved": [
     "fomo",
     "stockToken",
-    "perp"
+    "perp",
+    "perpPlan"
   ]
 }

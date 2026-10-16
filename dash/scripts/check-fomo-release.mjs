@@ -33,7 +33,7 @@ const paths = {
   perpPlan: 'perp-plan/check',
 };
 // Released Second Look tools, in approval order. Every other tool must stay held.
-const released = ['fomo', 'stockToken', 'perp'];
+const released = ['fomo', 'stockToken', 'perp', 'perpPlan'];
 test('only explicitly released Second Look tools are on; every other tool remains held', () => {
   assert.equal(FEATURE_SWITCHES.secondLook, true);
   assert.deepEqual(checkSecondLookReleaseFiles().approved, released);
