@@ -39,4 +39,5 @@ testpaths = ["tests"]
 
 [tool.uv]
 exclude-newer = "2026-09-25T00:00:00Z"
+exclude-newer-package = { certifi = "2026-10-20T00:00:00Z" }
 build-constraint-dependencies = ["setuptools==84.0.0", "hatchling==1.32.4"]

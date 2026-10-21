@@ -9,7 +9,7 @@ COPY scripts/gen-inventory.ts ./scripts/gen-inventory.ts
 RUN bun scripts/gen-inventory.ts --out /out/inventory.generated.json
 
 # Website: static Next.js export, served by the router at /.
-FROM node:22-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS web
+FROM node:22.23.4-bookworm-slim@sha256:5991875dfb80938dd8a6ba3fe3e96fd04929e70792762b3319d8caadbbe229bc AS web
 WORKDIR /web
 RUN npm install -g pnpm@11.19.0
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
