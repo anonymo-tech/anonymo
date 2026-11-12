@@ -12,6 +12,7 @@ import type { Jobs } from "./services/jobs.ts";
 import type { BlindIssuer } from "./blind/issuer.ts";
 import type { OhttpKeys } from "./ohttp/keys.ts";
 import type { TransparencyLog } from "./tlog/log.ts";
+import type { AnonymoServices } from "./anonymo/services.ts";
 
 export type Ctx = {
   cfg: Config;
@@ -37,6 +38,8 @@ export type Ctx = {
   ohttp?: OhttpKeys;
   /** Set only when TLOG_ENABLED is on: the transparency log of keys and configurations. */
   tlog?: TransparencyLog;
+  /** Anonymo's floor gate and refusal classifier (src/anonymo/services.ts). */
+  anonymo: AnonymoServices;
   /** Test hook: deterministic provider shuffle. */
   rand?: () => number;
 };

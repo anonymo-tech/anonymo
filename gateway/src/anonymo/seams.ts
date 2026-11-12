@@ -12,10 +12,11 @@ export type FloorVerdict = { ok: true } | { ok: false; category: FloorCategory }
 export interface FloorGate {
   check(input: FloorInput, signal?: AbortSignal): Promise<FloorVerdict>;
 }
-/** Placeholder: fails CLOSED in production so nothing ships without the real gate. */
-export const floorGateStub = (production: boolean): FloorGate => ({
+/** Placeholder that passes everything. With `required` (ANONYMO_FLOOR_REQUIRED=1, which every real deployment sets)
+ *  it fails CLOSED instead, so nothing can serve traffic without WS02's real gate. */
+export const floorGateStub = (required: boolean): FloorGate => ({
   async check() {
-    if (production) throw new Error("floor gate not configured");
+    if (required) throw new Error("floor gate not configured");
     return { ok: true };
   },
 });

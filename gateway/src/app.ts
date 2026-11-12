@@ -60,6 +60,8 @@ import type { Ctx } from "./context.ts";
 import { ApiError } from "./lib/errors.ts";
 import { log, setLogLevel } from "./lib/util.ts";
 import { chatRoutes } from "./api/chat.ts";
+import { anonymoRoutes } from "./anonymo/routes.ts";
+import { createAnonymoServices, type AnonymoServices } from "./anonymo/services.ts";
 import { modelsRoutes } from "./api/models.ts";
 import { generationRoutes } from "./api/generation.ts";
 import { keysRoutes } from "./api/keys.ts";
@@ -124,6 +126,8 @@ export type AppOptions = {
   startJobs?: boolean;
   /** Already initialized, caller-owned database for embedding or sharing an in-memory test store. */
   database?: Pick<DbHandle, "db" | "kind">;
+  /** Replace Anonymo's floor gate or refusal classifier (tests, and the real implementations once built). */
+  anonymo?: Partial<AnonymoServices>;
 };
 
 export async function createApp(opts: AppOptions = {}) {
@@ -159,6 +163,7 @@ export async function createApp(opts: AppOptions = {}) {
       await handle.db.insert(kv).values({ key: `job-health:${state.name}`, value }).onConflictDoUpdate({ target: kv.key, set: { value, updatedAt: new Date() } });
     }, cfg.runtimeRole === "worker" ? cfg.workerJobs : undefined),
     rand: opts.rand,
+    anonymo: createAnonymoServices(opts.env ?? {}, opts.anonymo),
     blind: cfg.blind.enabled ? new BlindIssuer(handle.db, cfg) : undefined,
     ohttp: cfg.ohttp.enabled ? new OhttpKeys(handle.db, cfg) : undefined,
     tlog: cfg.tlog.enabled ? new TransparencyLog(handle.db, cfg.tlog).start() : undefined,
@@ -205,6 +210,7 @@ export async function createApp(opts: AppOptions = {}) {
   structuredOutputMiddleware(app, ctx); // V83: ordinary chat routes bill each call.
   firstCallRoutes(app, cfg.developerFirstCallEnabled, cfg.siteUrl); // ON2: the public site address, not the router host
   chatRoutes(app, ctx);
+  anonymoRoutes(app, ctx); // Anonymo: every workstream mounts its routes in src/anonymo/routes.ts
   e2eeRoutes(app, ctx);
   embeddingsRoutes(app, ctx);
   batchesRoutes(app, ctx);

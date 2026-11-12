@@ -13,6 +13,7 @@ import type { Ctx } from "../context.ts";
 import { apps, byokKeys, generations, savedRoutes } from "../db/schema.ts";
 import type { Candidate, ModelRow, Modifier } from "../catalog/catalog.ts";
 import { ApiError, fail, isApiError } from "../lib/errors.ts";
+import { floorInputOf } from "../anonymo/services.ts";
 import { type Pico, maxPico, picoToUsd, picoToUsdString, usdToPico } from "../lib/money.ts";
 import { canonical, canonicalJson, decrypt, genId, log, sha256 } from "../lib/util.ts";
 import { reserve, release, settle } from "../ledger/ledger.ts";
@@ -352,6 +353,10 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
       key?.allowedModels?.length ? `This key may only use: ${key.allowedModels.join(", ")}.` : `Model ${modelIds[0]} is not available. See GET /api/v1/models.`,
       key?.allowedModels?.length ? "model_not_allowed" : "model_not_found",
     );
+
+  // Anonymo floor gate (WS02): before the cache, billing, the hold and routing, so a blocked prompt is never served,
+  // charged, sent to any provider or rerouted. A gate that cannot answer fails closed.
+  await floorCheck(ctx, body);
 
   // Request-level guardrails only for authenticated keys; a key's own guardrails always apply.
   const guardCfg = mergeGuardrails(key?.guardrails as GuardrailConfig | null, key ? body.guardrails as GuardrailConfig | undefined : undefined);
@@ -1062,3 +1067,14 @@ async function cachedResponse(ctx: Ctx, c: Context, p: { body: Record<string, un
 export const toolkit = { finalize, selectTargets, resolveBilling, allFailed, byokFor, limitOrThrow, requestHash, requestParams, paymentHeaders, upstreamAttestationOf, servedWith };
 
 export { canonical };
+
+/** Anonymo floor gate: 451 with the category and no text on a block, 503 when the gate cannot answer. Never rerouted. */
+async function floorCheck(ctx: Ctx, body: Record<string, unknown>) {
+  let verdict;
+  try {
+    verdict = await ctx.anonymo.floor.check(floorInputOf(body));
+  } catch {
+    throw new ApiError(503, "The safety check is unavailable. Nothing was sent or charged; try again shortly.", "floor_unavailable");
+  }
+  if (!verdict.ok) throw new ApiError(451, "This request crosses a line Anonymo blocks for everyone. Nothing was sent or charged.", "floor_blocked", { category: verdict.category });
+}
