@@ -400,6 +400,13 @@
       "when": 1791400058000,
       "tag": "0058_anonymo_receipts",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1791400059000,
+      "tag": "0059_anonymo_money",
+      "breakpoints": true
     }
   ]
 }

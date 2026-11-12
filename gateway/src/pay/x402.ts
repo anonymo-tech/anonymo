@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import type { Ctx } from "../context.ts";
 import { fail } from "../lib/errors.ts";
 import { checkAuthorization, EIP3009_TYPES } from "../facilitator/verify.ts";
+import { caip2Of, type RemoteX402Requirement } from "./x402-networks.ts";
 
 // x402, `exact` scheme on Robinhood Chain: the payer signs a USDG EIP-3009 TransferWithAuthorization
 // to X402_PAY_TO and sends it as `X-PAYMENT` (v1) or `PAYMENT-SIGNATURE` (v2); the router verifies it, relays it
@@ -39,6 +40,8 @@ export type X402Requirement = {
   asset: Hex;
   extra: { name: string; version: string; chainId: number };
 };
+/** Any requirement a 402 may offer: Robinhood Chain USDG (verified here) or Base/Solana USDC (x402-networks.ts). */
+export type X402Accept = X402Requirement | RemoteX402Requirement;
 export type X402Authorization = { from: Hex; to: Hex; value: bigint; validAfter: bigint; validBefore: bigint; nonce: Hex };
 export type X402Payment = { version: number; scheme: string; network: string; signature: Hex; auth: X402Authorization };
 
@@ -62,23 +65,23 @@ export async function x402Requirement(ctx: Ctx, o: { priceUsdg: bigint; resource
 }
 
 /** The x402 PaymentRequirementsResponse body. `error` is a string, as x402 clients expect. */
-export const x402Body = (error: string, accepts: X402Requirement[], extra: Record<string, unknown> = {}) => ({ x402Version: X402_VERSION, error, accepts, ...extra });
+export const x402Body = (error: string, accepts: X402Accept[], extra: Record<string, unknown> = {}) => ({ x402Version: X402_VERSION, error, accepts, ...extra });
 
 const base64Json = (v: unknown) => Buffer.from(JSON.stringify(v)).toString("base64");
 
 /** The same requirements as an x402 v2 PaymentRequired: `amount` for maxAmountRequired, the resource apart, the CAIP-2 network. */
-export function x402RequiredV2(error: string, accepts: X402Requirement[]) {
+export function x402RequiredV2(error: string, accepts: X402Accept[]) {
   const first = accepts[0];
   return {
     x402Version: 2,
     error,
     resource: { url: first.resource, description: first.description, mimeType: first.mimeType },
-    accepts: accepts.map((r) => ({ scheme: r.scheme, network: `eip155:${r.extra.chainId}`, amount: r.maxAmountRequired, asset: r.asset, payTo: r.payTo, maxTimeoutSeconds: r.maxTimeoutSeconds, extra: r.extra })),
+    accepts: accepts.map((r) => ({ scheme: r.scheme, network: "chainId" in r.extra ? `eip155:${r.extra.chainId}` : caip2Of((r as RemoteX402Requirement).network), amount: r.maxAmountRequired, asset: r.asset, payTo: r.payTo, maxTimeoutSeconds: r.maxTimeoutSeconds, extra: r.extra })),
   };
 }
 
 /** Headers of a 402 that asks for an x402 payment: `PAYMENT-REQUIRED` (base64 JSON, v2) beside the v1 JSON body. */
-export const x402RequiredHeaders = (error: string, accepts: X402Requirement[]): Record<string, string> => (accepts.length ? { "payment-required": base64Json(x402RequiredV2(error, accepts)) } : {});
+export const x402RequiredHeaders = (error: string, accepts: X402Accept[]): Record<string, string> => (accepts.length ? { "payment-required": base64Json(x402RequiredV2(error, accepts)) } : {});
 
 /** Value of the settlement headers: base64 JSON {success, transaction, network, payer}. */
 export const x402ResponseHeader = (r: { transaction: string; network: string; payer: string }) => base64Json({ success: true, ...r });

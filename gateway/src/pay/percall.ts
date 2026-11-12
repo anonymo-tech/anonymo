@@ -11,7 +11,8 @@ import { log, sleep } from "../lib/util.ts";
 import { CallPayAbi } from "../chain/abis.ts";
 import { walletAccountId } from "../api/auth.ts";
 import { relayExact } from "../facilitator/settle.ts";
-import { X402_VERSION, parseX402, paymentHeaderOf, verifyX402, x402Body, x402Enabled, x402FailureHeader, x402Requirement, x402RequiredHeaders, x402ResponseHeader, type X402Payment } from "./x402.ts";
+import { redeemRemoteX402, remotePaymentOf, remoteRequirements } from "./x402-networks.ts"; // WS05: Base and Solana USDC
+import { X402_VERSION, parseX402, paymentHeaderOf, verifyX402, x402Body, x402Enabled, x402FailureHeader, x402Requirement, x402RequiredHeaders, x402ResponseHeader, type X402Accept, type X402Payment } from "./x402.ts";
 
 // HTTP 402 per-call payments for callers without a key (agents):
 //   request -> 402 {price_usdg, pay_to, nonce, expiry, chain: 4663}
@@ -45,9 +46,13 @@ function quotePrice(ctx: Ctx, pricePico: Pico) {
 export async function paymentRequired(ctx: Ctx, opts: QuoteInfo): Promise<never> {
   const callPay = ctx.chain.address("callPay");
   const x402 = x402Enabled(ctx);
-  if (!callPay && !x402) fail(401, "An API key is required: per-call payment is not configured on this router.", "missing_key");
+  const remote = remoteRequirements(ctx, { priceUnits: 1n, resource: "", description: "" }).length > 0;
+  if (!callPay && !x402 && !remote) fail(401, "An API key is required: per-call payment is not configured on this router.", "missing_key");
   const priceUsdg = quotePrice(ctx, opts.pricePico);
-  const accepts = x402 ? [await x402Requirement(ctx, { priceUsdg, resource: opts.resource, description: opts.description })] : [];
+  const accepts: X402Accept[] = [
+    ...(x402 ? [await x402Requirement(ctx, { priceUsdg, resource: opts.resource, description: opts.description })] : []),
+    ...remoteRequirements(ctx, { priceUnits: priceUsdg, resource: opts.resource, description: opts.description }), // WS05
+  ];
   const v2 = x402RequiredHeaders("PAYMENT-SIGNATURE header is required", accepts);
   if (!callPay)
     throw new ApiError(402, `Payment required: $${fmtUsdg(priceUsdg)} USDG. Sign an x402 exact payment for one of \`accepts\` and retry this exact request with X-PAYMENT (or PAYMENT-SIGNATURE).`, "payment_required", undefined, { "x-payment-required": "usdg", ...v2 }, x402Body("X-PAYMENT header is required", accepts));
@@ -230,6 +235,8 @@ export async function payPerCall(ctx: Ctx, c: Context, o: Quote & { description?
   const info: QuoteInfo = { ...o, resource: `${ctx.cfg.publicUrl}${new URL(c.req.url).pathname}`, description: o.description ?? `Pay-per-call inference: ${o.modelId}` };
   const pay = paymentHeaderOf(c);
   if (!pay) return paymentRequired(ctx, info);
+  const remote = remotePaymentOf(ctx, pay); // WS05: x402 on Base or Solana, settled through the facilitator
+  if (remote) return redeemRemoteX402(ctx, remote, { ...info, priceUnits: quotePrice(ctx, o.pricePico) });
   const header = parsePaymentHeader(pay);
   if (header.kind === "x402") return redeemX402(ctx, header.payment, info);
   const txHash = header.kind === "tx" ? header.hash : await relayAuthorization(ctx, header.auth);

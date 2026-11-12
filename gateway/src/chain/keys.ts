@@ -11,7 +11,9 @@ import { sha256 } from "../lib/util.ts";
 // API immediately (no account), and withdraw by signing with the derived key.
 
 export const KEY_PREFIX = "sk-ar-v1-";
-export const KEY_RE = /^sk-ar-v1-[0-9a-f]{64}$/;
+/** Anonymo keys (src/anonymo/keys/): the same 32 random bytes and the same derivation, under the Anonymo prefix. */
+export const ANONYMO_KEY_PREFIX = "anm_live_";
+export const KEY_RE = /^(?:sk-ar-v1-|anm_live_)[0-9a-f]{64}$/;
 
 export function generateApiKey(): string {
   return KEY_PREFIX + randomBytes(32).toString("hex");

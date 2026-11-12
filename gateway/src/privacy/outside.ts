@@ -1,5 +1,6 @@
 import { mediaBodyReader } from "../anonymo/media/inventory.ts"; // WS06 media
 import { approveAndAllowBodyReader } from "./approve-and-allow.ts"; // B118
+import { anonymoMoneyAddressReader, anonymoMoneyBodyReaders } from "./anonymo-money.ts"; // WS05
 import { modelAlternativesReader } from "./model-alternatives.ts"; // B121
 import { lowBalanceReader } from "./low-balance.ts"; // B119
 import { abuseBodyReader } from "../anonymo/abuse/privacy.ts"; // Anonymo WS02
@@ -299,6 +300,7 @@ const redisFamilies: RedisFamily[] = [
 ];
 
 const addressReaders: Touchpoint[] = [
+  anonymoMoneyAddressReader, // WS05: an Anonymo key's IP allowlist
   ...hardeningAddresses, // HD1
   facilitatorAddressReader, // v6 F
   { file: "src/api/network-hosts.ts", reads: "The caller address bucket on host signup and credential writes.", then: "Counts attempts through the existing per-address limiter; trusted proxy and onion rules apply.", kept: "Raw address in the limiter key for 61 seconds in Redis, or until the memory limiter sweeps; never in the host row or application log.", evidence: [ev("src/api/network-hosts.ts", "const from = addressBucket(c, ctx.cfg);")] },
@@ -419,6 +421,7 @@ const addressReaders: Touchpoint[] = [
 ];
 
 const bodyReaders: ExternalDoc["bodyReaders"] = [
+  ...anonymoMoneyBodyReaders, // WS05
   weeklySummaryReader, // B120
   mediaBodyReader, // WS06 media
   modelAlternativesReader, // B121
