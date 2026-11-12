@@ -393,6 +393,13 @@
       "when": 1791400057000,
       "tag": "0057_anonymo_media_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1791400058000,
+      "tag": "0058_anonymo_receipts",
+      "breakpoints": true
     }
   ]
 }

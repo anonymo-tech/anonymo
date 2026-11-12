@@ -34,6 +34,7 @@ import { networkTables } from "./tables/network.ts";
 import { operationTables } from "./tables/operations.ts";
 import { providerTables } from "./tables/providers.ts";
 import { receiptTables } from "./tables/receipts.ts";
+import { anonymoReceiptTables } from "./tables/anonymo-receipts.ts"; // WS09
 import { requestTables } from "./tables/request.ts";
 import { skillTables } from "./tables/skills.ts";
 import { CATEGORIES, CATEGORY_INFO, type AboutRequest, type ColumnDoc, type ExternalDoc, type Review, type TableDoc } from "./types.ts";
@@ -46,7 +47,7 @@ import { CATEGORIES, CATEGORY_INFO, type AboutRequest, type ColumnDoc, type Exte
 
 export const INVENTORY_FORMAT = "anonymo.data-inventory/1";
 
-export const TABLE_DOCS: Record<string, TableDoc> = { ...guardTables, ...agentPayTables, ...webhookTables, ...requestTables, ...billingTables, ...receiptTables, ...keyTables, ...providerTables, ...chainTables, ...operationTables, ...characterTables, ...skillTables, ...networkTables, ...networkPayoutTables, ...sanctionsTables, ...agentTables, ...approvalTables, ...hostBondTables, ...agentLedgerTables, ...profileTables, ...agreementTables, ...x402RecoveryTables, ...facilitatorTables, ...makegoodTables, ...toolTables, ...identityTables, ...commerceTables, ...refusalTables, ...mediaTables };
+export const TABLE_DOCS: Record<string, TableDoc> = { ...guardTables, ...agentPayTables, ...webhookTables, ...requestTables, ...billingTables, ...receiptTables, ...keyTables, ...providerTables, ...chainTables, ...operationTables, ...characterTables, ...skillTables, ...networkTables, ...networkPayoutTables, ...sanctionsTables, ...agentTables, ...approvalTables, ...hostBondTables, ...agentLedgerTables, ...profileTables, ...agreementTables, ...x402RecoveryTables, ...facilitatorTables, ...makegoodTables, ...toolTables, ...identityTables, ...commerceTables, ...refusalTables, ...mediaTables, ...anonymoReceiptTables };
 describeLowBalance(TABLE_DOCS); // B119
 describeAbuse(TABLE_DOCS); // Anonymo WS02: abuse inbox, hash blocks, preservation vault
 describeAutonomy(TABLE_DOCS);

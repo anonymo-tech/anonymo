@@ -4,12 +4,24 @@ import type { Ctx } from "../context.ts";
 import { anchors, facilitatorSettlements, generations, receiptKeys } from "../db/schema.ts";
 import { MerkleTree } from "../receipts/merkle.ts";
 import { log } from "../lib/util.ts";
+import { anonymoReceiptRoots, anonymoReceipts } from "../db/anonymo-receipts.ts";
+import { HOUR_MS, hourOf, receiptRootsPoster } from "../receipts/roots.ts";
 
 // Hourly: build a merkle tree over every receipt leaf (v1, plus v2 where issued, then facilitator settlement receipts) since the last anchor, store the proof
 // positions, and post the root to ReceiptAnchor on Robinhood Chain (status "local" when no chain
 // is configured, so proofs still work and can be anchored later).
 
 export async function runAnchor(ctx: Ctx, upTo?: Date) {
+  // Anonymo receipts (Backend §8) get their own hourly root, posted through the ReceiptRoots poster. It never blocks
+  // the anchor below: a failure is logged and retried on the next run.
+  const anonymo = await runAnonymoRoots(ctx).catch((e) => {
+    log.error("anonymo receipt root failed; will retry", { error: (e as Error).message });
+    return { rooted: 0, error: true };
+  });
+  return { ...(await runV1Anchor(ctx, upTo)), anonymo };
+}
+
+async function runV1Anchor(ctx: Ctx, upTo?: Date) {
   // Close only whole seconds, so the exclusive endpoint is never in the future.
   // Late-completing receipts join the next batch by identity, not by timestamp membership.
   const chainConfigured = ctx.chain.address("receiptAnchor") && ctx.chain.roleAddress("anchorer");
@@ -100,4 +112,50 @@ export async function runKeyRotation(ctx: Ctx) {
     }
   }
   return { rotated: r.rotated, key: r.key.id, published };
+}
+
+// ---- Anonymo receipt roots (Backend §8) ----------------------------------------------------------------------------
+//
+// Once an hour has closed, every Anonymo receipt issued before the end of that hour and not yet rooted becomes one leaf
+// of that hour's Merkle tree, in (issued_at, id) order. A receipt that commits after its hour was rooted joins the next
+// hour's root. Roots are posted through the ReceiptRoots poster (receipts/roots.ts) when one is set, oldest first;
+// without one they stay "local" and are posted once a poster is configured. A failed post is retried on the next run.
+
+export async function runAnonymoRoots(ctx: Ctx, now = Date.now()) {
+  const hour = hourOf(now) - 1;
+  const cutoff = new Date((hour + 1) * HOUR_MS);
+  const poster = receiptRootsPoster(ctx);
+  let rooted = 0;
+  const [existing] = await ctx.db.select({ hour: anonymoReceiptRoots.hour }).from(anonymoReceiptRoots).where(eq(anonymoReceiptRoots.hour, hour));
+  if (!existing) {
+    const pending = await ctx.db
+      .select({ id: anonymoReceipts.id, leaf: anonymoReceipts.leaf })
+      .from(anonymoReceipts)
+      .where(and(isNull(anonymoReceipts.rootHour), lt(anonymoReceipts.issuedAt, cutoff)))
+      .orderBy(asc(anonymoReceipts.issuedAt), asc(anonymoReceipts.id))
+      .limit(500_000);
+    if (pending.length) {
+      const tree = new MerkleTree(pending.map((p) => p.leaf as Hex));
+      await ctx.db.transaction(async (tx) => {
+        await tx.insert(anonymoReceiptRoots).values({ hour, root: tree.root, count: pending.length, status: poster ? "pending" : "local" });
+        for (const [i, p] of pending.entries()) await tx.update(anonymoReceipts).set({ rootHour: hour, leafIndex: i }).where(eq(anonymoReceipts.id, p.id));
+      });
+      rooted = pending.length;
+    }
+  }
+  let posted = 0;
+  if (poster) {
+    const unposted = await ctx.db.select().from(anonymoReceiptRoots).where(sql`${anonymoReceiptRoots.status} <> 'posted'`).orderBy(asc(anonymoReceiptRoots.hour));
+    for (const r of unposted) {
+      try {
+        const { txHash } = await poster.post(BigInt(r.hour), r.root as Hex);
+        await ctx.db.update(anonymoReceiptRoots).set({ status: "posted", txHash, postedAt: new Date() }).where(eq(anonymoReceiptRoots.hour, r.hour));
+        posted++;
+      } catch (e) {
+        await ctx.db.update(anonymoReceiptRoots).set({ status: "failed" }).where(eq(anonymoReceiptRoots.hour, r.hour));
+        log.warn("ReceiptRoots post failed; will retry", { hour: r.hour, error: (e as Error).message });
+      }
+    }
+  }
+  return { hour, rooted, posted };
 }

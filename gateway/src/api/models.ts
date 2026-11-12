@@ -14,6 +14,7 @@ import type { DisclosureClass } from "../router/disclosure.ts";
 import { laneJson, offerEligible } from "./lane.ts";
 import { latestAttempts, summarizeAttestation } from "./provider-attestation.ts";
 import { unlinkableServed, unlinkableTransports } from "../onion/lane.ts";
+import { anonymoModelFields, refusalStats30d } from "../anonymo/trust/stats.ts"; // WS09
 
 export function offerPricing(o: Candidate) {
   return {
@@ -213,10 +214,12 @@ export function modelsRoutes(app: Hono, ctx: Ctx) {
     const variants = parseVariants(c.req.query("variant"));
     // ?output_modalities=rerank (or embeddings, text, ...) keeps models that output any of those.
     const outputs = parseOutputModalities(c.req.query("output_modalities"));
+    // WS09 (Backend §11): family, quant, weights_hash, attested and refusal_rate_30d on every model (counts only).
+    const stats = await refusalStats30d(ctx);
     const data = [...ctx.catalog.models.values()]
       .filter((m) => !m.hidden && servable(ctx, m).length > 0)
       .filter((m) => !outputs || outputModalities(m).some((o) => outputs.has(o)))
-      .map((m) => modelJson(ctx, m))
+      .map((m) => ({ ...modelJson(ctx, m), ...anonymoModelFields(ctx, m, fundedOffers(ctx, servable(ctx, m)), stats) }))
       .filter((m) => need.every((p) => m.supported_parameters.includes(p)))
       .filter((m) => !lane || m.lanes.includes(lane))
       .filter((m) => !variants || variants.has(m.variant))
