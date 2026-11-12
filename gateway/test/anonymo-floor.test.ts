@@ -101,3 +101,25 @@ describe("floor input and defaults", () => {
     expect(await createAnonymoServices({}).floor.check({ text: "x", modality: "text", hasUpload: false })).toEqual({ ok: true });
   });
 });
+
+describe("floor gate before council mode", () => {
+  let hc: Harness;
+  beforeAll(async () => {
+    hc = await startRouter({ env: { ANONYMO_FEATURE_COUNCIL: "true" } });
+  });
+  afterAll(async () => hc?.close());
+
+  test("a blocked council request gets 451 and no member or judge is called", async () => {
+    const key = (await hc.fundedKey(20n)).auth;
+    hc.ctx.anonymo.floor = block;
+    const calls = () => Object.values(hc.mocks).reduce((n, m) => n + m.stats.requests, 0);
+    const before = calls();
+    const res = await hc.request("/api/v1/chat/completions", {
+      method: "POST",
+      headers: key,
+      json: { model: "anonymo-council", messages: [{ role: "user", content: "hello" }], council: { models: [MODELS.llama.slug, MODELS.qwen.slug], judge: MODELS.llama.slug } },
+    });
+    expect(res.status).toBe(451);
+    expect(calls()).toBe(before);
+  });
+});

@@ -316,6 +316,11 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   const strict = disc.max !== "any";
   const prefs: ProviderPrefs = { ...basePrefs, ...(strict ? { disclosure: disc.max } : {}), ...(disc.lane !== "public" ? { lane: disc.lane } : {}) };
 
+  // Anonymo floor gate (WS02): after auth and preset/character assembly (so it reads the whole prompt), and before
+  // every dispatch: council, dual verification, the cache, billing, the hold and routing. A blocked prompt is never
+  // served, charged, sent to any provider or rerouted. A gate that cannot answer fails closed.
+  await floorCheck(ctx, body);
+
   // A blind token pays for one provider call. Council mode and dual verification make several, each with its own hold.
   if (pass && ((ctx.cfg.features.council && body.model === COUNCIL_MODEL) || body.verify != null))
     fail(400, "Council mode and dual verification make several provider calls, so they cannot be paid with a blind token. Use an API key.", "blind_unsupported");
@@ -357,9 +362,6 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
       key?.allowedModels?.length ? "model_not_allowed" : "model_not_found",
     );
 
-  // Anonymo floor gate (WS02): before the cache, billing, the hold and routing, so a blocked prompt is never served,
-  // charged, sent to any provider or rerouted. A gate that cannot answer fails closed.
-  await floorCheck(ctx, body);
   // Anonymo refusal catch (WS03): set up only once the floor gate passed, so a blocked prompt never reaches it.
   const refusal = await refusalCatchFor(ctx, c, key, body, kind, disc);
 
