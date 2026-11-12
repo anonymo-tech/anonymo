@@ -1,3 +1,4 @@
+import { mediaBodyReader } from "../anonymo/media/inventory.ts"; // WS06 media
 import { approveAndAllowBodyReader } from "./approve-and-allow.ts"; // B118
 import { modelAlternativesReader } from "./model-alternatives.ts"; // B121
 import { lowBalanceReader } from "./low-balance.ts"; // B119
@@ -419,6 +420,7 @@ const addressReaders: Touchpoint[] = [
 
 const bodyReaders: ExternalDoc["bodyReaders"] = [
   weeklySummaryReader, // B120
+  mediaBodyReader, // WS06 media
   modelAlternativesReader, // B121
   lowBalanceReader, // B119
   abuseBodyReader, // Anonymo WS02: takedown inbox

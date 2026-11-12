@@ -24,6 +24,7 @@ COPY src/tools/schema.ts ./src/tools/schema.ts
 COPY src/identity/schema.ts ./src/identity/schema.ts
 COPY src/commerce/schema.ts ./src/commerce/schema.ts
 COPY src/anonymo/abuse/schema.ts ./src/anonymo/abuse/schema.ts
+COPY src/anonymo/media/schema.ts ./src/anonymo/media/schema.ts
 COPY src/lib/util.ts ./src/lib/util.ts
 COPY src/chain/rpc-redaction.ts ./src/chain/rpc-redaction.ts
 COPY src/providers/headers.ts ./src/providers/headers.ts
