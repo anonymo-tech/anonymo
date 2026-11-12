@@ -1,36 +1,83 @@
-# Conclave production source
+# Anonymo dashboard
 
-This branch contains the source deployed at https://conclavemodels.com. Start work from `codex/live-production-source` when you need the current production baseline.
+The web workspace for Anonymo (Backend §2 "dash", Overview §2): create a key, fund it, chat with the four model IDs,
+compare council answers, read receipts and their inclusion proofs, import character cards, copy frontend presets, and the
+public `/manifest` and `/leaderboard` pages. No email, name or identity fields anywhere, and no analytics.
 
-```sh
-git clone --branch codex/live-production-source https://github.com/ConclaveSOL/Conclave-private.git
-cd Conclave-private
-corepack pnpm install --frozen-lockfile
-node scripts/verify-production-source.mjs
-pnpm typecheck
-pnpm check:feature-release
-CONCLAVE_DEPLOY_TARGET=node pnpm build
+It keeps the Conclave workspace layout (top bar, centred thread, answer cards with a model tab bar and Compare, the
+floating dock with tools and composer, the purse, Paper Trail) under a new identity. Conclave's own features, server,
+brand, films and i18n are gone.
+
+## Run
+
+```bash
+npx -y pnpm@11.19.0 install
+npx -y pnpm@11.19.0 dev          # http://localhost:5173
+npx -y pnpm@11.19.0 typecheck
+npx -y pnpm@11.19.0 test         # client, copy rules, Solana verifier, secret guard
+npx -y pnpm@11.19.0 lint
+npx -y pnpm@11.19.0 build && npx -y pnpm@11.19.0 start
 ```
 
-Use Node 24 and the package-manager version pinned in package.json. Configure local backing services and environment variables separately; credentials, database contents and wallet keys are not included. `pnpm dev` starts the app, while live service mode also requires the backend runtime configuration.
+## Live and demo mode
 
-## Production baseline
+| Setting | Effect |
+| --- | --- |
+| `NEXT_PUBLIC_ANONYMO_API=https://…` | Gateway origin. Unset means demo mode. |
+| `NEXT_PUBLIC_ANONYMO_DEMO=1` | Force demo mode. |
+| `?demo=1` / `?demo=0` | Turn demo mode on or off for this tab (when an API is set). |
+| `NEXT_PUBLIC_ANONYMO_VENICE_BADGE=1` | Show the "Built in Venice" badge (Overview §4, §10). Off by default. |
 
-- Deployment: `8f56129f-fc8c-4cdd-9fd2-f673cc5d853a`, created October 15, 2026 at 04:31:14 UTC.
-- `production-source.json` records the SHA-256 of all 590 uploaded source and asset files. The verification script checks the exact bytes, including feature gates and lockfile.
-- Projects, Canvas, Library, Decisions, Help, Model routes, Purse, Receipts, Cross-Check, Brief synthesis, Solana Explainer, Studio, Chapters, Agents and Connections are enabled.
-- The grouped searchable picker supports 112 chat options: 107 Chinese models/variants and five existing global options. Up to four may be compared at once. This snapshot includes the expanded catalog and native completion budgets.
-- Native chat completion budgets/history, mainnet USDC top-ups, the existing capped wallet welcome campaign and verified Studio formats are preserved.
-- The owner-signed flywheel is enabled. Eligible chat platform fee: 5%; reserve share: 50%. Wallet funding and transaction signatures are separate operational steps. Never run the localnet automatic executor on mainnet.
-- FOMO / Second Look and token-denominated funding remain disabled.
+Demo mode serves every endpoint from an in-browser mock gateway (`lib/anonymo/mock/`) with fixtures that follow the
+spec shapes. The same client code runs in both modes; only `fetch` differs. In demo mode the funds page can simulate a
+confirmed deposit, and a prompt containing the word "reroute" shows a refused-then-rerouted answer and its refund.
 
-This is an exact deployed-source baseline, not a merge of every development branch. Runtime configuration and live response verification are recorded separately by each release. In particular, source-only language work remains on the existing branches and is not silently removed from them. The current private `main`, other release branches and the public repository are preserved. Do not merge this snapshot over unrelated work without reconciling those changes.
+The real gateway must allow the dashboard origin in CORS and expose `x-anonymo-receipt` and `x-anonymo-council-mode`
+(`Access-Control-Expose-Headers`), or the browser cannot read them.
 
-## Release workflow
+## What stays on the device
 
-1. Branch from the appropriate committed baseline, make changes, and push the reviewed source to this private repository so collaborators can access it.
-2. Test the approved feature and preserve all existing release gates. Update the source manifest for a new release candidate; do not claim it is deployed until production verification succeeds.
-3. Deploy only an explicitly approved, committed revision. Keep GitHub automatic deployment disabled.
-4. Record the deployed commit and deployment identifier after verification. Public repository publication is a separate reviewed operation; it is not needed to share code privately.
+- The API key, only if the person ticks "Remember on this device" (otherwise for the tab only). It is sent only as the
+  `Authorization` header.
+- Receipt ids with their model and time, imported character cards, the last model picked, the 18+ answer.
+- Conversations live in memory and are gone when the tab closes. Prompt and output text are never written to storage.
 
-The production manifest records code, not runtime secret values or database state. Copying it does not recreate balances, welcome grants, transactions or operational credentials.
+## API shapes the dashboard assumes
+
+All in `lib/anonymo/types.ts` and `lib/anonymo/client.ts` (`API_PATHS`). Money is integer micro-USD (`*_musd`).
+Where the spec names a field it is used as written; the rest are proposals for the owning workstream to confirm.
+
+| Call | Shape | Owner |
+| --- | --- | --- |
+| `POST /keys` | body `{caps?}` → `{key, key_prefix, caps, created_at, deposit_addresses[]}`; `key` is shown once | WS05 |
+| `GET /deposit-addresses` | `{data: [{chain, tokens[], address, confirmations, min_musd}]}`; chains `base, arbitrum, rhc, solana, tron, btc, ln` | WS05 |
+| `POST /deposits/lightning` | `{amount_musd}` → `{invoice_id, bolt11, amount_sats, quote_musd, expires_at}` | WS05 |
+| `GET /balance` | `{available_musd, held_musd, refused_refunded_musd, sources[{chain, token, address, deposited_musd, withdrawable_musd}], recent[{kind, amount_musd, ref, at}]}` | WS05 |
+| `POST /withdraw` | `{chain, source_address, amount_musd \| "all"}` → `{id, chain, token, to, amount_musd, status, tx_hash}`; no destination field | WS05 |
+| `POST /v1/chat/completions` | OpenAI SSE; headers `x-anonymo-refusal-catch`, `x-anonymo-council-mode`, `x-anonymo-sealed: required`; response header `x-anonymo-receipt`; council adds `anonymo_council: {mode, aggregator, proposers[{route_id, family, content, cost_musd, used}]}` on the final chunk | WS03, WS09 |
+| `GET /v1/models` | OpenAI list plus `family, quant, weights_hash, attested, refusal_rate_30d` | WS04, WS09 |
+| `GET /v1/receipts/{id}` | `{receipt: {request_id, model_id, routes[], weights_hash[], attestation_quote_hash, tokens{in,out}, cost_musd, refused, refused_routes[], refund_musd, ts}, signer, signature, leaf}` | WS09 |
+| `GET /v1/receipts/{id}/proof` | `{request_id, leaf, proof[], root, hour, anchor{chain, contract, tx_hash, status}}`; sorted-pair keccak256 as in `gateway/src/receipts/merkle.ts` | WS09 |
+| `GET /manifest` | `{generated_at, routes[{id, upstream, tier, family, model, quant, weights_hash, attested, serves[], enabled}]}` | WS09 |
+| `GET /leaderboard` | `{generated_at, window_days, rows[{route_id, family, upstream, total, refused, refusal_rate}]}` | WS09 |
+| `POST /v1/characters` | private card: `{visibility: "private", sealed_card, card_hash}`, sealed on the device with `lib/anonymo/card.ts` | existing gateway route |
+
+Errors use the OpenAI shape. The UI explains `451 floor_blocked`, `409 sealed_unavailable`, `402 insufficient_balance`,
+`401` and `429` without ever echoing the prompt.
+
+## Copy rules (Overview §10), checked by `scripts/check-copy.mjs`
+
+Say "no refusals for legal adult use". Never the phrases "no rules", "anything goes" or "unfiltered". The Venice badge
+is the only Venice mention, behind its flag. No profit or investment language about $ANMO. "Fully private" only for
+`anonymo-sealed` with its attestation; everything else is "zero retention", a policy. Adults only on every surface,
+with an 18+ notice on entry.
+
+## Layout
+
+| Path | What |
+| --- | --- |
+| `app/` | Landing, `/dashboard/*` (chat, key, funds, receipts, characters, presets), public `/presets`, `/manifest`, `/leaderboard` |
+| `components/dashboard/` | Workspace shell and dock, chat thread, answer card and council compare, panels |
+| `lib/anonymo/` | Typed client, types, mock gateway, money, presets, proof check, device storage, character cards |
+| `lib/guards/`, `components/dashboard/use-content-guard.ts` | Kept from Conclave: warns before a seed phrase, private key or API key is sent in a prompt |
+| `server/solana/`, `lib/solana/` | Kept only as the reference WS05 ports the Solana USDC deposit verifier from, and because CI runs `scripts/check-solana.mjs` on it. Nothing in the app imports it; delete it with WS05's port and drop the CI step then. |

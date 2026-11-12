@@ -1,0 +1,39 @@
+import { deviceStore, readJson, writeJson } from './device-store.ts';
+import { ANONYMO_MODEL_IDS, type AnonymoModelId } from './types.ts';
+
+// Small per-device choices. No identity, no history: the last model picked, the receipt ids seen, the 18+ answer.
+
+const MODEL = 'anonymo.model.v1';
+const RECEIPTS = 'anonymo.receipts.v1';
+const ADULT = 'anonymo.adult.v1';
+
+export const modelStore = deviceStore<AnonymoModelId>(() => {
+  const saved = readJson<string>(MODEL, 'anonymo-1');
+  return (ANONYMO_MODEL_IDS as readonly string[]).includes(saved) ? (saved as AnonymoModelId) : 'anonymo-1';
+}, 'anonymo-1');
+export function setStoredModel(id: AnonymoModelId) {
+  writeJson(MODEL, id);
+  modelStore.changed();
+}
+
+export type SeenReceipt = { id: string; model: string; at: string };
+export const receiptsStore = deviceStore<SeenReceipt[]>(() => {
+  const parsed = readJson<unknown>(RECEIPTS, []);
+  return Array.isArray(parsed) ? (parsed as SeenReceipt[]).filter((r) => typeof r?.id === 'string').slice(0, 200) : [];
+}, []);
+export function rememberReceipt(receipt: SeenReceipt) {
+  writeJson(RECEIPTS, [receipt, ...receiptsStore.get().filter((r) => r.id !== receipt.id)].slice(0, 200));
+  receiptsStore.changed();
+}
+export function forgetReceipts() {
+  writeJson(RECEIPTS, []);
+  receiptsStore.changed();
+}
+
+let adultThisPage = false; // when storage is blocked the answer lasts for this page
+export const adultStore = deviceStore<boolean>(() => adultThisPage || readJson<boolean>(ADULT, false) === true, false);
+export function confirmAdult() {
+  adultThisPage = true;
+  writeJson(ADULT, true);
+  adultStore.changed();
+}

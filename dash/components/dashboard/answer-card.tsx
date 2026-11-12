@@ -1,448 +1,157 @@
 'use client';
 
-import type {PaperSource} from '../../lib/paper-trail';
-import {PaperSources} from './paper-sources';
-import { featureOn } from './feature-switches';
-import { ReadToMe } from './read-to-me';
-import { QuoteReply } from './quote-reply';
-import '@/app/dashboard/everyday-updates.css';
-import { useT } from '@/lib/i18n';
-import Image from 'next/image';
-import { useRef } from 'react';
-import { MotionIcon } from './motion-icon';
-import { MODELS } from './data';
-import { chineseModelByKey } from '../../lib/chinese-models';
-import type { Answer } from './canvas-state';
-import { formatAccountUsd6 } from '../../lib/client/account-records';
-import { CANCEL_DRAIN_TIMEOUT } from '../../lib/client/workspace';
-import { answerCosts, sumAnswerCosts } from './answer-costs';
-import { extractAnswerSources } from '../../lib/answer-sources';
-import '../../app/dashboard/answer-card.css';
-import { fomoAnalysisBody } from '../../lib/second-look/fomo-score';
-import { ResearchMarkdown } from '../second-look/chat/research-markdown';
+// One answer in the thread, kept from Conclave's answer card: a model tab bar with Compare, the answer body, and a
+// footer with what it cost and where it ran. For anonymo-council the tabs are the merged reply plus each proposer,
+// and Compare lays the proposers side by side with the merged reply.
 
-export function TurnCostLine({ answers }: { answers: Answer[] }) {
-  const t = useT();
-  if (!featureOn('answerCosts') || !featureOn('purse')) return null;
-  const total = sumAnswerCosts(answers);
-  return total && (
-    <div className="cw-turn-cost nodrag nowheel">
-      {t('This turn: settled {settled} of up to {quoted}', total)}
+import Link from 'next/link';
+import { Columns3 } from 'lucide-react';
+import { Fragment, useState, type ReactNode } from 'react';
+import { CopyButton } from '../copy-button';
+import { formatUsd } from '@/lib/anonymo/money';
+import type { Turn } from './chat-types';
+
+/** Paragraphs and fenced code only; everything renders as text, never as HTML. */
+export function AnswerText({ text, streaming = false }: { text: string; streaming?: boolean }) {
+  const blocks = text.split(/(```[\s\S]*?(?:```|$))/g).filter((b) => b.length > 0);
+  const cursor = streaming ? <span className="cursor" aria-hidden="true" /> : null;
+  if (blocks.length === 0) return <div className="answer-body"><p>{cursor}</p></div>;
+  return (
+    <div className="answer-body">
+      {blocks.map((block, i) => {
+        const last = i === blocks.length - 1;
+        if (block.startsWith('```'))
+          return (
+            <pre key={i}>
+              <code>{block.replace(/^```[^\n]*\n?/, '').replace(/```$/, '')}</code>
+              {last && cursor}
+            </pre>
+          );
+        const paragraphs = block.split(/\n{2,}/).filter((p) => p.trim());
+        return (
+          <Fragment key={i}>
+            {paragraphs.map((p, j) => (
+              <p key={j}>
+                {p}
+                {last && j === paragraphs.length - 1 && cursor}
+              </p>
+            ))}
+          </Fragment>
+        );
+      })}
     </div>
   );
 }
 
-const providerAssets: Record<string, string> = {
-  claude: 'claude',
-  gemini: 'gemini',
-  gpt: 'openai',
-  deepseek: 'deepseek',
-  qwen: 'qwen',
-  llama: 'meta',
-  runway: 'runway',
-  veo: 'gemini',
-  sora: 'openai',
-  kling: 'kling',
-};
-const chineseProviderAssets: Record<string, string> = {
-  deepseek: 'deepseek.svg', qwen: 'qwen.svg', kimi: 'kimi.png', glm: 'glm.svg', minimax: 'minimax.ico', stepfun: 'stepfun.svg', mimo: 'mimo.ico', hunyuan: 'hunyuan.svg', seed: 'seed.ico', ling: 'ling.png', longcat: 'longcat.svg',
-};
-/** Provider marks; models without a bundled mark use their monogram, never a third-party logo. */
-export function ProviderIcon({ id, size = 28 }: { id: string; size?: number }) {
-  const chineseProvider = chineseModelByKey.get(id)?.provider;
-  const asset = chineseProvider ? chineseProviderAssets[chineseProvider] : providerAssets[id] ? `${providerAssets[id]}.svg` : undefined;
-  const monogram = asset
-    ? null
-    : MODELS.find((model) => model.id === id)?.monogram;
-  if (monogram)
-    return (
-      <span
-        aria-hidden="true"
-        className="cw-provider-icon cw-provider-monogram"
-        style={{
-          width: size,
-          height: size,
-          fontSize: Math.max(9, Math.round(size * 0.56)),
-        }}
-      >
-        {monogram}
-      </span>
-    );
-  if (!asset)
-    return (
-      <span
-        aria-hidden="true"
-        style={{
-          width: size,
-          height: size,
-          display: 'inline-grid',
-          placeItems: 'center',
-          flexShrink: 0,
-        }}
-      >
-        ◇
-      </span>
-    );
-  return (
-    <Image
-      className="cw-provider-icon"
-      src={`/brand/providers/${asset}`}
-      style={{ objectFit: 'contain' }}
-      width={size}
-      height={size}
-      alt=""
-      draggable={false}
-    />
-  );
+function PrivacyChip({ turn }: { turn: Turn }) {
+  // "Fully private" only for anonymo-sealed with its attestation; every other route is "zero retention" (§10).
+  if (turn.model === 'anonymo-sealed' && turn.receipt?.attestation_quote_hash)
+    return <span className="chip chip-signal">Fully private · attested enclave</span>;
+  if (turn.model === 'anonymo-sealed') return <span className="chip">Sealed · waiting for attestation</span>;
+  return <span className="chip" title="A policy, not a proof. Only anonymo-sealed is provable.">Zero retention</span>;
 }
 
-export type AnswerActions = {
-  selected: string[];
-  /** Omitted when Brief selection is hidden. */
-  onSelect?: (id: string) => void;
-  onCopy: (answer: Answer) => void;
-  onBranch: (answer: Answer) => void;
-  onQuote?: (answer: Answer, text: string) => void;
-  /** Omitted when route inspection is hidden. */
-  onRoute?: (id: string) => void;
-  onCancel?: (answer: Answer) => void;
-  onVote?: (answer: Answer) => void;
-  onReveal?: (answer: Answer) => void;
-  onLoadFull?: (answer: Answer) => void;
-};
-
-function sourceText(answer: Answer) {
-  return answer.live ? answer.live.output || '' : [answer.heading, ...answer.paragraphs].join('\n\n');
-}
-
-/** Mounted only behind answerSources, including in comparison headers. */
-export function AnswerSourceCount({ answer }: { answer: Answer }) {
-  const t = useT();
-  const text = sourceText(answer);
-  if (!text.trim()) return null;
-  const count = extractAnswerSources(text).length;
+function Footer({ turn }: { turn: Turn }) {
+  const r = turn.receipt;
   return (
-    <small className="cw-answer-source-count">
-      {count === 20 ? t('{count} sources shown (limit)', { count })
-        : count === 1 ? t('{count} source', { count }) : t('{count} sources', { count })}
-    </small>
-  );
-}
-
-function AnswerSources({ answer }: { answer: Answer }) {
-  const t = useT();
-  const text = sourceText(answer);
-  if (!text.trim()) return null;
-  const sources = extractAnswerSources(text);
-  const chips = sources.map((source) => (
-    <a className="cw-answer-source-chip" key={source.url} href={source.url}
-      target="_blank" rel="noopener noreferrer" title={source.url}>
-      {source.domain}
-    </a>
-  ));
-  return (
-    <div className="cw-answer-sources nodrag nowheel" aria-label={t('Sources')}>
-      <span>{t('Sources')}</span>
-      {sources.length ? chips.slice(0, 6) : <span>{t('No sources given')}</span>}
-      {sources.length > 6 && (
-        <details className="cw-answer-sources-more">
-          <summary>{t('+{count} more', { count: sources.length - 6 })}</summary>
-          <div className="cw-answer-source-links">{chips.slice(6)}</div>
-        </details>
+    <div className="answer-foot">
+      {turn.status === 'done' && <CopyButton text={turn.content} />}
+      <PrivacyChip turn={turn} />
+      {r?.refused && (
+        <span className="chip chip-amber" title={`Refused on ${r.refused_routes.join(', ')}`}>
+          Refusal rerouted · {formatUsd(r.refund_musd)} refunded
+        </span>
       )}
-      <details className="cw-answer-sources-info">
-        <summary>{t('About sources')}</summary>
-        <div>{t("Links as the model wrote them. Conclave hasn't opened or checked them.")}</div>
-        {sources.length === 20 && <div>{t('Up to 20 links shown.')}</div>}
-      </details>
+      {r && <span className="mono">{formatUsd(r.cost_musd)}</span>}
+      {r && (
+        <span className="faint">
+          {r.tokens.in.toLocaleString()} in · {r.tokens.out.toLocaleString()} out
+        </span>
+      )}
+      {turn.receiptId && <Link href={`/dashboard/receipts/${encodeURIComponent(turn.receiptId)}`}>Receipt</Link>}
     </div>
   );
 }
 
-export function AnswerCard({
-  answer,
-  actions,
-  variant = 'canvas',
-  peers,
-  researchMarkdown = false,
-  paperSource,
-}: {
-  answer: Answer;
-  actions: AnswerActions;
-  variant?: 'canvas' | 'chat';
-  /** Answers in this turn; a stop applies to every answer still running. */
-  peers?: number;
-  /** Display-only formatting for detected FOMO research; ordinary answers stay unchanged. */
-  researchMarkdown?: boolean;
-  paperSource?: PaperSource;
-}) {
-  const t = useT();
-  const model = MODELS.find((item) => item.id === answer.modelId);
-  const modelName = t(
-    answer.live?.modelName || answer.live?.label || model?.name || 'Model',
-  );
-  const liveState = answer.live?.state;
-  const active = liveState === 'queued' || liveState === 'running';
-  const stopping = active && answer.live?.cancelRequested === true;
-  const drainTimedOut =
-    liveState === 'reconciliation_pending' &&
-    answer.live?.errorCode === CANCEL_DRAIN_TIMEOUT;
-  const amount = answer.live?.billing.actualUsd6;
-  const costs = featureOn('answerCosts') && featureOn('purse')
-    ? answerCosts(answer.live?.billing)
-    : null;
-  const cost =
-    amount !== null && amount !== undefined
-      ? `$${formatAccountUsd6(amount)}`
-      : null;
-  const selected = actions.selected.includes(answer.id);
-  const isChat = variant === 'chat';
-  const formatted = researchMarkdown || featureOn('cleanRead');
-  const menu = useRef<HTMLDetailsElement>(null);
-  const menuIconSize = isChat ? 18 : 20;
-  const { onSelect, onRoute } = actions;
-  const selectControl = onSelect && (
-    <button
-      data-icon-trigger
-      className={`cw-answer-control cw-answer-select${selected ? ' is-selected' : ''}`}
-      onClick={() => onSelect(answer.id)}
-      aria-pressed={selected}
-      aria-label={
-        selected
-          ? t('Deselect {name} answer', { name: modelName })
-          : t('Select {name} answer', { name: modelName })
-      }
-      title={selected ? t('Remove from selection') : t('Select for a Brief')}
-    >
-      <MotionIcon name="select" size={18} active={selected} />
-      {isChat && <span>{selected ? t('Selected') : t('Select')}</span>}
-    </button>
-  );
-  const copyControl = (
-    <button
-      data-icon-trigger
-      className="cw-answer-control"
-      onClick={() => actions.onCopy(answer)}
-      aria-label={t('Copy {name} answer', { name: modelName })}
-      title={t('Copy answer')}
-    >
-      <MotionIcon name="copy" size={18} />
-      {isChat && <span>{t('Copy')}</span>}
-    </button>
-  );
-  function performMenuAction(action: () => void) {
-    if (isChat && menu.current) {
-      menu.current.open = false;
-      menu.current.querySelector('summary')?.focus();
-    }
-    action();
-  }
-  return (
-    <article
-      className={`cw-answer cw-node-drag${selected ? ' is-selected' : ''}${isChat ? ' is-chat-answer' : ''}${formatted ? ' is-fomo-answer' : ''}`}
-      aria-label={answer.live ? t('{name} answer', { name: modelName }) : t('{name} sample answer', { name: modelName })}
-      aria-busy={active}
-    >
-      {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Overflowing answers must be keyboard-scrollable. */}
-      <div
-        className="cw-answer-body nodrag nowheel"
-        data-quote-answer={featureOn('quoteReply') && actions.onQuote ? answer.id : undefined}
-        tabIndex={isChat ? undefined : 0}
-      >
-        {answer.heading && <h2>{t(answer.heading)}</h2>}
-        {formatted ? <ResearchMarkdown codeCopy={featureOn('codeClip')} text={researchMarkdown ? fomoAnalysisBody(answer.paragraphs.join('\n\n')) : answer.paragraphs.join('\n\n')} /> : answer.paragraphs.map((paragraph, index) => (
-          <p key={index}>
-            {answer.live?.output ? paragraph : t(
-              answer.heading === 'No live model result.' &&
-                paragraph ===
-                  'Use a prepared example to explore the comparison, or keep this question in your room for later.'
-                ? 'Use a prepared example to explore the comparison, or keep this question in your project for later.'
-                : paragraph,
-            )}
-          </p>
-        ))}
-        {answer.live?.state === 'succeeded' && answer.live.errorCode === 'OUTPUT_LIMIT_REACHED' && (
-          /* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- Preserve the production paragraph styling and status announcement. */
-          <p role="status">{t('This answer reached the model’s maximum response length. Ask “continue” to pick up where it stopped.')}</p>
+export function AnswerCard({ turn }: { turn: Turn }) {
+  const council = turn.council;
+  const [tab, setTab] = useState<number>(-1); // -1 = merged / main answer, n = proposer n
+  const [comparing, setComparing] = useState(false);
+  const streaming = turn.status === 'streaming';
+  const label = (i: number) => `${String.fromCharCode(65 + i)} · ${council?.proposers[i]?.family ?? ''}`;
+
+  let body: ReactNode;
+  if (turn.status === 'error') body = <p className="notice notice-rose">{turn.error}</p>;
+  else if (council && comparing)
+    body = (
+      <div className="answer answer-compare">
+        <div className="compare-grid">
+          {council.proposers.map((p, i) => (
+            <section key={p.route_id} className="answer" aria-label={`Proposer ${label(i)}`}>
+              <div className="answer-head">
+                <span>{label(i)}</span>
+                <span>{p.route_id}</span>
+                {!p.used && <span className="chip">late, not used</span>}
+                <span className="mono">{formatUsd(p.cost_musd)}</span>
+              </div>
+              <AnswerText text={p.content} />
+            </section>
+          ))}
+        </div>
+        <section className="merged answer" aria-label="Merged reply">
+          <div className="answer-head">
+            <span>{council.mode === 'select' ? 'Judge picked' : 'Merged reply'}</span>
+            {council.aggregator && <span>{council.aggregator.route_id}</span>}
+          </div>
+          <AnswerText text={turn.content} />
+        </section>
+      </div>
+    );
+  else if (council && tab >= 0) {
+    const p = council.proposers[tab];
+    body = (
+      <div className="answer">
+        <div className="answer-head">
+          <span>{p.route_id}</span>
+          <span className="mono">{formatUsd(p.cost_musd)}</span>
+        </div>
+        <AnswerText text={p.content} />
+      </div>
+    );
+  } else
+    body = (
+      <div className="answer">
+        {turn.character && <div className="answer-head">{turn.character}</div>}
+        {turn.content || streaming ? (
+          <AnswerText text={turn.content} streaming={streaming} />
+        ) : (
+          <p className="muted">{turn.status === 'stopped' ? 'Stopped before any text arrived.' : ''}</p>
         )}
-        {answer.live?.outputTruncated && (
-          <button
-            className="ct-button"
-            type="button"
-            onClick={() => actions.onLoadFull?.(answer)}
-          >
-            {t('Load full answer ({count} characters)', {
-              count: answer.live.outputLength?.toLocaleString() ?? '',
-            })}
+      </div>
+    );
+
+  return (
+    <div className="answer">
+      <div className="response-bar" role="tablist" aria-label="Answers">
+        <button type="button" role="tab" className="tab" aria-selected={!comparing && tab === -1} onClick={() => { setTab(-1); setComparing(false); }}>
+          {council ? (council.mode === 'select' ? 'Selected' : 'Merged') : turn.model}
+        </button>
+        {council?.proposers.map((p, i) => (
+          <button key={p.route_id} type="button" role="tab" className="tab" aria-selected={!comparing && tab === i} onClick={() => { setTab(i); setComparing(false); }}>
+            {label(i)}
+          </button>
+        ))}
+        <span className="spacer" />
+        {council && (
+          <button type="button" className="btn btn-small btn-ghost compare" aria-pressed={comparing} onClick={() => setComparing((c) => !c)}>
+            <Columns3 size={14} aria-hidden="true" />
+            {comparing ? 'Focus' : 'Compare'}
           </button>
         )}
-        {featureOn('answerSources') && <AnswerSources answer={answer} />}
       </div>
-      {featureOn('quoteReply') && actions.onQuote && <QuoteReply answerId={answer.id} onQuote={text => actions.onQuote?.(answer, text)} />}
-      {featureOn('paperTrail') && paperSource && <PaperSources source={paperSource} text={answer.paragraphs.join('\n\n')}/>}
-      {featureOn('readToMe') && (!answer.live || (answer.live.state==='succeeded' && !answer.live.outputTruncated)) && <ReadToMe key={answer.id+answer.paragraphs.join('').length} text={answer.paragraphs.join('\n\n')} />}
-      <footer className={`cw-answer-footer${costs ? ' has-cost' : ''}`}>
-        {costs && (
-          <div className="cw-answer-cost nodrag nowheel">
-            {costs.settled === null
-              ? t('Quoted up to {quoted} · settling…', { quoted: costs.quoted })
-              : t('Quoted up to {quoted} · Settled {settled}', {
-                  quoted: costs.quoted, settled: costs.settled,
-                })}
-          </div>
-        )}
-        {!isChat && (
-          <span className="cw-answer-attribution">
-            <ProviderIcon id={answer.modelId} size={18} />
-            <span>{modelName}</span>
-          </span>
-        )}
-        <div className="cw-answer-controls nodrag nowheel">
-          {isChat ? (
-            <>
-              {copyControl}
-              {selectControl}
-            </>
-          ) : (
-            <>
-              {selectControl}
-              {copyControl}
-            </>
-          )}
-          {answer.live && (
-            <small
-              title={
-                drainTimedOut
-                  ? t(
-                      'Stopped. The provider did not confirm usage in time, so the final cost is being reconciled. Reserved funds remain held until then.',
-                    )
-                  : liveState === 'reconciliation_pending'
-                    ? t(
-                        'The final cost is being reconciled. Reserved funds remain held.',
-                      )
-                    : stopping
-                      ? t(
-                          'Stopping. Usage already dispatched is being measured for an exact charge.',
-                        )
-                      : undefined
-              }
-            >
-              {answer.live.billing.maximumUsd6 === null
-                ? t('Cost after reveal')
-                : drainTimedOut
-                  ? t('Stopped · Cost pending')
-                  : liveState === 'reconciliation_pending'
-                    ? t('Cost pending')
-                    : liveState === 'succeeded'
-                      ? (cost ?? t('Cost pending'))
-                      : stopping
-                        ? t('Stopping…')
-                        : liveState === 'running'
-                          ? t('Generating…')
-                          : liveState === 'queued'
-                            ? t('Queued')
-                            : liveState === 'cancelled'
-                              ? cost
-                                ? t('Stopped · {cost}', { cost })
-                                : t('Stopped')
-                              : t('Failed')}
-            </small>
-          )}
-          <details ref={menu} className="cw-answer-menu">
-            <summary
-              data-icon-trigger
-              aria-label={t('More actions for {name} answer', {
-                name: modelName,
-              })}
-              title={t('More actions')}
-            >
-              <MotionIcon name="more" size={18} />
-            </summary>
-            <div className="cw-menu cw-answer-menu-content">
-              {answer.live && active && !stopping && actions.onCancel && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    performMenuAction(() => actions.onCancel?.(answer))
-                  }
-                >
-                  {peers === undefined
-                    ? t('Stop this request')
-                    : peers > 1
-                      ? t('Stop all models')
-                      : t('Stop')}
-                </button>
-              )}
-              {answer.modelId === 'blind' && actions.onVote && (
-                <button
-                  type="button"
-                  disabled={liveState !== 'succeeded'}
-                  onClick={() =>
-                    performMenuAction(() => actions.onVote?.(answer))
-                  }
-                >
-                  {t('Prefer this answer & reveal')}
-                </button>
-              )}
-              {answer.modelId === 'blind' && actions.onReveal && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    performMenuAction(() => actions.onReveal?.(answer))
-                  }
-                >
-                  {t('Reveal model names')}
-                </button>
-              )}
-
-              {onSelect && (
-                <button
-                  data-icon-trigger
-                  onClick={() => performMenuAction(() => onSelect(answer.id))}
-                  aria-pressed={selected}
-                >
-                  <MotionIcon
-                    name="select"
-                    size={menuIconSize}
-                    active={selected}
-                  />
-                  {selected
-                    ? t('Remove from selection')
-                    : t('Select for a Brief')}
-                </button>
-              )}
-              <button
-                data-icon-trigger
-                onClick={() => performMenuAction(() => actions.onCopy(answer))}
-              >
-                <MotionIcon name="copy" size={menuIconSize} />
-                {t('Copy answer')}
-              </button>
-              <button
-                data-icon-trigger
-                onClick={() =>
-                  performMenuAction(() => actions.onBranch(answer))
-                }
-              >
-                <MotionIcon name="branch" size={menuIconSize} />
-                {t('Follow up')}
-              </button>
-              {onRoute && (
-                <button
-                  data-icon-trigger
-                  disabled={answer.modelId === 'blind'}
-                  onClick={() =>
-                    performMenuAction(() => onRoute(answer.modelId))
-                  }
-                >
-                  <MotionIcon name="route" size={menuIconSize} />
-                  {t('Inspect route')}
-                </button>
-              )}
-            </div>
-          </details>
-        </div>
-      </footer>
-    </article>
+      {body}
+      {turn.status === 'stopped' && <p className="faint">Stopped. You are charged only for the text that arrived.</p>}
+      {turn.status !== 'streaming' && turn.status !== 'error' && <Footer turn={turn} />}
+    </div>
   );
 }

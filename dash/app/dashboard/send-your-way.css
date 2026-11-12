@@ -1,8 +1,0 @@
-.cw-send-your-way { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 12px; padding: 5px 4px 0; color: #666; font-size: 11px; }
-.cw-send-your-way label { display: inline-flex; align-items: center; gap: 5px; }
-.cw-send-your-way select { max-width: 180px; padding: 3px 4px; border: 1px solid #ddd; border-radius: 4px; background: transparent; color: inherit; font: inherit; }
-.cw-send-your-way select:focus-visible { outline: 2px solid #e93125; outline-offset: 2px; }
-.cw-send-your-way output { flex-basis: 100%; }
-.cw-conversation-dock .cw-send-your-way { color: #ccc; }
-.cw-conversation-dock .cw-send-your-way select { color: #eee; border-color: #ffffff30; }
-.cw-send-your-way option { background: #fff; color: #222; }

@@ -1,37 +1,31 @@
 import type { Metadata, Viewport } from 'next';
-import '@fontsource/anton/400.css';
-import '@fontsource/instrument-serif/400.css';
-import '@fontsource/instrument-serif/400-italic.css';
-import '@fontsource/jetbrains-mono/400.css';
+import '@fontsource/ibm-plex-sans/400.css';
+import '@fontsource/ibm-plex-sans/500.css';
+import '@fontsource/ibm-plex-sans/600.css';
+import '@fontsource/ibm-plex-mono/400.css';
+import '@fontsource/ibm-plex-mono/500.css';
 import './globals.css';
-import './conclave-typography.css';
-import './i18n.css';
-import { LocaleSync } from '@/components/locale-sync';
-import { featureOn } from '@/components/dashboard/feature-switches';
+import { AgeGate } from '@/components/age-gate';
+import { AnonymoProvider } from '@/components/anonymo-provider';
 
 export const metadata: Metadata = {
-  title: 'Conclave — See what one model misses.',
+  title: 'Anonymo — Ask anything. Get an answer. One key.',
   description:
-    'Bring different AI perspectives into one connected workspace. Explore the Conclave preview and the vision for chat, Canvas, Studio and Briefs.',
-  icons: {
-    icon: '/favicon.svg',
-    ...(featureOn('shareTarget') ? { apple: '/app-icons/apple-touch-icon.png' } : {}),
-  },
-  ...(featureOn('shareTarget') ? { manifest: '/manifest.webmanifest' } : {}),
+    'One OpenAI-compatible key for uncensored and low-refusal models. No refusals for legal adult use, refused attempts refunded, a signed receipt on every call. Adults only.',
+  icons: { icon: '/favicon.svg' },
+  referrer: 'no-referrer',
 };
 
-export const viewport: Viewport = featureOn('shareTarget') ? { themeColor: '#C10A05' } : {};
+export const viewport: Viewport = { themeColor: '#0d0f0d', colorScheme: 'dark' };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="en" data-gated="">
       <body>
-        <LocaleSync />
-        {children}
+        <AnonymoProvider>
+          <div className="app-root">{children}</div>
+          <AgeGate />
+        </AnonymoProvider>
       </body>
     </html>
   );

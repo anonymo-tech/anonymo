@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "allowJs": true,
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
@@ -12,7 +16,6 @@
     "moduleResolution": "bundler",
     "types": [
       "node",
-      "@cloudflare/workers-types",
       "vinext/types",
       "vite/client"
     ],
@@ -21,7 +24,9 @@
     "jsx": "react-jsx",
     "incremental": true,
     "paths": {
-      "@/*": ["./*"]
+      "@/*": [
+        "./*"
+      ]
     }
   },
   "include": [
@@ -32,5 +37,9 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "dist", "tmp"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "tmp"
+  ]
 }

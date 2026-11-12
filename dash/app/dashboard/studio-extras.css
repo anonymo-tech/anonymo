@@ -1,9 +1,0 @@
-.cs-search-tools { margin: 0 0 18px; }
-.cs-search-fields { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
-.cs-search-fields label { display: grid; gap: 5px; min-width: 140px; flex: 1; }
-.cs-search-fields label:first-child { flex: 2; min-width: min(260px, 100%); }
-.cs-search-fields label > span { color: #697066; font-size: 11px; }
-.cs-search-fields input, .cs-search-fields select { width: 100%; min-height: 39px; border: 1px solid #dedfda; border-radius: 7px; padding: 8px 10px; background: #fff; color: #171816; font-size: 12px; }
-.cs-search-fields button { min-height: 39px; text-decoration: underline; font-size: 12px; white-space: nowrap; }
-.cs-search-count { display: block; padding-top: 9px; color: #747871; font-size: 11px; }
-@media (max-width: 600px) { .cs-search-fields label:first-child { flex-basis: 100%; } .cs-search-fields { gap: 8px; } }

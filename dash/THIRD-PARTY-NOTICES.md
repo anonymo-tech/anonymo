@@ -1,63 +1,32 @@
 # Third-party notices
 
-The Conclave website uses the third-party fonts, software and trademarks listed below. Each item is distributed under its own terms, and those terms come from that item's license text, not from this summary. Exact dependency versions are recorded in `pnpm-lock.yaml`.
+The Anonymo dashboard uses the third-party fonts and software listed below. Each item is distributed under its own terms, and those terms come from that item's license text, not from this summary. Exact versions are recorded in `pnpm-lock.yaml`.
 
 ## Fonts
 
-| Font | Used for | Copyright | License | License text |
-| --- | --- | --- | --- | --- |
-| Caveat Brush | Section and page headings | © 2015 Google Inc. | SIL Open Font License 1.1 | `public/fonts/CaveatBrush-LICENSE.txt` |
-| Geist | Interface motion and banner labels | © 2023 Vercel, in collaboration with basement.studio | SIL Open Font License 1.1 | `public/fonts/Geist-LICENSE.txt` |
-| Instrument Serif | Serif accents and fallback | © 2022 The Instrument Serif Project Authors | SIL Open Font License 1.1 | `public/fonts/InstrumentSerif-LICENSE.txt` and the `@fontsource/instrument-serif` package |
-| JetBrains Mono | Technical labels | © 2020 The JetBrains Mono Project Authors | SIL Open Font License 1.1 | `public/fonts/JetBrainsMono-LICENSE.txt` |
-| Anton | Fallback display face | © 2020 The Anton Project Authors | SIL Open Font License 1.1 | `public/fonts/Anton-LICENSE.txt` |
-
-Caveat Brush and Geist are stored in `public/fonts/`. The other fonts are installed from npm through [Fontsource](https://fontsource.org/) and bundled into the build output. Each font's full OFL text is also included in `public/fonts/`, so it accompanies production builds. The license includes redistribution and reserved-name terms and is also available at <https://openfontlicense.org>.
-
-The Conclave wordmark is fixed vector artwork. The font software used for the original lettering is not included.
-
-## Software
-
-These packages, and the dependencies they pull in, ship in the browser bundle or in the Worker:
-
-| Package | Version | License | Copyright |
+| Font | Used for | License | License text |
 | --- | --- | --- | --- |
-| `react`, `react-dom`, `react-server-dom-webpack`, `scheduler` | 19.2.6 (`scheduler` 0.27.0) | MIT | © Meta Platforms, Inc. and affiliates |
-| `vinext` | 1.0.0-beta.5 | MIT | © 2026 Cloudflare, Inc. |
-| `shaders` | 4.0.0 | MIT | © 2026 Shader Effects Inc. |
-| `three` | 0.186.1 | MIT | © 2010–2026 three.js authors |
-| `pdfjs-dist` | 6.4.299 | Apache-2.0 | © Mozilla Foundation. The full license is included in the installed package at `pdfjs-dist/LICENSE`. |
-| `typegpu`, `tinyest` (used by `shaders`) | 0.12.3, 0.3.4 | MIT | © 2025 Software Mansion |
-| `typed-binary` (used by `typegpu`) | 4.3.3 | MIT | © 2022 Iwo Plaza |
-| `tsover-runtime` (used by `typegpu`) | 0.0.7 | Apache-2.0 | Software Mansion ([source](https://github.com/software-mansion/tsover)) |
-| `@xyflow/react`, `@xyflow/system` | 12.12.0, 0.0.83 | MIT | © 2019–2025 webkid GmbH |
-| `lucide-react` | 1.31.0 | ISC. Some icons are derived from Feather, which is MIT-licensed (© 2013-present Cole Bemis) | © 2026 Lucide Icons and Contributors |
-| `@fontsource/anton`, `@fontsource/instrument-serif`, `@fontsource/jetbrains-mono` | 5.3.0 | SIL Open Font License 1.1 | See [Fonts](#fonts) |
+| IBM Plex Sans | Interface and reading text | SIL Open Font License 1.1 | `@fontsource/ibm-plex-sans/LICENSE` |
+| IBM Plex Mono | Wordmark, keys, amounts and hashes | SIL Open Font License 1.1 | `@fontsource/ibm-plex-mono/LICENSE` |
 
-The dashboard's three-dimensional icons use Three.js. Its full MIT license accompanies the app at `public/licenses/three-LICENSE.txt`.
+Both are installed from npm through [Fontsource](https://fontsource.org/) and bundled into the build output. "Plex" is a reserved font name of IBM Corp.
 
-The separate Node media worker uses `sharp` 0.35.5 (Apache-2.0) and its packaged native dependencies. Their license files accompany the installed packages. FFmpeg and FFprobe are separately installed worker tools; their applicable licenses depend on the selected build and codecs. These native tools are not part of the browser bundle.
+## Software shipped in the browser bundle
 
-Passkey registration and authentication use `@simplewebauthn/browser` 14.0.0 and `@simplewebauthn/server` 14.0.3 under the MIT license, copyright © 2020 Matthew Miller. The full license accompanies the app at `public/licenses/simplewebauthn-LICENSE.txt`.
+| Package | License |
+| --- | --- |
+| `react`, `react-dom`, `react-server-dom-webpack` | MIT, © Meta Platforms, Inc. and affiliates |
+| `vinext` | MIT, © Cloudflare, Inc. |
+| `lucide-react` | ISC, © Lucide Icons and Contributors; some icons derive from Feather (MIT) |
+| `pdfjs-dist` (Paper Trail PDF reading) | Apache-2.0, © Mozilla Foundation; full text in `pdfjs-dist/LICENSE` |
+| `@noble/hashes`, `@noble/curves` | MIT, © Paul Miller |
+| `@scure/bip39` (seed-phrase detection in the composer) | MIT, © Paul Miller |
+| `bs58` | MIT |
 
-These build and development tools run only on the developer's machine and are not shipped with the site: Vite, `@vitejs/plugin-react` and `@vitejs/plugin-rsc` (MIT), `@cloudflare/vite-plugin` (MIT), Wrangler (MIT or Apache-2.0), Tailwind CSS (MIT), TypeScript (Apache-2.0), `@types/three` (MIT), Oxlint and Oxfmt (MIT). Each one's license file is in its own package under `node_modules` after you run `pnpm install`.
+`lib/anonymo/card.ts` is a copy of `gateway/src/characters/card.ts` from this repository.
+
+Build and development tools run only on the developer's machine: Vite, `@vitejs/plugin-react`, `@vitejs/plugin-rsc` (MIT), TypeScript (Apache-2.0), `fast-check` (MIT), Oxlint and Oxfmt (MIT).
 
 ## Trademarks
 
-The site displays the marks and names of Claude (Anthropic), GPT and OpenAI (OpenAI), Gemini (Google), DeepSeek, Qwen (Alibaba Cloud), Llama and Meta (Meta Platforms) and Solana (Solana Foundation). These marks belong to their owners. They appear only to identify model families in the workspace preview and the ecosystem Conclave is designed for. They do not imply any affiliation with, endorsement by or partnership with those owners. They also do not mean that the preview is connected to any of their services.
-
-The logo files in `public/brand/providers/` are the owners' published marks. The site changes only their color and outline. They are not licensed by Conclave, and reuse is subject to each owner's brand guidelines.
-
-Other product names mentioned on the site, such as USDC, Squads, Telegram, Claude Code, Cursor, Windsurf, Cline, Continue, Android and iOS, belong to their respective owners.
-
-### React Flow
-
-The interactive conversation canvas uses React Flow. The full license accompanies the app at `public/licenses/react-flow-LICENSE.txt`.
-
-## Additional Studio marks
-
-Runway and Kling SVG assets are distributed from `@lobehub/icons-static-svg` 1.95.1 under the MIT license, reproduced in `public/licenses/lobe-icons-LICENSE.txt`. Their names and marks remain the property of their respective owners; their display does not imply affiliation or endorsement.
-
-## Wallet marks
-
-The wallet picker uses the published marks of [Phantom](https://phantom.com/), [Solflare](https://www.solflare.com/), [Backpack](https://backpack.app/), [MetaMask](https://metamask.io/), [Trust Wallet](https://trustwallet.com/), and [OKX Wallet](https://web3.okx.com/). The files in `public/brand/wallets/` come from their official websites or press kits and identify wallet options. They remain the property of their respective owners, are subject to their brand guidelines, and do not imply affiliation or endorsement.
+Model family names (DeepSeek, GLM, Qwen, Gemma, Mistral, Kimi, Llama) and upstream names (Venice, Phala, Chutes, NanoGPT, Featherless) identify where a route runs. They belong to their owners and do not imply endorsement. "Built in Venice" is shown only behind `NEXT_PUBLIC_ANONYMO_VENICE_BADGE=1`, following Venice's badge terms.

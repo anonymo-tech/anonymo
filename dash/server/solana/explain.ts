@@ -14,7 +14,6 @@ import type {
 import { decodeCoreInstruction } from './explain-core.ts';
 import { decodeTokenInstruction } from './explain-token.ts';
 import { SOLANA_DECODER_VERSION } from '../../lib/solana/explanation.ts';
-import { featureOn } from '../../components/dashboard/feature-switches.ts';
 import { normalizeTransactionError } from '../../lib/solana/transaction-errors.ts';
 import type { TransactionErrorDetail } from '../../lib/solana/transaction-errors.ts';
 
@@ -113,7 +112,7 @@ export function explainParsedTransaction(value: unknown) {
         message: 'Execution success or failure is not recorded.',
       });
     if (execution === 'failed') {
-      if (featureOn('explainer') && featureOn('failureReasons')) {
+      {
         const detail = normalizeTransactionError(meta.err);
         if (
           detail &&
