@@ -3,19 +3,18 @@
 // createApp({ anonymo }) or by assigning ctx.anonymo.* on a running harness.
 
 import { createFloorGate } from "./floor/gate.ts";
-import { phraseRefusalStub, type FloorGate, type FloorInput, type RefusalClassifier } from "./seams.ts";
+import { defaultRefusalClassifier } from "./refusal/classifier.ts";
+import { type FloorGate, type FloorInput, type RefusalClassifier } from "./seams.ts";
 
 export type AnonymoServices = {
   floor: FloorGate;
   refusal: RefusalClassifier;
 };
 
-const truthy = (v: unknown) => v === true || v === "1" || v === "true";
-
 export function createAnonymoServices(env: Record<string, unknown>, overrides: Partial<AnonymoServices> = {}): AnonymoServices {
   return {
     floor: overrides.floor ?? createFloorGate(env), // WS02: ANONYMO_FLOOR_URL selects the guard model; REQUIRED without it fails closed
-    refusal: overrides.refusal ?? phraseRefusalStub,
+    refusal: overrides.refusal ?? defaultRefusalClassifier(env), // WS03: phrase rules, plus the small model at ANONYMO_REFUSAL_URL
   };
 }
 

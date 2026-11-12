@@ -2,6 +2,7 @@ import { approveAndAllowBodyReader } from "./approve-and-allow.ts"; // B118
 import { modelAlternativesReader } from "./model-alternatives.ts"; // B121
 import { lowBalanceReader } from "./low-balance.ts"; // B119
 import { abuseBodyReader } from "../anonymo/abuse/privacy.ts"; // Anonymo WS02
+import { refusalSettingReader } from "./refusal.ts"; // Anonymo WS03
 import { anonymousRateFamily, hardeningAddresses, hardeningBodies } from "./hardening.ts"; // HD1
 import { weeklySummaryReader } from "./weekly-summary.ts"; // B120
 import { fastCreditLogRecords } from "./fast-credit.ts";
@@ -421,6 +422,7 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
   modelAlternativesReader, // B121
   lowBalanceReader, // B119
   abuseBodyReader, // Anonymo WS02: takedown inbox
+  refusalSettingReader, // Anonymo WS03
   ...hardeningBodies, // HD1
   { file: "src/api/guard.ts", carries: "settings", reads: "A strict bounded action name, optional target label and order digest, decimal amount and approval identifier, or a reported outcome.", then: "Authenticates the deciding key and serializes checks and reports with the account lock. Action and target are readable caller-chosen labels; targets can name a wallet or host. No full order details are accepted. When DECISION_TAGS_ENABLED is on and an order digest is given, the decision also reads the same agent's calls from the preceding 24 hours whose stored receipt carries that digest as decision_tag and returns their ids, model, provider and time as informed_by; GET /api/v1/guard/decisions reads decisions by digest or receipt id within the Activity scope. Neither stores anything new.", kept: "Decision metadata and reported outcomes in agent_action_decisions, with action decisions and outcomes on agent_policy_events and action approval projections in agent_approvals. Reported amounts are not verified execution.", evidence: [ev("src/api/guard.ts", "guardDecideInput.parse(await readJson(c))")] }, // V98
   depositProgressReader, // V97B
@@ -456,9 +458,9 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
     file: "src/api/chat.ts",
     carries: "prompt-or-answer",
     reads: "The whole JSON body of a chat or text completion: the messages, the model and the parameters (readJson).",
-    then: "Read in memory to route the call on every lane: validated, checked against guardrails, priced, then sent to the provider chosen. The request is hashed (request_sha256) and the answer is hashed (response_sha256). Streaming answers are passed through chunk by chunk.",
+    then: "Read in memory to route the call on every lane: validated, checked against guardrails, priced, then sent to the provider chosen. The request is hashed (request_sha256) and the answer is hashed (response_sha256). Streaming answers are passed through chunk by chunk. Unless the refusal catch is off, the last user turn and the first ~160 tokens of the answer are read by the refusal classifier: in process on the attested and private lanes, otherwise also by the operator's classifier endpoint (ANONYMO_REFUSAL_URL) when one is configured; the classifier keeps nothing.",
     kept: "Not stored. Kept in memory for the length of the call. The opt-in response cache and batch content are kept sealed outside the database (see the Redis section), and a failed provider attempt can keep up to 200 characters of that provider's own error message.",
-    evidence: [ev("src/api/chat.ts", "const body = await readJson(c);"), ev("src/api/chat.ts", "const bodySha = requestHash(body);"), ev("src/api/chat.ts", "response_sha256: sha256(p.responseText),")],
+    evidence: [ev("src/api/chat.ts", "const body = await readJson(c);"), ev("src/api/chat.ts", "const bodySha = requestHash(body);"), ev("src/api/chat.ts", "response_sha256: sha256(p.responseText),"), ev("src/api/chat.ts", "const local = disc.lane !== \"public\" || requiresAttestedUpstream(body, disc as DisclosureRequest);")],
   },
   {
     file: "src/api/batches.ts",

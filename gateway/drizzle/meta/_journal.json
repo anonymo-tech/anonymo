@@ -379,6 +379,13 @@
       "when": 1791400055000,
       "tag": "0055_anonymo_floor_abuse",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1791400056000,
+      "tag": "0056_refusal",
+      "breakpoints": true
     }
   ]
 }

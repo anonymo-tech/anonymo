@@ -23,7 +23,10 @@ import { disclosureClass, disclosureRefusal, profileOf, type DisclosureClass, ty
 import { servedDisclosure, servedPolicyHash } from "./disclosure.ts";
 import { batchHold, batchPrice, estimatePromptTokens, maxOutputTokens, priceUsage, readUsage, worstCase, type Mode, type Usage } from "../router/pricing.ts";
 import { batchKey, batchLineOf } from "../router/batch-line.ts";
-import { route, type Attempt, type RouteSuccess, type RouteTarget } from "../router/execute.ts";
+import { route, type Attempt, type RefusalCatch, type RouteSuccess, type RouteTarget } from "../router/execute.ts";
+import { familyOf } from "../anonymo/refusal/family.ts";
+import { phraseRefusalClassifier } from "../anonymo/refusal/classifier.ts";
+import { bumpRefusalStats, recordRefusedAttempts, refusalCatchEnabled, routeIdOf, REFUSAL_CATCH_HEADER } from "../anonymo/refusal/store.ts";
 import { providerKey } from "../providers/upstream.ts";
 import { compactUpstream, recordGpuAttested, unverifiedUpstream, verifyAciExchange, type UpstreamAttestation } from "../providers/aci.ts";
 import { receiptLeaf } from "../receipts/merkle.ts";
@@ -357,6 +360,8 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   // Anonymo floor gate (WS02): before the cache, billing, the hold and routing, so a blocked prompt is never served,
   // charged, sent to any provider or rerouted. A gate that cannot answer fails closed.
   await floorCheck(ctx, body);
+  // Anonymo refusal catch (WS03): set up only once the floor gate passed, so a blocked prompt never reaches it.
+  const refusal = await refusalCatchFor(ctx, c, key, body, kind, disc);
 
   // Request-level guardrails only for authenticated keys; a key's own guardrails always apply.
   const guardCfg = mergeGuardrails(key?.guardrails as GuardrailConfig | null, key ? body.guardrails as GuardrailConfig | undefined : undefined);
@@ -456,11 +461,11 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   const plannedPolicy = sharedPolicyHash(attemptable.map(({ cand }) => servedPolicyHash(ctx, cand)));
   const common = { ctx, c, body, billing, holdId, t0, bodySha, stream, kind, byok, meta, guardCfg, promptTokens, tier, disc, planned, plannedPolicy, unavailable: (attempts: Attempt[], last?: Parameters<typeof allFailed>[1]) => availabilityFailure(() => allFailed(attempts, last), ctx, alternatives, attempts) }; // B121
 
-  if (stream) return explainedStream(ctx.cfg.routeExplain, () => route({ appSecret: ctx.cfg.appSecret, targets, path, body, stream: true, keyFor, signal: abort.signal, health: ctx.health, maxAttempts: ctx.cfg.routing.maxAttempts, timeoutMs: ctx.cfg.routing.providerTimeoutMs, firstTokenTimeoutMs: ctx.cfg.routing.firstTokenTimeoutMs, production: ctx.cfg.production, caller: sha256(billing.accountId).slice(0, 16) }), (run, routeHeaders) => streamResponse({ ...common, run, routeHeaders, abort })); // V84
+  if (stream) return explainedStream(ctx.cfg.routeExplain, () => route({ appSecret: ctx.cfg.appSecret, targets, path, body, stream: true, keyFor, signal: abort.signal, health: ctx.health, maxAttempts: ctx.cfg.routing.maxAttempts, timeoutMs: ctx.cfg.routing.providerTimeoutMs, firstTokenTimeoutMs: ctx.cfg.routing.firstTokenTimeoutMs, production: ctx.cfg.production, caller: sha256(billing.accountId).slice(0, 16), refusal }), (run, routeHeaders) => streamResponse({ ...common, run, routeHeaders, abort })); // V84
 
   let result: Awaited<ReturnType<typeof route>>;
   try {
-    result = await route({ appSecret: ctx.cfg.appSecret, targets, path, body, stream: false, keyFor, signal: abort.signal, health: ctx.health, maxAttempts: ctx.cfg.routing.maxAttempts, timeoutMs: ctx.cfg.routing.providerTimeoutMs, firstTokenTimeoutMs: ctx.cfg.routing.firstTokenTimeoutMs, production: ctx.cfg.production, caller: sha256(billing.accountId).slice(0, 16) });
+    result = await route({ appSecret: ctx.cfg.appSecret, targets, path, body, stream: false, keyFor, signal: abort.signal, health: ctx.health, maxAttempts: ctx.cfg.routing.maxAttempts, timeoutMs: ctx.cfg.routing.providerTimeoutMs, firstTokenTimeoutMs: ctx.cfg.routing.firstTokenTimeoutMs, production: ctx.cfg.production, caller: sha256(billing.accountId).slice(0, 16), refusal });
   } catch (e) {
     await giveBack(ctx, billing, holdId);
     throw e;
@@ -471,6 +476,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
     throw common.unavailable(result.attempts, result.last); // B121
   }
   const r = result as Extract<RouteSuccess, { kind: "json" }>;
+  if (r.refusal?.served === "refused") capRefusedJson(r.json);
   const json = r.json;
   const usage = readUsage(json.usage, { prompt: promptTokens, completion: Math.ceil(JSON.stringify(json.choices ?? []).length / 4) });
   const redactions = guardCfg?.redact_output ? redactOutput(json) : 0;
@@ -492,8 +498,8 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
     receipt: fin.receiptJson,
     ...(fin.extras(redactions) ?? {}),
   };
-  if (cacheMode && !stream) await ctx.cache.put(cacheMode, cacheScope, body, out, fin.upstream, (body.cache as { ttl?: number } | undefined)?.ttl ?? ctx.cfg.gateway.cacheTtlS);
-  return c.json(out, 200, { ...generationHeaders(fin.id, disc.lane, fin.policyHash), ...routeResponseHeaders(ctx.cfg.routeExplain, r), "x-anonymo-disclosure": fin.disclosure, ...paymentHeaders(billing) });
+  if (cacheMode && !stream && r.refusal?.served !== "refused") await ctx.cache.put(cacheMode, cacheScope, body, out, fin.upstream, (body.cache as { ttl?: number } | undefined)?.ttl ?? ctx.cfg.gateway.cacheTtlS);
+  return c.json(out, 200, { ...generationHeaders(fin.id, disc.lane, fin.policyHash), ...routeResponseHeaders(ctx.cfg.routeExplain, r), "x-anonymo-disclosure": fin.disclosure, ...paymentHeaders(billing), ...refusalHeaders(r) });
 }
 
 function allFailed(attempts: Attempt[], last?: { status?: number; errorKind: string; message: string }): ApiError {
@@ -625,13 +631,18 @@ async function finalize(p: FinalizeInput) {
   const budget = p.extra?.budget;
   const overBudget = budget != null && cost.total > budget;
   // A blind token pays for at most its face value: anything above the hold would come out of the pool's other tokens.
-  const settleAmount = billing.mode === "blind" && cost.total > billing.hold ? billing.hold : cost.total;
-  const settled = await settle(ctx.db, p.holdId, overBudget ? budget : settleAmount, {
+  const payable = overBudget ? budget : billing.mode === "blind" && cost.total > billing.hold ? billing.hold : cost.total;
+  // Anonymo refusal catch: an answer that is itself a refusal is billed 0 (its cost goes on the ledger with an equal
+  // refusal_refund, below), and so is every refused attempt before it.
+  const servedRefused = r.refusal?.served === "refused";
+  const settleAmount = servedRefused ? 0n : payable;
+  const settled = await settle(ctx.db, p.holdId, settleAmount, {
     description: `${r.model.id} via ${r.candidate.providerId}`,
     generationId: id,
     creditLine: billing.mode === "paywith" ? billing.grant.creditLine : 0n,
   });
   const charged = settled.charged;
+  const refusalReceipt = r.refusal ? await recordRefusal(p, { fees, served: payable }) : null;
 
   // Pay-with: record the debt and an estimate of the share fraction it will cost.
   let paidWith: Record<string, unknown> | null = null;
@@ -678,6 +689,7 @@ async function finalize(p: FinalizeInput) {
     ...(batchLine ? { batch: { id: batchLine.batchId, line: batchLine.idx } } : {}),
     ...routeReceiptFields(ctx.cfg.routeExplain, r), // V84: signed optional extension.
     ...decisionTagFields(decisionTagOf(ctx.cfg.decisionTagsEnabled, p.c, p.disc.lane)), // B: signed optional extension.
+    ...(refusalReceipt ?? {}), // Anonymo WS03: `refused`, every route the call touched, and the refund
     ...(p.extra?.payload ?? {}),
   };
   const signed = ctx.signer.sign(payload);
@@ -864,6 +876,7 @@ async function finalize(p: FinalizeInput) {
       if (p.billing.mode === "blind") x.blind = redemptionSummary(p.billing.pass, charged);
       if (p.tier) x.holder = { tier: p.tier.name, rpm_multiplier: p.tier.rpmMultiplier, discount_bps: p.tier.discountBps };
       if (r.dropped.length) x.dropped_parameters = r.dropped;
+      if (refusalReceipt && (refusalReceipt.routes.length > 1 || servedRefused)) x.refusal = refusalReceipt.refusal;
       return Object.keys(x).length ? x : null;
     },
   };
@@ -952,6 +965,12 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
       try {
         for (const ev of r.buffered) emit(ev);
         for await (const ev of r.rest) {
+          // A served refusal is billed 0, so it is cut off where no real refusal goes on (see REFUSED_MAX_CHARS).
+          if (r.refusal?.served === "refused" && text.length >= REFUSED_MAX_CHARS) {
+            r.abort();
+            finish = "length";
+            break;
+          }
           if (ev?.error) {
             midError = String(ev.error?.message ?? "provider error");
             relay({ ...base, error: { code: 502, message: midError, type: "provider_error" }, choices: [{ index: 0, delta: { content: "" }, finish_reason: "error" }] });
@@ -1077,4 +1096,89 @@ async function floorCheck(ctx: Ctx, body: Record<string, unknown>) {
     throw new ApiError(503, "The safety check is unavailable. Nothing was sent or charged; try again shortly.", "floor_unavailable");
   }
   if (!verdict.ok) throw new ApiError(451, "This request crosses a line Anonymo blocks for everyone. Nothing was sent or charged.", "floor_blocked", { category: verdict.category });
+}
+
+// ---- Anonymo refusal catch (WS03, Backend §5) ---------------------------------------------------------------------
+
+/**
+ * A served refusal is billed 0, so it is cut off at this length (≈ 600 tokens): real refusals are far shorter, and a
+ * reply that only opens like one ("I'm sorry, I can't… anyway, here are 3,000 words") must not be free.
+ */
+export const REFUSED_MAX_CHARS = 2400;
+
+/** The refusal catch for this request, or undefined when it is off (header, then the key's setting; on by default). */
+async function refusalCatchFor(ctx: Ctx, c: Context, key: KeyRow | null, body: Record<string, unknown>, kind: Kind, disc: DisclosureRequest): Promise<RefusalCatch | undefined> {
+  if (!(await refusalCatchEnabled(ctx.db, c.req.header(REFUSAL_CATCH_HEADER), key?.keyHash ?? null))) return undefined;
+  return { classifier: refusalClassifierFor(ctx, body, disc), prompt: refusalPromptOf(body, kind), familyOf: (m, cand) => familyOf(m, cand, ctx.catalog.lane.get(m.id)?.baseModel) };
+}
+
+/**
+ * A request that may only be served on attested hardware, or on a private lane, never has its prompt sent to the
+ * classifier service: it is read by the in-process phrase rules only.
+ */
+export function refusalClassifierFor(ctx: Pick<Ctx, "anonymo">, body: Record<string, unknown>, disc: Pick<DisclosureRequest, "lane" | "max">) {
+  const local = disc.lane !== "public" || requiresAttestedUpstream(body, disc as DisclosureRequest);
+  return local ? phraseRefusalClassifier : ctx.anonymo.refusal;
+}
+
+/** What the classifier reads as the request: the last user turn (or the completion prompt). Never stored. */
+export function refusalPromptOf(body: Record<string, unknown>, kind: Kind): string {
+  const textOf = (content: unknown): string =>
+    typeof content === "string" ? content : Array.isArray(content) ? content.map((p) => (typeof (p as { text?: unknown })?.text === "string" ? (p as { text: string }).text : "")).join(" ") : "";
+  if (kind === "completion") return textOf(Array.isArray(body.prompt) ? body.prompt.filter((x) => typeof x === "string").join("\n") : body.prompt).slice(-4000);
+  const msgs = Array.isArray(body.messages) ? (body.messages as { role?: unknown; content?: unknown }[]) : [];
+  const lastUser = [...msgs].reverse().find((m) => m?.role === "user");
+  return textOf(lastUser?.content ?? msgs.at(-1)?.content).slice(-4000);
+}
+
+function capRefusedJson(json: any) {
+  for (const ch of json?.choices ?? []) {
+    if (typeof ch?.message?.content === "string" && ch.message.content.length > REFUSED_MAX_CHARS) {
+      ch.message.content = ch.message.content.slice(0, REFUSED_MAX_CHARS);
+      ch.finish_reason = "length";
+    } else if (typeof ch?.text === "string" && ch.text.length > REFUSED_MAX_CHARS) {
+      ch.text = ch.text.slice(0, REFUSED_MAX_CHARS);
+      ch.finish_reason = "length";
+    }
+  }
+}
+
+/** `x-anonymo-refusal`: rerouted (a refusal was replaced), refused (the answer is a refusal), double (both refused). */
+function refusalHeaders(r: RouteSuccess): Record<string, string> {
+  const o = r.refusal;
+  if (!o) return {};
+  return { "x-anonymo-refusal": o.double ? "double" : o.served === "refused" ? "refused" : o.refused.length ? "rerouted" : "none" };
+}
+
+/**
+ * Record what the refusal catch did for a finished call: each refused attempt's cost with an equal
+ * `refusal_refund` (net 0), one reading per route in refusal_stats, and the receipt fields (every route touched).
+ */
+async function recordRefusal(p: FinalizeInput, o: { fees: Parameters<typeof priceUsage>[4]; served: Pico }) {
+  const { ctx, billing, r } = p;
+  const out = r.refusal!;
+  const servedRefused = out.served === "refused";
+  const priceMode = (byok: boolean): Mode => (billing.mode === "per_call" ? "per_call" : byok ? "byok" : billing.mode);
+  const charges = out.refused.map((a, i) => {
+    if (servedRefused && i === out.refused.length - 1) return { modelId: a.model.id, providerId: a.candidate.providerId, cost: o.served };
+    const byok = p.byok.has(a.candidate.providerId);
+    const usage = readUsage(a.usage, { prompt: p.promptTokens, completion: Math.max(1, Math.ceil(a.outChars / 4)) });
+    return { modelId: a.model.id, providerId: a.candidate.providerId, cost: priceUsage(a.candidate, a.model, usage, priceMode(byok), o.fees, byok).total };
+  });
+  await recordRefusedAttempts(ctx.db, { accountId: billing.accountId, keyHash: billing.key?.keyHash ?? null, holdId: p.holdId, charges });
+  await bumpRefusalStats(ctx.db, out.checked.map((x) => ({ routeId: routeIdOf(x.model.id, x.candidate.providerId), refused: x.refused })));
+  const refunded = charges.reduce((sum, ch) => sum + ch.cost, 0n);
+  let n = 0;
+  const routes = out.checked.map((x) => ({
+    model: x.model.id,
+    provider: x.candidate.providerId,
+    family: familyOf(x.model, x.candidate, ctx.catalog.lane.get(x.model.id)?.baseModel),
+    refused: x.refused,
+    ...(x.refused ? { refund: picoToUsdString(charges[n++]?.cost ?? 0n) } : {}),
+  }));
+  return {
+    refused: servedRefused,
+    routes,
+    refusal: { rerouted: out.refused.length > 0 && routes.length > 1, double: out.double, served: out.served, refunded: picoToUsdString(refunded) },
+  };
 }
