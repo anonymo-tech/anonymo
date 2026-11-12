@@ -398,7 +398,12 @@ describe("POST /v1/audio/speech", () => {
 // ---- Video ---------------------------------------------------------------------------------------------------------
 describe("/v1/video/generations", () => {
   const submit = (extra: Record<string, unknown> = {}, headers = auth) => post("/v1/video/generations", { model: "wan-2.2", prompt: `a slow pan over a green field ${PROMPT_MARK}`, seconds: 4, ...extra }, headers);
-  const poll = (id: string, headers = auth) => h.request(`/v1/video/generations/${id}`, { headers });
+  // pollIntervalMs is 0 here, and a claim needs lastPolledAt strictly before now (the production rule that stops two
+  // pollers settling one job twice), so each poll starts at least a millisecond after the one before it.
+  const poll = async (id: string, headers = auth) => {
+    await Bun.sleep(2);
+    return h.request(`/v1/video/generations/${id}`, { headers });
+  };
   type Job = { id: string; status: string; url?: string; error?: { type: string; reason?: string }; anonymo: { cost_usd: number } };
 
   test("submit → in progress → completed with a signed URL to a stamped MP4, charged per second", async () => {

@@ -79,7 +79,9 @@ test("exhaustion survives stale and failed polls, restarts and expired holds; re
   try {
     await connectBalance(h);
     await runUpstreamMonitor(h.ctx, async () => Response.json({ balance: 30 }));
-    const healthy = await (await h.request("/api/v1/models")).text();
+    // refusal_rate_30d (Anonymo WS09) moves from null to 0 once traffic is served; every other byte must come back exactly.
+    const catalogue = async (path: string) => (await (await h.request(path)).text()).replace(/"refusal_rate_30d":(null|[0-9.]+)/g, '"refusal_rate_30d":_');
+    const healthy = await catalogue("/api/v1/models");
     const old = Date.now() - CREDIT_HOLD_MS - MONITOR_INTERVAL_MS;
     await runUpstreamMonitor(h.ctx, async () => Response.json({ balance: "-0.0039" }), old);
     const [row] = await h.ctx.db.select().from(kv).where(eq(kv.key, "upstream-balance:alpha"));
@@ -110,8 +112,8 @@ test("exhaustion survives stale and failed polls, restarts and expired holds; re
     await refreshUpstreamHealth(replica, h.ctx.db);
     expect(replica.outage(MODELS.qwen.slug, "alpha")).toBe(false);
     expect(h.ctx.health.outage(MODELS.qwen.slug, "alpha")).toBe(false);
-    expect(await (await h.request("/api/v1/models")).text()).toBe(healthy);
-    expect(await (await h.request("/v1/models")).text()).toBe(healthy);
+    expect(await catalogue("/api/v1/models")).toBe(healthy);
+    expect(await catalogue("/v1/models")).toBe(healthy);
     await h.ctx.db.update(providers).set({ baseUrl: h.mocks.alpha.url.toString().replace(/\/$/, "") }).where(eq(providers.id, "alpha"));
     await h.ctx.catalog.refresh();
     const recovered = await h.request("/api/v1/chat/completions", { ...request, json: { ...request.json, model: MODELS.qwen.slug } });
@@ -119,7 +121,7 @@ test("exhaustion survives stale and failed polls, restarts and expired holds; re
     await h.ctx.db.insert(kv).values({ key: "upstream-balance:alpha", value: { balance_usd: 0, checked_at: Date.now(), status: "ok" } }).onConflictDoUpdate({ target: kv.key, set: { value: { balance_usd: 0, checked_at: Date.now(), status: "ok" } } });
     // An API replica's warm cache observes another worker's change after the five-second refresh window.
     const clock = spyOn(performance, "now").mockReturnValue(performance.now() + 5_000);
-    try { expect(await (await h.request("/api/v1/models")).text()).not.toBe(healthy); }
+    try { expect(await catalogue("/api/v1/models")).not.toBe(healthy); }
     finally { clock.mockRestore(); }
   } finally { await h.close(); }
 });
