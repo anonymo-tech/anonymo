@@ -2,6 +2,9 @@ import type { Candidate, Modifier } from "../catalog/catalog.ts";
 import { networkSelectionInput } from "../network/routing.ts";
 import { usdToPico } from "../lib/money.ts";
 import { NOT_SERVABLE_REASON, isRestricted, restrictedExclusion, type ModelLane } from "./lane.ts";
+import { ANONYMO_SEALED, isAnonymoRoute } from "../anonymo/models.ts";
+import { anonymoScoring, routeScore } from "../routing/score.ts";
+import { stickyRoutes } from "../routing/sticky.ts";
 import { DISCLOSURE_MAX_VALUES, OUTAGE_REASON, UNDECLARED, classAllowed, disclosureClass, disclosureExclusion, type DisclosureClass, type DisclosureMax, type DisclosureProfile, type Lane } from "./disclosure.ts";
 
 // Provider selection, OpenRouter-compatible:
@@ -41,6 +44,8 @@ export interface HealthView {
   uptime30d(modelId: string, providerId: string): number;
   quality(modelId: string, providerId: string): number;
   stats(modelId: string, providerId: string): { latency: Percentiles; throughput: Percentiles } | null;
+  /** WS04: rolling-window error rate and median time to first token (services/health.ts). Absent: no penalties. */
+  window?(modelId: string, providerId: string, windowMs?: number): { errorRate: number; ttftP50: number | null; n: number };
 }
 
 export type Exclusion = { provider: string; reason: string };
@@ -72,6 +77,11 @@ export type SelectInput = {
    */
   attestedBonus?: Partial<Record<Lane, number>>;
   rand?: () => number;
+  /**
+   * WS04: the request's sticky key (routing/sticky.ts stickyKeyOf: API key + conversation prefix). When the candidates
+   * are Anonymo routes, a key whose route is still healthy and still passes every filter is served by it first.
+   */
+  sticky?: string | null;
 };
 
 /** Default attested bonus per lane: attested endpoints get a quarter more weight on the public lane. */
@@ -185,8 +195,10 @@ export function selectProviders(input: SelectInput): Selection {
     if (cls) classes.set(c, cls);
     // Lane rules apply before the outage check, so an outage is only ever reported for a provider that could serve.
     const laneReason = !servable ? NOT_SERVABLE_REASON : restricted ? restrictedExclusion(cls ?? "vendor-forwarded", c.provider.classifierEnabled) : null;
-    const reason =
-      c.provider.status !== "live"
+    // WS04: anonymo-sealed never touches a route without a fresh attestation, whatever the request's lane says.
+    const sealedReason = input.modelId === ANONYMO_SEALED && !attestationFresh(c, input.attestationMaxAgeMs, input.production) ? "anonymo-sealed requires a fresh TEE attestation" : null;
+    const reason = sealedReason ??
+      (c.provider.status !== "live"
         ? `provider ${c.provider.status}`
         : c.status !== "live"
           ? `offer ${c.status}`
@@ -223,7 +235,7 @@ export function selectProviders(input: SelectInput): Selection {
                                         ? laneReason
                                         : health.outage(c.modelId, c.providerId)
                                           ? OUTAGE_REASON
-                                          : null;
+                                          : null);
     if (reason) excluded.push({ provider: c.providerId, reason });
     else pass.push(c);
   }
@@ -251,6 +263,8 @@ export function selectProviders(input: SelectInput): Selection {
     ordered = [...pass].sort(
       (a, b) => (p50(a, "latency") ?? Number.MAX_SAFE_INTEGER) - (p50(b, "latency") ?? Number.MAX_SAFE_INTEGER) || tieBreak(a, b),
     );
+  } else if (pass.length && pass.every(isAnonymoRoute)) {
+    ordered = anonymoOrder(pass, health, input.sticky ?? null);
   } else {
     const minPrice = Math.min(...pass.map((c) => blendedPrice(c)).filter((p) => p > 0), Number.MAX_VALUE);
     ordered = weightedShuffle(
@@ -286,4 +300,27 @@ export function selectProviders(input: SelectInput): Selection {
   }
 
   return { ordered, excluded };
+}
+
+/**
+ * WS04 · The order of Anonymo routes (Backend §4): highest score first (routing/score.ts), ties to the higher quality
+ * rank, then the provider id, so the order is deterministic. With a sticky key, the route that key used last comes first
+ * while it is healthy and passed every filter; otherwise the key moves to the new first route.
+ */
+export function anonymoOrder(pass: Candidate[], health: HealthView, sticky: string | null, now = Date.now()): Candidate[] {
+  const s = anonymoScoring();
+  const scored = pass.map((c) => {
+    const w = health.window?.(c.modelId, c.providerId) ?? { errorRate: 0, ttftP50: null, n: 0 };
+    const r = routeScore({ tier: c.tier, qualityRank: c.qualityRank, canaryQuality: health.quality(c.modelId, c.providerId), ttftP50Ms: w.ttftP50, errorRate: w.errorRate, usdPerM: blendedPrice(c) / 1e6 }, s);
+    return { c, ...r };
+  });
+  scored.sort((a, b) => b.score - a.score || (b.c.qualityRank ?? 0) - (a.c.qualityRank ?? 0) || a.c.providerId.localeCompare(b.c.providerId));
+  let ordered = scored.map((x) => x.c);
+  if (sticky && ordered.length) {
+    const held = stickyRoutes.get(sticky, now);
+    const keep = held ? scored.find((x) => x.c.providerId === held && x.healthy) : undefined;
+    if (keep) ordered = [keep.c, ...ordered.filter((c) => c !== keep.c)];
+    stickyRoutes.set(sticky, ordered[0].providerId, s.sticky_ttl_s * 1000, now);
+  }
+  return ordered;
 }

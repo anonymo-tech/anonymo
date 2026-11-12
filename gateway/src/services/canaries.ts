@@ -5,6 +5,9 @@ import { canaries, canaryReferences } from "../db/schema.ts";
 import { callUpstream, providerKey, upstreamBody } from "../providers/upstream.ts";
 import { log } from "../lib/util.ts";
 import { recordCanaryEvent } from "./attestation-events.ts";
+import { loadUpstreamsRuntime } from "../providers/tiers.ts";
+import { isEmptyCompletion } from "../router/execute.ts";
+import { setAnonymoScoring } from "../routing/score.ts";
 
 // Quant canaries. Every hour, for each model x provider (live and shadow):
 //  - fingerprint: a fixed greedy continuation with logprobs (top-5). Different weight precisions
@@ -168,4 +171,59 @@ export async function latestCanaries(ctx: Ctx, providerId: string, modelIds: str
     map.set(r.modelId, list);
   }
   return map;
+}
+
+// ---- WS04 · Liveness canaries for Anonymo routes ------------------------------------------------------------------
+// Backend §4: a canary every 30-60 s per upstream x model. One tiny chat call per route (provider row) whose last canary
+// is older than the configured interval; the outcome is recorded for every model ID the route serves, as source
+// "canary", so a failed canary takes the route out of selection at once (services/health.ts outage) and its latency and
+// errors feed the route score. The prompt is fixed and nothing of the reply is kept.
+
+export const LIVENESS_PROMPT = "Reply with the single word: ok";
+/** How often the canary job wakes up to look for routes that are due (the per-route interval is in the config). */
+export const UPSTREAM_CANARY_TICK_MS = 10_000;
+
+export type UpstreamCanaryOptions = { now?: () => number; force?: boolean; intervalMs?: number; timeoutMs?: number; concurrency?: number };
+
+export async function runUpstreamCanaries(ctx: Ctx, opts: UpstreamCanaryOptions = {}) {
+  const now = opts.now ?? Date.now;
+  const runtime = await loadUpstreamsRuntime(ctx.db);
+  setAnonymoScoring(runtime?.scoring);
+  const intervalMs = opts.intervalMs ?? (runtime?.canaries.interval_s ?? 45) * 1000;
+  const timeoutMs = opts.timeoutMs ?? (runtime?.canaries.timeout_s ?? 15) * 1000;
+  const concurrency = opts.concurrency ?? runtime?.canaries.concurrency ?? 8;
+  await ctx.catalog.ensureFresh();
+  const byRoute = new Map<string, Candidate[]>();
+  for (const o of [...ctx.catalog.offersByModel.values()].flat())
+    if (o.tier != null && o.status === "live" && o.provider.status === "live") byRoute.set(o.providerId, [...(byRoute.get(o.providerId) ?? []), o]);
+  const due = [...byRoute.values()].filter((list) => opts.force || list.some((o) => (ctx.health.lastCanaryAt(o.modelId, o.providerId) ?? 0) <= now() - intervalMs));
+  const results: { route: string; ok: boolean; ms: number }[] = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < due.length) {
+      const list = due[next++];
+      const c = list[0];
+      const r = await callUpstream({
+        health: ctx.health,
+        appSecret: ctx.cfg.appSecret,
+        candidate: c,
+        path: "/chat/completions",
+        body: upstreamBody(c, { messages: [{ role: "user", content: LIVENESS_PROMPT }], max_tokens: 4, temperature: 0 }, false).body,
+        stream: false,
+        apiKey: providerKey(c, ctx.cfg.appSecret),
+        signal: AbortSignal.timeout(timeoutMs + 1_000),
+        timeoutMs,
+        firstTokenTimeoutMs: timeoutMs,
+        production: ctx.cfg.production,
+      }).catch(() => ({ ok: false as const, errorKind: "connection" as const, latencyMs: timeoutMs, status: undefined }));
+      const empty = r.ok && r.kind === "json" && isEmptyCompletion(r.json);
+      const ok = r.ok && !empty;
+      const errorKind = r.ok ? (empty ? "empty200" : null) : r.errorKind;
+      for (const o of list)
+        ctx.health.record({ modelId: o.modelId, providerId: o.providerId, ok, errorKind, statusCode: r.ok ? 200 : (r.status ?? null), latencyMs: r.latencyMs, empty200: empty, source: "canary", at: now() });
+      results.push({ route: c.providerId, ok, ms: Math.round(r.latencyMs) });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, due.length) }, worker));
+  return { ran: results.length, failed: results.filter((r) => !r.ok).map((r) => r.route) };
 }

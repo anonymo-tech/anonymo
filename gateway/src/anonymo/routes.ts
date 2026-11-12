@@ -8,10 +8,12 @@ import { refusalRoutes } from "./refusal/routes.ts";
 import { mediaRoutes } from "./media/routes.ts";
 import { trustRoutes } from "./trust/routes.ts";
 import { anonymoMoneyRoutes } from "./deposits/index.ts";
+import { registerUpstreamJobs } from "../providers/upstream-jobs.ts";
 
 export function anonymoRoutes(app: Hono, ctx: Ctx) {
   abuseRoutes(app, ctx); // WS02 · abuse inbox, takedowns, floor-hit reporting (region rules mount in app.ts, see region/middleware.ts)
   refusalRoutes(app, ctx); // WS03 · per-key refusal-catch setting
+  registerUpstreamJobs(ctx); // WS04 · upstream canaries and wallet-balance alarms (jobs, no routes)
   anonymoMoneyRoutes(app, ctx); // WS05 · keys, deposits, withdrawals, x402 on Base and Solana
   mediaRoutes(app, ctx); // WS06 · media endpoints (src/anonymo/media/routes.ts)
   trustRoutes(app, ctx); // WS09 · receipts and proofs, manifest, leaderboard

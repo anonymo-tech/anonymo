@@ -205,7 +205,7 @@ export async function providerFetch(input: string | URL, init: RequestInit = {},
   const requestOptions = {
     method: init.method ?? "GET",
     headers,
-    signal: init.signal ?? undefined,
+    // No `signal` here: Bun 1.3.x's own handling of it never settles the request; the abort is handled below instead.
     lookup: lookupPinned,
     ...(url.protocol === "https:" && literalFamily === 0 ? { servername: host } : {}),
     // An attested provider's connections accept exactly its pinned certificate (see providers/tls-pin.ts).
@@ -217,7 +217,9 @@ export async function providerFetch(input: string | URL, init: RequestInit = {},
     throw new Error("Provider request body type is not supported.");
 
   return await new Promise<Response>((resolve, reject) => {
+    let releaseAbort = () => {};
     const req = request(url, requestOptions, (res) => {
+      res.once("close", () => releaseAbort());
       // Readable.toWeb forwards cancellation to the IncomingMessage, which destroys its socket;
       // errors discovered after headers must also tear down the request side immediately.
       res.on("error", () => req.destroy());
@@ -236,6 +238,28 @@ export async function providerFetch(input: string | URL, init: RequestInit = {},
     // "on", not "once": the client can emit a second error (e.g. while trying the next address after a refused
     // connect), and an unhandled error event would crash the worker. Later errors are ignored once settled.
     req.on("error", reject);
+    // Bun 1.3.x does not tear a node:http request down when its signal aborts before the response headers arrive, so a
+    // provider that accepts the connection and never answers would hang the call past every timeout (and no failover
+    // would happen). Destroy it ourselves, before and after the headers.
+    const signal = init.signal;
+    if (signal) {
+      const onAbort = () => {
+        const reason = signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
+        reject(reason);
+        try {
+          req.destroy(reason instanceof Error ? reason : new Error(String(reason)));
+        } catch {
+          /* already torn down */
+        }
+      };
+      if (signal.aborted) onAbort();
+      else {
+        signal.addEventListener("abort", onAbort, { once: true });
+        // Kept until the response body is done, so an abort mid-stream still tears the connection down.
+        releaseAbort = () => signal.removeEventListener("abort", onAbort);
+        req.once("error", releaseAbort);
+      }
+    }
     if (body instanceof ArrayBuffer) req.end(Buffer.from(body));
     else if (body instanceof Uint8Array) req.end(Buffer.from(body));
     else req.end(body == null ? undefined : body.toString());

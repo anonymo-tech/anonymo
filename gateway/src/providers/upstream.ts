@@ -5,6 +5,7 @@ import { providerFetch } from "./network.ts";
 import type { Candidate } from "../catalog/catalog.ts";
 import { decrypt } from "../lib/util.ts";
 import { ACI_CONSTRAINTS, type AciExchange } from "./aci.ts";
+import { adapterFor } from "./adapters.ts";
 
 // OpenAI-compatible upstream calls. Every failure is classified so the router can decide
 // whether to fall back (5xx, timeout, connection, 429, empty-200, provider-side 4xx) and what
@@ -53,6 +54,7 @@ export function upstreamBody(c: Candidate, body: Record<string, unknown>, stream
     if (supported.has("reasoning_effort") && reasoning.effort) out.reasoning_effort = reasoning.effort;
   }
   out.model = c.providerModelId;
+  adapterFor(c.upstream)?.body?.(out); // WS04: what one kind of Anonymo upstream needs on top (providers/adapters.ts)
   // An attested gateway serves this request only from an upstream it verified in a TEE, under zero data retention.
   if (c.provider?.aci) out.provider = { ...ACI_CONSTRAINTS };
   if (stream) {

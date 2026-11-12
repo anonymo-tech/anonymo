@@ -276,8 +276,15 @@ export const offers = pgTable(
     supportedParameters: text("supported_parameters").array().notNull().default([]),
     features: jsonb("features").notNull().default({}),
     isModerated: boolean("is_moderated").notNull().default(false),
-    status: text("status").notNull().default("live"), // live | shadow | disabled
+    status: text("status").notNull().default("live"), // live | shadow | disabled | drained (WS04: upstream wallet empty)
     updatedAt: ts("updated_at").notNull().defaultNow(),
+    // WS04 · Anonymo route record (Backend §4). Null on offers that are not Anonymo routes (src/providers/tiers.ts).
+    family: text("family"), // deepseek | glm | qwen | gemma | mistral | kimi | llama | ...
+    weightsHash: text("weights_hash"), // sha256 of the served weights, for the manifest
+    tier: integer("tier"), // 0 Venice · 1 self-hosted · 2 Phala/Chutes/NanoGPT · 3 Featherless
+    upstream: text("upstream"), // venice | selfhost | phala | chutes | nanogpt | featherless
+    upstreamId: text("upstream_id"), // the configured upstream account the route draws on (balance alarms drain by it)
+    qualityRank: real("quality_rank"), // 0-100, from the leaderboard
   },
   (t) => [primaryKey({ columns: [t.modelId, t.providerId] }), index("offers_provider_idx").on(t.providerId)],
 );

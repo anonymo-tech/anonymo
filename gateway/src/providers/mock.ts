@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 // (JSON + SSE), legacy completions, embeddings, rerank, logprobs, and a TEE-style attestation endpoint.
 // Behaviours can be switched at runtime through POST /_control.
 
-export type MockBehaviour = "ok" | "empty200" | "error500" | "rate429" | "slow" | "hang" | "reject400" | "midstream_error" | "no_usage" | "auth401" | "truncate_after_usage";
+export type MockBehaviour = "ok" | "empty200" | "error500" | "rate429" | "pay402" | "error503" | "slow" | "hang" | "reject400" | "midstream_error" | "no_usage" | "auth401" | "truncate_after_usage";
 export type MockModel = { id: string; slug?: string; prompt: string; completion: string; request?: string; ctx?: number; quant?: string; features?: string[]; params?: string[]; creator?: string; output?: string[]; hf?: string };
 export type MockConfig = {
   name: string;
@@ -30,6 +30,8 @@ export type MockConfig = {
    * (an index and a score that make no sense, to test that the router refuses them).
    */
   rerankShape?: "jina" | "cohere" | "invalid";
+  /** WS04: the prepaid wallet balance the account endpoints report (Venice and NanoGPT shapes); absent = 404. */
+  balanceUsd?: number;
 };
 
 const WORDS = "the quick brown fox jumps over the lazy dog and keeps running far away".split(" ");
@@ -101,6 +103,10 @@ export function createMockProvider(initial: MockConfig) {
     }),
   );
 
+  // WS04: wallet balance endpoints, in the shapes providers/adapters.ts reads.
+  app.get("/api/v1/api_keys/rate_limits", (c) => (cfg.balanceUsd == null ? c.json({ error: "not found" }, 404) : c.json({ data: { balances: { USD: cfg.balanceUsd, DIEM: 0 } } })));
+  app.post("/api/check-balance", (c) => (cfg.balanceUsd == null ? c.json({ error: "not found" }, 404) : c.json({ usd_balance: cfg.balanceUsd.toFixed(2), nano_balance: "0" })));
+
   app.get("/attestation", (c) => {
     if (cfg.tee !== "dev") return c.json({ error: "no tee" }, 404);
     return c.json({ kind: "dev", nonce: c.req.query("nonce"), measurement: "mock-measurement-v1", ...(cfg.classifier != null ? { classifier: { enabled: cfg.classifier } } : {}) });
@@ -112,6 +118,8 @@ export function createMockProvider(initial: MockConfig) {
     if (cfg.delayMs) await new Promise((r) => setTimeout(r, cfg.delayMs));
     if (b === "error500") return new Response(JSON.stringify({ error: { message: "upstream exploded" } }), { status: 500 });
     if (b === "rate429") return new Response(JSON.stringify({ error: { message: "slow down" } }), { status: 429 });
+    if (b === "pay402") return new Response(JSON.stringify({ error: { message: "payment required" } }), { status: 402 });
+    if (b === "error503") return new Response(JSON.stringify({ error: { message: "overloaded" } }), { status: 503 });
     if (b === "reject400") return new Response(JSON.stringify({ error: { message: "bad parameter foo" } }), { status: 400 });
     if (b === "auth401") return new Response(JSON.stringify({ error: { message: "bad key" } }), { status: 401 });
     if (b === "hang") await new Promise((r) => setTimeout(r, 600_000));

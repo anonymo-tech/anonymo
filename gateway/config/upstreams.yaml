@@ -1,0 +1,148 @@
+# Anonymo upstream tiers and routes (Backend §4, Overview §2-§4). Seed with:
+#   bun scripts/seed-upstreams.ts config/upstreams.yaml
+# Base URLs and keys come from the environment (base_url_env / api_key_env); keys are stored encrypted with APP_SECRET.
+#
+# Product rules the loader enforces (src/providers/tiers.ts):
+#   - Venice models are never relabelled one-for-one: no direct_id on a Venice route, and no model ID served by Venice only
+#   - anonymo-1: every T0 family has a warm backup of the same family on another tier
+#   - anonymo-sealed: only routes on an upstream with a TEE (WS09 fails closed when none is freshly attested)
+#   - anonymo-rp: self-hosted routes only
+#   - every prepaid upstream has a wallet-balance alarm (warn_usd alarms, drain_usd drains its routes)
+#
+# VERIFY BEFORE GOING LIVE: upstream model ids, prices (our cost, USD per 1M tokens), context lengths, weights hashes,
+# attestation URLs and balance endpoints below are planning values. None was checked against a live account from here.
+version: 1
+
+scoring:
+  t0_bonus: 25            # points for a healthy T0 route
+  latency_per_s: 5        # points per second of median time to first token (5-minute window)
+  error_penalty: 100      # points at a 100% error rate (5-minute window)
+  cost_per_usd_m: 2       # points per USD of blended cost per 1M tokens
+  healthy_max_error_rate: 0.25
+  sticky_ttl_s: 1800      # key + conversation prefix stay on their route this long while it is healthy
+
+canaries:
+  interval_s: 45          # per upstream x model (spec: every 30-60 s)
+  timeout_s: 15
+  concurrency: 8
+
+upstreams:
+  # ---- T0 · Venice (higher-tier business agreement key) --------------------------------------------------------------
+  - id: venice
+    name: Venice
+    kind: venice
+    tier: 0
+    base_url: https://api.venice.ai/api/v1
+    base_url_env: VENICE_BASE_URL
+    api_key_env: VENICE_API_KEY
+    data_policy: { training: false, retains_prompts: false, zdr: false }
+    prepaid: true
+    balance: { warn_usd: 200, drain_usd: 5 }   # GET /api/v1/api_keys/rate_limits -> data.balances.USD
+
+  # ---- T1 · self-hosted vLLM / SGLang on crypto-paid GPUs (hot spares of the T0 families) ----------------------------
+  - id: selfhost-dolphin-24b
+    name: Self-hosted Dolphin-Venice 24B
+    kind: selfhost
+    tier: 1
+    base_url: https://dolphin-24b.selfhost.invalid/v1
+    base_url_env: SELFHOST_DOLPHIN_24B_URL
+    api_key_env: SELFHOST_DOLPHIN_24B_KEY
+    data_policy: { training: false, retains_prompts: false, retention_days: 0, zdr: true }
+    prepaid: true
+    balance: { warn_usd: 50, drain_usd: 2, url: "https://console.vast.ai/api/v0/users/current/", auth: bearer, path: credit, key_env: GPU_MARKET_API_KEY }
+  - id: selfhost-deepseek-flash
+    name: Self-hosted DeepSeek V4.1 Flash abliterated
+    kind: selfhost
+    tier: 1
+    base_url: https://deepseek-flash.selfhost.invalid/v1
+    base_url_env: SELFHOST_DEEPSEEK_FLASH_URL
+    api_key_env: SELFHOST_DEEPSEEK_FLASH_KEY
+    data_policy: { training: false, retains_prompts: false, retention_days: 0, zdr: true }
+    prepaid: true
+    balance: { warn_usd: 50, drain_usd: 2, url: "https://console.vast.ai/api/v0/users/current/", auth: bearer, path: credit, key_env: GPU_MARKET_API_KEY }
+  - id: selfhost-gemma-26b
+    name: Self-hosted Gemma 4 26B uncensored
+    kind: selfhost
+    tier: 1
+    base_url: https://gemma-26b.selfhost.invalid/v1
+    base_url_env: SELFHOST_GEMMA_26B_URL
+    api_key_env: SELFHOST_GEMMA_26B_KEY
+    data_policy: { training: false, retains_prompts: false, retention_days: 0, zdr: true }
+    prepaid: true
+    balance: { warn_usd: 50, drain_usd: 2, url: "https://console.vast.ai/api/v0/users/current/", auth: bearer, path: credit, key_env: GPU_MARKET_API_KEY }
+  - id: selfhost-qwen-27b
+    name: Self-hosted Qwen3.8 27B abliterated
+    kind: selfhost
+    tier: 1
+    base_url: https://qwen-27b.selfhost.invalid/v1
+    base_url_env: SELFHOST_QWEN_27B_URL
+    api_key_env: SELFHOST_QWEN_27B_KEY
+    data_policy: { training: false, retains_prompts: false, retention_days: 0, zdr: true }
+    prepaid: true
+    balance: { warn_usd: 50, drain_usd: 2, url: "https://console.vast.ai/api/v0/users/current/", auth: bearer, path: credit, key_env: GPU_MARKET_API_KEY }
+
+  # ---- T2 · attested or cheap overflow -------------------------------------------------------------------------------
+  - id: phala
+    name: Phala confidential AI
+    kind: phala
+    tier: 2
+    base_url: https://api.redpill.ai/v1
+    base_url_env: PHALA_BASE_URL
+    api_key_env: PHALA_API_KEY
+    data_policy: { training: false, retains_prompts: false, retention_days: 0, zdr: true }
+    tee: { kind: nvidia-cc, attestation_url: https://api.redpill.ai/v1/attestation/report }
+    prepaid: true
+    balance: { warn_usd: 50, drain_usd: 2, url: "https://api.redpill.ai/v1/credits", auth: bearer, path: data.balance }
+  - id: chutes
+    name: Chutes TEE
+    kind: chutes
+    tier: 2
+    base_url: https://llm.chutes.ai/v1
+    base_url_env: CHUTES_BASE_URL
+    api_key_env: CHUTES_API_KEY
+    data_policy: { training: false, retains_prompts: false, retention_days: 0, zdr: true }
+    tee: { kind: tdx, attestation_url: https://api.chutes.ai/tee/attestation }
+    prepaid: true
+    balance: { warn_usd: 50, drain_usd: 2 }    # GET https://api.chutes.ai/users/me -> balance
+  - id: nanogpt
+    name: NanoGPT
+    kind: nanogpt
+    tier: 2
+    base_url: https://nano-gpt.com/api/v1
+    base_url_env: NANOGPT_BASE_URL
+    api_key_env: NANOGPT_API_KEY
+    # Retention is not confirmed per request: declared conservatively.
+    data_policy: { training: false, retains_prompts: true, zdr: false }
+    prepaid: true
+    balance: { warn_usd: 30, drain_usd: 1 }    # POST /api/check-balance -> usd_balance
+
+  # ---- T3 · coverage -------------------------------------------------------------------------------------------------
+  - id: featherless
+    name: Featherless
+    kind: featherless
+    tier: 3
+    base_url: https://api.featherless.ai/v1
+    base_url_env: FEATHERLESS_BASE_URL
+    api_key_env: FEATHERLESS_API_KEY
+    data_policy: { training: false, retains_prompts: true, zdr: false }
+    prepaid: false                             # flat Scale plan, no wallet to drain
+
+routes:
+  # T0 Venice: served under anonymo-1 and the council pool only, never as a direct model ID.
+  - { id: venice-uncensored, upstream: venice, model: venice-uncensored, family: mistral, quant: fp8, ctx: 32768, price: { in: 0.20, out: 0.90 }, quality: 82, serves: [anonymo-1, anonymo-council] }
+  - { id: venice-deepseek-flash, upstream: venice, model: deepseek-v4.1-flash-abliterated, family: deepseek, quant: fp8, ctx: 131072, price: { in: 0.30, out: 1.10 }, quality: 86, serves: [anonymo-1, anonymo-council] }
+
+  # T1 self-hosted hot spares of the same families.
+  - { id: selfhost-dolphin-24b, upstream: selfhost-dolphin-24b, model: dolphin-venice-24b, family: mistral, quant: fp8, ctx: 32768, price: { in: 0.10, out: 0.30 }, quality: 80, serves: [anonymo-1, anonymo-rp], direct_id: dolphin-venice-24b, hf_repo: cognitivecomputations/Dolphin-Mistral-24B-Venice-Edition }
+  - { id: selfhost-deepseek-flash, upstream: selfhost-deepseek-flash, model: deepseek-v4.1-flash-abliterated, family: deepseek, quant: fp8, ctx: 131072, price: { in: 0.25, out: 0.80 }, quality: 84, serves: [anonymo-1, anonymo-council], direct_id: deepseek-v4.1-flash-abliterated }
+  - { id: selfhost-gemma-26b, upstream: selfhost-gemma-26b, model: gemma-4-26b-uncensored, family: gemma, quant: bf16, ctx: 131072, price: { in: 0.10, out: 0.30 }, quality: 76, serves: [anonymo-1, anonymo-rp, anonymo-council], direct_id: gemma-4-26b-uncensored }
+  - { id: selfhost-qwen-27b, upstream: selfhost-qwen-27b, model: qwen3.8-27b-abliterated, family: qwen, quant: fp8, ctx: 131072, price: { in: 0.10, out: 0.30 }, quality: 78, serves: [anonymo-1, anonymo-rp, anonymo-council], direct_id: qwen3.8-27b-abliterated }
+
+  # T2 attested (anonymo-sealed) and overflow.
+  - { id: phala-deepseek, upstream: phala, model: deepseek/deepseek-v4.1-flash, family: deepseek, quant: fp8, ctx: 131072, price: { in: 0.40, out: 1.40 }, quality: 80, serves: [anonymo-sealed] }
+  - { id: phala-qwen, upstream: phala, model: qwen/qwen3.8-27b, family: qwen, quant: fp8, ctx: 131072, price: { in: 0.20, out: 0.60 }, quality: 74, serves: [anonymo-sealed] }
+  - { id: chutes-glm-abliterated, upstream: chutes, model: glm-5.2-abliterated, family: glm, quant: fp8, ctx: 131072, price: { in: 0.30, out: 1.20 }, quality: 83, serves: [anonymo-1, anonymo-sealed, anonymo-council], direct_id: glm-5.2-abliterated }
+  - { id: nanogpt-kimi, upstream: nanogpt, model: kimi-k2.7-code-abliterated, family: kimi, quant: fp8, ctx: 131072, price: { in: 0.50, out: 2.00 }, quality: 81, serves: [anonymo-council], direct_id: kimi-k2.7-code-abliterated }
+
+  # T3 coverage.
+  - { id: featherless-mistral, upstream: featherless, model: cognitivecomputations/Dolphin-Mistral-24B-Venice-Edition, family: mistral, quant: fp8, ctx: 32768, price: { in: 0.10, out: 0.10 }, quality: 70, serves: [anonymo-1] }

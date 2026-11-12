@@ -80,7 +80,35 @@ export class HealthTracker implements HealthView {
     if (emptyCallers.size >= 2) fails += empties;
     if (fails >= 2 && fails >= oks) return true;
     const last = [...list].reverse().find(counts);
-    return !!last && last.at! >= since && hardFailure(last) && last.source === "probe";
+    // WS04: an Anonymo canary (a real chat call) counts like a probe: its last failure, with no success since, is an outage.
+    return !!last && last.at! >= since && hardFailure(last) && (last.source === "probe" || last.source === "canary");
+  }
+
+  /**
+   * WS04 · Rolling-window view for the Anonymo selection score (Backend §4: rolling 5-minute windows of time to first
+   * token and error rate). Client-caused rejections do not count. `ttftP50` is null without a success in the window.
+   */
+  window(modelId: string, providerId: string, windowMs = 5 * 60_000): { errorRate: number; ttftP50: number | null; n: number } {
+    const list = this.recent.get(this.k(modelId, providerId)) ?? [];
+    const since = Date.now() - windowMs;
+    let n = 0;
+    let fails = 0;
+    const lat: number[] = [];
+    for (let i = list.length - 1; i >= 0 && list[i].at! >= since; i--) {
+      const e = list[i];
+      if (!counts(e)) continue;
+      n++;
+      if (!e.ok) fails++;
+      else if (e.latencyMs != null) lat.push(e.latencyMs);
+    }
+    lat.sort((a, b) => a - b);
+    return { errorRate: n ? fails / n : 0, ttftP50: percentile(lat, 50) ?? null, n };
+  }
+
+  /** WS04 · When this model x provider last saw a canary (any outcome), or null. */
+  lastCanaryAt(modelId: string, providerId: string): number | null {
+    const e = this.recent.get(this.k(modelId, providerId))?.findLast((x) => x.source === "canary");
+    return e?.at ?? null;
   }
 
   lastFailureKind(modelId: string, providerId: string) { // B121: distinguish availability from rate/policy outages without retaining new data.

@@ -7,6 +7,7 @@ import type { Ctx } from "../context.ts";
 import { kv } from "../db/schema.ts";
 import { log } from "../lib/util.ts";
 import { readiness } from "./readiness.ts";
+import { anonymoBalanceChecks } from "../providers/balance.ts";
 
 // Readiness-driven alert delivery for platforms without Alertmanager (for example Railway).
 // Each minute one worker evaluates readiness. A check that has failed for ALERT_SUSTAIN_MS is
@@ -146,7 +147,7 @@ async function releaseLease(ctx: Ctx, holder: string) {
 }
 
 async function evaluateReadiness(ctx: Ctx) {
-  return { ...(await readiness(ctx)).checks, ...await upstreamAlertChecks(ctx), ...await fastCreditAlertChecks(ctx) }; // ON3
+  return { ...(await readiness(ctx)).checks, ...await upstreamAlertChecks(ctx), ...await fastCreditAlertChecks(ctx), ...await anonymoBalanceChecks(ctx) }; // ON3; WS04: prepaid upstream wallets
 }
 
 export type NotifierOptions = { now?: () => number; evaluate?: (ctx: Ctx) => Promise<Record<string, boolean>>; fetch?: typeof fetch; sustainMs?: number };
