@@ -1,4 +1,5 @@
 import { describeLowBalance } from "./low-balance.ts"; // B119
+import { describeAbuse } from "../anonymo/abuse/privacy.ts"; // Anonymo WS02
 import { guardTables } from "./tables/agent-guard.ts"; // V98
 import { describeWeeklySummary } from "./weekly-summary.ts"; // B120
 import { agentPayTables } from "./agent-pay.ts"; // Pay another agent
@@ -45,6 +46,7 @@ export const INVENTORY_FORMAT = "anonymo.data-inventory/1";
 
 export const TABLE_DOCS: Record<string, TableDoc> = { ...guardTables, ...agentPayTables, ...webhookTables, ...requestTables, ...billingTables, ...receiptTables, ...keyTables, ...providerTables, ...chainTables, ...operationTables, ...characterTables, ...skillTables, ...networkTables, ...networkPayoutTables, ...sanctionsTables, ...agentTables, ...approvalTables, ...hostBondTables, ...agentLedgerTables, ...profileTables, ...agreementTables, ...x402RecoveryTables, ...facilitatorTables, ...makegoodTables, ...toolTables, ...identityTables, ...commerceTables };
 describeLowBalance(TABLE_DOCS); // B119
+describeAbuse(TABLE_DOCS); // Anonymo WS02: abuse inbox, hash blocks, preservation vault
 describeAutonomy(TABLE_DOCS);
 describeSealed(TABLE_DOCS);
 describeWeeklySummary(TABLE_DOCS); // B120

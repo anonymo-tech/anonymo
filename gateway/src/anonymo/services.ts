@@ -2,7 +2,8 @@
 // implementation here (WS02 the floor gate, WS03 the refusal classifier). Tests inject their own through
 // createApp({ anonymo }) or by assigning ctx.anonymo.* on a running harness.
 
-import { floorGateStub, phraseRefusalStub, type FloorGate, type FloorInput, type RefusalClassifier } from "./seams.ts";
+import { createFloorGate } from "./floor/gate.ts";
+import { phraseRefusalStub, type FloorGate, type FloorInput, type RefusalClassifier } from "./seams.ts";
 
 export type AnonymoServices = {
   floor: FloorGate;
@@ -13,7 +14,7 @@ const truthy = (v: unknown) => v === true || v === "1" || v === "true";
 
 export function createAnonymoServices(env: Record<string, unknown>, overrides: Partial<AnonymoServices> = {}): AnonymoServices {
   return {
-    floor: overrides.floor ?? floorGateStub(truthy(env.ANONYMO_FLOOR_REQUIRED)),
+    floor: overrides.floor ?? createFloorGate(env), // WS02: ANONYMO_FLOOR_URL selects the guard model; REQUIRED without it fails closed
     refusal: overrides.refusal ?? phraseRefusalStub,
   };
 }

@@ -1,4 +1,5 @@
 export * from "./low-balance.ts"; // B119
+export * from "../anonymo/abuse/schema.ts"; // Anonymo WS02: abuse inbox, hash blocks, preservation vault
 export * from "../network/bond-schema.ts";
 import { sql } from "drizzle-orm";
 import {

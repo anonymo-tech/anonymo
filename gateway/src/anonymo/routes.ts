@@ -3,9 +3,10 @@
 
 import type { Hono } from "hono";
 import type { Ctx } from "../context.ts";
+import { abuseRoutes } from "./abuse/routes.ts";
 
-export function anonymoRoutes(_app: Hono, _ctx: Ctx) {
-  // WS02 · abuse inbox and region rules
+export function anonymoRoutes(app: Hono, ctx: Ctx) {
+  abuseRoutes(app, ctx); // WS02 · abuse inbox, takedowns, floor-hit reporting (region rules mount in app.ts, see region/middleware.ts)
   // WS05 · keys, deposits, withdrawals
   // WS06 · media endpoints
   // WS09 · receipts proofs, manifest, leaderboard

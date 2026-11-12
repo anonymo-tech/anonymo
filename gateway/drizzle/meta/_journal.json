@@ -372,6 +372,13 @@
       "when": 1791400054000,
       "tag": "0054_low_balance",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1791400055000,
+      "tag": "0055_anonymo_floor_abuse",
+      "breakpoints": true
     }
   ]
 }

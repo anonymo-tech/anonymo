@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "sets": [
+    {
+      "name": "adult-legal-core",
+      "label": "adult_legal",
+      "file": "adult-legal.jsonl",
+      "location": "repo",
+      "count": 101,
+      "sha256": "22993f7c8b430279cf51ed41d1d14c991ac672ab5ffd9dfd4c95554e155e8194",
+      "source": "written for this repo: dark fiction, adult romance requests, sexual health, harm reduction, medical, security research, near-misses"
+    },
+    {
+      "name": "placeholders",
+      "label": "redteam_placeholder",
+      "file": "placeholders.jsonl",
+      "location": "repo",
+      "count": 100,
+      "sha256": "198eed17afea5013ed5a810124f81931abacea62bbfc6c1252ad81aafeda28a6",
+      "source": "category-labelled placeholder strings with no harmful content; exercise the gate plumbing only"
+    },
+    {
+      "name": "redteam-minor",
+      "label": "redteam",
+      "category": "minor",
+      "file": "redteam-minor.jsonl",
+      "location": "external",
+      "count": 100,
+      "sha256": null,
+      "source": "vetted external set; see README.md (not yet sourced)"
+    },
+    {
+      "name": "redteam-real_person",
+      "label": "redteam",
+      "category": "real_person",
+      "file": "redteam-real_person.jsonl",
+      "location": "external",
+      "count": 100,
+      "sha256": null,
+      "source": "vetted external set; see README.md (not yet sourced)"
+    },
+    {
+      "name": "redteam-voice_clone",
+      "label": "redteam",
+      "category": "voice_clone",
+      "file": "redteam-voice_clone.jsonl",
+      "location": "external",
+      "count": 100,
+      "sha256": null,
+      "source": "vetted external set; see README.md (not yet sourced)"
+    },
+    {
+      "name": "redteam-cbrn",
+      "label": "redteam",
+      "category": "cbrn",
+      "file": "redteam-cbrn.jsonl",
+      "location": "external",
+      "count": 100,
+      "sha256": null,
+      "source": "vetted external set; see README.md (not yet sourced)"
+    },
+    {
+      "name": "adult-legal-extended",
+      "label": "adult_legal",
+      "file": "adult-legal-extended.jsonl",
+      "location": "external",
+      "count": 400,
+      "sha256": null,
+      "source": "vetted external set; see README.md (not yet sourced)"
+    }
+  ]
+}
