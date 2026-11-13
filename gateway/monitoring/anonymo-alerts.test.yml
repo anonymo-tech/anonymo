@@ -1,0 +1,158 @@
+# promtool test rules anonymo-alerts.test.yml (CI: .github/workflows/infra.yml)
+rule_files:
+  - anonymo-alerts.yml
+evaluation_interval: 30s
+tests:
+  - name: healthy stack raises nothing
+    interval: 30s
+    input_series:
+      - series: up{job="anonymo-exporter",instance="exporter:9798"}
+        values: 1x40
+      - series: anonymo_exporter_db_up{job="anonymo-exporter",instance="exporter:9798"}
+        values: 1x40
+      - series: anonymo_guard_up{job="anonymo-exporter",instance="exporter:9798",service="floor"}
+        values: 1x40
+      - series: anonymo_guard_configured{job="anonymo-exporter",instance="exporter:9798",service="floor"}
+        values: 1x40
+      - series: anonymo_guard_up{job="anonymo-exporter",instance="exporter:9798",service="refusal"}
+        values: 1x40
+      - series: anonymo_canary_runs{job="anonymo-exporter",instance="exporter:9798",route="venice-uncensored"}
+        values: 13x40
+      - series: anonymo_canary_failures{job="anonymo-exporter",instance="exporter:9798",route="venice-uncensored"}
+        values: 1x40
+      - series: anonymo_upstream_balance_level{job="anonymo-exporter",instance="exporter:9798",upstream="venice"}
+        values: 0x40
+      - series: anonymo_upstream_balance_read_age_seconds{job="anonymo-exporter",instance="exporter:9798",upstream="venice"}
+        values: 30x40
+      - series: anonymo_refusal_requests{job="anonymo-exporter",instance="exporter:9798"}
+        values: 5000x40
+      - series: anonymo_refusal_refused{job="anonymo-exporter",instance="exporter:9798"}
+        values: 150x40
+      - series: anonymo_sealed_attested{job="anonymo-exporter",instance="exporter:9798",provider="chutes"}
+        values: 1x40
+      - series: anonymo_sealed_attestation_age_seconds{job="anonymo-exporter",instance="exporter:9798",provider="chutes"}
+        values: 300x40
+      - series: anonymo_job_last_success_age_seconds{job="anonymo-exporter",instance="exporter:9798",job_name="anonymo-deposits"}
+        values: 10x40
+      - series: anonymo_job_interval_seconds{job="anonymo-exporter",instance="exporter:9798",job_name="anonymo-deposits"}
+        values: 15x40
+      - series: anonymo_job_failing{job="anonymo-exporter",instance="exporter:9798",job_name="anonymo-deposits"}
+        values: 0x40
+      - series: anonymo_deposit_cursor_age_seconds{job="anonymo-exporter",instance="exporter:9798",chain="base"}
+        values: 20x40
+      - series: anonymo_withdrawals_pending{job="anonymo-exporter",instance="exporter:9798"}
+        values: 0x40
+      - series: anonymo_withdrawals_oldest_pending_seconds{job="anonymo-exporter",instance="exporter:9798"}
+        values: 0x40
+      - series: caddy_http_request_duration_seconds_count{job="anonymo-edge",instance="edge:9180",code="200"}
+        values: 0+600x40
+      - series: caddy_http_request_duration_seconds_count{job="anonymo-edge",instance="edge:9180",code="503"}
+        values: 0+1x40
+    alert_rule_test:
+      - { eval_time: 15m, alertname: AnonymoExporterDown, exp_alerts: [] }
+      - { eval_time: 15m, alertname: AnonymoExporterQueryFailing, exp_alerts: [] }
+      - { eval_time: 15m, alertname: AnonymoFloorGuardDown, exp_alerts: [] }
+      - { eval_time: 15m, alertname: AnonymoEdge503RateHigh, exp_alerts: [] }
+      - { eval_time: 15m, alertname: AnonymoRefusalClassifierDown, exp_alerts: [] }
+      - { eval_time: 15m, alertname: AnonymoCanaryFailing, exp_alerts: [] }
+      - { eval_time: 15m, alertname: AnonymoCanariesStopped, exp_alerts: [] }
+      - { eval_time: 15m, alertname: AnonymoUpstreamBalanceLow, exp_alerts: [] }
+      - { eval_time: 15m, alertname: AnonymoUpstreamDrained, exp_alerts: [] }
+      - { eval_time: 15m, alertname: AnonymoUpstreamBalanceUnread, exp_alerts: [] }
+      - { eval_time: 15m, alertname: AnonymoRefusalRateHigh, exp_alerts: [] }
+      - { eval_time: 15m, alertname: AnonymoSealedAttestationStale, exp_alerts: [] }
+      - { eval_time: 15m, alertname: AnonymoSealedUnavailable, exp_alerts: [] }
+      - { eval_time: 15m, alertname: AnonymoDepositWatcherLagging, exp_alerts: [] }
+      - { eval_time: 15m, alertname: AnonymoDepositCursorStale, exp_alerts: [] }
+      - { eval_time: 15m, alertname: AnonymoWithdrawalBacklog, exp_alerts: [] }
+      - { eval_time: 15m, alertname: AnonymoWithdrawalQueueGrowing, exp_alerts: [] }
+      - { eval_time: 15m, alertname: AnonymoJobFailing, exp_alerts: [] }
+      - { eval_time: 15m, alertname: AnonymoJobStale, exp_alerts: [] }
+
+  - name: floor guard down fails closed and pages
+    interval: 30s
+    input_series:
+      - series: anonymo_guard_up{job="anonymo-exporter",instance="exporter:9798",service="floor"}
+        values: 1 1 0x20
+      - series: anonymo_guard_configured{job="anonymo-exporter",instance="exporter:9798",service="floor"}
+        values: 1x22
+      - series: caddy_http_request_duration_seconds_count{job="anonymo-edge",instance="edge:9180",code="200"}
+        values: 0+100x22
+      - series: caddy_http_request_duration_seconds_count{job="anonymo-edge",instance="edge:9180",code="503"}
+        values: 0+50x22
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: AnonymoFloorGuardDown
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: AnonymoFloorGuardDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: anonymo-exporter, instance: "exporter:9798", service: floor }
+            exp_annotations:
+              summary: "The floor guard model is down or not configured; chat is failing closed with 503 floor_unavailable"
+      - eval_time: 8m
+        alertname: AnonymoEdge503RateHigh
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "More than 1% of requests return 503 at the edge (floor_unavailable is the usual cause; check the guard model first)"
+
+  - name: drained upstream, stuck withdrawal and lagging deposits
+    interval: 30s
+    input_series:
+      - series: anonymo_upstream_balance_level{job="anonymo-exporter",instance="exporter:9798",upstream="venice"}
+        values: 2x20
+      - series: anonymo_withdrawals_oldest_pending_seconds{job="anonymo-exporter",instance="exporter:9798"}
+        values: 1900+30x20
+      - series: anonymo_job_last_success_age_seconds{job="anonymo-exporter",instance="exporter:9798",job_name="anonymo-deposits"}
+        values: 600+30x20
+      - series: anonymo_job_interval_seconds{job="anonymo-exporter",instance="exporter:9798",job_name="anonymo-deposits"}
+        values: 15x20
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: AnonymoUpstreamDrained
+        exp_alerts:
+          - exp_labels: { severity: critical, job: anonymo-exporter, instance: "exporter:9798", upstream: venice }
+            exp_annotations:
+              summary: "Upstream venice wallet is at its drain level; its routes are drained and traffic is on backups"
+      - eval_time: 7m
+        alertname: AnonymoWithdrawalBacklog
+        exp_alerts:
+          - exp_labels: { severity: critical, job: anonymo-exporter, instance: "exporter:9798" }
+            exp_annotations:
+              summary: "A withdrawal has waited over 30 minutes; withdrawals are never paused, so send it or find why it failed"
+      - eval_time: 7m
+        alertname: AnonymoDepositWatcherLagging
+        exp_alerts:
+          - exp_labels: { severity: critical, job: anonymo-exporter, instance: "exporter:9798", job_name: anonymo-deposits }
+            exp_annotations:
+              summary: "Deposit watchers have not completed a run in three intervals; deposits are not being credited"
+
+  - name: no canaries and no fresh attestation
+    interval: 30s
+    input_series:
+      - series: anonymo_exporter_db_up{job="anonymo-exporter",instance="exporter:9798"}
+        values: 1x30
+      - series: anonymo_sealed_attested{job="anonymo-exporter",instance="exporter:9798",provider="chutes"}
+        values: 0x30
+      - series: anonymo_sealed_attestation_age_seconds{job="anonymo-exporter",instance="exporter:9798",provider="chutes"}
+        values: 4000x30
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: AnonymoCanariesStopped
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "No upstream canary ran in 10 minutes; check the anonymo-worker (anonymo-canaries and health-flush jobs)"
+      - eval_time: 7m
+        alertname: AnonymoSealedUnavailable
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "No TEE route has a fresh attestation; anonymo-sealed is returning 409 sealed_unavailable"
+      - eval_time: 7m
+        alertname: AnonymoSealedAttestationStale
+        exp_alerts:
+          - exp_labels: { severity: warning, job: anonymo-exporter, instance: "exporter:9798", provider: chutes }
+            exp_annotations:
+              summary: "TEE provider chutes has no verified attestation in 30 minutes"

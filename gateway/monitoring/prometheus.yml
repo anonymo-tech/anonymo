@@ -1,13 +1,23 @@
 global:
   scrape_interval: 30s
   evaluation_interval: 30s
-rule_files: [/etc/prometheus/anonymo-alerts.yml]
+rule_files: [/etc/prometheus/anonymo-alerts.yml, /etc/prometheus/anonymo-alerts.yml]
 scrape_configs:
   - job_name: anonymo
     metrics_path: /ready/metrics
     scrape_timeout: 5s
     static_configs:
       - targets: [router:8787]
+  # Anonymo signals: canaries, wallet balances, refusal rate, sealed attestation age, deposit watchers, withdrawals,
+  # guard model reachability (monitoring/anonymo-exporter.ts). No prompt text, keys or addresses.
+  - job_name: anonymo-exporter
+    scrape_timeout: 10s
+    static_configs:
+      - targets: [anonymo-exporter:9798]
+  # Edge request counters by host and status code (deploy/anonymo/Caddyfile, internal port only).
+  - job_name: anonymo-edge
+    static_configs:
+      - targets: [edge:9180]
 alerting:
   alertmanagers:
     - static_configs:

@@ -84,3 +84,21 @@ The `*.railway.json` files use Railway's Config as Code format (`build.dockerfil
 Before the cutoff, run `railway config migrate` to convert these files into Railway's Infrastructure as Code (`.railway/railway.ts`). Check the generated plan with `railway config plan`, confirming the start commands, health check path and variables, before `railway config apply`. Railway's current IaC reference does not document cron schedules, restart policies or Dockerfile paths. Confirm those three in the dashboard after migrating, and keep this table in sync.
 
 See Railway's [Config as Code reference](https://docs.railway.com/config-as-code/reference), [Infrastructure as Code](https://docs.railway.com/infrastructure-as-code), [Dockerfiles](https://docs.railway.com/builds/dockerfiles) and [cron jobs](https://docs.railway.com/reference/cron-jobs) guides.
+
+## Anonymo services (WS10)
+
+Anonymo adds three services and one rule to the topology above. The self-hosted equivalent is `docker-compose.anonymo.yml`; the runbook is [infra/README.md](../../../infra/README.md).
+
+| Service | Build | Config | Runs | Health / restart |
+|---|---|---|---|---|
+| `upstreams-init` | `Dockerfile` | `upstreams-init.railway.json` | `bun scripts/seed-upstreams.ts config/upstreams.yaml`, once after `provider-init` and after every change to that file | restart `NEVER` |
+| `anonymo-worker` | `Dockerfile` | `anonymo-worker.railway.json` | `bun src/worker.ts` with `WORKER_JOBS=anonymo-canaries,anonymo-balances,anonymo-deposits,anonymo-sanctions,health-flush` | restart `ON_FAILURE` |
+| `dash` | `dash/Dockerfile` (source root `dash/`) | `dash/railway.json` | the workspace on port 3000 | health check `GET /`; restart `ON_FAILURE` |
+
+**The rule: set `ANONYMO_FLOOR_REQUIRED=1` on `api`, `worker` and `anonymo-worker` in every environment that is not a developer's machine** (staging included). With it, a missing or unreachable guard model fails closed (`503 floor_unavailable`) instead of serving unchecked. Put it in a shared variable so a new service cannot miss it.
+
+Variables (names only): `api` and `anonymo-worker` also take `ANONYMO_FLOOR_URL`, `ANONYMO_FLOOR_MODEL`, `ANONYMO_FLOOR_FORMAT`, `ANONYMO_FLOOR_KEY`, `ANONYMO_REFUSAL_URL`, `ANONYMO_REFUSAL_MODEL`, `ANONYMO_REFUSAL_KEY`, the region, media and money variables listed in `deploy/anonymo/.env.example`. `upstreams-init` takes `DATABASE_URL` (runtime role), `APP_SECRET` and the upstream keys named by `api_key_env`/`key_env` in `config/upstreams.yaml` (for example `VENICE_API_KEY`); those keys belong on no other service. `dash` takes the build variables `NEXT_PUBLIC_ANONYMO_API` (the public API origin) and optionally `NEXT_PUBLIC_ANONYMO_VENICE_BADGE`; leave `NEXT_PUBLIC_ANONYMO_DEMO` unset in production.
+
+Railway's Postgres template has no Timescale. Attach a Timescale-enabled Postgres (a TimescaleDB template or an external managed Timescale) and run `deploy/timescale/requests-hypertable.sql` against it as the schema owner. Without it the request log has no 30-day retention, which Backend §7 requires: do not launch on plain Postgres. Never point the app at a database the backup service does not cover.
+
+Railway passes a client address to the app in `X-Forwarded-For` and `X-Real-IP`. The app must not log or store either; put a CDN in front that sets the country header and keep Railway's HTTP logs off for the `api` and `dash` services, or self-host the edge (`deploy/anonymo/Caddyfile`), which strips both.

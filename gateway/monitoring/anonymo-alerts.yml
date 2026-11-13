@@ -1,0 +1,141 @@
+# Anonymo alert rules (WS10). Signals come from monitoring/anonymo-exporter.ts (job anonymo-exporter) and the edge's
+# request counters (job anonymo-edge). No rule, label or annotation carries prompt text, keys, addresses or IPs.
+# Runbook for each alert: infra/README.md, "Alerts".
+groups:
+  - name: anonymo-exporter
+    rules:
+      - alert: AnonymoExporterDown
+        expr: up{job="anonymo-exporter"} == 0 or absent(up{job="anonymo-exporter"})
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: The Anonymo signal exporter cannot be scraped, so canary, balance, floor, sealed, deposit and withdrawal alerts are blind
+      - alert: AnonymoExporterQueryFailing
+        expr: anonymo_exporter_db_up == 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: The exporter's read queries are failing; check its database role and the database
+
+  - name: anonymo-floor
+    rules:
+      # With ANONYMO_FLOOR_REQUIRED=1 a down guard model turns every chat call into 503 floor_unavailable.
+      - alert: AnonymoFloorGuardDown
+        expr: anonymo_guard_up{service="floor"} == 0 or anonymo_guard_configured{service="floor"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: The floor guard model is down or not configured; chat is failing closed with 503 floor_unavailable
+      - alert: AnonymoEdge503RateHigh
+        expr: |
+          sum(rate(caddy_http_request_duration_seconds_count{job="anonymo-edge",code="503"}[5m]))
+            / sum(rate(caddy_http_request_duration_seconds_count{job="anonymo-edge"}[5m])) > 0.01
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: More than 1% of requests return 503 at the edge (floor_unavailable is the usual cause; check the guard model first)
+      - alert: AnonymoRefusalClassifierDown
+        expr: anonymo_guard_up{service="refusal"} == 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: The refusal classifier is down; the refusal catch falls back to phrase rules
+
+  - name: anonymo-upstreams
+    rules:
+      - alert: AnonymoCanaryFailing
+        expr: anonymo_canary_failures / anonymo_canary_runs >= 0.5
+        for: 3m
+        labels: { severity: warning }
+        annotations:
+          summary: "Half or more of the canaries for route {{ $labels.route }} failed in the last 10 minutes"
+      - alert: AnonymoCanariesStopped
+        expr: absent(anonymo_canary_runs) and on() anonymo_exporter_db_up == 1
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: No upstream canary ran in 10 minutes; check the anonymo-worker (anonymo-canaries and health-flush jobs)
+      - alert: AnonymoUpstreamBalanceLow
+        expr: anonymo_upstream_balance_level == 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Upstream {{ $labels.upstream }} wallet is at or below its warn level; top it up"
+      - alert: AnonymoUpstreamDrained
+        expr: anonymo_upstream_balance_level == 2
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Upstream {{ $labels.upstream }} wallet is at its drain level; its routes are drained and traffic is on backups"
+      - alert: AnonymoUpstreamBalanceUnread
+        expr: anonymo_upstream_balance_read_age_seconds > 600
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Upstream {{ $labels.upstream }} balance has not been read for 10 minutes"
+
+  - name: anonymo-quality
+    rules:
+      - alert: AnonymoRefusalRateHigh
+        expr: anonymo_refusal_refused / anonymo_refusal_requests > 0.10 and anonymo_refusal_requests > 200
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: More than 10% of attempts were refusals today and yesterday; check which route changed (/leaderboard)
+
+  - name: anonymo-sealed
+    rules:
+      - alert: AnonymoSealedAttestationStale
+        expr: anonymo_sealed_attestation_age_seconds > 1800 or anonymo_sealed_attested == 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "TEE provider {{ $labels.provider }} has no verified attestation in 30 minutes"
+      - alert: AnonymoSealedUnavailable
+        expr: absent((anonymo_sealed_attestation_age_seconds <= 1800) and (anonymo_sealed_attested == 1)) and on() (anonymo_exporter_db_up == 1)
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: No TEE route has a fresh attestation; anonymo-sealed is returning 409 sealed_unavailable
+
+  - name: anonymo-money
+    rules:
+      - alert: AnonymoDepositWatcherLagging
+        expr: anonymo_job_last_success_age_seconds{job_name="anonymo-deposits"} > 3 * anonymo_job_interval_seconds{job_name="anonymo-deposits"} and anonymo_job_last_success_age_seconds{job_name="anonymo-deposits"} > 120
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: Deposit watchers have not completed a run in three intervals; deposits are not being credited
+      - alert: AnonymoDepositCursorStale
+        expr: anonymo_deposit_cursor_age_seconds{chain!="solana"} > 900
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "The {{ $labels.chain }} deposit cursor has not moved for 15 minutes; check its RPC"
+      - alert: AnonymoWithdrawalBacklog
+        expr: anonymo_withdrawals_oldest_pending_seconds > 1800
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: A withdrawal has waited over 30 minutes; withdrawals are never paused, so send it or find why it failed
+      - alert: AnonymoWithdrawalQueueGrowing
+        expr: anonymo_withdrawals_pending > 20
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: More than 20 withdrawals are pending
+
+  - name: anonymo-jobs
+    rules:
+      - alert: AnonymoJobFailing
+        expr: anonymo_job_failing == 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Worker job {{ $labels.job_name }} keeps failing"
+      - alert: AnonymoJobStale
+        expr: anonymo_job_last_success_age_seconds > 3 * anonymo_job_interval_seconds and anonymo_job_last_success_age_seconds > 180
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Worker job {{ $labels.job_name }} has not succeeded in three intervals"

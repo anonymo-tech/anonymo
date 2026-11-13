@@ -1,0 +1,89 @@
+# Anonymo edge (WS10). TLS in front of the gateway API and the dashboard.
+#
+# What leaves the edge for the app: the request, plus one 2-letter country code in x-anonymo-country and cf-ipcountry
+# (the two header names the region rules and media read). Nothing else about the client: every address header is
+# removed, and the edge writes no access log. Rate limits by address and the country lookup happen at the CDN in
+# front of this edge; firewall this host so it accepts :443 only from the CDN's published ranges, because the country
+# header is trusted only for that reason.
+#
+# Validate: docker run --rm -v "$PWD/deploy/anonymo/Caddyfile:/etc/caddy/Caddyfile:ro" -e ANONYMO_API_HOST=api.example.invalid \
+#   -e ANONYMO_DASH_HOST=app.example.invalid caddy:<pinned> caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+{
+	# No admin API on any interface: config changes are a redeploy.
+	admin off
+	# Runtime logs only (no access log is configured below). Strip everything that could identify a client from
+	# any request that appears in an error entry.
+	log default {
+		output stderr
+		level WARN
+		format filter {
+			request>remote_ip delete
+			request>remote_port delete
+			request>client_ip delete
+			request>headers delete
+			request>uri delete
+			request>tls delete
+			wrap json
+		}
+	}
+	# Request counters by host and status code (no client data), served on :9180 below.
+	metrics {
+		per_host
+	}
+}
+
+(anonymo_country) {
+	# A client must not choose its own country: drop whatever it sent, then copy the CDN's value.
+	request_header -X-Anonymo-Country
+	request_header X-Anonymo-Country {http.request.header.{$EDGE_COUNTRY_HEADER:CF-IPCountry}}
+}
+
+(no_client_address) {
+	header_up -X-Forwarded-For
+	header_up -X-Real-IP
+	header_up -Forwarded
+	header_up -CF-Connecting-IP
+	header_up -CF-Connecting-IPv6
+	header_up -True-Client-IP
+	header_up -X-Client-IP
+	header_up -X-Cluster-Client-IP
+	header_up -Fastly-Client-IP
+	header_up -User-Agent
+	header_up -Referer
+	header_up CF-IPCountry {http.request.header.X-Anonymo-Country}
+}
+
+{$ANONYMO_API_HOST} {
+	import anonymo_country
+	encode zstd gzip
+	reverse_proxy router:8787 {
+		import no_client_address
+		# Streams (SSE) must not be buffered.
+		flush_interval -1
+		transport http {
+			read_timeout 10m
+		}
+	}
+	header {
+		-Server
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+	}
+}
+
+{$ANONYMO_DASH_HOST} {
+	import anonymo_country
+	encode zstd gzip
+	reverse_proxy dash:3000 {
+		import no_client_address
+	}
+	header {
+		-Server
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+	}
+}
+
+# Prometheus scrapes the edge's request counters (status codes per host, no client data) on the internal network only.
+:9180 {
+	metrics /metrics
+}

@@ -51,6 +51,8 @@ COPY src ./src
 COPY scripts ./scripts
 COPY drizzle ./drizzle
 COPY config ./config
+# Anonymo signal exporter (compose.monitoring.yml runs it from this image).
+COPY monitoring/anonymo-exporter.ts ./monitoring/anonymo-exporter.ts
 COPY --from=web /web/out ./web/out
 USER bun
 EXPOSE 8787

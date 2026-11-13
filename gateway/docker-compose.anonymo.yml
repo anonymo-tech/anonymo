@@ -1,0 +1,194 @@
+# Anonymo production topology (WS10). An overlay on docker-compose.yml, which keeps the migrate -> grants -> init ->
+# API/worker order and its isolated signing workers. This file adds what Anonymo needs on top:
+#   - Postgres with Timescale (the `requests` hypertable and its 30-day retention are an operator step, see
+#     deploy/timescale/requests-hypertable.sql and the `timescale-ops` service below)
+#   - ANONYMO_FLOOR_REQUIRED=1 on every application container: with no working guard model nothing is served
+#   - upstreams-init (seeds config/upstreams.yaml; the upstream keys exist only in that one-shot)
+#   - anonymo-worker (canaries, wallet-balance alarms, deposit watchers, sanctions list, health flush)
+#   - dash (the workspace) and edge (TLS, country header only, no client IPs passed on or logged)
+#
+# Validate (no Docker daemon or cloud account needed):
+#   docker compose -f docker-compose.yml -f docker-compose.anonymo.yml --env-file ../infra/ci/compose-validate.env config -q
+# Run: put real values in a secret store or an operator-only env file (never committed), then
+#   docker compose -f docker-compose.yml -f docker-compose.anonymo.yml up -d
+#
+# Secrets only arrive as ${...} from the operator's environment or as files named by *_FILE variables.
+# Names and meanings: deploy/anonymo/anonymo.env.example. Runbook: ../infra/README.md.
+
+x-anonymo-runtime: &anonymo-runtime
+  # Fail closed: without a reachable guard model every chat call returns 503 floor_unavailable (WS00/WS02).
+  ANONYMO_FLOOR_REQUIRED: "1"
+  ANONYMO_FLOOR_URL: ${ANONYMO_FLOOR_URL:?Set the guard model URL (infra/gpu/docker-compose.guard.yml)}
+  ANONYMO_FLOOR_MODEL: ${ANONYMO_FLOOR_MODEL:?Set the served guard model name}
+  ANONYMO_FLOOR_FORMAT: ${ANONYMO_FLOOR_FORMAT:-llama-guard}
+  ANONYMO_FLOOR_KEY: ${ANONYMO_FLOOR_KEY:?Inject the guard server API key}
+  ANONYMO_FLOOR_TIMEOUT_MS: ${ANONYMO_FLOOR_TIMEOUT_MS:-1500}
+  ANONYMO_REFUSAL_URL: ${ANONYMO_REFUSAL_URL:-}
+  ANONYMO_REFUSAL_MODEL: ${ANONYMO_REFUSAL_MODEL:-refusal-classifier}
+  ANONYMO_REFUSAL_KEY: ${ANONYMO_REFUSAL_KEY:-}
+  ANONYMO_REGION_BLOCKED: ${ANONYMO_REGION_BLOCKED:-}
+  ANONYMO_AGE_VERIFICATION_REGIONS: ${ANONYMO_AGE_VERIFICATION_REGIONS:-}
+  ANONYMO_MEDIA_CLASSIFIER_URL: ${ANONYMO_MEDIA_CLASSIFIER_URL:-}
+  ANONYMO_MEDIA_CLASSIFIER_TOKEN: ${ANONYMO_MEDIA_CLASSIFIER_TOKEN:-}
+  ANONYMO_COMFY_URL: ${ANONYMO_COMFY_URL:-}
+  ANONYMO_COMFY_TOKEN: ${ANONYMO_COMFY_TOKEN:-}
+  ANONYMO_WATERMARK_URL: ${ANONYMO_WATERMARK_URL:-}
+  ANONYMO_WATERMARK_TOKEN: ${ANONYMO_WATERMARK_TOKEN:-}
+  ANONYMO_PROVENANCE_KEY: ${ANONYMO_PROVENANCE_KEY:-}
+  ANONYMO_WATERMARK_KEY: ${ANONYMO_WATERMARK_KEY:-}
+  ANONYMO_FEATURE_COUNCIL: ${ANONYMO_FEATURE_COUNCIL:-true}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+services:
+  postgres:
+    image: ${TIMESCALE_IMAGE:?Set a reviewed timescale/timescaledb pg16 image pinned by sha256 digest}
+    # Timescale must be preloaded (the image's init script only does it for a fresh cluster). Telemetry off.
+    # Statement, parameter and connection logging stay off: a log line must never carry request data or a client address.
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=timescaledb
+      - -c
+      - timescaledb.telemetry_level=off
+      - -c
+      - log_connections=off
+      - -c
+      - log_disconnections=off
+      - -c
+      - log_statement=none
+      - -c
+      - log_min_duration_statement=-1
+      - -c
+      - log_parameter_max_length=0
+      - -c
+      - log_parameter_max_length_on_error=0
+
+  # One-shots run the app image too: fail closed there as well, so no path of this image serves without the floor.
+  migrate:
+    environment: { ANONYMO_FLOOR_REQUIRED: "1" }
+  provider-init:
+    environment: { ANONYMO_FLOOR_REQUIRED: "1" }
+
+  router:
+    environment: *anonymo-runtime
+    depends_on:
+      upstreams-init: { condition: service_completed_successfully }
+    # The API is reached only through the edge; no published host port in production.
+    ports: !reset []
+    networks: [storage, egress, front]
+
+  registry-worker:
+    environment: *anonymo-runtime
+  settlement-worker:
+    environment: *anonymo-runtime
+  anchor-worker:
+    environment: *anonymo-runtime
+
+  # One-shot: loads config/upstreams.yaml (tiers, routes, canaries, balance alarms) and stores the upstream keys
+  # encrypted with APP_SECRET. The upstream key file reaches only this container.
+  upstreams-init:
+    image: ${ANONYMO_IMAGE:?Set the reviewed application image pinned by sha256 digest}
+    environment:
+      ANONYMO_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?Inject a nondefault PostgreSQL URL}
+      APP_SECRET: ${APP_SECRET:?Inject the application encryption secret}
+      ANONYMO_FLOOR_REQUIRED: "1"
+    env_file: ["${UPSTREAM_SECRETS_FILE:?Provide a file containing only upstream key variables (VENICE_API_KEY, ...)}"]
+    command: ["bun", "scripts/seed-upstreams.ts", "config/upstreams.yaml"]
+    networks: [storage]
+    depends_on:
+      provider-init: { condition: service_completed_successfully }
+    restart: "no"
+
+  # Anonymo background jobs. Holds no signing key. health-flush persists canary results to the `health` table,
+  # which monitoring reads (gateway/monitoring/anonymo-exporter.ts).
+  # NOTE: src/config.ts must allow these job names for RUNTIME_ROLE=worker (WS01 owns that file; see infra/README.md).
+  anonymo-worker:
+    image: ${ANONYMO_IMAGE:?Set the reviewed application image pinned by sha256 digest}
+    environment:
+      <<: *anonymo-runtime
+      ANONYMO_ENV: production
+      RUNTIME_ROLE: worker
+      WORKERS: "true"
+      WORKER_JOBS: anonymo-canaries,anonymo-balances,anonymo-deposits,anonymo-sanctions,health-flush
+      AUTO_MIGRATE: "false"
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set the HTTPS public origin}
+      DATABASE_URL: ${DATABASE_URL:?Inject a nondefault PostgreSQL URL}
+      REDIS_URL: ${REDIS_URL:?Inject an authenticated Redis URL}
+      APP_SECRET: ${APP_SECRET:?Inject the application encryption secret}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?Inject the operator token}
+      RHC_RPC_URL: ${RHC_RPC_URL:?Set the verified chain RPC}
+      ANONYMO_EVM_CHAINS: ${ANONYMO_EVM_CHAINS:-}
+      ANONYMO_SOLANA: ${ANONYMO_SOLANA:-}
+      ANONYMO_TRON: ${ANONYMO_TRON:-}
+      ANONYMO_BTCPAY: ${ANONYMO_BTCPAY:-}
+      ANONYMO_SANCTIONS_ENABLED: ${ANONYMO_SANCTIONS_ENABLED:-true}
+      ANONYMO_SANCTIONS_LIST_URL: ${ANONYMO_SANCTIONS_LIST_URL:-}
+      ANONYMO_WATCH_EVERY_MS: ${ANONYMO_WATCH_EVERY_MS:-15000}
+    command: ["bun", "src/worker.ts"]
+    networks: [storage, egress]
+    depends_on:
+      upstreams-init: { condition: service_completed_successfully }
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1
+    stop_grace_period: 45s
+    healthcheck: { test: ["CMD", "sh", "scripts/worker-healthcheck.sh"], interval: 30s, timeout: 5s, retries: 3, start_period: 2m }
+
+  dash:
+    image: ${DASH_IMAGE:?Set the reviewed dash image (dash/Dockerfile) pinned by sha256 digest}
+    environment:
+      NODE_ENV: production
+    networks: [front]
+    restart: unless-stopped
+    tmpfs: ["/tmp"]
+    mem_limit: 512m
+    cpus: 1
+    healthcheck: { test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"], interval: 30s, timeout: 5s, retries: 3, start_period: 30s }
+
+  # TLS edge. Passes on only a 2-letter country code (from the CDN's header, which the edge trusts because it accepts
+  # connections only from the CDN), drops every client address header and writes no access log.
+  edge:
+    image: ${CADDY_IMAGE:?Set a reviewed caddy image pinned by sha256 digest}
+    environment:
+      ANONYMO_API_HOST: ${ANONYMO_API_HOST:?Set the public API host name}
+      ANONYMO_DASH_HOST: ${ANONYMO_DASH_HOST:?Set the public dashboard host name}
+      EDGE_COUNTRY_HEADER: ${EDGE_COUNTRY_HEADER:-CF-IPCountry}
+    volumes:
+      - ./deploy/anonymo/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    ports: ["443:443", "80:80"]
+    networks: [front]
+    depends_on:
+      router: { condition: service_started }
+      dash: { condition: service_started }
+    restart: unless-stopped
+    read_only: true
+    tmpfs: ["/tmp"]
+    mem_limit: 256m
+    cpus: 1
+
+  # Operator one-shot, never started by `up`:
+  #   docker compose -f docker-compose.yml -f docker-compose.anonymo.yml --profile ops run --rm timescale-ops
+  # Turns the request log into a Timescale hypertable with 30-day retention. Idempotent; take a backup first.
+  timescale-ops:
+    profiles: [ops]
+    image: ${TIMESCALE_IMAGE:?Set a reviewed timescale/timescaledb pg16 image pinned by sha256 digest}
+    entrypoint: ["sh", "-ec"]
+    command: ["exec psql \"$$MIGRATION_DATABASE_URL\" -X -v ON_ERROR_STOP=1 -v retention_days=$${RETENTION_DAYS:-30} -f /run/anonymo/requests-hypertable.sql"]
+    environment:
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?Inject the separate PostgreSQL migration-role URL}
+      RETENTION_DAYS: ${REQUESTS_RETENTION_DAYS:-30}
+    volumes: ["./deploy/timescale/requests-hypertable.sql:/run/anonymo/requests-hypertable.sql:ro"]
+    networks: [storage]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: "no"
+
+networks:
+  front: {}
+
+volumes:
+  caddydata: {}
+  caddyconfig: {}

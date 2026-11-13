@@ -10,8 +10,9 @@ services:
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/alerts.yml:/etc/prometheus/anonymo-alerts.yml:ro
+      - ./monitoring/anonymo-alerts.yml:/etc/prometheus/anonymo-alerts.yml:ro
       - prometheusdata:/prometheus
-    networks: [egress]
+    networks: [egress, front]
     ports: ["127.0.0.1:9090:9090"]
     depends_on:
       alertmanager: { condition: service_started }
@@ -30,9 +31,27 @@ services:
     restart: unless-stopped
     mem_limit: 256m
     cpus: 0.5
+  # Anonymo signals for monitoring/anonymo-alerts.yml. Read-only database role (deploy/anonymo/monitor-role.sql) and one
+  # GET /models per guard server per scrape; it never reads prompt text, keys or addresses.
+  anonymo-exporter:
+    image: ${ANONYMO_IMAGE:?Set the reviewed application image pinned by sha256 digest}
+    command: ["bun", "monitoring/anonymo-exporter.ts"]
+    environment:
+      EXPORTER_DATABASE_URL: ${EXPORTER_DATABASE_URL:?Inject the read-only anonymo_monitor database URL}
+      ANONYMO_FLOOR_URL: ${ANONYMO_FLOOR_URL:-}
+      ANONYMO_FLOOR_KEY: ${ANONYMO_FLOOR_KEY:-}
+      ANONYMO_REFUSAL_URL: ${ANONYMO_REFUSAL_URL:-}
+      ANONYMO_REFUSAL_KEY: ${ANONYMO_REFUSAL_KEY:-}
+    networks: [storage, egress]
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.25
 secrets:
   alert_webhook_url:
     file: ${ALERT_WEBHOOK_URL_FILE:?Provide a file containing only the on-call webhook URL}
+networks:
+  # Also defined by docker-compose.anonymo.yml (the edge's network); declared here so this overlay validates on the base file alone.
+  front: {}
 volumes:
   prometheusdata: {}
   alertmanagerdata: {}
