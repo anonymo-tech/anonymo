@@ -74,3 +74,53 @@ export async function singleCallReceipt(
   const charged = o.attempts.reduce((s, a) => s + a.charged, 0n);
   return issueAnonymoReceipt(ctx, buildAnonymoReceipt({ requestId: o.requestId, modelId: o.modelId, routes, charged, refused: o.refused, sealed: o.sealed }));
 }
+
+// ---- Wiring for api/chat.ts (single calls) -------------------------------------------------------------------------
+
+/** A sealed request is served on the attested lane (attested retention, fresh attestation), never on the public one. */
+export function sealedLane<D extends { max: string; lane: string }>(sealed: boolean, disc: D): D {
+  return sealed && disc.lane === "public" ? { ...disc, max: "none", lane: "attested" } : disc;
+}
+
+/**
+ * Selection for a sealed request: a lane refusal becomes 409 sealed_unavailable, and only attested, fresh routes are
+ * kept (409 when none is left). Not sealed: the selection unchanged.
+ */
+export function sealedSelection<T extends { targets: RouteTarget[] }>(ctx: Ctx, sealed: boolean, plan: () => T): T {
+  if (!sealed) return plan();
+  let sel: T;
+  try {
+    sel = plan();
+  } catch (e) {
+    throw asSealedError(e);
+  }
+  return { ...sel, targets: sealedTargets(ctx, sel.targets) };
+}
+
+/**
+ * The Anonymo receipt for a finished single call: every refused attempt (billed 0), then the route that served it with
+ * what it was charged. Returns the signed receipt, its `x-anonymo-receipt` header value and the body field.
+ */
+export async function receiptForCall(
+  ctx: Ctx,
+  o: {
+    r: { candidate: Candidate; model: ModelRow; refusal?: { refused: { candidate: Candidate; model: ModelRow }[]; served: "answer" | "refused" } };
+    fin: { id: string; charged: Pico; usageJson: { prompt_tokens: number; completion_tokens: number } };
+    modelId: string;
+    sealed: boolean;
+  },
+) {
+  const servedRefused = o.r.refusal?.served === "refused";
+  const before = (o.r.refusal?.refused ?? []).slice(0, servedRefused ? -1 : undefined);
+  const receipt = await singleCallReceipt(ctx, {
+    requestId: o.fin.id,
+    modelId: o.modelId,
+    sealed: o.sealed,
+    refused: servedRefused,
+    attempts: [
+      ...before.map((a) => ({ candidate: a.candidate, model: a.model, status: "refused" as const, tokens: { in: 0, out: 0 }, charged: 0n })),
+      { candidate: o.r.candidate, model: o.r.model, status: servedRefused ? ("refused" as const) : ("ok" as const), tokens: { in: o.fin.usageJson.prompt_tokens, out: o.fin.usageJson.completion_tokens }, charged: o.fin.charged, callReceiptId: o.fin.id },
+    ],
+  });
+  return { header: { [RECEIPT_HEADER]: receipt.header }, body: { payload: receipt.payload, sig: receipt.sig, key_id: receipt.key_id, alg: receipt.alg, leaf: receipt.leaf }, header_value: receipt.header };
+}

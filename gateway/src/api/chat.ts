@@ -47,6 +47,7 @@ import { paymentHeaderOf, x402ResponseHeaders } from "../pay/x402.ts";
 import { holderTier, scaleLimit, walletOfAccount } from "../holders/tiers.ts";
 import type { HolderTier } from "../config.ts";
 import { COUNCIL_MODEL, applyDualDecoding, runCouncil, runDual, validateMulti } from "./council.ts";
+import { receiptForCall, sealedForRequest, sealedLane, sealedSelection } from "../anonymo/trust/hooks.ts"; // WS09
 import { gatewayOrigin } from "../ohttp/origin.ts";
 import { requestLane } from "../ohttp/lane.ts";
 import { blockReasonForStatus, isPrivateLaneRequest, noteLane, recordPrivateLane } from "../services/private-stats.ts";
@@ -309,7 +310,9 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   // Checked before anything is priced or spent (ohttp/lane.ts).
   await applyRouteDefault(ctx, c, body, key, { params: requestParams(body) }); // U101: the key's default privacy route, only when the request names no lane
   const { disclosure: _wantDisclosure, lane: _wantLane, lane_downgrade: _wantDowngrade, ...basePrefs } = (body.provider ?? {}) as ProviderPrefs & { lane_downgrade?: unknown };
-  const disc = requestLane(ctx, c, (body.provider ?? {}) as Record<string, unknown>, { hasKey: !!key, hasWallet: !!wallet || (!key && !pass && !!paymentHeaderOf(c)), hasToken: !!pass });
+  // Sealed (WS09): `anonymo-sealed`, `x-anonymo-sealed: required` or a sealed_only key runs on the attested lane only.
+  const sealed = sealedForRequest(ctx, c, key, body);
+  const disc = sealedLane(sealed, requestLane(ctx, c, (body.provider ?? {}) as Record<string, unknown>, { hasKey: !!key, hasWallet: !!wallet || (!key && !pass && !!paymentHeaderOf(c)), hasToken: !!pass }));
   // Private-lane traffic (and `:private`, stored as private) is published only through noisy hourly counters.
   noteLane(c.req.raw, disc.lane !== "public" ? disc.lane : (body.provider as ProviderPrefs | undefined)?.private === true || String(body.model ?? "").includes(":private") ? "attested" : "public");
   decisionTagOf(ctx.cfg.decisionTagsEnabled, c, disc.lane); // B: a malformed tag is refused before anything is priced or spent.
@@ -403,7 +406,10 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   if (body.verify != null) applyDualDecoding(body); // temperature 0 and a fixed seed, before parameter support is checked
   const params = requestParams(body);
   const alternatives = { resolved, prefs, params, promptTokens, byok, body, allowed }; // B121
-  const { targets, excluded } = selectWithSuggestions(() => selectTargets(ctx, { resolved, prefs, params, promptTokens, byok, disc }), ctx, alternatives); // B121
+  // Sealed: only attested, fresh routes; otherwise 409 sealed_unavailable before any hold or provider call (WS09).
+  const { targets, excluded } = sealed
+    ? sealedSelection(ctx, true, () => selectTargets(ctx, { resolved, prefs, params, promptTokens, byok, disc }))
+    : selectWithSuggestions(() => selectTargets(ctx, { resolved, prefs, params, promptTokens, byok, disc }), ctx, alternatives); // B121
   if (!targets.length)
     throw addSuggestions(new ApiError(404, "No providers match this request's model and routing preferences.", "no_providers", { excluded: excluded.slice(0, 50) }), ctx, alternatives); // B121
 
@@ -461,7 +467,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   const planned = classes.size === 1 ? [...classes][0] : null;
   // Likewise the policy hash: up front on a stream only when every reachable endpoint attested the same one.
   const plannedPolicy = sharedPolicyHash(attemptable.map(({ cand }) => servedPolicyHash(ctx, cand)));
-  const common = { ctx, c, body, billing, holdId, t0, bodySha, stream, kind, byok, meta, guardCfg, promptTokens, tier, disc, planned, plannedPolicy, unavailable: (attempts: Attempt[], last?: Parameters<typeof allFailed>[1]) => availabilityFailure(() => allFailed(attempts, last), ctx, alternatives, attempts) }; // B121
+  const common = { ctx, c, body, billing, holdId, t0, bodySha, stream, kind, byok, meta, guardCfg, promptTokens, tier, disc, planned, plannedPolicy, sealed, unavailable: (attempts: Attempt[], last?: Parameters<typeof allFailed>[1]) => availabilityFailure(() => allFailed(attempts, last), ctx, alternatives, attempts) }; // B121
 
   if (stream) return explainedStream(ctx.cfg.routeExplain, () => route({ appSecret: ctx.cfg.appSecret, targets, path, body, stream: true, keyFor, signal: abort.signal, health: ctx.health, maxAttempts: ctx.cfg.routing.maxAttempts, timeoutMs: ctx.cfg.routing.providerTimeoutMs, firstTokenTimeoutMs: ctx.cfg.routing.firstTokenTimeoutMs, production: ctx.cfg.production, caller: sha256(billing.accountId).slice(0, 16), refusal }), (run, routeHeaders) => streamResponse({ ...common, run, routeHeaders, abort })); // V84
 
@@ -490,6 +496,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
     const err = unattestedUpstream(upstreamAttestation);
     return c.json({ ...err.toJSON(), id: fin.id, usage: fin.usageJson, receipt: fin.receiptJson }, 502, { ...generationHeaders(fin.id, disc.lane, fin.policyHash), ...routeResponseHeaders(ctx.cfg.routeExplain, r), "x-anonymo-disclosure": fin.disclosure, ...paymentHeaders(billing) });
   }
+  const anon = await receiptForCall(ctx, { r, fin, modelId: String(body.model ?? r.model.id), sealed }); // WS09
   const out = {
     ...json,
     id: fin.id,
@@ -498,10 +505,11 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
     object: kind === "chat" ? "chat.completion" : "text_completion",
     usage: fin.usageJson,
     receipt: fin.receiptJson,
+    anonymo_receipt: anon.body,
     ...(fin.extras(redactions) ?? {}),
   };
   if (cacheMode && !stream && r.refusal?.served !== "refused") await ctx.cache.put(cacheMode, cacheScope, body, out, fin.upstream, (body.cache as { ttl?: number } | undefined)?.ttl ?? ctx.cfg.gateway.cacheTtlS);
-  return c.json(out, 200, { ...generationHeaders(fin.id, disc.lane, fin.policyHash), ...routeResponseHeaders(ctx.cfg.routeExplain, r), "x-anonymo-disclosure": fin.disclosure, ...paymentHeaders(billing), ...refusalHeaders(r) });
+  return c.json(out, 200, { ...generationHeaders(fin.id, disc.lane, fin.policyHash), ...routeResponseHeaders(ctx.cfg.routeExplain, r), "x-anonymo-disclosure": fin.disclosure, ...paymentHeaders(billing), ...refusalHeaders(r), ...anon.header });
 }
 
 function allFailed(attempts: Attempt[], last?: { status?: number; errorKind: string; message: string }): ApiError {
@@ -564,6 +572,8 @@ export function unattestedUpstream(ua: UpstreamAttestation): ApiError {
 
 export type Common = {
   ctx: Ctx;
+  /** WS09: the request is sealed (attested routes only); its Anonymo receipt carries the enclave quote hash. */
+  sealed?: boolean;
   c: Context;
   body: Record<string, unknown>;
   billing: Billing;
@@ -998,7 +1008,9 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
         // The refusal goes out before the receipt is signed, so the chain covers it too.
         if (refused) chained({ ...unattestedUpstream(upstreamAttestation!).toJSON(), id: p.holdId });
         const fin = await finalize({ ...p, r, usage, responseText: text, finishReason: finish ?? (cancelled ? "cancelled" : midError ? "error" : null), nativeFinish, generationMs: Date.now() - p.t0, cancelled, upstreamAttestation, chainHead: chain.head, delivered: { completion: Math.ceil((text.length + toolText.length) / 4) + reasoningEst, reasoning: reasoningEst } /* V6 R */ });
-        event({ ...base, choices: [], usage: fin.usageJson, receipt: fin.receiptJson, ...(fin.extras(0) ?? {}) });
+        // WS09: a stream's headers are already sent, so its Anonymo receipt (and the header form) ride in the final event.
+        const anon = await receiptForCall(ctx, { r, fin, modelId: String(p.body.model ?? r.model.id), sealed: p.sealed === true });
+        event({ ...base, choices: [], usage: fin.usageJson, receipt: fin.receiptJson, anonymo_receipt: { ...anon.body, header: anon.header_value }, ...(fin.extras(0) ?? {}) });
       } catch (e) {
         clearInterval(holdKeepalive);
         log.error("stream finalize failed", { error: (e as Error).message, hold: p.holdId });
