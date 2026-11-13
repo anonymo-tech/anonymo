@@ -12,7 +12,11 @@ names below still work **for this release only** and are removed in the next one
 | Request option `anonymo: { json_check }` (chat body and presets) | `anonymo: { json_check }` | Read as `anonymo`. |
 | `/.well-known/anonymo-receipt-keys.json` | `/.well-known/anonymo-receipt-keys.json` | Same document on both paths. |
 | Client SDK `Anonymo`, `AnonymoError`, `AnonymoMeta`, `result.anonymo` | `Anonymo`, `AnonymoError`, `AnonymoMeta`, `result.anonymo` | Deprecated aliases of the new names. |
-| Model id `anonymo/council` | `anonymo-council` | Alias for the explicit-members council (WS09). |
+| X-Wallet-Auth signed message `anonymo:<ts>:<bodySha>` | `anonymo:<ts>:<bodySha>` | Either signature verifies; one timestamp and body authorize one call whichever prefix signed it. |
+| Creator-claim proof file `anonymo.json` | `anonymo.json` | Read when `anonymo.json` is missing. |
+| Day-zero claim file `anonymo-claim.txt` | `anonymo-claim.txt` (`LANE_CLAIM_FILE`) | Read when the new file is missing (default file name only). New challenges start `anonymo-claim-`; challenges already issued keep their text. |
+| Facilitator listing EIP-712 domain `Anonymo Facilitator` | `Anonymo Facilitator` | Listings signed under the old domain are accepted (they are checked only when submitted). |
+| Stream chain comment `: anonymo-chain <i> <hex>` | `: anonymo-chain <i> <hex>` | The router sends the new label; the client SDK reads both. The label is not part of the chain. |
 
 ## Renamed without an alias
 
@@ -26,6 +30,8 @@ These are only ever sent by the router, so there is nothing to alias:
 - Streams send `: ANONYMO PROCESSING` keep-alive comments.
 - Tracing exports use `anonymo.*` attributes and service name `anonymo`; Helicone properties are `Anonymo-*`.
 - New API keys start with `anm_live_`. Keys that start with `sk-ar-v1-` keep working: the secret derivation is unchanged.
+- The model id `anonymo/council` is retired: it answers 404 `model_not_found` with a message naming `anonymo-council`,
+  which takes `council.models`, `council.judge` and `council.mode` for an explicit council.
 - The client package is `@anonymo/client`; the Vercel AI SDK provider is `@anonymo/ai-sdk-provider` (export `anonymo`).
 - Operators: the Prometheus metrics are `anonymo_ready`, `anonymo_readiness_check`, `anonymo_readiness_warning` and
   `anonymo_chain_*`; scrape jobs `anonymo` and `anonymo-chain`; alerts `Anonymo*` (for example `AnonymoNotReady`). The
@@ -35,13 +41,12 @@ These are only ever sent by the router, so there is nothing to alias:
 
 Changing these would invalidate keys, signatures or stored data, or break deployed components:
 
-- Cryptographic domain strings: the key derivation (`anonymo-key-v1:`), the response-cache key (`anonymo:aes:`), the
-  wallet-auth and x402 recovery messages, the character-card HKDF/AES-GCM labels, and the EIP-712 domains
-  `Anonymo Credits` and `Anonymo Facilitator` (bound to deployed contracts).
+- Cryptographic domain strings: the key derivation (`anonymo-key-v1:`, every existing key depends on it), the
+  response-cache key (`anonymo:aes:`), the x402 recovery message, the character-card HKDF/AES-GCM labels (dash uses
+  the same ones), and the EIP-712 domain `Anonymo Credits` (compiled into the deployed Anonymo Credits contract,
+  which this repository no longer contains, so nothing here could change it in step).
 - Signed document types (`anonymo.statement.v1`, `anonymo.lane-report.v1`, `anonymo.data-inventory/1`,
-  `anonymo.measurement.bundle`, `anonymo.deployments/v1`) and the receipt-chain stream comment `: anonymo-chain`.
-- Creator claims already published in model repositories: the `anonymo.json` proof file, the `anonymo-claim.txt`
-  challenge file and its `anonymo-claim-…` challenge prefix.
+  `anonymo.measurement.bundle`, `anonymo.deployments/v1`): verifiers check these exact strings.
 - The attested-host sidecar protocol (`anonymo.sidecar.*` report types, its `x-anonymo-receipt*` response headers,
   the `attest.anonymo` certificate name).
 - Operator internals that hold state: database role names (`anonymo_runtime`), BullMQ queue names, the backup object

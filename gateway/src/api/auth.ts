@@ -116,14 +116,20 @@ async function firstUse(ctx: Ctx, id: string) {
   if (seen.size > 50_000) for (const [k, t] of seen) if (Date.now() - t > 600_000) seen.delete(k);
   return true;
 }
+/** X-Wallet-Auth signs `${WALLET_AUTH_PREFIX}:<unixSeconds>:<sha256 of the body>` (EIP-191 personal_sign). */
+export const WALLET_AUTH_PREFIX = "anonymo";
+const LEGACY_WALLET_AUTH_PREFIX = "anonymo";
 export async function walletAuth(ctx: Ctx, header: string, bodySha: string) {
   const [address, ts, sig] = header.split(":");
   if (!/^0x[0-9a-fA-F]{40}$/.test(address ?? "") || !/^\d+$/.test(ts ?? "") || !/^0x[0-9a-fA-F]+$/.test(sig ?? ""))
     fail(401, "X-Wallet-Auth must be <address>:<unixSeconds>:<signature>.", "invalid_wallet_auth");
   const age = Math.abs(Date.now() / 1000 - Number(ts));
   if (age > 300) fail(401, "X-Wallet-Auth timestamp is outside the 5-minute window.", "invalid_wallet_auth");
-  const recovered = await recoverMessageAddress({ message: `anonymo:${ts}:${bodySha}`, signature: sig as Hex }).catch(() => null);
-  if (!recovered || recovered.toLowerCase() !== address!.toLowerCase()) fail(401, "X-Wallet-Auth signature does not match the address.", "invalid_wallet_auth");
+  // The signed message is `anonymo:<ts>:<bodySha>`; `anonymo:` (before the WS01 rename) is accepted for one release.
+  // Either way the replay guard below is keyed on address, timestamp and body, so one signature is usable once.
+  const signer = async (prefix: string) => (await recoverMessageAddress({ message: `${prefix}:${ts}:${bodySha}`, signature: sig as Hex }).catch(() => null))?.toLowerCase();
+  const matches = async (prefix: string) => (await signer(prefix)) === address!.toLowerCase();
+  if (!(await matches(WALLET_AUTH_PREFIX)) && !(await matches(LEGACY_WALLET_AUTH_PREFIX))) fail(401, "X-Wallet-Auth signature does not match the address.", "invalid_wallet_auth");
   if (!(await firstUse(ctx, sha256(`${address!.toLowerCase()}|${ts}|${bodySha}`)))) fail(401, "X-Wallet-Auth signature was already used.", "invalid_wallet_auth");
   const accountId = walletAccountId(address!);
   const [acct] = await ctx.db.select().from(accounts).where(eq(accounts.id, accountId));

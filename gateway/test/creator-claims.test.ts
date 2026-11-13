@@ -185,6 +185,12 @@ describe("verifying it", () => {
     publish(MODEL.hf, `${mine.challenge}\n${theirs.challenge}\n`);
     expect((await verify(theirs.id)).status).toBe(200); // whoever controls the repository decides who is paid
     expect((await modelRow()).creator).toBe(BOB);
+    // A challenge file under the pre-rebrand name anonymo-claim.txt still verifies (WS01, one release).
+    delete hub.files[`${MODEL.hf}@main:anonymo-claim.txt`];
+    publish(MODEL.hf, `${mine.challenge}\n`, "anonymo-claim.txt");
+    expect((await verify(mine.id)).status).toBe(200);
+    expect((await modelRow()).creator).toBe(ALICE);
+    delete hub.files[`${MODEL.hf}@main:anonymo-claim.txt`];
   });
 
   test("a claim expires, and a changed weights source invalidates it", async () => {

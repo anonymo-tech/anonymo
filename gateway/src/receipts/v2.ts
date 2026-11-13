@@ -76,9 +76,10 @@ export function chainOf(rid: string, chunks: string[]): { steps: string[]; head:
   return { steps, head: ch.head };
 }
 
-/** The SSE comment line that carries c_i right after the i-th chained event. */
+/** The SSE comment line that carries c_i right after the i-th chained event. Only `i` and the hex value are chained. */
 export const chainComment = (i: number, hex: string) => `: anonymo-chain ${i} ${hex}\n\n`;
-export const CHAIN_COMMENT = /^: anonymo-chain (\d+) ([0-9a-f]{64})$/;
+/** Reads the comment, and the pre-rebrand `: anonymo-chain` label from routers before WS01 (one release). */
+export const CHAIN_COMMENT = /^: (?:anonymo|anonymo)-chain (\d+) ([0-9a-f]{64})$/;
 
 // ---- COSE_Sign1 -------------------------------------------------------------------------------------------------
 

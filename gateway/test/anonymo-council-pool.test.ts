@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { startRouter, type Harness } from "./helpers.ts";
-import { COUNCIL_MODEL, LEGACY_COUNCIL_MODEL, familyGroups } from "../src/router/council.ts";
+import { COUNCIL_MODEL, RETIRED_COUNCIL_MODEL, familyGroups } from "../src/router/council.ts";
 import { parseReceiptHeader } from "../src/receipts/anonymo.ts";
 
 // WS04 registers `anonymo-council` as a catalog model whose routes span several families (its offers carry `family`).
@@ -23,9 +23,9 @@ describe("family groups", () => {
     ]);
     expect(familyGroups([], () => "x")).toEqual([]);
   });
-  test("anonymo-council is the dispatch id; the older id is an alias", () => {
+  test("anonymo-council is the dispatch id; the Anonymo id is retired", () => {
     expect(COUNCIL_MODEL).toBe("anonymo-council");
-    expect(LEGACY_COUNCIL_MODEL).toBe("anonymo/council");
+    expect(RETIRED_COUNCIL_MODEL).toBe("anonymo/council");
   });
 });
 
@@ -70,15 +70,15 @@ describe("council over WS04's anonymo-council route pool", () => {
     expect(((await r.json()) as any).error.type).toBe("council_unavailable");
   });
 
-  test("the older anonymo/council id still runs the explicit-members council", async () => {
-    await tagFamilies();
+  test("the retired anonymo/council id is a 404 that names anonymo-council", async () => {
     const r = await h.request("/v1/chat/completions", {
       method: "POST",
       headers: auth,
-      json: { model: LEGACY_COUNCIL_MODEL, messages: [{ role: "user", content: "hello" }], max_tokens: 50, council: { models: ["anonymo-council", "anonymo-council:nitro"], judge: "anonymo-council" } },
+      json: { model: RETIRED_COUNCIL_MODEL, messages: [{ role: "user", content: "hello" }], max_tokens: 50, council: { models: ["acme/a", "acme/b"], judge: "acme/j" } }
     });
-    // The legacy council refuses to include the council id itself: what matters is that it is the legacy parser answering.
-    expect(r.status).toBe(400);
-    expect(((await r.json()) as any).error.type).toBe("invalid_council");
+    expect(r.status).toBe(404);
+    const err = ((await r.json()) as any).error;
+    expect(err.type).toBe("model_not_found");
+    expect(err.message).toContain("anonymo-council");
   });
 });

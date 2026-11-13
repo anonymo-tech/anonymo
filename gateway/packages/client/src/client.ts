@@ -274,7 +274,7 @@ export class ChatStream implements AsyncIterable<Record<string, unknown>> {
           if (cut < 0) break;
           const block = buf.slice(0, cut);
           buf = buf.slice(cut).replace(/^\r?\n\r?\n/, "");
-          const link = /^: anonymo-chain (\d+) ([0-9a-f]{64})$/m.exec(block);
+          const link = /^: (?:anonymo|anonymo)-chain (\d+) ([0-9a-f]{64})$/m.exec(block); // `anonymo-chain`: routers before the rebrand
           if (link && Number(link[1]) === this.chained.length && this.chained.length) this.chained[this.chained.length - 1].chain = link[2];
           const data = block
             .split(/\r?\n/)

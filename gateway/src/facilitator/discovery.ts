@@ -22,7 +22,11 @@ export const LISTING_TYPES = {
     { name: "issuedAt", type: "uint256" },
   ],
 } as const;
-export const listingDomain = (chainId: number) => ({ name: "Anonymo Facilitator", version: "1", chainId });
+export const listingDomain = (chainId: number, name = LISTING_DOMAIN_NAME) => ({ name, version: "1", chainId });
+/** The EIP-712 domain name sellers sign listings under (published at GET /facilitator/discovery/resources). */
+export const LISTING_DOMAIN_NAME = "Anonymo Facilitator";
+/** The pre-rebrand domain name (WS01), accepted for one release. Listings are only checked when submitted, never re-verified from storage. */
+export const LEGACY_LISTING_DOMAIN_NAME = "Anonymo Facilitator";
 
 /** How long a listing signature stays acceptable around its issuedAt (seconds). */
 export const LISTING_SKEW_S = 600;
@@ -66,8 +70,8 @@ export function parseListing(ctx: Pick<Ctx, "cfg">, b: Record<string, unknown>):
 }
 
 /** The EIP-712 message a seller signs for a listing. */
-export const listingTypedData = (chainId: number, l: Omit<Listing, "signature">) => ({
-  domain: listingDomain(chainId),
+export const listingTypedData = (chainId: number, l: Omit<Listing, "signature">, domainName = LISTING_DOMAIN_NAME) => ({
+  domain: listingDomain(chainId, domainName),
   types: LISTING_TYPES,
   primaryType: "SellerListing" as const,
   message: { payTo: getAddress(l.payTo), resource: l.resource, priceHint: l.priceHint, outputSchema: l.outputSchema, tags: l.tags, listed: l.listed, issuedAt: l.issuedAt },
@@ -78,7 +82,8 @@ export async function upsertListing(ctx: Ctx, l: Listing) {
   const now = Math.floor(Date.now() / 1000);
   if (l.issuedAt > BigInt(now + LISTING_SKEW_S) || l.issuedAt < BigInt(now - LISTING_SKEW_S)) fail(400, `issuedAt must be within ${LISTING_SKEW_S} seconds of now.`, "invalid_listing");
   const { signature, ...unsigned } = l;
-  if (!(await ctx.chain.verifyWalletSignature(l.payTo, listingTypedData(ctx.cfg.chain.id, unsigned) as never, signature))) fail(401, "The listing is not signed by its payTo key.", "invalid_listing_signature");
+  const signedUnder = async (name: string) => ctx.chain.verifyWalletSignature(l.payTo, listingTypedData(ctx.cfg.chain.id, unsigned, name) as never, signature);
+  if (!(await signedUnder(LISTING_DOMAIN_NAME)) && !(await signedUnder(LEGACY_LISTING_DOMAIN_NAME))) fail(401, "The listing is not signed by its payTo key.", "invalid_listing_signature");
   // Screening covers listings only: the facilitator holds no funds, so payers are not screened.
   if (l.listed && ctx.cfg.sanctions.enabled) {
     // The same OFAC list the deposit watchers screen senders against (anonymo/deposits/sanctions.ts). No list: fail closed.

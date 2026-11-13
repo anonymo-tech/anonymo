@@ -202,9 +202,9 @@ describe("hosted x402 facilitator (eip155:4663)", () => {
 
   // ---- listings and discovery -----------------------------------------------------------------------------------
 
-  const listing = async (account: PrivateKeyAccount, o: { resource?: string; priceHint?: string; outputSchema?: string; tags?: string[]; listed?: boolean; issuedAt?: number; signer?: PrivateKeyAccount; payTo?: Hex } = {}) => {
+  const listing = async (account: PrivateKeyAccount, o: { resource?: string; priceHint?: string; outputSchema?: string; tags?: string[]; listed?: boolean; issuedAt?: number; signer?: PrivateKeyAccount; payTo?: Hex; domainName?: string } = {}) => {
     const message = { payTo: o.payTo ?? account.address, resource: o.resource ?? `https://seller-${randomBytes(4).toString("hex")}.example/api`, priceHint: BigInt(o.priceHint ?? "20000"), outputSchema: o.outputSchema ?? JSON.stringify({ type: "object", properties: { price: { type: "number" } } }), tags: o.tags ?? ["prices", "stocks"], listed: o.listed ?? true, issuedAt: BigInt(o.issuedAt ?? Number(now())) };
-    const signature = await (o.signer ?? account).signTypedData({ domain: listingDomain(4663), types: LISTING_TYPES, primaryType: "SellerListing", message });
+    const signature = await (o.signer ?? account).signTypedData({ domain: listingDomain(4663, o.domainName), types: LISTING_TYPES, primaryType: "SellerListing", message });
     return { ...message, priceHint: String(message.priceHint), issuedAt: Number(message.issuedAt), signature };
   };
 
@@ -222,6 +222,9 @@ describe("hosted x402 facilitator (eip155:4663)", () => {
     const v1 = await (await h.request(`/facilitator/discovery/resources?type=http&x402Version=1`)).json();
     expect(v1.items.find((i: { resource: string }) => i.resource === body.resource).accepts[0]).toMatchObject({ maxAmountRequired: "20000", resource: body.resource, outputSchema: { type: "object" } });
     expect((await (await h.request(`/facilitator/discovery/resources?network=eip155:1`)).json()).items).toEqual([]);
+    // WS01: a listing signed under the pre-rebrand domain "Anonymo Facilitator" is accepted for one release; another name is not.
+    expect((await post("/facilitator/sellers", await listing(seller(), { domainName: "Anonymo Facilitator" }))).status).toBe(201);
+    expect((await post("/facilitator/sellers", await listing(seller(), { domainName: "Some Other Facilitator" }))).status).toBe(401);
     // Signed by another key, or changed after signing: refused.
     expect((await post("/facilitator/sellers", await listing(s, { signer: seller() }))).status).toBe(401);
     expect((await post("/facilitator/sellers", { ...(await listing(s)), priceHint: "1" })).status).toBe(401);

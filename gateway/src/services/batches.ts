@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { Ctx } from "../context.ts";
+import { COUNCIL_MODEL, RETIRED_COUNCIL_MODEL } from "../router/council.ts";
 import { batchLines, batches, generations } from "../db/schema.ts";
 import { fail } from "../lib/errors.ts";
 import { type Pico, picoToUsd, usdToPico } from "../lib/money.ts";
@@ -156,7 +157,7 @@ export function parseSubmission(ctx: Ctx, body: Record<string, unknown>): { api:
     if (typeof b.model !== "string" || !b.model) { bad(r.line, "invalid_body", "`body.model` is required."); continue; }
     if (b.stream === true) { bad(r.line, "invalid_body", "Batch lines cannot stream."); continue; }
     if (lineApi === "chat") {
-      if (b.verify != null || b.model === "anonymo/council") { bad(r.line, "invalid_body", "Council mode and dual verification cannot run in a batch."); continue; }
+      if (b.verify != null || b.model === COUNCIL_MODEL || b.model === RETIRED_COUNCIL_MODEL) { bad(r.line, "invalid_body", "Council mode and dual verification cannot run in a batch."); continue; }
       if (!Array.isArray(b.messages) || !b.messages.length) { bad(r.line, "invalid_body", "`body.messages` must be a non-empty array."); continue; }
     } else if (b.input == null) { bad(r.line, "invalid_body", "`body.input` is required."); continue; }
     lines.push({ custom_id: id, url: ENDPOINT[lineApi], body: b });

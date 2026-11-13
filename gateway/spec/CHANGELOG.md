@@ -4,6 +4,10 @@ All notable changes to the SEAL specification. The format follows [Keep a Change
 
 ## [Unreleased]
 
+### Changed
+
+- `0004-receipts.md` Section 4.2: the chain comment is now `: anonymo-chain <i> <hex>` (the label is not chained; clients also accept `: anonymo-chain` from routers before the rename).
+
 ### Added
 
 - `0001-attestation.md` Section 5.4: signed host admission policy schema, canonical bytes, immutable consecutive publication, Ed25519 signatures, `host_policy` key-log entries, fail-closed quote-bound comparisons and probation. Section 3.1.1 clarifies v1 compatibility and v2 field constraints.

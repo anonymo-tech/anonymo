@@ -16,8 +16,8 @@ import type { DisclosureClass } from "./disclosure.ts";
 
 /** The model id chat.ts dispatches to the council (Anonymo, Backend §6). */
 export const COUNCIL_MODEL = "anonymo-council";
-/** The older explicit-members council id, kept as an alias until WS01 retires it. */
-export const LEGACY_COUNCIL_MODEL = "anonymo/council";
+/** The Anonymo council id, retired in WS01: a request that sends it gets a 404 that names COUNCIL_MODEL. */
+export const RETIRED_COUNCIL_MODEL = "anonymo/council";
 export const MIN_MEMBERS = 2;
 export const MAX_MEMBERS = 5;
 /** Decoding seed used by dual verification unless the caller sets `seed`. */
@@ -52,12 +52,12 @@ export function parseCouncilSpec(raw: unknown, defaults: CouncilDefaults): Counc
   const list = (models as string[]).map((m) => m.trim());
   if (list.length < MIN_MEMBERS || list.length > MAX_MEMBERS) bad(`\`council.models\` must list ${MIN_MEMBERS} to ${MAX_MEMBERS} models.`);
   if (new Set(list).size !== list.length) bad("`council.models` must not repeat a model id.");
-  if (list.includes(COUNCIL_MODEL) || list.includes(LEGACY_COUNCIL_MODEL)) bad("A council cannot include itself.");
+  if (list.includes(COUNCIL_MODEL) || list.includes(RETIRED_COUNCIL_MODEL)) bad("A council cannot include itself.");
 
   const judge = c.judge ?? defaults.judge ?? undefined;
   if (judge === undefined) bad("`council.judge` is required (a model id), or configure ANONYMO_COUNCIL_JUDGE.");
   if (typeof judge !== "string" || !judge.trim()) bad("`council.judge` must be a model id.");
-  if ((judge as string).trim() === COUNCIL_MODEL || (judge as string).trim() === LEGACY_COUNCIL_MODEL) bad("A council cannot be its own judge.");
+  if ((judge as string).trim() === COUNCIL_MODEL || (judge as string).trim() === RETIRED_COUNCIL_MODEL) bad("A council cannot be its own judge.");
 
   const mode = c.mode ?? defaults.mode;
   if (mode !== "judge" && mode !== "fuse") bad("`council.mode` must be \"judge\" or \"fuse\".");

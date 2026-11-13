@@ -149,7 +149,8 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
   });
 
   // Creator royalties: prove you control the model's Hugging Face repo by committing
-  // `anonymo.json` = {"creator": "0x…", "royalty_bps": 500} to its main branch, then claim.
+  // `anonymo.json` = {"creator": "0x…", "royalty_bps": 500} to its main branch, then claim. (`anonymo.json`, the
+  // pre-rebrand name, is still read for one release.)
   app.post("/api/v1/creators/claim", async (c) => {
     const v = z.object({ model: z.string(), address: z.string().regex(/^0x[0-9a-fA-F]{40}$/) }).parse(await readJson(c));
     const lim = await ctx.limiter.take(`claim:${v.model}`, 1, 10, 3_600_000);
@@ -159,7 +160,8 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
     if (!m.hfRepo || !/^[\w.-]+\/[\w.-]+$/.test(m.hfRepo)) fail(400, "This model has no Hugging Face repository on record to prove ownership against.", "no_hf_repo");
     let proof: { creator?: string; royalty_bps?: number };
     try {
-      const res = await fetch(`${ctx.cfg.hfBaseUrl}/${m.hfRepo}/raw/main/anonymo.json`, { signal: AbortSignal.timeout(10_000) });
+      let res = await fetch(`${ctx.cfg.hfBaseUrl}/${m.hfRepo}/raw/main/anonymo.json`, { signal: AbortSignal.timeout(10_000) });
+      if (res.status === 404) res = await fetch(`${ctx.cfg.hfBaseUrl}/${m.hfRepo}/raw/main/anonymo.json`, { signal: AbortSignal.timeout(10_000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       proof = (await res.json()) as typeof proof;
     } catch (e) {

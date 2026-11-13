@@ -351,8 +351,9 @@ describe("creator royalty claims (Hugging Face proof) and launch metrics", () =>
   let h: Harness;
   let hf: ReturnType<typeof Bun.serve>;
   let published: Record<string, unknown> | null = null;
+  let proofFile = "anonymo.json";
   beforeAll(async () => {
-    hf = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (req) => (new URL(req.url).pathname === "/acme/llama-ft/raw/main/anonymo.json" && published ? Response.json(published) : new Response("not found", { status: 404 })) });
+    hf = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (req) => (new URL(req.url).pathname === `/acme/llama-ft/raw/main/${proofFile}` && published ? Response.json(published) : new Response("not found", { status: 404 })) });
     h = await startRouter({ env: { HF_BASE_URL: `http://127.0.0.1:${hf.port}` } });
     await h.ctx.db.update(models).set({ hfRepo: "acme/llama-ft" }).where(eq(models.id, LLAMA));
   });
@@ -361,11 +362,13 @@ describe("creator royalty claims (Hugging Face proof) and launch metrics", () =>
     hf.stop(true);
   });
 
-  test("claim requires anonymo.json in the repo naming the address; then royalty applies per call", async () => {
+  test("claim requires anonymo.json (or the older anonymo.json) in the repo naming the address; then royalty applies per call", async () => {
     const creator = "0x00000000000000000000000000000000000C0dE5";
     expect((await h.request("/api/v1/creators/claim", { method: "POST", json: { model: LLAMA, address: creator } })).status).toBe(400);
     published = { creator: "0x0000000000000000000000000000000000000bad" };
+    proofFile = "anonymo.json"; // the pre-rebrand name is still read: it is found, and names someone else
     expect((await h.request("/api/v1/creators/claim", { method: "POST", json: { model: LLAMA, address: creator } })).status).toBe(403);
+    proofFile = "anonymo.json";
     published = { creator, royalty_bps: 300 };
     const ok = await h.request("/api/v1/creators/claim", { method: "POST", json: { model: LLAMA, address: creator } });
     expect(ok.status).toBe(201);

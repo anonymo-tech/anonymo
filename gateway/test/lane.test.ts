@@ -472,28 +472,6 @@ describe("council and dual verification", () => {
   });
   afterAll(async () => c.close());
 
-  test("council members that are restricted variants are served by qualifying providers only", async () => {
-    const vendorBefore = served("vendor");
-    const r = await ask({ model: "anonymo/council", council: { models: [A.slug, B.slug], judge: J.slug } });
-    expect(r.status).toBe(200);
-    const j = await r.json();
-    expect(j.council.members.map((m: any) => [m.model, m.status])).toEqual([[A.slug, "ok"], [B.slug, "ok"]]);
-    for (const m of j.council.members) expect(["enc1", "enc2"]).toContain(m.provider);
-    expect(served("vendor") - vendorBefore).toBe(1); // the judge, an ordinary model, and nothing else
-  });
-
-  test("with no qualifying provider a council is refused before any member is called", async () => {
-    await c.ctx.db.update(providers).set({ classifierEnabled: false }).where(eq(providers.id, "enc1"));
-    await c.ctx.db.update(providers).set({ classifierEnabled: false }).where(eq(providers.id, "enc2"));
-    await c.ctx.catalog.refresh();
-    const before = [served("vendor"), served("enc1"), served("enc2")];
-    const r = await ask({ model: "anonymo/council", council: { models: [A.slug, B.slug], judge: J.slug } });
-    expect(r.status).toBe(404);
-    expect((await r.json()).error.type).toBe("no_providers");
-    expect([served("vendor"), served("enc1"), served("enc2")]).toEqual(before);
-    await attestAll();
-  });
-
   const attestAll = async () => {
     await runAttestor(c.ctx);
     await c.ctx.catalog.refresh();

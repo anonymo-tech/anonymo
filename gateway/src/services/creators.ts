@@ -7,6 +7,10 @@ import { laneClaims, models, modelsLane } from "../db/schema.ts";
 import { fail } from "../lib/errors.ts";
 import * as hf from "./hf.ts";
 
+/** The challenge file a claimant commits (LANE_CLAIM_FILE). `anonymo-claim.txt` is still read for one release (WS01). */
+export const DEFAULT_CLAIM_FILE = "anonymo-claim.txt";
+const LEGACY_CLAIM_FILE = "anonymo-claim.txt";
+
 // Creator royalties for open-weights models. The uploader of a model's weights proves who they are with a
 // challenge:
 //
@@ -122,7 +126,11 @@ export async function verifyClaim(ctx: Ctx, id: string, from: AddressBucket, dep
   let text: string | null;
   try {
     info = await hf.modelInfo(f, ctx.cfg.hfBaseUrl, claim.hfRepo);
-    if (info && !info.private && !info.disabled) text = await hf.repoFile(f, ctx.cfg.hfBaseUrl, claim.hfRepo, "main", file);
+    if (info && !info.private && !info.disabled) {
+      text = await hf.repoFile(f, ctx.cfg.hfBaseUrl, claim.hfRepo, "main", file);
+      // WS01: a file committed under the pre-rebrand name is accepted for one release.
+      if (text == null && file === DEFAULT_CLAIM_FILE) text = await hf.repoFile(f, ctx.cfg.hfBaseUrl, claim.hfRepo, "main", LEGACY_CLAIM_FILE);
+    }
     else text = null;
   } catch (e) {
     fail(502, `Could not read the repository from Hugging Face (${(e as Error).message}). Try again shortly.`, "hf_unavailable");

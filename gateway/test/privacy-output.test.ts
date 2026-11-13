@@ -102,7 +102,6 @@ describe("labels for receipts produced by every current route", () => {
     ["chat", "/api/v1/chat/completions", { model: MODELS.llama.slug, messages: [{ role: "user", content: "hello" }], max_tokens: 30 }],
     ["responses", "/api/v1/responses", { model: MODELS.llama.slug, input: "hello", max_output_tokens: 30 }],
     ["messages", "/v1/messages", { model: MODELS.llama.slug, messages: [{ role: "user", content: "hello" }], max_tokens: 30 }],
-    ["council", "/api/v1/chat/completions", { model: "anonymo/council", messages: [{ role: "user", content: "hello" }], max_tokens: 30, council: { models: [MODELS.llama.slug, MODELS.qwen.slug], judge: MODELS.llama.slug, mode: "fuse" } }],
   ] as const;
   for (const [name, path, json] of routes) test(name, async () => {
     const response = await h.request(path, { method: "POST", headers: auth, json });
@@ -110,8 +109,7 @@ describe("labels for receipts produced by every current route", () => {
     expect(response.status).toBe(200);
     const ids = new Set<string>([response.headers.get("x-receipt-id")!]);
     if (name === "rag") for (const call of body.receipts) ids.add(call.receipt_id);
-    if (name === "council") for (const member of body.receipt.payload.council.members) if (member.receipt_id) ids.add(member.receipt_id);
-    if (name === "rag" || name === "council") expect(ids.size).toBeGreaterThan(1);
+    if (name === "rag") expect(ids.size).toBeGreaterThan(1);
     for (const id of ids) {
       expect(id).toStartWith("gen-");
       const fetched = await h.request(`/api/v1/receipts/${id}`);

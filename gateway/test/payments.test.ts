@@ -92,6 +92,15 @@ describe("HTTP 402 per-call payments", () => {
     expect(r.status).toBe(200);
     expect((await r.json()).receipt.payload.payer).toBe(wallet.address.toLowerCase());
     expect((await h.request("/api/v1/chat/completions", { method: "POST", headers: auth, json: body })).status).toBe(401); // replay
+    // The same timestamp and body signed under the pre-rebrand prefix is the same authorization: also a replay.
+    const legacySame = await wallet.signMessage({ message: `anonymo:${ts}:${requestHash(body)}` });
+    expect((await h.request("/api/v1/chat/completions", { method: "POST", headers: { "x-wallet-auth": `${wallet.address}:${ts}:${legacySame}` }, json: body })).status).toBe(401);
+    // A fresh `anonymo:` signature is still accepted for one release (WS01); any other prefix is not.
+    const ts2 = ts + 1;
+    const other = await wallet.signMessage({ message: `other:${ts2}:${requestHash(body)}` });
+    expect((await h.request("/api/v1/chat/completions", { method: "POST", headers: { "x-wallet-auth": `${wallet.address}:${ts2}:${other}` }, json: body })).status).toBe(401);
+    const legacy = await wallet.signMessage({ message: `anonymo:${ts2}:${requestHash(body)}` });
+    expect((await h.request("/api/v1/chat/completions", { method: "POST", headers: { "x-wallet-auth": `${wallet.address}:${ts2}:${legacy}` }, json: body })).status).toBe(200);
     // Wallet sign-in turns the change into a normal key.
     const challenge = (await (await h.request("/api/v1/auth/wallet/challenge", { method: "POST", json: { address: wallet.address } })).json()).data;
     const k = await (await h.request("/api/v1/auth/wallet", { method: "POST", json: { address: wallet.address, nonce: challenge.nonce, signature: await wallet.signMessage({ message: challenge.message }) } })).json();

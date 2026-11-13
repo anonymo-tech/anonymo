@@ -23,7 +23,6 @@ import {
   judgeMessages,
   labelFor,
   outputText,
-  parseCouncilSpec,
   parseJudgeChoice,
   transcript,
   weakestServed,
@@ -38,7 +37,7 @@ import {
   parseCouncilMode,
   pickProposers,
   type AnonymoCouncilMode,
-  LEGACY_COUNCIL_MODEL,
+  RETIRED_COUNCIL_MODEL,
   familyGroups,
 } from "../router/council.ts";
 import { attestationFresh } from "../router/select.ts";
@@ -50,7 +49,6 @@ import { SEALED_HEADER, assertSealedSeats, candidateState, sealedFilter, sealedR
 import { floorInputOf } from "../anonymo/services.ts";
 import { RECEIPT_HEADER, buildAnonymoReceipt, issueAnonymoReceipt, receiptRoute, type ReceiptRoute } from "../receipts/anonymo.ts";
 import type { KeyRow } from "./auth.ts";
-import { servedDisclosure } from "./disclosure.ts";
 import { generationHeaders, sharedPolicyHash } from "./common.ts";
 import type * as Chat from "./chat.ts";
 
@@ -95,7 +93,7 @@ type Base = {
  * unknown model, and `verify` is refused rather than silently ignored.
  */
 export function validateMulti(ctx: Ctx, kind: Chat.Kind, body: Record<string, unknown>) {
-  normalizeAnonymoCouncil(ctx, body);
+  refuseRetiredCouncil(body);
   const council = ctx.cfg.features.council && body.model === COUNCIL_MODEL;
   const verify = body.verify != null;
   if (verify && !ctx.cfg.features.council) fail(400, "`verify` is not enabled on this router.", "feature_disabled");
@@ -219,18 +217,6 @@ function prepare(leg: Leg, out: Extract<LegResult, { ok: true }>, guardCfg: Guar
 const refOf = (cand: Candidate): AttestationRef | null =>
   attestationRefOf({ id: cand.providerId, teeKind: cand.provider.teeKind, attestationHash: cand.provider.attestationHash, attestedAt: cand.provider.attestedAt, tlsPin: cand.provider.tlsPin });
 
-/** A member or leg receipt row for the `council` / `verification` blocks. */
-const rowOf = (label: string, d: Done, fin: Fin) => ({
-  label,
-  model: d.r.model.id,
-  provider: d.r.candidate.providerId,
-  disclosure: fin.disclosure,
-  receipt_id: fin.id,
-  cost: picoToUsdString(fin.charged),
-  latency_ms: Math.round(d.r.latencyMs),
-  status: "ok" as const,
-});
-
 /** A call's receipt field for its provider's attestation reference: only in attested mode, so other receipts are unchanged. */
 const refPayload = (attested: boolean, cand: Candidate) => {
   const ref = attested ? refOf(cand) : null;
@@ -266,265 +252,9 @@ const firstFinish = (json: any) => ({ finish: json?.choices?.[0]?.finish_reason 
 
 const FREE_TEXT_ONLY = ["tools", "tool_choice", "response_format", "structured_outputs"];
 
-/**
- * chat.ts sends every council request here. `anonymo-council` runs the Anonymo council (Backend §6); the older
- * `anonymo/council` keeps its explicit-members judge/fuse behaviour until WS01 retires it.
- */
+/** chat.ts sends every council request here: `anonymo-council` (Backend §6). */
 export async function runCouncil(tk: Toolkit, p: Base): Promise<Response> {
-  return legacyCouncilBodies.has(p.body) ? runLegacyCouncil(tk, p) : runAnonymoCouncil(tk, p);
-}
-
-async function runLegacyCouncil(tk: Toolkit, p: Base): Promise<Response> {
-  const { ctx, c, kind, body, bodySha, t0, key, wallet } = p;
-  let { prefs, disc } = p;
-  validateMulti(ctx, kind, body);
-  const spec = parseCouncilSpec(body.council, ctx.cfg.council);
-  // Attested council: `council.attested: true` or lane "attested". Either way it is the attested lane for every member and
-  // the judge (retention declared attested, attestation fresh), so a request that only set the flag is held to it here.
-  const attested = spec.attested === true || disc.lane === "attested";
-  if (attested && disc.lane === "public") {
-    disc = { max: "none", lane: "attested" };
-    prefs = { ...prefs, disclosure: "none", lane: "attested" };
-  }
-  if (spec.mode === "fuse")
-    for (const k of FREE_TEXT_ONLY) if (body[k] != null) fail(400, `Fuse mode writes free text, so \`${k}\` is not supported; use council.mode "judge".`, "invalid_council");
-
-  // Every seat must resolve and be allowed for this key before anything is held or sent.
-  await ctx.catalog.ensureFresh();
-  const allowed = new Set(key?.allowedModels ?? []);
-  const seat = (id: string) => {
-    const r = ctx.catalog.resolve(id);
-    if (!r) fail(404, `Council model ${id} is not available. See GET /api/v1/models.`, "model_not_found");
-    if (allowed.size && !allowed.has(r.model.id)) fail(403, `This key may only use: ${[...allowed].join(", ")}.`, "model_not_allowed");
-    return { ...r, requested: id };
-  };
-  const seats = spec.models.map(seat);
-  const judgeSeat = seat(spec.judge);
-
-  const guardCfg = mergeGuardrails(key?.guardrails as GuardrailConfig | null, key ? (body.guardrails as GuardrailConfig | undefined) : undefined);
-  const guard = applyGuardrails(body, guardCfg);
-
-  const { billing: resolvedBilling, paywithNote } = await tk.resolveBilling(ctx, c, key, wallet);
-  let billing = resolvedBilling;
-  const byok = await tk.byokFor(ctx, billing?.accountId);
-  const modeForPrice: Mode = billing?.mode ?? "per_call";
-
-  // ---- Plan: one leg per member, then the judge ------------------------------------------------------
-  const { council: _council, model: _model, ...shared } = body;
-  const promptTokens = estimatePromptTokens(shared);
-  const excludedAll: unknown[] = [];
-  // An attested council never drops or downgrades a seat: a member or the judge with no attested provider refuses the whole
-  // request (the same 409, or 503 while attested providers are down, a single attested request gets), before anything is held.
-  const seatError = (e: unknown, seat: string) => (attested && isApiError(e) && (e.status === 409 || e.status === 503) ? Object.assign(e, { metadata: { ...e.metadata, council_seat: seat } }) : e);
-  const legs: Leg[] = seats.map((s, i) => {
-    const memberBody = { ...shared, model: s.requested };
-    let planned: ReturnType<Toolkit["selectTargets"]>;
-    try {
-      planned = tk.selectTargets(ctx, { resolved: [s], prefs, params: tk.requestParams(memberBody), promptTokens, byok, disc });
-    } catch (e) {
-      throw seatError(e, `member ${labelFor(i)}`);
-    }
-    const { targets, excluded } = planned;
-    if (!targets.length) fail(404, `No providers match council member ${s.requested} under this request's routing preferences.`, "no_providers", { excluded: excluded.slice(0, 50) });
-    excludedAll.push(...excluded.slice(0, 10));
-    return { label: labelFor(i), model: s.model, requested: s.requested, body: memberBody, targets, promptTokens, holdId: genId(), hold: holdFor(ctx, targets, memberBody, promptTokens, modeForPrice, byok) };
-  });
-
-  // The judge reads the conversation and every answer. Its hold assumes each member fills its output cap.
-  const conversation = transcript(shared.messages);
-  const tag = randomBytes(8).toString("hex");
-  const skeleton = judgeMessages(spec.mode, conversation, [], tag);
-  const judgeBase: Record<string, unknown> = {
-    model: spec.judge,
-    ...(spec.mode === "judge" ? { max_tokens: JUDGE_MAX_TOKENS } : Object.fromEntries(["max_tokens", "max_completion_tokens"].filter((k) => body[k] != null).map((k) => [k, body[k]]))),
-    ...(body.user !== undefined ? { user: body.user } : {}),
-    ...(body.provider !== undefined ? { provider: body.provider } : {}),
-  };
-  const skeletonTokens = estimatePromptTokens({ messages: skeleton });
-  let judgePlan: ReturnType<Toolkit["selectTargets"]>;
-  try {
-    judgePlan = tk.selectTargets(ctx, { resolved: [judgeSeat], prefs, params: tk.requestParams(judgeBase), promptTokens: skeletonTokens, byok, disc });
-  } catch (e) {
-    throw seatError(e, "judge");
-  }
-  const { targets: judgeTargets, excluded: judgeExcluded } = judgePlan;
-  if (!judgeTargets.length) fail(404, `No providers match the council judge ${spec.judge} under this request's routing preferences.`, "no_providers", { excluded: judgeExcluded.slice(0, 50) });
-  const answerTokens = legs.reduce((sum, l) => sum + Math.ceil((maxOutFor(ctx, l.targets, l.body, l.promptTokens) * 4) / 3) + 40, 0);
-  const judgeWorstTokens = skeletonTokens + answerTokens;
-  const judgeHoldId = genId();
-  const judgeHold = holdFor(ctx, judgeTargets, { ...judgeBase, messages: skeleton }, judgeWorstTokens, modeForPrice, byok);
-
-  // ---- Budget: the whole council, before anything is sent -------------------------------------------------
-  const total = legs.reduce((sum, l) => sum + l.hold, judgeHold);
-  const cap = spec.maxCostUsd != null ? usdToPico(spec.maxCostUsd, "floor") : null;
-  if (cap != null && total > cap)
-    fail(402, `The worst case for this council is $${picoToUsd(total)}, above council.max_cost_usd of $${spec.maxCostUsd}. Lower max_tokens or use fewer members.`, "council_budget_exceeded", {
-      max_cost_usd: spec.maxCostUsd,
-      worst_case_usd: picoToUsd(total),
-      members: legs.map((l) => ({ label: l.label, model: l.model.id, worst_case_usd: picoToUsd(l.hold) })),
-      judge: { model: judgeSeat.model.id, worst_case_usd: picoToUsd(judgeHold) },
-    });
-
-  if (!billing) {
-    const r = await payPerCall(ctx, c, { pricePico: total, bodySha, modelId: LEGACY_COUNCIL_MODEL });
-    billing = { mode: "per_call", accountId: r.accountId, payer: r.payer, paymentTx: r.txHash, paymentResponse: r.paymentResponse };
-  }
-  if (billing.key?.tpm) await tk.limitOrThrow(ctx, `kt:${billing.key.keyHash}`, legs.reduce((s, l) => s + l.promptTokens, judgeWorstTokens), billing.key.tpm, "tokens");
-  const bill: Chat.Billing = billing;
-
-  await reserveAll(ctx, bill, [...legs, { holdId: judgeHoldId, hold: judgeHold, targets: judgeTargets, body: judgeBase, promptTokens: judgeWorstTokens }], paywithNote, disc.lane);
-  const open = new Set([...legs.map((l) => l.holdId), judgeHoldId]);
-  const abort = new AbortController();
-  c.req.raw.signal?.addEventListener("abort", () => abort.abort(new DOMException("client disconnected", "AbortError")), { once: true });
-  const call = { ctx, kind, billing: bill, byok, signal: abort.signal };
-  const meta = { guard, middle: null, paywithNote, cacheMode: null, excluded: excludedAll, route: null };
-  const budget = (l: { hold: Pico }) => (cap != null ? l.hold : undefined);
-  const common = (leg: Leg, bodySha_: string) => ({ ctx, c, body: leg.body, billing: bill, holdId: leg.holdId, t0, bodySha: bodySha_, stream: false, kind, byok, meta, guardCfg, promptTokens: leg.promptTokens, disc, planned: null });
-
-  try {
-    // ---- Members, concurrently, through the normal routing path ----------------------------------------
-    const outcomes = await Promise.all(legs.map((leg) => callLeg(tk, call, leg)));
-    if (abort.signal.aborted) throw abort.signal.reason;
-
-    const members: Record<string, unknown>[] = [];
-    const memberRefs: Record<string, unknown>[] = [];
-    const answered: { leg: Leg; done: Done }[] = [];
-    const fins: Fin[] = [];
-    let membersCharged = 0n;
-    for (const [i, out] of outcomes.entries()) {
-      const leg = legs[i];
-      if (!out.ok) {
-        open.delete(leg.holdId);
-        await release(ctx.db, leg.holdId);
-        members.push({ label: leg.label, model: leg.model.id, provider: null, receipt_id: null, cost: "0", latency_ms: null, status: "failed", error: reasonOf(tk, out) });
-        continue;
-      }
-      const done = prepare(leg, out, guardCfg);
-      const fin = await tk.finalize({
-        ...common(leg, tk.requestHash(leg.body)),
-        r: done.r,
-        usage: done.usage,
-        responseText: done.text,
-        finishReason: firstFinish(done.json).finish,
-        nativeFinish: firstFinish(done.json).native,
-        generationMs: done.doneAt - t0,
-        cancelled: false,
-        extra: { payload: { council: { role: "member", label: leg.label, mode: spec.mode, parent: judgeHoldId }, ...refPayload(attested, done.r.candidate) }, budget: budget(leg) },
-      });
-      open.delete(leg.holdId);
-      fins.push(fin);
-      membersCharged += fin.charged;
-      members.push(rowOf(leg.label, done, fin));
-      const memberRef = attested ? refOf(done.r.candidate) : null;
-      if (memberRef) memberRefs.push({ role: "member", label: leg.label, receipt_id: fin.id, ...memberRef });
-      answered.push({ leg, done });
-    }
-    const failureMeta = () => ({ members, members_cost_usd: picoToUsd(membersCharged), receipts: fins.map((f) => f.id) });
-
-    if (answered.length < spec.minMembers)
-      throw new ApiError(502, `Only ${answered.length} of ${legs.length} council members answered (${spec.minMembers} needed). Members that answered were billed; their receipts are listed.`, "council_quorum", { needed: spec.minMembers, ...failureMeta() });
-
-    // ---- The judge ------------------------------------------------------------------------------------------
-    const judgeBody = { ...judgeBase, messages: judgeMessages(spec.mode, conversation, answered.map((a) => ({ label: a.leg.label, text: outputText(a.done.json) })), tag) };
-    const judgeLeg: Leg = { label: "judge", model: judgeSeat.model, requested: spec.judge, body: judgeBody, targets: judgeTargets, promptTokens: estimatePromptTokens(judgeBody), holdId: judgeHoldId, hold: judgeHold };
-    const jo = await callLeg(tk, call, judgeLeg);
-    if (abort.signal.aborted) throw abort.signal.reason;
-    if (!jo.ok) throw new ApiError(502, "The council judge could not be reached. Members were billed; their receipts are listed.", "council_judge_failed", { judge: { model: judgeSeat.model.id, error: reasonOf(tk, jo) }, ...failureMeta() });
-    const judged = prepare(judgeLeg, jo, guardCfg);
-
-    // What the caller receives: a member's own answer (judge mode) or the judge's fused text (fuse mode).
-    let delivered: any = null;
-    let source: Done | null = null;
-    let selected: { label: string; receipt_id: string } | null = null;
-    let reason: string | null = null;
-    if (spec.mode === "judge") {
-      const choice = parseJudgeChoice(outputText(judged.json), answered.map((a) => a.leg.label));
-      if (choice) {
-        const idx = answered.findIndex((a) => a.leg.label === choice.label);
-        source = answered[idx].done;
-        delivered = source.json;
-        selected = { label: choice.label, receipt_id: members.find((m) => m.label === choice.label)!.receipt_id as string };
-        reason = choice.reason;
-      }
-    } else {
-      source = judged;
-      delivered = judged.json;
-    }
-    const answerText = source?.text ?? "";
-    const outcome = spec.mode === "fuse" ? "fused" : selected ? "selected" : "invalid_verdict";
-    // The top-level receipt stands for every call, so it never claims more than the weakest of them.
-    // A judge an attested gateway served counts as attested only when its receipt shows an attested upstream.
-    const judgeUa = await tk.upstreamAttestationOf(ctx, judged.r, byok);
-    const judgeServed = tk.servedWith(ctx, judged.r.candidate, judgeUa);
-    const served = weakestServed([...fins.map((f) => ({ class: f.disclosure, simulated: f.simulated })), judgeServed]);
-    // Attested council: what the router checked for every provider that took part, in the signed block. `attested` is true only
-    // when every call was served under the attested class and has a reference, so it is a fact about these calls and not a request echo.
-    const judgeRef = attested ? refOf(judged.r.candidate) : null;
-    const attestedBlock = attested
-      ? {
-          attested: served.class === "attested" && !!judgeRef && memberRefs.length === answered.length,
-          ...(served.simulated ? { attestation_simulated: true } : {}),
-          attestation_refs: [...memberRefs, ...(judgeRef ? [{ role: "judge", receipt_id: judgeHoldId, ...judgeRef }] : [])],
-        }
-      : {};
-    const signedBlock = {
-      role: "judge",
-      mode: spec.mode,
-      requested: LEGACY_COUNCIL_MODEL,
-      members,
-      members_cost: picoToUsdString(membersCharged),
-      judge: { model: judged.r.model.id, provider: judged.r.candidate.providerId, disclosure: judgeServed.class, receipt_id: judgeHoldId, request_sha256: tk.requestHash(judgeBody) },
-      selected,
-      outcome,
-      answer_sha256: source ? sha256(answerText) : null,
-      ...attestedBlock,
-    };
-    const judgeFin = await tk.finalize({
-      ...common(judgeLeg, bodySha),
-      r: judged.r,
-      usage: judged.usage,
-      responseText: answerText,
-      finishReason: firstFinish(delivered ?? judged.json).finish,
-      nativeFinish: firstFinish(delivered ?? judged.json).native,
-      generationMs: Date.now() - t0,
-      cancelled: false,
-      extra: { payload: { council: signedBlock, ...(judgeRef ? { attestation_ref: judgeRef } : {}) }, budget: budget(judgeLeg), served },
-      upstreamAttestation: judgeUa,
-    });
-    open.delete(judgeHoldId);
-    fins.push(judgeFin);
-
-    if (!delivered)
-      throw new ApiError(502, "The council judge did not name one of the answers. Nothing was returned; all calls were billed and their receipts are listed.", "council_judge_invalid", { ...failureMeta(), judge_receipt_id: judgeHoldId });
-
-    const totalCharged = membersCharged + judgeFin.charged;
-    const dropped = [...new Set([...answered.flatMap((a) => a.done.r.dropped), ...judged.r.dropped])];
-    const redactions = answered.reduce((s, a) => s + a.done.redactions, 0) + (spec.mode === "fuse" ? judged.redactions : 0);
-    const extras = (judgeFin.extras(redactions) ?? {}) as Record<string, unknown>;
-    delete extras.dropped_parameters;
-    if (dropped.length) extras.dropped_parameters = dropped;
-    const out = {
-      ...delivered,
-      id: judgeFin.id,
-      model: LEGACY_COUNCIL_MODEL,
-      provider: (source ?? judged).r.candidate.provider.name,
-      object: "chat.completion",
-      usage: aggregateUsage(fins),
-      receipt: judgeFin.receiptJson,
-      council: {
-        ...signedBlock,
-        ...(reason ? { reason } : {}),
-        judge: { ...signedBlock.judge, cost: picoToUsdString(judgeFin.charged), latency_ms: Math.round(judged.r.latencyMs) },
-        total_cost: picoToUsdString(totalCharged),
-        ...(cap != null ? { max_cost_usd: spec.maxCostUsd } : {}),
-      },
-      ...extras,
-    };
-    // The policy hash header speaks for every call of the council, so it is sent only when they all share one.
-    return c.json(out, 200, { ...routeResponseHeaders(ctx.cfg.routeExplain, judged.r), ...generationHeaders(judgeFin.id, disc.lane, sharedPolicyHash(fins.map((f) => f.policyHash))), "x-anonymo-disclosure": judgeFin.disclosure, ...tk.paymentHeaders(bill) });
-  } finally {
-    await Promise.all([...open].map((id) => release(ctx.db, id)));
-  }
+  return runAnonymoCouncil(tk, p);
 }
 
 // ---- Dual verification ------------------------------------------------------------------------------------
@@ -692,15 +422,12 @@ export async function runDual(tk: Toolkit, p: DualInput): Promise<Response> {
 //
 // chat.ts dispatches a council for `body.model === COUNCIL_MODEL` ("anonymo-council") when the council feature is on,
 // before key aliases and before its floor check. runAnonymoCouncil therefore runs the floor gate itself, first, so a
-// council request is never sent anywhere when the floor blocks it. The older `anonymo/council` id is marked here
-// (validateMulti runs before the dispatch) and keeps its explicit-members judge/fuse behaviour.
+// council request is never sent anywhere when the floor blocks it.
 
-const legacyCouncilBodies = new WeakSet<object>();
-
-function normalizeAnonymoCouncil(ctx: Ctx, body: Record<string, unknown>) {
-  if (!ctx.cfg.features.council || body.model !== LEGACY_COUNCIL_MODEL) return;
-  body.model = COUNCIL_MODEL;
-  legacyCouncilBodies.add(body);
+/** WS01 retired the Anonymo council id; a request that still sends it is told the new one. */
+function refuseRetiredCouncil(body: Record<string, unknown>) {
+  if (body.model === RETIRED_COUNCIL_MODEL)
+    fail(404, `The model \`${RETIRED_COUNCIL_MODEL}\` was renamed: send \`${COUNCIL_MODEL}\` (council.models and council.judge still choose the seats).`, "model_not_found");
 }
 
 /** The same check and error shapes as the chat floor hook: 451 floor_blocked, 503 floor_unavailable, nothing sent or charged. */
@@ -729,12 +456,12 @@ function parseAnonymoSpec(raw: unknown): AnonymoSpec {
     models = (c.models as string[]).map((m) => m.trim());
     if (models.length < COUNCIL_PROPOSERS || models.length > 8) bad(`\`council.models\` must list ${COUNCIL_PROPOSERS} to 8 model ids (the first ${COUNCIL_PROPOSERS} usable ones from different families answer).`);
     if (new Set(models).size !== models.length) bad("`council.models` must not repeat a model id.");
-    if (models.includes(ANONYMO_COUNCIL_MODEL) || models.includes(LEGACY_COUNCIL_MODEL)) bad("A council cannot include itself.");
+    if (models.includes(ANONYMO_COUNCIL_MODEL) || models.includes(RETIRED_COUNCIL_MODEL)) bad("A council cannot include itself.");
   }
   const id = (v: unknown, name: string) => {
     if (v == null) return null;
     if (typeof v !== "string" || !v.trim()) bad(`\`council.${name}\` must be a model id.`);
-    if (v === ANONYMO_COUNCIL_MODEL || v === LEGACY_COUNCIL_MODEL) bad(`A council cannot be its own ${name}.`);
+    if (v === ANONYMO_COUNCIL_MODEL || v === RETIRED_COUNCIL_MODEL) bad(`A council cannot be its own ${name}.`);
     return (v as string).trim();
   };
   if (c.sealed != null && typeof c.sealed !== "boolean") bad("`council.sealed` must be true or false.");

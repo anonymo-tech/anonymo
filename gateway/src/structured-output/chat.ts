@@ -31,7 +31,7 @@ export function captureStructuredOutput(ctx: Ctx, c: Context, kind: string, body
   if (!["/api/v1/chat/completions", "/v1/chat/completions"].includes(new URL(c.req.url).pathname)) fail(400, "JSON checking is supported only on chat completions endpoints.", "invalid_request");
   const mode = body.anonymo.json_check;
   if (mode !== "validate" && mode !== "repair") fail(400, "anonymo.json_check must be validate or repair.", "invalid_request");
-  if (kind !== "chat" || body.model === "anonymo/council" || body.model === "anonymo-council" || body.verify != null || (body.n ?? 1) !== 1)
+  if (kind !== "chat" || body.model === "anonymo-council" || body.verify != null || (body.n ?? 1) !== 1)
     fail(400, "JSON checking requires a single chat answer; council, dual verification and n > 1 are not supported.", "invalid_request");
   const format = body.response_format;
   if (!format || !["json_object", "json_schema"].includes(format.type)) fail(400, "JSON checking requires response_format json_object or json_schema.", "invalid_request");

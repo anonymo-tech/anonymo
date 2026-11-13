@@ -46,7 +46,7 @@ describe("attested council helpers", () => {
   });
 });
 
-describe("attested council over HTTP", () => {
+describe("attested dual verification over HTTP", () => {
   let h: Harness;
   let auth: Record<string, string>;
   const admin = { "x-admin-token": ADMIN };
@@ -72,9 +72,6 @@ describe("attested council over HTTP", () => {
   });
   afterAll(async () => h.close());
 
-  const ask = (body: Record<string, unknown>) =>
-    h.request("/api/v1/chat/completions", { method: "POST", headers: auth, json: { model: "anonymo/council", messages: [{ role: "user", content: "which one?" }], max_tokens: 60, ...body } });
-  const council = (models: string[], extra: Record<string, unknown> = {}, judge = "acme/judge") => ({ council: { models, judge, ...extra } });
   const dual = (provider: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
     h.request("/api/v1/chat/completions", { method: "POST", headers: auth, json: { model: LLAMA, messages: [{ role: "user", content: "What is 17 * 23?" }], max_tokens: 30, verify: "dual", provider, ...extra } });
   const requests = async () => Object.fromEntries(await Promise.all(Object.entries(h.mocks).map(async ([id, m]) => [id, (await (await fetch(m.url + "/_stats")).json()).requests as number])));
@@ -85,181 +82,6 @@ describe("attested council over HTTP", () => {
     (await (await h.request("/api/v1/receipts/verify", { method: "POST", json: { payload, sig: receipt.sig, key_id: receipt.key_id } })).json()).data.signature_valid;
   /** The refs in a response's list, without the fields that say which call they belong to. */
   const bare = ({ role: _r, label: _l, receipt_id: _i, ...ref }: any) => ref;
-
-  test("council.attested: every member and the judge are attested; each receipt records its provider's attestation, and the list is signed", async () => {
-    const r = await ask(council(["acme/m1", "acme/m2"], { attested: true }));
-    expect(r.status).toBe(200);
-    const j = await r.json();
-    expect(r.headers.get("x-anonymo-lane")).toBe("attested");
-    expect(r.headers.get("x-anonymo-disclosure")).toBe("attested");
-    expect(j.council.attested).toBe(true);
-    expect(j.council.attestation_simulated).toBe(true); // development evidence, and it says so
-    expect(j.council.members.map((m: any) => [m.label, m.provider, m.disclosure, m.status])).toEqual([
-      ["A", "enc1", "attested", "ok"],
-      ["B", "enc2", "attested", "ok"],
-    ]);
-    expect(j.council.judge).toMatchObject({ provider: "enc1", disclosure: "attested" });
-
-    const refs = j.council.attestation_refs;
-    expect(refs.map((x: any) => [x.role, x.label ?? null, x.provider])).toEqual([["member", "A", "enc1"], ["member", "B", "enc2"], ["judge", null, "enc1"]]);
-    expect(refs.map((x: any) => x.receipt_id)).toEqual([j.council.members[0].receipt_id, j.council.members[1].receipt_id, j.id]);
-    const enc1 = { provider: "enc1", tee: "dev", report_hash: await hashOf("enc1"), tls_pin: { spki_sha256: PIN.spkiSha256, attestation_ref: PIN.attestationRef }, simulated: true };
-    const enc2 = { provider: "enc2", tee: "dev", report_hash: await hashOf("enc2"), tls_pin: null, simulated: true };
-    expect(bare(refs[0])).toMatchObject(enc1);
-    expect(bare(refs[1])).toMatchObject(enc2);
-    expect(bare(refs[2])).toMatchObject(enc1);
-    expect(refs[0].report_hash).toMatch(/\S/);
-
-    // Each call's own stored receipt names its provider's attestation, and says it was served on the attested lane.
-    const rows = await h.ctx.db.select().from(generations).where(inArray(generations.id, refs.map((x: any) => x.receipt_id)));
-    expect(rows.length).toBe(3);
-    for (const x of refs) {
-      const row = rows.find((y) => y.id === x.receipt_id)!;
-      expect(row.receipt).toMatchObject({ lane: "attested", disclosure: "attested", attestation: x.report_hash, attestation_ref: bare(x) });
-    }
-    // The top-level receipt is the judge's: its own reference, plus the signed list. Changing either breaks the signature.
-    expect(j.receipt.payload.attestation_ref).toEqual(bare(refs[2]));
-    expect(j.receipt.payload.council.attested).toBe(true);
-    expect(j.receipt.payload.council.attestation_refs).toEqual(refs);
-    expect(await verifySig(j.receipt)).toBe(true);
-    const forgedList = structuredClone(j.receipt.payload);
-    forgedList.council.attestation_refs[0].report_hash = "0".repeat(64);
-    expect(await verifySig(j.receipt, forgedList)).toBe(false);
-    const forgedOwn = structuredClone(j.receipt.payload);
-    forgedOwn.attestation_ref.report_hash = "0".repeat(64);
-    expect(await verifySig(j.receipt, forgedOwn)).toBe(false);
-  });
-
-  test("lane attested on a council request is the same as council.attested", async () => {
-    for (const patch of [{ provider: { lane: "attested" } }, { provider: { lane: "attested" }, ...council(["acme/m1", "acme/m2"], { attested: true }) }]) {
-      const r = await ask({ ...council(["acme/m1", "acme/m2"]), ...patch });
-      expect(r.status).toBe(200);
-      const j = await r.json();
-      expect(r.headers.get("x-anonymo-lane")).toBe("attested");
-      expect(j.council.attested).toBe(true);
-      expect(j.council.attestation_refs.length).toBe(3);
-      expect(j.receipt.payload).toMatchObject({ lane: "attested", disclosure: "attested" });
-    }
-    const viaHeader = await h.request("/api/v1/chat/completions", { method: "POST", headers: { ...auth, "x-anonymo-lane": "attested" }, json: { model: "anonymo/council", messages: [{ role: "user", content: "x" }], max_tokens: 30, ...council(["acme/m1", "acme/m2"]) } });
-    expect(viaHeader.status).toBe(200);
-    expect((await viaHeader.json()).council.attested).toBe(true);
-  });
-
-  test("a council that did not ask for it is unchanged: no attested flag, no references in any receipt", async () => {
-    const r = await ask(council(["acme/m1", "acme/m2"]));
-    expect(r.status).toBe(200);
-    const j = await r.json();
-    expect(r.headers.get("x-anonymo-lane")).toBe("public");
-    expect(j.council).not.toHaveProperty("attested");
-    expect(j.council).not.toHaveProperty("attestation_refs");
-    expect(j.receipt.payload).not.toHaveProperty("attestation_ref");
-    const rows = await h.ctx.db.select().from(generations).where(inArray(generations.id, j.council.members.map((m: any) => m.receipt_id)));
-    for (const row of rows) expect(row.receipt).not.toHaveProperty("attestation_ref");
-    // `council.attested: false` is the same as leaving it out.
-    const off = await (await ask(council(["acme/m1", "acme/m2"], { attested: false }))).json();
-    expect(off.council).not.toHaveProperty("attested");
-  });
-
-  test("a member with no attested provider refuses the whole council: no member is dropped, none is served by the vendor", async () => {
-    const before = await requests();
-    const count = await generationCount();
-    for (const [models, extra, seat, model] of [
-      [["acme/m1", "acme/m3"], { attested: true }, "member B", "acme/m3"], // one attested member is not a council
-      [["acme/m1", "acme/m2", "acme/m3"], { attested: true }, "member C", "acme/m3"], // two of three is not enough either
-      [["acme/m1", "acme/m2", "acme/m3"], { attested: true, min_members: 2 }, "member C", "acme/m3"],
-    ] as const) {
-      const r = await ask(council([...models], { ...extra }));
-      expect(r.status).toBe(503);
-      const e = (await r.json()).error;
-      expect(e.type).toBe("no_attested_endpoint");
-      expect(e.message).toContain(model);
-      expect(e.message).toMatch(/Nothing was sent to any provider and nothing was charged/);
-      expect(e.metadata).toMatchObject({ council_seat: seat, requested: { disclosure: "none", lane: "attested" } });
-      expect(e.metadata.excluded.length).toBeGreaterThan(0);
-    }
-    // Lane "attested" on the request alone is held to the same rule.
-    const viaLane = await ask({ ...council(["acme/m1", "acme/m3"]), provider: { lane: "attested" } });
-    expect(viaLane.status).toBe(503);
-    expect((await viaLane.json()).error.type).toBe("no_attested_endpoint");
-    expect(await requests()).toEqual(before);
-    expect(await generationCount()).toBe(count);
-    expect(await openHolds()).toBe(0);
-    // Without the flag the same members are served, vendor included: the refusal above is the flag's doing.
-    const plain = await ask(council(["acme/m1", "acme/m3"]));
-    expect(plain.status).toBe(200);
-    expect((await plain.json()).council.members.map((m: any) => m.provider)).toEqual(["enc1", "ven"]);
-  });
-
-  test("no attested judge is a 503 no_attested_endpoint, even when the members are attested", async () => {
-    const before = await requests();
-    const count = await generationCount();
-    const r = await ask(council(["acme/m1", "acme/m2"], { attested: true }, "acme/vjudge"));
-    expect(r.status).toBe(503);
-    const e = (await r.json()).error;
-    expect(e.type).toBe("no_attested_endpoint");
-    expect(e.message).toContain("acme/vjudge");
-    expect(e.metadata.council_seat).toBe("judge");
-    expect(await requests()).toEqual(before);
-    expect(await generationCount()).toBe(count);
-    expect(await openHolds()).toBe(0);
-  });
-
-  test("a lapsed attestation counts as not attested", async () => {
-    const [{ attestedAt }] = await h.ctx.db.select().from(providersTable).where(eq(providersTable.id, "enc2"));
-    await h.ctx.db.update(providersTable).set({ attestedAt: new Date(Date.now() - 10 * h.ctx.cfg.attestation.intervalMs) }).where(eq(providersTable.id, "enc2"));
-    await h.ctx.catalog.refresh();
-    try {
-      const before = await requests();
-      const r = await ask(council(["acme/m1", "acme/m2"], { attested: true }));
-      expect(r.status).toBe(503);
-      const e = (await r.json()).error;
-      expect(e.type).toBe("no_attested_endpoint");
-      expect(e.metadata.council_seat).toBe("member B");
-      expect(await requests()).toEqual(before);
-    } finally {
-      await h.ctx.db.update(providersTable).set({ attestedAt }).where(eq(providersTable.id, "enc2"));
-      await h.ctx.catalog.refresh();
-    }
-    expect((await ask(council(["acme/m1", "acme/m2"], { attested: true }))).status).toBe(200);
-  });
-
-  test("attested providers that are down give a 503, not a fallback", async () => {
-    const health = h.ctx.health as unknown as { outage: (m: string, p: string) => boolean };
-    const original = health.outage.bind(h.ctx.health);
-    health.outage = (m, p) => p === "enc2" || original(m, p);
-    try {
-      const before = await requests();
-      const r = await ask(council(["acme/m1", "acme/m2"], { attested: true }));
-      expect(r.status).toBe(503);
-      expect(r.headers.get("retry-after")).toBe("30");
-      const e = (await r.json()).error;
-      expect(e.type).toBe("no_attested_endpoint");
-      expect(e.metadata.reason).toBe("attested_endpoints_down");
-      expect(e.metadata.council_seat).toBe("member B");
-      expect(await requests()).toEqual(before);
-    } finally {
-      health.outage = original;
-    }
-    expect((await ask(council(["acme/m1", "acme/m2"], { attested: true }))).status).toBe(200);
-  });
-
-  test("a non-boolean council.attested is a 400 before anything is sent", async () => {
-    const before = await requests();
-    const r = await ask(council(["acme/m1", "acme/m2"], { attested: "yes" }));
-    expect(r.status).toBe(400);
-    expect((await r.json()).error.type).toBe("invalid_council");
-    expect(await requests()).toEqual(before);
-  });
-
-  test("fuse mode: the judge's own text, attested judge, references in the signed block", async () => {
-    const r = await ask({ ...council(["acme/m1", "acme/m2"], { attested: true, mode: "fuse" }), messages: [{ role: "user", content: "combine" }] });
-    // The mock has no fused reply for this judge prompt, so it answers with its default text; what matters is who was asked.
-    expect(r.status).toBe(200);
-    const j = await r.json();
-    expect(j.council).toMatchObject({ mode: "fuse", outcome: "fused", attested: true });
-    expect(j.council.attestation_refs.map((x: any) => x.role)).toEqual(["member", "member", "judge"]);
-    expect(await verifySig(j.receipt)).toBe(true);
-  });
 
   // ---- Dual verification on the attested lane -----------------------------------------------------------------------
 
