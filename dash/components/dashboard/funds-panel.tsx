@@ -1,44 +1,34 @@
 'use client';
 
-// The purse: balance, deposit addresses per chain and token, Lightning invoices, and withdrawals that can only go back
-// to the address the credit came from (Backend §7).
+// The purse: balance, how to deposit on each rail the gateway offers (GET /deposits), browser-wallet payments,
+// recent deposits, and withdrawals that can only go back to an address the credit came from.
 
 import Link from 'next/link';
 import { RefreshCw } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
 import { CopyButton } from '../copy-button';
-import { CHAIN_ORDER, CHAINS, shortAddress } from '@/lib/anonymo/chains';
-import { describeError } from '@/lib/anonymo/client';
-import { formatUsd, parseUsd } from '@/lib/anonymo/money';
-import type { Balance, DepositAddress, DepositChain, DepositSource, LedgerKind, LightningInvoice, Withdrawal } from '@/lib/anonymo/types';
+import { CoinWalletPay, EvmWalletPay } from './wallet-pay';
+import { chainName, shortAddress } from '@/lib/anonymo/chains';
+import { describeError, newIdempotencyKey } from '@/lib/anonymo/client';
+import { formatUsd, formatUsdAmount, musdToUsdString, parseUsd, usdToMusd } from '@/lib/anonymo/money';
+import type { Balance, BtcpayInvoice, DepositInstructions, DepositRow, Withdrawal } from '@/lib/anonymo/types';
 
-const KIND_LABEL: Record<LedgerKind, string> = {
-  deposit: 'Deposit',
-  hold: 'Hold',
-  settle: 'Chat',
-  release: 'Released',
-  refusal_refund: 'Refusal refund',
-  withdraw: 'Withdrawal',
-  council: 'Council',
-  media: 'Media',
-};
+type Loaded = { balance: Balance; instructions: DepositInstructions; deposits: DepositRow[]; withdrawals: Withdrawal[] };
 
 export function FundsPanel() {
   const { ready, key, client, balanceVersion, refreshBalance } = useAnonymo();
-  const [balance, setBalance] = useState<Balance | null>(null);
-  const [addresses, setAddresses] = useState<DepositAddress[] | null>(null);
+  const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (!ready || !key) return;
     let live = true;
-    Promise.all([client.balance(), client.depositAddresses()]).then(
-      ([b, a]) => {
+    Promise.all([client.balance(), client.deposits(), client.withdrawals()]).then(
+      ([balance, deposits, withdrawals]) => {
         if (!live) return;
         setError('');
-        setBalance(b);
-        setAddresses(a);
+        setData({ balance, instructions: deposits.instructions, deposits: deposits.data, withdrawals });
       },
       (e: unknown) => live && setError(describeError(e)),
     );
@@ -52,7 +42,7 @@ export function FundsPanel() {
     return (
       <section className="panel">
         <h2>Balance & deposits</h2>
-        <p className="lede">Create a key first. Each key gets its own deposit addresses.</p>
+        <p className="lede">Create a key first. Deposits are tied to the key, not to an account.</p>
         <div className="row">
           <Link className="btn btn-primary" href="/dashboard/key">
             Create a key
@@ -61,6 +51,8 @@ export function FundsPanel() {
       </section>
     );
 
+  const b = data?.balance;
+  const usageOnly = b?.usage_only_usd ?? 0;
   return (
     <div className="panel-stack">
       {error && <p className="notice notice-rose">{error}</p>}
@@ -74,48 +66,40 @@ export function FundsPanel() {
         <div className="stats">
           <div className="stat">
             <span>Available</span>
-            <strong>{balance ? formatUsd(balance.available_musd) : '—'}</strong>
+            <strong>{b ? formatUsdAmount(b.available_usd) : '—'}</strong>
           </div>
           <div className="stat">
             <span>Held for requests in flight</span>
-            <strong>{balance ? formatUsd(balance.held_musd) : '—'}</strong>
+            <strong>{b ? formatUsdAmount(b.held_usd) : '—'}</strong>
           </div>
-          <div className="stat">
-            <span>Refunded for refusals</span>
-            <strong>{balance ? formatUsd(balance.refused_refunded_musd) : '—'}</strong>
-          </div>
+          {usageOnly > 0 && (
+            <div className="stat">
+              <span>Paid in ANMO · usage only, can&apos;t be withdrawn</span>
+              <strong>{formatUsdAmount(usageOnly)}</strong>
+            </div>
+          )}
         </div>
       </section>
-      {addresses && <Deposits addresses={addresses} onCredited={refreshBalance} />}
-      {balance && <Withdrawals sources={balance.sources} onDone={refreshBalance} />}
-      {balance && balance.recent.length > 0 && (
-        <section className="panel">
-          <h2>Recent activity</h2>
-          <ul className="list">
-            {balance.recent.slice(0, 15).map((row, i) => (
-              <li key={`${row.ref}-${i}`}>
-                <span>{KIND_LABEL[row.kind] ?? row.kind}</span>
-                <span className="faint">{new Date(row.at).toLocaleString()}</span>
-                <span className="mono">{formatUsd(row.amount_musd, { sign: true })}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      {data && <Deposits instructions={data.instructions} onCredited={refreshBalance} />}
+      {data && data.deposits.length > 0 && <DepositList rows={data.deposits} />}
+      {b && <Withdrawals balance={b} onDone={refreshBalance} />}
+      {data && data.withdrawals.length > 0 && <WithdrawalList rows={data.withdrawals} />}
     </div>
   );
 }
 
-function Deposits({ addresses, onCredited }: { addresses: DepositAddress[]; onCredited: () => void }) {
-  const { demo, mock, key, client } = useAnonymo();
-  const [chain, setChain] = useState<DepositChain>('base');
-  const [amount, setAmount] = useState('10');
-  const [invoice, setInvoice] = useState<LightningInvoice | null>(null);
-  const [error, setError] = useState('');
+type Rail = 'evm' | 'coin' | 'solana' | 'tron' | 'btc';
+const RAIL_LABEL: Record<Rail, string> = { evm: 'Stablecoin wallet', coin: 'Pay with ANMO', solana: 'Solana', tron: 'Tron', btc: 'Bitcoin / Lightning' };
+
+function Deposits({ instructions, onCredited }: { instructions: DepositInstructions; onCredited: () => void }) {
+  const { demo, mock, key } = useAnonymo();
+  const rails: Rail[] = instructions.paused
+    ? []
+    : (['evm', 'coin', 'solana', 'tron', 'btc'] as const).filter((r) => (instructions as Record<string, unknown>)[r]);
+  const [rail, setRail] = useState<Rail | null>(null);
+  const active = rail && rails.includes(rail) ? rail : (rails[0] ?? null);
   const [note, setNote] = useState('');
-  const address = addresses.find((a) => a.chain === chain);
-  const info = CHAINS[chain];
-  const available = CHAIN_ORDER.filter((c) => addresses.some((a) => a.chain === c));
+  const credited = useCallback(() => onCredited(), [onCredited]);
 
   return (
     <section className="panel" aria-labelledby="deposit-title">
@@ -123,120 +107,207 @@ function Deposits({ addresses, onCredited }: { addresses: DepositAddress[]; onCr
         <h2 id="deposit-title">Deposit</h2>
         <span className="faint">Stablecoins credit 1:1 · BTC at the BTCPay quote</span>
       </header>
-      <fieldset className="segmented">
-        <legend className="sr-only">Chain</legend>
-        {available.map((c) => (
-          <button key={c} type="button" aria-pressed={c === chain} onClick={() => { setChain(c); setInvoice(null); setError(''); setNote(''); }}>
-            {CHAINS[c].name}
-          </button>
-        ))}
-      </fieldset>
-      <p className="lede">
-        Send <strong>{info.tokens.join(', ')}</strong> on {info.name}. {info.note}
-        {address && address.min_musd > 0 && <> Minimum {formatUsd(address.min_musd)}.</>}
-        {address && address.confirmations > 0 && <> Credited after {address.confirmations} confirmations.</>}
-      </p>
-      {chain === 'ln' ? (
-        <div className="panel-stack">
-          <form
-            className="row"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              setError('');
-              const musd = parseUsd(amount);
-              if (!musd) return setError('Enter an amount in USD.');
-              try {
-                setInvoice(await client.lightningInvoice({ amount_musd: musd }));
-              } catch (err) {
-                setError(describeError(err));
-              }
-            }}
-          >
-            <label className="field" style={{ flex: '0 1 180px' }}>
-              Amount (USD)
-              <input className="input" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
-            </label>
-            <button type="submit" className="btn" style={{ alignSelf: 'flex-end' }}>
-              Get invoice
-            </button>
-          </form>
-          {invoice && (
+      {instructions.paused ? (
+        <p className="notice notice-amber">New deposits are paused right now. Withdrawals are not affected and are never paused.</p>
+      ) : rails.length === 0 ? (
+        <p className="lede">This gateway has no deposit rail configured yet.</p>
+      ) : (
+        <>
+          {rails.length > 1 && (
+            <fieldset className="segmented">
+              <legend className="sr-only">How to pay</legend>
+              {rails.map((r) => (
+                <button key={r} type="button" aria-pressed={r === active} onClick={() => setRail(r)}>
+                  {RAIL_LABEL[r]}
+                </button>
+              ))}
+            </fieldset>
+          )}
+          {active === 'evm' && instructions.evm && <EvmWalletPay evm={instructions.evm} onCredited={credited} />}
+          {active === 'coin' && instructions.coin && <CoinWalletPay coin={instructions.coin} onCredited={credited} />}
+          {active === 'solana' && instructions.solana && (
             <div className="address-box">
               <span className="faint">
-                {invoice.amount_sats.toLocaleString()} sats · {formatUsd(invoice.quote_musd)} · expires{' '}
-                {new Date(invoice.expires_at).toLocaleTimeString()}
+                Send {instructions.solana.tokens.map((t) => t.symbol).join(' or ')} on Solana ({instructions.solana.cluster}). {instructions.solana.how}
               </span>
-              <code>{invoice.bolt11}</code>
+              <dl className="kv">
+                {instructions.solana.tokens.map((t) => (
+                  <div key={t.mint}>
+                    <dt>{t.symbol} token account</dt>
+                    <dd className="hash">{t.token_account}</dd>
+                  </div>
+                ))}
+                <div>
+                  <dt>Reference</dt>
+                  <dd className="hash">{instructions.solana.reference}</dd>
+                </div>
+              </dl>
               <div className="row">
-                <CopyButton text={invoice.bolt11} label="Copy invoice" />
+                <CopyButton text={instructions.solana.reference} label="Copy reference" />
               </div>
             </div>
           )}
-        </div>
-      ) : (
-        address && (
-          <div className="address-box">
-            <span className="faint">Your {info.name} deposit address · only for this key</span>
-            <code>{address.address}</code>
-            <div className="row">
-              <CopyButton text={address.address} label="Copy address" />
+          {active === 'tron' && instructions.tron && (
+            <div className="address-box">
+              <span className="faint">
+                Your Tron deposit address · only for this key · USDT · credited after {instructions.tron.confirmations} confirmations
+              </span>
+              <code>{instructions.tron.address}</code>
+              <div className="row">
+                <CopyButton text={instructions.tron.address} label="Copy address" />
+              </div>
             </div>
-          </div>
-        )
+          )}
+          {active === 'btc' && <BtcpayForm />}
+          {active !== 'coin' && (
+            <p className="faint">
+              The wallet you send from becomes this credit&apos;s source: withdrawals can only go back there, and are never paused.
+            </p>
+          )}
+        </>
       )}
-      <p className="faint">
-        The wallet you send from becomes this credit&apos;s source: withdrawals can only go back there, and are never paused.
-      </p>
       {demo && mock && key && (
         <div className="notice notice-amber row">
-          <span style={{ flex: 1, minWidth: 200 }}>Demo: simulate a confirmed deposit to this key.</span>
-          <label className="sr-only" htmlFor="demo-amount">
-            Test amount (USD)
-          </label>
-          <input id="demo-amount" className="input" style={{ width: 100 }} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <span style={{ flex: 1, minWidth: 200 }}>Demo: simulate a confirmed payment to this key.</span>
           <button
             type="button"
             className="btn btn-small"
             onClick={async () => {
-              setError('');
-              const musd = parseUsd(amount);
-              if (!musd) return setError('Enter an amount in USD.');
-              try {
-                await mock.simulateDeposit(key, chain, info.tokens[0], musd);
-                setNote(`${formatUsd(musd)} in ${info.tokens[0]} credited from a test ${info.name} wallet.`);
-                onCredited();
-              } catch (err) {
-                setError(describeError(err));
-              }
+              await mock.simulateDeposit(key, 'rhc', 'USDG', 10_000_000);
+              setNote('$10.00 in USDG credited from a test Robinhood Chain wallet.');
+              onCredited();
             }}
           >
-            Send test {info.tokens[0]}
+            Send test USDG
+          </button>
+          <button
+            type="button"
+            className="btn btn-small"
+            onClick={async () => {
+              await mock.simulateCoinPayment(key, 5_000_000);
+              setNote('$5.00 of ANMO burned for usage-only credit.');
+              onCredited();
+            }}
+          >
+            Burn test ANMO
           </button>
         </div>
       )}
       {note && <output className="notice notice-signal">{note}</output>}
-      {error && <p className="error-text" role="alert">{error}</p>}
     </section>
   );
 }
 
-function Withdrawals({ sources, onDone }: { sources: DepositSource[]; onDone: () => void }) {
+function BtcpayForm() {
+  const { client } = useAnonymo();
+  const [amount, setAmount] = useState('10');
+  const [refund, setRefund] = useState('');
+  const [invoice, setInvoice] = useState<BtcpayInvoice | null>(null);
+  const [error, setError] = useState('');
+  return (
+    <div className="panel-stack">
+      <form
+        className="row"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setError('');
+          setInvoice(null);
+          const musd = parseUsd(amount);
+          if (!musd) return setError('Enter an amount in USD.');
+          if (!refund.trim()) return setError('Enter a Bitcoin address or a Lightning address for refunds.');
+          try {
+            setInvoice(await client.btcpayInvoice({ amount_usd: musdToUsdString(musd), refund_address: refund.trim() }));
+          } catch (err) {
+            setError(describeError(err));
+          }
+        }}
+      >
+        <label className="field" style={{ flex: '0 1 140px' }}>
+          Amount (USD)
+          <input className="input" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+        </label>
+        <label className="field" style={{ flex: '1 1 240px' }}>
+          Refund address (BTC or name@host)
+          <input className="input mono" spellCheck={false} autoComplete="off" value={refund} onChange={(e) => setRefund(e.target.value)} />
+        </label>
+        <button type="submit" className="btn" style={{ alignSelf: 'flex-end' }}>
+          Get invoice
+        </button>
+      </form>
+      <p className="faint">Withdrawals of a BTC or Lightning deposit go to the refund address you give here.</p>
+      {invoice && (
+        <div className="address-box">
+          <span className="faint">
+            Invoice {invoice.invoice_id} · ${invoice.amount_usd} · refunds to {chainName(invoice.refund.chain)}{' '}
+            <span className="mono">{shortAddress(invoice.refund.address)}</span>
+          </span>
+          {invoice.checkout_link ? (
+            <a className="btn btn-primary" href={invoice.checkout_link} target="_blank" rel="noreferrer noopener">
+              Open the BTCPay checkout
+            </a>
+          ) : (
+            <span>The invoice was created; this gateway did not return a checkout link.</span>
+          )}
+        </div>
+      )}
+      {error && (
+        <p className="error-text" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function DepositList({ rows }: { rows: DepositRow[] }) {
+  return (
+    <section className="panel">
+      <h2>Recent deposits</h2>
+      <ul className="list">
+        {rows.slice(0, 20).map((r) => (
+          <li key={r.ref}>
+            <span>
+              <strong>{chainName(r.chain)}</strong> {r.chain === 'coin' ? '' : r.token}{' '}
+              {r.chain === 'coin' && <span className="chip">usage only, can&apos;t be withdrawn</span>}
+              {r.status === 'held' && <span className="chip chip-amber">held{r.reason === 'over_cap' ? ' · over the per-payment cap' : ''}</span>}
+            </span>
+            <span className="faint">{new Date(r.created_at).toLocaleString()}</span>
+            <span className="mono">{formatUsdAmount(r.amount_usd, { sign: true })}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function Withdrawals({ balance, onDone }: { balance: Balance; onDone: () => void }) {
   const { client } = useAnonymo();
   const [amounts, setAmounts] = useState<Record<string, string>>({});
   const [result, setResult] = useState<Withdrawal | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
+  // One idempotency key per destination and attempt, reused if the same request is retried after a network error.
+  const [attempts, setAttempts] = useState<Record<string, string>>({});
+  const usageOnly = balance.usage_only_usd ?? 0;
 
-  async function withdraw(source: DepositSource, all: boolean) {
-    const id = `${source.chain}:${source.address}`;
+  async function withdraw(dest: Balance['withdraw_to'][number], all: boolean) {
+    const id = `${dest.chain}:${dest.address}`;
     setError('');
     setResult(null);
-    const typed = amounts[id] ?? '';
-    const musd = all ? 'all' : parseUsd(typed);
-    if (musd === null || musd === 0) return setError('Enter an amount in USD, or withdraw all.');
+    const musd = all ? null : parseUsd(amounts[id] ?? '');
+    if (!all && !musd) return setError('Enter an amount in USD, or withdraw all.');
+    const amount = all ? 'all' : musdToUsdString(musd!);
+    const sig = `${id}|${amount}`;
+    const idem = attempts[sig] ?? newIdempotencyKey();
+    setAttempts((m) => ({ ...m, [sig]: idem }));
     setBusy(id);
     try {
-      setResult(await client.withdraw({ chain: source.chain, source_address: source.address, amount_musd: musd }));
+      const r = await client.withdraw({ chain: dest.chain, to: dest.address, amount_usd: amount }, idem);
+      setResult(r.withdrawal);
+      setAttempts((m) => {
+        const { [sig]: _done, ...rest } = m;
+        return rest;
+      });
       onDone();
     } catch (e) {
       setError(describeError(e));
@@ -251,19 +322,22 @@ function Withdrawals({ sources, onDone }: { sources: DepositSource[]; onDone: ()
         <h2 id="withdraw-title">Withdraw to source</h2>
         <span className="faint">Never paused · never to another address</span>
       </header>
-      {sources.length === 0 ? (
+      {balance.withdraw_to.length === 0 ? (
         <p className="lede">Nothing to withdraw yet. Credit can go back only to the wallet it was deposited from.</p>
       ) : (
         <ul className="list">
-          {sources.map((s) => {
-            const id = `${s.chain}:${s.address}`;
+          {balance.withdraw_to.map((d) => {
+            const id = `${d.chain}:${d.address}`;
+            const max = usdToMusd(d.max_usd);
             return (
               <li key={id}>
                 <span>
-                  <strong>{CHAINS[s.chain].name}</strong> {s.token} <span className="mono faint">→ {shortAddress(s.address)}</span>
+                  <strong>{chainName(d.chain)}</strong> <span className="mono faint">→ {shortAddress(d.address)}</span>
                 </span>
                 <span className="row">
-                  <span className="mono">{formatUsd(s.withdrawable_musd)}</span>
+                  <span className="mono" title="The most that can go back to this address now">
+                    {formatUsd(max)}
+                  </span>
                   <label className="sr-only" htmlFor={`wd-${id}`}>
                     Amount (USD)
                   </label>
@@ -276,10 +350,10 @@ function Withdrawals({ sources, onDone }: { sources: DepositSource[]; onDone: ()
                     value={amounts[id] ?? ''}
                     onChange={(e) => setAmounts((m) => ({ ...m, [id]: e.target.value }))}
                   />
-                  <button type="button" className="btn btn-small" disabled={busy !== null || s.withdrawable_musd === 0} onClick={() => void withdraw(s, false)}>
+                  <button type="button" className="btn btn-small" disabled={busy !== null || !(max > 0)} onClick={() => void withdraw(d, false)}>
                     Withdraw
                   </button>
-                  <button type="button" className="btn btn-small btn-ghost" disabled={busy !== null || s.withdrawable_musd === 0} onClick={() => void withdraw(s, true)}>
+                  <button type="button" className="btn btn-small btn-ghost" disabled={busy !== null || !(max > 0)} onClick={() => void withdraw(d, true)}>
                     All
                   </button>
                 </span>
@@ -288,19 +362,47 @@ function Withdrawals({ sources, onDone }: { sources: DepositSource[]; onDone: ()
           })}
         </ul>
       )}
+      {usageOnly > 0 && (
+        <p className="faint">{formatUsdAmount(usageOnly)} was paid in ANMO. It is usage only and can&apos;t be withdrawn, so it is not counted above.</p>
+      )}
       {result && (
         <output className="notice notice-signal">
-          {formatUsd(result.amount_musd)} {result.token} {result.status === 'sent' ? 'sent' : 'queued'} to{' '}
+          {formatUsdAmount(result.amount_usd)} {result.token} {result.status === 'sent' ? 'sent' : 'queued'} to{' '}
           <span className="mono">{shortAddress(result.to)}</span>
-          {result.tx_hash && (
+          {result.tx && (
             <>
               {' '}
-              · tx <span className="mono">{shortAddress(result.tx_hash, 8)}</span>
+              · tx <span className="mono">{shortAddress(result.tx, 8)}</span>
             </>
           )}
+          {result.status === 'pending' && '. It is recorded and debited; the payout is retried until it goes through.'}
         </output>
       )}
-      {error && <p className="error-text" role="alert">{error}</p>}
+      {error && (
+        <p className="error-text" role="alert">
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function WithdrawalList({ rows }: { rows: Withdrawal[] }) {
+  return (
+    <section className="panel">
+      <h2>Withdrawals</h2>
+      <ul className="list">
+        {rows.slice(0, 20).map((w) => (
+          <li key={w.id}>
+            <span>
+              <strong>{chainName(w.chain)}</strong> {w.token} <span className="mono faint">→ {shortAddress(w.to)}</span>{' '}
+              <span className={w.status === 'sent' ? 'chip chip-signal' : 'chip'}>{w.status}</span>
+            </span>
+            <span className="faint">{new Date(w.created_at).toLocaleString()}</span>
+            <span className="mono">{formatUsdAmount(-w.amount_usd, { sign: true })}</span>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

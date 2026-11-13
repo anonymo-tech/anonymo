@@ -32,7 +32,7 @@ contract FeeOnTransferToken is ERC20 {
 }
 
 contract DepositRouterTest is AnonymoBase {
-    bytes32 constant DEPOSITED_TOPIC = keccak256("Deposited(bytes32,address,uint256)");
+    bytes32 constant DEPOSITED_TOPIC = keccak256("Deposited(bytes32,address,address,uint256)");
     address constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
 
     DepositRouter router;
@@ -74,10 +74,11 @@ contract DepositRouterTest is AnonymoBase {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         Vm.Log memory dep = logs[logs.length - 1];
         assertEq(dep.emitter, address(router));
-        assertEq(dep.topics.length, 3);
+        assertEq(dep.topics.length, 4);
         assertEq(dep.topics[0], DEPOSITED_TOPIC);
         assertEq(dep.topics[1], commit);
         assertEq(dep.topics[2], bytes32(uint256(uint160(address(usdc)))));
+        assertEq(dep.topics[3], bytes32(uint256(uint160(alice))));
         assertEq(abi.decode(dep.data, (uint256)), 25e6);
     }
 
@@ -88,7 +89,7 @@ contract DepositRouterTest is AnonymoBase {
         vm.startPrank(alice);
         token.approve(address(router), amount);
         vm.expectEmit(address(router));
-        emit IDepositRouter.Deposited(keyCommit, address(token), amount);
+        emit IDepositRouter.Deposited(keyCommit, address(token), alice, amount);
         router.deposit(address(token), amount, keyCommit);
         vm.stopPrank();
         assertEq(token.balanceOf(treasury), amount);
@@ -120,7 +121,7 @@ contract DepositRouterTest is AnonymoBase {
         vm.startPrank(alice);
         fot.approve(address(router), 100e6);
         vm.expectEmit(address(router));
-        emit IDepositRouter.Deposited(commit, address(fot), 99e6);
+        emit IDepositRouter.Deposited(commit, address(fot), alice, 99e6);
         router.deposit(address(fot), 100e6, commit);
         vm.stopPrank();
         assertEq(fot.balanceOf(treasury), 99e6);
@@ -146,7 +147,7 @@ contract DepositRouterTest is AnonymoBase {
     function test_depositWithPermit() public {
         (uint8 v, bytes32 r, bytes32 s) = _permitSig(40e6, block.timestamp + 1 hours);
         vm.expectEmit(address(router));
-        emit IDepositRouter.Deposited(commit, address(usdc), 40e6);
+        emit IDepositRouter.Deposited(commit, address(usdc), alice, 40e6);
         vm.prank(alice);
         router.depositWithPermit(address(usdc), 40e6, commit, block.timestamp + 1 hours, v, r, s);
         assertEq(usdc.balanceOf(treasury), 40e6);

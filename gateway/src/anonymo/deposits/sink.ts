@@ -11,7 +11,8 @@ import { log } from "../../lib/util.ts";
 import type { ConfirmedDeposit, DepositSink, SanctionsScreen } from "../seams.ts";
 import { anonymoDeposits } from "./schema.ts";
 
-export type DepositExtra = { token?: string; amountRaw?: bigint };
+/** `holdReason` records the deposit as held for an operator instead of crediting it (e.g. a coin payment over the cap). */
+export type DepositExtra = { token?: string; amountRaw?: bigint; holdReason?: string };
 export type AnonymoDepositSink = DepositSink & {
   /** Same as credit(), with the token and raw amount kept for the record. */
   creditWith(d: ConfirmedDeposit, extra: DepositExtra): Promise<{ credited: boolean; held?: string }>;
@@ -28,8 +29,8 @@ export function createDepositSink(db: Db, screen: SanctionsScreen): AnonymoDepos
     const [seen] = await db.select({ status: anonymoDeposits.status }).from(anonymoDeposits).where(eq(anonymoDeposits.ref, d.ref));
     if (seen) return { credited: false };
     const row = { ref: d.ref, keyHash: d.keyHash, chain: d.chain, token: extra.token ?? "", amountRaw: extra.amountRaw?.toString() ?? null, amountPico: d.amount, sourceAddr: d.sourceAddr };
-    let held: string | null = null;
-    try {
+    let held: string | null = extra.holdReason ?? null;
+    if (!held) try {
       if (await screen.isBlocked(d.chain, d.sourceAddr)) held = "sanctioned";
     } catch {
       held = "screening_unavailable";

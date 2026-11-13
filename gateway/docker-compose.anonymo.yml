@@ -79,7 +79,10 @@ services:
 
   registry-worker:
     environment: *anonymo-runtime
+  # Anonymo settles on its off-chain ledger (WS05): there is no on-chain settlement, so this Anonymo worker only
+  # starts with `--profile anonymo-contracts`. A contract-free config would refuse its key anyway.
   settlement-worker:
+    profiles: [anonymo-contracts]
     environment: *anonymo-runtime
   anchor-worker:
     environment: *anonymo-runtime
@@ -118,6 +121,12 @@ services:
       APP_SECRET: ${APP_SECRET:?Inject the application encryption secret}
       ADMIN_TOKEN: ${ADMIN_TOKEN:?Inject the operator token}
       RHC_RPC_URL: ${RHC_RPC_URL:?Set the verified chain RPC}
+      ANONYMO_EVM_CHAINS: ${ANONYMO_EVM_CHAINS:-}
+      ANONYMO_COIN: ${ANONYMO_COIN:-}
+      # The withdrawal hot wallet: only here, never on the router. Without it withdrawals wait for an operator.
+      ANONYMO_PAYOUT_PRIVATE_KEY: ${ANONYMO_PAYOUT_PRIVATE_KEY:-}
+      ANONYMO_PAYOUT_MAX_USD: ${ANONYMO_PAYOUT_MAX_USD:-500}
+      ANONYMO_PAYOUT_DAILY_MAX_USD: ${ANONYMO_PAYOUT_DAILY_MAX_USD:-2000}
       ANONYMO_EVM_CHAINS: ${ANONYMO_EVM_CHAINS:-}
       ANONYMO_SOLANA: ${ANONYMO_SOLANA:-}
       ANONYMO_TRON: ${ANONYMO_TRON:-}

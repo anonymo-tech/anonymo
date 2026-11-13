@@ -1,4 +1,5 @@
 import type { Context, Hono } from "hono";
+import { cors } from "hono/cors";
 import type { Hex } from "viem";
 import type { Ctx } from "../../context.ts";
 import { fail } from "../../lib/errors.ts";
@@ -18,6 +19,12 @@ import { familyOf } from "./families.ts";
 // /manifest and /leaderboard are JSON, or a minimal HTML page for a browser (Accept: text/html, or ?format=html).
 
 export function trustRoutes(app: Hono, ctx: Ctx) {
+  // The dashboard (dash/, its own origin) reads /manifest and /leaderboard from the browser. Both are public, read-only
+  // and cookie-free, so any origin may read them. (/v1/receipts/* already gets the /v1/* CORS from app.ts.)
+  const publicCors = cors({ origin: "*", allowMethods: ["GET", "HEAD", "OPTIONS"], allowHeaders: ["accept"] });
+  app.use("/manifest", publicCors);
+  app.use("/leaderboard", publicCors);
+
   const receipt = async (id: string) => {
     const row = await loadAnonymoReceipt(ctx, id);
     if (!row) fail(404, "Receipt not found. Per-call receipts are at GET /api/v1/receipts/{id}.", "not_found");

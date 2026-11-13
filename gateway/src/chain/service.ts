@@ -1,4 +1,5 @@
 import { rpcTransport } from "./rpc-transport.ts"; // RPC1
+import { RECEIPT_ROOTS_POST_ABI } from "../receipts/roots.ts";
 import {
   BlockNotFoundError,
   TransactionReceiptNotFoundError,
@@ -310,6 +311,14 @@ export class ChainService {
       if (d?.event === "Anchored") index = d.args.index as bigint;
     }
     return { hash, index };
+  }
+
+  /** ReceiptRoots.post(hour, root) as the anchorer (Anonymo, rollout A3). */
+  async postReceiptRoot(hour: bigint, root: Hex): Promise<{ txHash: string }> {
+    const a = this.cfg.chain.anonymoReceiptRoots;
+    if (!a) fail(503, "The ReceiptRoots contract is not configured on this router.", "chain_unconfigured");
+    const { hash } = await this.send("anchorer", a, RECEIPT_ROOTS_POST_ABI as unknown as Abi, "post", [hour, root]);
+    return { txHash: hash };
   }
 
   async anchorOnChain(index: number): Promise<{ root: Hex; fromTs: bigint; toTs: bigint; count: number } | null> {

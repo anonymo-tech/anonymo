@@ -22,7 +22,7 @@ import { EVM_CHAINS } from "./config.ts";
 import { anonymoDeposits, anonymoKeys, anonymoWithdrawals } from "./schema.ts";
 import { normalizeAddress } from "./sanctions.ts";
 
-export type PayoutChain = Exclude<DepositChain, "x402">;
+export type PayoutChain = Exclude<DepositChain, "x402" | "coin">;
 export const PAYOUT_CHAINS: readonly PayoutChain[] = ["base", "arbitrum", "rhc", "solana", "tron", "btc", "ln"];
 export const DEFAULT_TOKEN: Record<PayoutChain, string> = { base: "USDC", arbitrum: "USDC", rhc: "USDG", solana: "USDC", tron: "USDT", btc: "BTC", ln: "BTC" };
 const TOKENS: Record<PayoutChain, readonly string[]> = { base: ["USDC", "USDT", "USDG"], arbitrum: ["USDC", "USDT", "USDG"], rhc: ["USDC", "USDT", "USDG"], solana: ["USDC", "USDT"], tron: ["USDT"], btc: ["BTC"], ln: ["BTC"] };
@@ -52,6 +52,18 @@ export class MockPayout implements Payout {
     this.sent.set(p.id, { ...p, txRef });
     return { txRef };
   }
+}
+
+/**
+ * Credit paid in the coin (burned, priced at the pool) is for usage only and never leaves as stablecoins. It counts as
+ * spent last: only the balance above everything this key ever paid in the coin can be withdrawn.
+ */
+export async function coinCreditPico(db: Db | Tx, keyHash: string): Promise<Pico> {
+  const [row] = await db
+    .select({ total: sql<string | null>`sum(${anonymoDeposits.amountPico})` })
+    .from(anonymoDeposits)
+    .where(and(eq(anonymoDeposits.keyHash, keyHash), eq(anonymoDeposits.chain, "coin"), eq(anonymoDeposits.status, "credited")));
+  return BigInt(row?.total ?? 0);
 }
 
 const dest = (chain: string, address: string) => `${chain}|${address}`;
@@ -122,7 +134,7 @@ export async function requestWithdrawal(db: Db, o: { minPico: Pico }, w: Withdra
       return { row: prior, replay: true };
     }
     const [acct] = await tx.select().from(accounts).where(eq(accounts.id, w.accountId)).for("update");
-    const available = acct ? acct.balance - acct.held : 0n;
+    const available = (acct ? acct.balance - acct.held : 0n) - (await coinCreditPico(tx, w.keyHash));
     const dests = await withdrawDestinations(tx, w.keyHash);
     const d = dests.get(dest(chain, to));
     if (!d) fail(403, "Withdrawals go only to an address this key's deposits came from, on the same chain.", "not_source_address", { allowed: [...dests.values()].map((x) => ({ chain: x.chain, address: x.address })) });

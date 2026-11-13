@@ -5,6 +5,7 @@ import { expireHolds } from "../ledger/ledger.ts";
 import { pollChain } from "../chain/indexer.ts";
 import { runSpendWatch } from "./spend-watch.ts";
 import { retryAnchors, runAnchor, runKeyRotation } from "./anchor.ts";
+import { setReceiptRootsPoster } from "../receipts/roots.ts";
 import { runAttestor } from "./attestor.ts";
 import { runMeasurementJob } from "./measurement-bundles.ts";
 import { runDayzero } from "./dayzero.ts";
@@ -36,6 +37,8 @@ export function registerJobs(ctx: Ctx, dispatch?: Dispatch) {
   // Off unless DAYZERO_ENABLED: watch Hugging Face for new fine-tunes of the configured permissive base models, and
   // evaluate and promote candidates an operator has linked and approved. Serving anything still needs an approval.
   if (cfg.lane.dayzero.enabled) jobs.register("dayzero", cfg.lane.dayzero.intervalMs, () => runDayzero(ctx));
+  // Anonymo hourly roots go on-chain once ReceiptRoots and the anchoring key are both configured (rollout A3).
+  if (cfg.chain.anonymoReceiptRoots && ctx.chain.roleAddress("anchorer")) setReceiptRootsPoster(ctx, { post: (hour, root) => ctx.chain.postReceiptRoot(hour, root) });
   jobs.register("receipts-anchor", cfg.receipts.anchorIntervalMs, async () => ({ anchor: await runAnchor(ctx), retry: await retryAnchors(ctx) }), { atStart: true });
   jobs.register("receipt-key-rotation", 3_600_000, () => runKeyRotation(ctx), { atStart: true });
   jobs.register("settlement", cfg.workers.settlementIntervalMs, () => runSettlement(ctx), { atStart: true });

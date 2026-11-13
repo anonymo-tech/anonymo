@@ -97,6 +97,9 @@ const schema = z.object({
   CALLPAY_ADDRESS: addr,
   PROVIDER_BOND_ADDRESS: addr,
   RECEIPT_ANCHOR_ADDRESS: addr,
+  // Anonymo ReceiptRoots on Robinhood Chain (WS08, rollout A3). With ANCHORER_PRIVATE_KEY on the receipts-anchor worker,
+  // hourly receipt roots are posted there; without it they stay "local" (proofs still verify off-chain).
+  ANONYMO_RECEIPT_ROOTS_ADDRESS: addr,
   ROYALTY_ADDRESS: addr,
   CALLPAY_TREASURY: addr,
   ROUTER_PRIVATE_KEY: pk,
@@ -253,7 +256,8 @@ const schema = z.object({
 export type Config = ReturnType<typeof loadConfig>;
 
 export function loadConfig(overrides: Record<string, unknown> = {}) {
-  const parsed = schema.safeParse(withLegacyEnv({ ...process.env, ...overrides } as Record<string, unknown>));
+  const raw = { ...process.env, ...overrides } as Record<string, unknown>;
+  const parsed = schema.safeParse(withLegacyEnv(raw));
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
     throw new Error(`Invalid configuration: ${issues}`);
@@ -266,6 +270,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
   // no chain indexer, settlement or slashing runs and no signing key belongs anywhere.
   const contractAddresses = { CREDITS_ADDRESS: e.CREDITS_ADDRESS, CALLPAY_ADDRESS: e.CALLPAY_ADDRESS, RECEIPT_ANCHOR_ADDRESS: e.RECEIPT_ANCHOR_ADDRESS, PROVIDER_BOND_ADDRESS: e.PROVIDER_BOND_ADDRESS };
   const contractsMode = Object.values(contractAddresses).some((v) => v && !/^0x0{40}$/.test(v));
+  const anonymoRoots = !!e.ANONYMO_RECEIPT_ROOTS_ADDRESS && !/^0x0{40}$/.test(e.ANONYMO_RECEIPT_ROOTS_ADDRESS);
   if (production) {
     if (!e.APP_SECRET || e.APP_SECRET.length < 32) throw new Error("APP_SECRET (>= 32 chars) is required in production.");
     if (!e.ADMIN_TOKEN || e.ADMIN_TOKEN.length < 24) throw new Error("ADMIN_TOKEN (>= 24 chars) is required in production.");
@@ -284,8 +289,12 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     if (contractsMode && e.RUNTIME_ROLE === "api" && !e.ROUTER_PRIVATE_KEY) throw new Error("Public API requires the restricted router signing role for enabled per-call payments.");
     const roleKeys = { settlement: e.SETTLEMENT_PRIVATE_KEY, anchoring: e.ANCHORER_PRIVATE_KEY, slashing: e.SLASHER_PRIVATE_KEY };
     if (e.RUNTIME_ROLE === "api" && Object.values(roleKeys).some(Boolean)) throw new Error("Public API must not receive settlement, anchoring or slashing signing keys.");
+    // The withdrawal hot wallet signs only on the worker that runs anonymo-deposits (it processes pending withdrawals).
+    const payoutKey = typeof raw.ANONYMO_PAYOUT_PRIVATE_KEY === "string" && raw.ANONYMO_PAYOUT_PRIVATE_KEY.trim();
+    if (payoutKey && e.RUNTIME_ROLE === "api") throw new Error("Public API must not receive the withdrawal hot wallet key (ANONYMO_PAYOUT_PRIVATE_KEY).");
     // Contract-free: no job signs anything (receipts stay signed locally, settlement and slashing are inert).
-    if (!contractsMode && Object.values(roleKeys).some(Boolean)) throw new Error("A contract-free router must not receive settlement, anchoring or slashing signing keys.");
+    // ReceiptRoots (A3) is the one contract a contract-free router signs for: the anchoring key alone, on its worker.
+    if (!contractsMode && (roleKeys.settlement || roleKeys.slashing || (roleKeys.anchoring && !anonymoRoots))) throw new Error("A contract-free router must not receive settlement, anchoring or slashing signing keys.");
     if (e.RUNTIME_ROLE === "worker") {
       const names = e.WORKER_JOBS.split(",").map((v) => v.trim()).filter(Boolean);
       const allowed = ["health-flush", "holds-expire", "catalog-refresh", "provider-registry", "health-probes", "canaries", "attestor", "receipts-anchor", "receipt-key-rotation", "settlement", "slasher", "chain-indexer", "spend-watch", "alert-notifier", "measurements", "dayzero", "batches"];
@@ -296,6 +305,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
       if (!names.length || names.some((n) => !allowed.includes(n))) throw new Error("Worker requires an explicit valid WORKER_JOBS list.");
       const keyJobs = { settlement: "settlement", anchoring: "receipts-anchor", slashing: "slasher" };
       if (Object.values(roleKeys).filter(Boolean).length > 1) throw new Error("Privileged worker signing roles must be isolated.");
+      if (!contractsMode && anonymoRoots && !!roleKeys.anchoring !== names.includes("receipts-anchor")) throw new Error("Worker anchoring job and signing-key configuration must match.");
       if (contractsMode)
         for (const [role, key] of Object.entries(roleKeys)) {
           const enabled = names.includes(keyJobs[role as keyof typeof keyJobs]);
@@ -386,6 +396,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
       callPay: e.CALLPAY_ADDRESS as `0x${string}` | undefined,
       providerBond: e.PROVIDER_BOND_ADDRESS as `0x${string}` | undefined,
       receiptAnchor: e.RECEIPT_ANCHOR_ADDRESS as `0x${string}` | undefined,
+      anonymoReceiptRoots: e.ANONYMO_RECEIPT_ROOTS_ADDRESS as `0x${string}` | undefined,
       royalty: e.ROYALTY_ADDRESS as `0x${string}` | undefined,
       callPayTreasury: e.CALLPAY_TREASURY as `0x${string}` | undefined,
       routerKey: e.ROUTER_PRIVATE_KEY as `0x${string}` | undefined,

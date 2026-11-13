@@ -95,6 +95,7 @@ export function ChatWorkspace() {
     const abort = new AbortController();
     controller.current = abort;
     let receiptId: string | null = null;
+    let haveReceipt = false;
     try {
       const result = await client.chat(
         { model, messages },
@@ -108,7 +109,8 @@ export function ChatWorkspace() {
         },
       );
       receiptId = result.receiptId;
-      update(id, { status: 'done', content: result.content, council: result.council, receiptId });
+      haveReceipt = result.receipt !== null;
+      update(id, { status: 'done', content: result.content, council: result.council, receiptId, receipt: result.receipt });
     } catch (error) {
       const stopped = abort.signal.aborted;
       update(id, { status: stopped ? 'stopped' : 'error', error: stopped ? null : describeError(error) });
@@ -118,10 +120,11 @@ export function ChatWorkspace() {
     }
     if (receiptId) {
       rememberReceipt({ id: receiptId, model, at: new Date().toISOString() });
-      client.receipt(receiptId).then(
-        (signed) => update(id, { receipt: signed.receipt }),
-        () => undefined,
-      );
+      if (!haveReceipt)
+        client.receipt(receiptId).then(
+          (view) => update(id, { receipt: view.receipt }),
+          () => undefined,
+        );
     }
   }
 

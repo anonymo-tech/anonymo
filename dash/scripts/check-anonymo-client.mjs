@@ -1,11 +1,12 @@
 // The typed gateway client against the in-browser mock gateway: the whole visitor path (key → deposit → balance →
-// chat → receipt → proof → withdrawal), the error codes the UI explains, and the pure helpers.
+// chat → receipt → proof → withdrawal), the error codes the UI explains, and the pure helpers. The mock answers in the
+// real gateway's shapes; scripts/check-gateway-live.mjs runs the same client against a running gateway.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fc from 'fast-check';
-import { AnonymoApiError, createAnonymoClient, describeError, readChatStream } from '../lib/anonymo/client.ts';
+import { API_PATHS, AnonymoApiError, createAnonymoClient, describeError, newIdempotencyKey, readChatStream, receiptIdFromHeader } from '../lib/anonymo/client.ts';
 import { createMockGateway } from '../lib/anonymo/mock/gateway.ts';
-import { formatUsd, parseUsd } from '../lib/anonymo/money.ts';
+import { formatUsd, musdToUsdString, parseUsd, usdToMusd } from '../lib/anonymo/money.ts';
 import { hashPair, rootFromProof, verifyInclusion } from '../lib/anonymo/proof.ts';
 import { KEY_PLACEHOLDER, PRESETS, presetText } from '../lib/anonymo/presets.ts';
 import { ANONYMO_MODEL_IDS } from '../lib/anonymo/types.ts';
@@ -22,21 +23,26 @@ async function funded(options = {}) {
   return { mock, client, created };
 }
 
-void test('POST /keys returns an anm_live_ key once, with a deposit address per chain', async () => {
+void test('POST /keys returns an anm_live_ key once, its caps and the deposit instructions with one key_commit', async () => {
   const { created } = await funded();
   assert.ok(isApiKey(created.key));
-  assert.equal(created.key_prefix, created.key.slice(0, 13));
-  assert.deepEqual(created.deposit_addresses.map((a) => a.chain).sort(), Object.keys(CHAINS).sort());
-  for (const a of created.deposit_addresses) assert.deepEqual(a.tokens, CHAINS[a.chain].tokens);
+  assert.match(created.key_hash, /^[0-9a-f]{64}$/);
+  assert.equal(created.deposit.paused, false);
+  assert.match(created.deposit.evm.key_commit, /^0x[0-9a-f]{64}$/);
+  assert.equal(created.deposit.coin.key_commit, created.deposit.evm.key_commit, 'one commitment per key on every EVM rail');
+  for (const c of created.deposit.evm.chains) assert.ok(CHAINS[c.chain] && c.tokens.length > 0);
   assert.ok(!maskKey(created.key).includes(created.key.slice(14, -4)));
 });
 
 void test('the visitor path: deposit → balance → streamed chat → receipt → verified proof → withdraw to source', async () => {
   const { mock, client, created } = await funded();
-  await mock.simulateDeposit(created.key, 'base', 'USDC', 20_000_000);
+  await mock.simulateDeposit(created.key, 'rhc', 'USDG', 20_000_000);
   const before = await client.balance();
-  assert.equal(before.available_musd, 20_000_000);
-  assert.equal(before.sources[0].chain, 'base');
+  assert.equal(usdToMusd(before.available_usd), 20_000_000);
+  assert.equal(before.withdraw_to[0].chain, 'rhc');
+  const deposits = await client.deposits();
+  assert.equal(deposits.data[0].status, 'credited');
+  assert.match(deposits.data[0].ref, /^rhc:0x[0-9a-f]{64}:0$/);
 
   let streamed = '';
   const reply = await client.chat(
@@ -47,46 +53,85 @@ void test('the visitor path: deposit → balance → streamed chat → receipt �
   assert.equal(streamed, reply.content);
   assert.equal(reply.finishReason, 'stop');
   assert.ok(reply.receiptId);
+  assert.equal(reply.receipt.request_id, reply.receiptId, 'the receipt rides on the last stream event');
 
-  const signed = await client.receipt(reply.receiptId);
-  assert.equal(signed.receipt.model_id, 'anonymo-1');
-  assert.equal(signed.receipt.refused, false);
-  assert.equal(signed.receipt.routes.length, 1);
+  const view = await client.receipt(reply.receiptId);
+  assert.equal(view.receipt.model_id, 'anonymo-1');
+  assert.equal(view.receipt.refused, false);
+  assert.equal(view.receipt.routes.length, 1);
   const proof = await client.receiptProof(reply.receiptId);
-  assert.equal(proof.leaf, signed.leaf);
+  assert.equal(proof.rooted, true);
+  assert.equal(proof.leaf, view.leaf);
   assert.ok(proof.proof.length >= 2, 'a multi-level path');
   assert.ok(verifyInclusion(proof.leaf, proof.proof, proof.root));
   assert.ok(!verifyInclusion(proof.leaf, proof.proof.slice(1), proof.root));
 
   const after = await client.balance();
-  assert.equal(after.held_musd, 0);
-  assert.equal(after.available_musd, 20_000_000 - signed.receipt.cost_musd);
+  assert.equal(after.held_usd, 0);
+  assert.equal(usdToMusd(after.available_usd), 20_000_000 - usdToMusd(view.receipt.cost));
 
-  const source = after.sources[0];
-  const wd = await client.withdraw({ chain: source.chain, source_address: source.address, amount_musd: 'all' });
-  assert.equal(wd.to, source.address);
-  assert.equal(wd.amount_musd, after.available_musd);
+  const dest = after.withdraw_to[0];
+  const wd = await client.withdraw({ chain: dest.chain, to: dest.address, amount_usd: 'all' }, newIdempotencyKey());
+  assert.equal(wd.withdrawal.to, dest.address);
+  assert.equal(wd.withdrawal.amount_usd, after.available_usd);
   const empty = await client.balance();
-  assert.equal(empty.available_musd, 0);
-  assert.equal(empty.sources[0].withdrawable_musd, 0, 'spent credit is not withdrawable');
+  assert.equal(empty.available_usd, 0);
+  assert.equal(empty.withdraw_to[0].max_usd, 0, 'spent credit is not withdrawable');
+  assert.equal((await client.withdrawals()).length, 1);
 });
 
-void test('property: across deposits, chats and withdrawals, sources never offer more than is available', async () => {
+void test('withdrawals need an Idempotency-Key, replay the first result, and go only to a source address', async () => {
+  const { mock, client, created } = await funded();
+  await mock.simulateDeposit(created.key, 'tron', 'USDT', 3_000_000);
+  const raw = await mock.fetch(`${BASE}${API_PATHS.withdraw}`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${created.key}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ chain: 'tron', to: 'Tsomeone', amount_usd: '1' }),
+  });
+  assert.equal(raw.status, 400);
+  assert.equal((await raw.json()).error.type, 'idempotency_key_required');
+  await assert.rejects(
+    client.withdraw({ chain: 'tron', to: 'Tnot-a-source', amount_usd: '1' }, newIdempotencyKey()),
+    (e) => e.status === 403 && e.code === 'not_source_address',
+  );
+  const dest = (await client.balance()).withdraw_to[0];
+  const idem = newIdempotencyKey();
+  const first = await client.withdraw({ chain: dest.chain, to: dest.address, amount_usd: '1.5' }, idem);
+  const again = await client.withdraw({ chain: dest.chain, to: dest.address, amount_usd: '1.5' }, idem);
+  assert.equal(again.replay, true);
+  assert.equal(again.withdrawal.id, first.withdrawal.id);
+  assert.equal(usdToMusd((await client.balance()).available_usd), 1_500_000, 'a replay never withdraws twice');
+});
+
+void test('property: across deposits, coin payments, chats and withdrawals, no destination offers more than is withdrawable', async () => {
   await fc.assert(
     fc.asyncProperty(
-      fc.array(fc.oneof(fc.record({ op: fc.constant('deposit'), usd: fc.integer({ min: 1, max: 50 }), chain: fc.constantFrom('base', 'solana', 'tron') }), fc.record({ op: fc.constant('chat') }), fc.record({ op: fc.constant('withdraw'), part: fc.integer({ min: 1, max: 100 }) })), { maxLength: 8 }),
+      fc.array(
+        fc.oneof(
+          fc.record({ op: fc.constant('deposit'), usd: fc.integer({ min: 1, max: 50 }), chain: fc.constantFrom('base', 'rhc', 'tron') }),
+          fc.record({ op: fc.constant('coin'), usd: fc.integer({ min: 1, max: 50 }) }),
+          fc.record({ op: fc.constant('chat') }),
+          fc.record({ op: fc.constant('withdraw'), part: fc.integer({ min: 1, max: 100 }) }),
+        ),
+        { maxLength: 8 },
+      ),
       async (ops) => {
         const { mock, client, created } = await funded();
         for (const o of ops) {
           if (o.op === 'deposit') await mock.simulateDeposit(created.key, o.chain, o.chain === 'tron' ? 'USDT' : 'USDC', o.usd * 1_000_000);
+          if (o.op === 'coin') await mock.simulateCoinPayment(created.key, o.usd * 1_000_000);
           if (o.op === 'chat') await client.chat({ model: 'anonymo-1', messages: [{ role: 'user', content: 'hi' }] }).catch(() => null);
           if (o.op === 'withdraw') {
-            const s = (await client.balance()).sources.find((x) => x.withdrawable_musd > 0);
-            if (s) await client.withdraw({ chain: s.chain, source_address: s.address, amount_musd: Math.max(1, Math.floor((s.withdrawable_musd * o.part) / 100)) });
+            const d = (await client.balance()).withdraw_to.find((x) => usdToMusd(x.max_usd) >= 1_000_000);
+            if (d) {
+              const amount = Math.max(1_000_000, Math.floor((usdToMusd(d.max_usd) * o.part) / 100));
+              await client.withdraw({ chain: d.chain, to: d.address, amount_usd: musdToUsdString(amount) }, newIdempotencyKey());
+            }
           }
           const b = await client.balance();
-          assert.ok(b.available_musd >= 0 && b.held_musd === 0);
-          assert.ok(b.sources.reduce((t, x) => t + x.withdrawable_musd, 0) <= b.available_musd);
+          assert.ok(b.available_usd >= 0 && b.held_usd === 0);
+          const withdrawable = usdToMusd(b.available_usd) - usdToMusd(b.usage_only_usd);
+          for (const d of b.withdraw_to) assert.ok(usdToMusd(d.max_usd) <= withdrawable, 'usage-only credit is never withdrawable');
         }
       },
     ),
@@ -94,43 +139,43 @@ void test('property: across deposits, chats and withdrawals, sources never offer
   );
 });
 
-void test('a refused first attempt is rerouted to another family and nets to zero on the ledger', async () => {
+void test('ANMO payments credit usage-only balance; a payment over the cap is held', async () => {
   const { mock, client, created } = await funded();
-  await mock.simulateDeposit(created.key, 'solana', 'USDC', 5_000_000);
-  const reply = await client.chat({ model: 'anonymo-1', messages: [{ role: 'user', content: 'please reroute this' }] });
-  const { receipt } = await client.receipt(reply.receiptId);
-  assert.equal(receipt.refused, true);
-  assert.equal(receipt.routes.length, 2);
-  assert.deepEqual(receipt.refused_routes, [receipt.routes[0]]);
-  assert.ok(receipt.refund_musd > 0);
-  const balance = await client.balance();
-  assert.equal(balance.available_musd, 5_000_000 - receipt.cost_musd, 'the refused attempt costs nothing');
-  assert.equal(balance.refused_refunded_musd, receipt.refund_musd);
+  await mock.simulateCoinPayment(created.key, 5_000_000);
+  const b = await client.balance();
+  assert.equal(usdToMusd(b.usage_only_usd), 5_000_000);
+  assert.deepEqual(b.withdraw_to, [], 'nothing to withdraw: coin credit is usage only');
+  await mock.simulateCoinPayment(created.key, 300_000_000);
+  const rows = (await client.deposits()).data;
+  assert.equal(rows[0].chain, 'coin');
+  assert.equal(rows[0].status, 'held');
+  assert.equal(rows[0].reason, 'over_cap');
+  assert.equal(usdToMusd((await client.balance()).balance_usd), 5_000_000);
 });
 
-void test('council returns the merged reply and every proposer; the receipt lists proposers and aggregator', async () => {
+void test('council answers as one JSON body with every seat; the receipt lists proposers and the aggregator or judge', async () => {
   const { mock, client, created } = await funded();
   await mock.simulateDeposit(created.key, 'arbitrum', 'USDT', 5_000_000);
   const reply = await client.chat({ model: 'anonymo-council', messages: [{ role: 'user', content: 'Compare two plans.' }] });
   assert.equal(reply.councilMode, 'merge');
-  assert.equal(reply.council?.proposers.length, 3);
+  assert.equal(reply.council.proposers.length, 3);
   assert.equal(new Set(reply.council.proposers.map((p) => p.family)).size, 3, 'three different families');
-  const { receipt } = await client.receipt(reply.receiptId);
-  assert.equal(receipt.routes.length, 4);
-  const select = await client.chat(
-    { model: 'anonymo-council', messages: [{ role: 'user', content: 'Pick one.' }] },
-    { headers: { councilMode: 'select' } },
-  );
+  assert.ok(reply.council.aggregator);
+  const view = await client.receipt(reply.receiptId);
+  assert.equal(view.receipt.routes.length, 4);
+  assert.deepEqual(view.receipt.routes.map((r) => r.role), ['proposer', 'proposer', 'proposer', 'aggregator']);
+  const select = await client.chat({ model: 'anonymo-council', messages: [{ role: 'user', content: 'Pick one.' }] }, { headers: { councilMode: 'select' } });
   assert.equal(select.council.mode, 'select');
-  assert.equal(select.council.aggregator, null);
+  assert.ok(select.council.judge);
+  assert.equal(select.council.aggregator, undefined);
 });
 
-void test('sealed carries an attestation quote hash, and fails with 409 rather than downgrading', async () => {
+void test('sealed carries an attestation quote hash, and fails with 409 sealed_unavailable rather than downgrading', async () => {
   const { mock, client, created } = await funded();
   await mock.simulateDeposit(created.key, 'base', 'USDC', 5_000_000);
   const reply = await client.chat({ model: 'anonymo-sealed', messages: [{ role: 'user', content: 'hi' }] });
-  const { receipt } = await client.receipt(reply.receiptId);
-  assert.match(receipt.attestation_quote_hash, /^0x[0-9a-f]{64}$/);
+  assert.match(reply.receipt.attestation_quote_hash, /^0x[0-9a-f]{64}$/);
+  assert.equal(reply.receipt.sealed, true);
 
   const down = await funded({ sealedAvailable: false });
   await down.mock.simulateDeposit(down.created.key, 'base', 'USDC', 5_000_000);
@@ -138,32 +183,25 @@ void test('sealed carries an attestation quote hash, and fails with 409 rather t
     down.client.chat({ model: 'anonymo-sealed', messages: [{ role: 'user', content: 'hi' }] }),
     (e) => e instanceof AnonymoApiError && e.status === 409 && e.code === 'sealed_unavailable',
   );
-  assert.equal((await down.client.balance()).available_musd, 5_000_000, 'nothing charged');
+  assert.equal(usdToMusd((await down.client.balance()).available_usd), 5_000_000, 'nothing charged');
 });
 
-void test('no credit → 402, no key → 401, and the UI text explains each without echoing the prompt', async () => {
+void test('errors: the gateway shape ({code: status, type}) maps to codes, and the UI text never echoes the prompt', async () => {
   const { client } = await funded();
   const secret = 'a prompt that must never be echoed';
   const e402 = await client.chat({ model: 'anonymo-1', messages: [{ role: 'user', content: secret }] }).catch((e) => e);
   assert.equal(e402.status, 402);
+  assert.equal(e402.code, 'insufficient_balance');
   assert.ok(!describeError(e402).includes(secret));
   const anon = createAnonymoClient({ baseUrl: BASE, fetch: createMockGateway().fetch });
   await assert.rejects(anon.balance(), (e) => e.status === 401);
-  const floor = new AnonymoApiError(451, 'floor_blocked', 'blocked', 'cbrn');
+  const body = JSON.stringify({ error: { code: 451, message: 'blocked', type: 'floor_blocked', metadata: { category: 'cbrn' } } });
+  const blocked = createAnonymoClient({ baseUrl: BASE, key: 'anm_live_' + 'a'.repeat(32), fetch: async () => new Response(body, { status: 451 }) });
+  const floor = await blocked.balance().catch((e) => e);
+  assert.equal(floor.code, 'floor_blocked');
+  assert.equal(floor.category, 'cbrn');
   assert.match(describeError(floor), /not sent to any model/);
   assert.match(describeError(floor), /not charged/);
-});
-
-void test('withdrawals refuse a destination and an unknown source', async () => {
-  const { mock, client, created } = await funded();
-  await mock.simulateDeposit(created.key, 'tron', 'USDT', 3_000_000);
-  const raw = await mock.fetch(`${BASE}/withdraw`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${created.key}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ chain: 'tron', source_address: 'x', amount_musd: 1, to: 'T-someone-else' }),
-  });
-  assert.equal(raw.status, 400);
-  await assert.rejects(client.withdraw({ chain: 'tron', source_address: 'Tnot-a-source', amount_musd: 1 }), (e) => e.status === 404);
 });
 
 void test('aborting a stream stops it and charges only what was delivered', async () => {
@@ -180,13 +218,31 @@ void test('aborting a stream stops it and charges only what was delivered', asyn
   );
   await new Promise((r) => setTimeout(r, 30));
   const balance = await client.balance();
-  assert.equal(balance.held_musd, 0);
-  assert.ok(balance.available_musd > 5_000_000 - 5_000);
+  assert.equal(balance.held_usd, 0);
+  assert.ok(usdToMusd(balance.available_usd) > 5_000_000 - 5_000);
+});
+
+void test('the x-anonymo-receipt header decodes to its request id', () => {
+  const payload = Buffer.from(JSON.stringify({ request_id: 'gen-1-abc', model_id: 'anonymo-1' })).toString('base64url');
+  assert.equal(receiptIdFromHeader(`${payload}.c2ln.key1`), 'gen-1-abc');
+  assert.equal(receiptIdFromHeader('not-a-header'), null);
+  assert.equal(receiptIdFromHeader(null), null);
+});
+
+void test('money: gateway USD numbers and strings convert to micro-USD exactly', () => {
+  assert.equal(usdToMusd(10), 10_000_000);
+  assert.equal(usdToMusd(0.0000154), 15);
+  assert.equal(usdToMusd('0.0000165'), 17);
+  assert.equal(usdToMusd('12.5'), 12_500_000);
+  assert.ok(Number.isNaN(usdToMusd('abc')));
+  assert.equal(musdToUsdString(12_500_000), '12.5');
+  assert.equal(musdToUsdString(1), '0.000001');
+  fc.assert(fc.property(fc.integer({ min: 0, max: 10 ** 12 }), (m) => usdToMusd(musdToUsdString(m)) === m));
 });
 
 void test('the SSE reader handles split frames, CRLF and [DONE]', async () => {
   const enc = new TextEncoder();
-  const frames = ['data: {"id":"a","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"he"},', '"finish_reason":null}]}\r\n\r\n', 'data: {"id":"a","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"llo"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'];
+  const frames = [': ANONYMO PROCESSING\n\ndata: {"id":"a","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"he"},', '"finish_reason":null}]}\r\n\r\n', 'data: {"id":"a","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"llo"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'];
   const body = new ReadableStream({ start(c) { for (const f of frames) c.enqueue(enc.encode(f)); c.close(); } });
   let text = '';
   for await (const chunk of readChatStream(body)) text += chunk.choices[0].delta.content ?? '';

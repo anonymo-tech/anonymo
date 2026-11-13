@@ -1,7 +1,8 @@
 // EVM deposit watcher: USDC, USDT and USDG on Base, Arbitrum and Robinhood Chain through DepositRouter (WS08).
-// The router emits Deposited(bytes32 keyCommit, address token, uint256 amount) and forwards the tokens to the treasury Safe,
+// The router emits Deposited(bytes32 keyCommit, address token, address payer, uint256 amount) and forwards the tokens to the treasury Safe,
 // so no per-key wallet ever holds funds. A log is credited once it is `confirmations` blocks deep, only for an allowlisted
-// token, and only when its keyCommit belongs to a key. The source (refund) address is the transaction sender.
+// token, and only when its keyCommit belongs to a key. The source (refund) address is the payer the router pulled
+// the tokens from (not the transaction sender, which differs for Safes, relayers and account-abstraction bundlers).
 // Our own ABI fragment, matching contracts/src/anonymo/interfaces/IAnonymo.sol, so this does not depend on chain/abis.ts.
 
 import { createPublicClient, http, parseAbiItem, type Hex } from "viem";
@@ -14,21 +15,20 @@ import type { EvmChainConfig } from "./config.ts";
 import type { AnonymoDepositSink } from "./sink.ts";
 import { stableRawToPico } from "./units.ts";
 
-export const DEPOSITED_EVENT = parseAbiItem("event Deposited(bytes32 indexed keyCommit, address indexed token, uint256 amount)");
+export const DEPOSITED_EVENT = parseAbiItem("event Deposited(bytes32 indexed keyCommit, address indexed token, address indexed payer, uint256 amount)");
 
 export type DepositedLog = {
-  args: { keyCommit?: Hex; token?: Hex; amount?: bigint };
+  args: { keyCommit?: Hex; token?: Hex; payer?: Hex; amount?: bigint };
   transactionHash: Hex | null;
   logIndex: number | null;
   blockNumber: bigint | null;
   removed?: boolean;
 };
 
-/** The three RPC reads the watcher needs; tests pass a mock. */
+/** The two RPC reads the watcher needs; tests pass a mock. */
 export type EvmReader = {
   getBlockNumber(): Promise<bigint>;
   getDepositLogs(o: { address: Hex; fromBlock: bigint; toBlock: bigint }): Promise<DepositedLog[]>;
-  getTransactionSender(hash: Hex): Promise<Hex>;
 };
 
 export function rpcEvmReader(rpcUrl: string): EvmReader {
@@ -36,7 +36,6 @@ export function rpcEvmReader(rpcUrl: string): EvmReader {
   return {
     getBlockNumber: () => client.getBlockNumber({ cacheTime: 0 }),
     getDepositLogs: ({ address, fromBlock, toBlock }) => client.getLogs({ address, event: DEPOSITED_EVENT, fromBlock, toBlock, strict: false }) as Promise<DepositedLog[]>,
-    getTransactionSender: async (hash) => (await client.getTransaction({ hash })).from,
   };
 }
 
@@ -68,8 +67,8 @@ export async function scanEvmChain(db: Db, cfg: EvmChainConfig, reader: EvmReade
     const to = from + BigInt(cfg.maxRange) - 1n < safe ? from + BigInt(cfg.maxRange) - 1n : safe;
     const logs = await reader.getDepositLogs({ address: cfg.router, fromBlock: from, toBlock: to });
     for (const l of logs) {
-      const { keyCommit, token, amount } = l.args;
-      if (l.removed || !l.transactionHash || l.logIndex == null || !keyCommit || !token || amount == null) {
+      const { keyCommit, token, payer, amount } = l.args;
+      if (l.removed || !l.transactionHash || l.logIndex == null || !keyCommit || !token || !payer || amount == null) {
         out.skipped++;
         continue;
       }
@@ -85,7 +84,7 @@ export async function scanEvmChain(db: Db, cfg: EvmChainConfig, reader: EvmReade
         out.skipped++;
         continue;
       }
-      const sender = (await reader.getTransactionSender(l.transactionHash)).toLowerCase();
+      const sender = payer.toLowerCase();
       const amountPico = stableRawToPico(amount, t.decimals);
       if (amountPico <= 0n) {
         out.skipped++;

@@ -8,8 +8,8 @@ import { useAnonymo } from '../anonymo-provider';
 import { CopyButton } from '../copy-button';
 import { describeError } from '@/lib/anonymo/client';
 import { isApiKey, maskKey } from '@/lib/anonymo/key-store';
-import { parseUsd } from '@/lib/anonymo/money';
-import type { CreateKeyResponse, KeyCaps } from '@/lib/anonymo/types';
+import { musdToUsdString, parseUsd } from '@/lib/anonymo/money';
+import type { CreateKeyResponse, KeyCapsInput } from '@/lib/anonymo/types';
 
 /** Create a key (shown once), paste an existing one, or forget it on this device. No identity fields anywhere. */
 export function KeyPanel() {
@@ -27,7 +27,7 @@ export function KeyPanel() {
   async function create() {
     setBusy(true);
     setError('');
-    const caps: KeyCaps = {};
+    const caps: KeyCapsInput = {};
     if (dailyCap.trim()) {
       const musd = parseUsd(dailyCap);
       if (musd === null || musd <= 0) {
@@ -35,7 +35,7 @@ export function KeyPanel() {
         setBusy(false);
         return;
       }
-      caps.daily_musd = musd;
+      caps.daily_usd = musdToUsdString(musd);
     }
     if (sealedOnly) caps.sealed_only = true;
     try {
@@ -119,8 +119,8 @@ export function KeyPanel() {
             <span className="chip">No account · no email · no KYC</span>
           </header>
           <p className="lede">
-            A key is all you need. Fund it with crypto at its own deposit addresses, and any unused credit can always go back to
-            the wallet it came from.
+            A key is all you need. Fund it from your own wallet, and any unused stablecoin credit can always go back to the wallet
+            it came from.
           </p>
           <details>
             <summary className="muted" style={{ cursor: 'pointer' }}>

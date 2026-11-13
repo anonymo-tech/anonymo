@@ -1,7 +1,7 @@
 # Anonymo dashboard
 
 The web workspace for Anonymo (Backend §2 "dash", Overview §2): create a key, fund it, chat with the four model IDs,
-compare council answers, read receipts and their inclusion proofs, import character cards, copy frontend presets, and the
+see every council seat, read receipts and their inclusion proofs, import character cards, copy frontend presets, and the
 public `/manifest` and `/leaderboard` pages. No email, name or identity fields anywhere, and no analytics.
 
 It keeps the Conclave workspace layout (top bar, centred thread, answer cards with a model tab bar and Compare, the
@@ -14,7 +14,7 @@ brand, films and i18n are gone.
 npx -y pnpm@11.19.0 install
 npx -y pnpm@11.19.0 dev          # http://localhost:5173
 npx -y pnpm@11.19.0 typecheck
-npx -y pnpm@11.19.0 test         # client, copy rules, Solana verifier, secret guard
+npx -y pnpm@11.19.0 test         # client, wallet, copy rules, Solana verifier, secret guard
 npx -y pnpm@11.19.0 lint
 npx -y pnpm@11.19.0 build && npx -y pnpm@11.19.0 start
 ```
@@ -27,13 +27,43 @@ npx -y pnpm@11.19.0 build && npx -y pnpm@11.19.0 start
 | `NEXT_PUBLIC_ANONYMO_DEMO=1` | Force demo mode. |
 | `?demo=1` / `?demo=0` | Turn demo mode on or off for this tab (when an API is set). |
 | `NEXT_PUBLIC_ANONYMO_VENICE_BADGE=1` | Show the "Built in Venice" badge (Overview §4, §10). Off by default. |
+| `NEXT_PUBLIC_ANONYMO_RHC_CHAIN_ID=46630` | Robinhood Chain testnet instead of mainnet (4663). Set `NEXT_PUBLIC_ANONYMO_RHC_RPC` with it. |
+| `NEXT_PUBLIC_ANONYMO_EVM_NETWORKS='{"rhc":{"chainId":…,"rpcUrl":"…"}}'` | Override the chain id, RPC or name the wallet is switched to, per EVM chain (testnets, local chains). |
 
 Demo mode serves every endpoint from an in-browser mock gateway (`lib/anonymo/mock/`) with fixtures that follow the
-spec shapes. The same client code runs in both modes; only `fetch` differs. In demo mode the funds page can simulate a
-confirmed deposit, and a prompt containing the word "reroute" shows a refused-then-rerouted answer and its refund.
+gateway's shapes. The same client code runs in both modes; only `fetch` differs. In demo mode the funds page can simulate
+a confirmed USDG deposit or an ANMO payment, and a prompt containing the word "reroute" shows a refused-then-rerouted
+answer.
 
-The real gateway must allow the dashboard origin in CORS and expose `x-anonymo-receipt` and `x-anonymo-council-mode`
-(`Access-Control-Expose-Headers`), or the browser cannot read them.
+Against a local gateway (`cd gateway && bun run launch`, http://127.0.0.1:8787):
+
+```bash
+NEXT_PUBLIC_ANONYMO_API=http://127.0.0.1:8787 npx -y pnpm@11.19.0 dev
+ANONYMO_API=http://127.0.0.1:8787 ANONYMO_TEST_KEY=<LAUNCH_KEY from gateway/.data/launch.env> \
+  node --experimental-strip-types --test scripts/check-gateway-live.mjs
+```
+
+`check-gateway-live.mjs` runs the dashboard's client against the running gateway: CORS for every path, key creation,
+deposit instructions, balance, withdrawals, models, manifest, leaderboard, chat with each of the four model IDs, the
+receipt and its proof, and a sealed character card. The chat checks need the four model IDs seeded on the gateway
+(`bun scripts/seed-upstreams.ts`, see `gateway/config/upstreams.yaml`) and council enabled (`ANONYMO_FEATURE_COUNCIL=1`).
+
+## Paying from a browser wallet
+
+`lib/anonymo/wallet.ts` and `components/dashboard/wallet-pay.tsx`, over plain EIP-1193 (`window.ethereum`) and viem. No
+wallet SDK and no WalletConnect.
+
+- **Stablecoins.** `GET /deposits` gives one `key_commit` per key and a DepositRouter per chain. The wallet is switched to
+  the chain (added first if it does not know it), then pays `depositWithPermit(token, amount, keyCommit, deadline, v, r, s)`
+  when the token's EIP-712 domain provably matches its `DOMAIN_SEPARATOR` (USDG), else `approve` then `deposit`. An
+  existing allowance skips both. The page then polls `GET /deposits` until the row whose `ref` holds the transaction
+  hash appears, credited or held. The sending wallet becomes the withdrawal address.
+- **ANMO**, shown only when the instructions carry `coin`. Coins = USD / `price_usd`, rounded up to the smallest unit;
+  amounts above `max_usd_per_payment` are refused, and nothing can be paid while `price_usd` is null. `CoinPay` burns the
+  coins (`payWithPermit`, else `approve` + `pay`), and the page says so: the credit is the USD value at the time of
+  crediting and is usage only, never withdrawable (`usage_only_usd` on `GET /balance`).
+- Before anything is signed, the payment contract and the token must have code on the chosen chain: a call to an
+  address with no code would "succeed" and move nothing.
 
 ## What stays on the device
 
@@ -42,28 +72,31 @@ The real gateway must allow the dashboard origin in CORS and expose `x-anonymo-r
 - Receipt ids with their model and time, imported character cards, the last model picked, the 18+ answer.
 - Conversations live in memory and are gone when the tab closes. Prompt and output text are never written to storage.
 
-## API shapes the dashboard assumes
+## API shapes the dashboard uses
 
-All in `lib/anonymo/types.ts` and `lib/anonymo/client.ts` (`API_PATHS`). Money is integer micro-USD (`*_musd`).
-Where the spec names a field it is used as written; the rest are proposals for the owning workstream to confirm.
+The gateway is the source of truth: `lib/anonymo/types.ts` mirrors its routes field for field and names the file behind
+each type, and `lib/anonymo/client.ts` holds every path (`API_PATHS`). The gateway sends USD as numbers (`*_usd`) or, on
+receipts, decimal strings; the dashboard computes in integer micro-USD (`lib/anonymo/money.ts`).
 
-| Call | Shape | Owner |
+| Call | Shape | Gateway file |
 | --- | --- | --- |
-| `POST /keys` | body `{caps?}` → `{key, key_prefix, caps, created_at, deposit_addresses[]}`; `key` is shown once | WS05 |
-| `GET /deposit-addresses` | `{data: [{chain, tokens[], address, confirmations, min_musd}]}`; chains `base, arbitrum, rhc, solana, tron, btc, ln` | WS05 |
-| `POST /deposits/lightning` | `{amount_musd}` → `{invoice_id, bolt11, amount_sats, quote_musd, expires_at}` | WS05 |
-| `GET /balance` | `{available_musd, held_musd, refused_refunded_musd, sources[{chain, token, address, deposited_musd, withdrawable_musd}], recent[{kind, amount_musd, ref, at}]}` | WS05 |
-| `POST /withdraw` | `{chain, source_address, amount_musd \| "all"}` → `{id, chain, token, to, amount_musd, status, tx_hash}`; no destination field | WS05 |
-| `POST /v1/chat/completions` | OpenAI SSE; headers `x-anonymo-refusal-catch`, `x-anonymo-council-mode`, `x-anonymo-sealed: required`; response header `x-anonymo-receipt`; council adds `anonymo_council: {mode, aggregator, proposers[{route_id, family, content, cost_musd, used}]}` on the final chunk | WS03, WS09 |
-| `GET /v1/models` | OpenAI list plus `family, quant, weights_hash, attested, refusal_rate_30d` | WS04, WS09 |
-| `GET /v1/receipts/{id}` | `{receipt: {request_id, model_id, routes[], weights_hash[], attestation_quote_hash, tokens{in,out}, cost_musd, refused, refused_routes[], refund_musd, ts}, signer, signature, leaf}` | WS09 |
-| `GET /v1/receipts/{id}/proof` | `{request_id, leaf, proof[], root, hour, anchor{chain, contract, tx_hash, status}}`; sorted-pair keccak256 as in `gateway/src/receipts/merkle.ts` | WS09 |
-| `GET /manifest` | `{generated_at, routes[{id, upstream, tier, family, model, quant, weights_hash, attested, serves[], enabled}]}` | WS09 |
-| `GET /leaderboard` | `{generated_at, window_days, rows[{route_id, family, upstream, total, refused, refusal_rate}]}` | WS09 |
-| `POST /v1/characters` | private card: `{visibility: "private", sealed_card, card_hash}`, sealed on the device with `lib/anonymo/card.ts` | existing gateway route |
+| `POST /keys` | body `{caps?: {daily_usd, …}}` → `{key, key_hash, wallet, caps, deposit}`; `key` is shown once | `anonymo/keys/routes.ts` |
+| `GET /keys/me` | `{key_hash, label, caps, deposit}` | `anonymo/keys/routes.ts` |
+| `GET /deposits` | `{instructions: {paused, evm: {key_commit, method, chains[{chain, router, confirmations, tokens[]}]}, solana, tron, btc, coin?, stablecoins_credit}, data[{ref, chain, token, amount_usd, from, status, created_at, reason?}]}` | `anonymo/deposits/routes.ts`, `instructions.ts` |
+| `POST /deposits/btcpay` | `{amount_usd, refund_address}` → `{invoice_id, checkout_link, amount_usd, refund}` | `anonymo/deposits/routes.ts` |
+| `GET /balance` | `{balance_usd, held_usd, available_usd, usage_only_usd?, withdraw_to[{chain, address, max_usd}]}` | `anonymo/deposits/routes.ts` |
+| `POST /withdraw` | header `Idempotency-Key`; `{chain, to, token?, amount_usd?: "all" \| "12.5"}` → `{withdrawal, replay}`; `to` must be one of `withdraw_to` | `anonymo/deposits/withdraw.ts` |
+| `GET /withdrawals` | `{data: [{id, status, chain, token, to, amount_usd, tx, created_at, sent_at}]}` | `anonymo/deposits/routes.ts` |
+| `POST /v1/chat/completions` | SSE for every model but `anonymo-council`; the last event carries `anonymo_receipt {payload, sig, key_id, alg, leaf, header}`. `anonymo-council` is one JSON body (`stream: false`) with `council {mode, outcome, selected, proposers[{label, model, provider, family, status, cost, receipt_id}], aggregator \| judge, premium, total_cost}`; the mode goes in the body as `council.mode`. Request headers `x-anonymo-refusal-catch`, `x-anonymo-sealed: required` | `api/chat.ts`, `api/council.ts` |
+| `GET /v1/models` | `{data: [{id, …, family, quant, weights_hash, attested, refusal_rate_30d}]}` | `api/models.ts`, `anonymo/trust/stats.ts` |
+| `GET /v1/receipts/{id}` | `{data: {id, receipt, sig, key_id, alg, leaf, header, signature_valid, keys, anchor}}`; `receipt` is `anonymo-receipt/1` with `routes[{route, role, status, cost, …}]` | `anonymo/trust/routes.ts`, `receipts/anonymo.ts` |
+| `GET /v1/receipts/{id}/proof` | `{data: {rooted: false, status: "pending", hint}}` until the hour is rooted, then `{data: {rooted: true, hour, root, leaf, leaf_index, leaf_count, proof[], status, posted, tx_hash, valid}}` | `receipts/roots.ts` |
+| `GET /manifest` | `{generated_at, counts, notes[], models[{id, family, quant, weights_hash, attested, refusal_rate_30d, routes[{route, upstream, family, quant, weights_hash, attested, tee, attestation_hash, attested_at}]}]}` | `anonymo/trust/routes.ts` |
+| `GET /leaderboard` | `{generated_at, window_days, available, routes[{route, model, family, total_30d, refused_30d, refusal_rate_30d}], families[…]}` | `anonymo/trust/routes.ts` |
+| `POST /api/v1/characters` | private card: `{visibility: "private", sealed_card, card_hash}`, sealed on the device with `lib/anonymo/card.ts` | `api/characters.ts` |
 
-Errors use the OpenAI shape. The UI explains `451 floor_blocked`, `409 sealed_unavailable`, `402 insufficient_balance`,
-`401` and `429` without ever echoing the prompt.
+Errors are `{error: {code: <HTTP status>, type: <machine code>, message, metadata?}}`. The UI explains `451 floor_blocked`,
+`409 sealed_unavailable`, `402`, `401` and `429` without ever echoing the prompt.
 
 ## Copy rules (Overview §10), checked by `scripts/check-copy.mjs`
 

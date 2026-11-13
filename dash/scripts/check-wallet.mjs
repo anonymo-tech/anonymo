@@ -1,0 +1,122 @@
+// The browser-wallet payment helpers: coin quotes (rounded up, capped, refused without a price), stablecoin units,
+// the ABI fragments against the gateway's compiled DepositRouter ABI, permit-domain detection, and chain switching.
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import fc from 'fast-check';
+import { domainSeparator, toFunctionSelector } from 'viem';
+import { DepositRouterAbi } from '../../gateway/src/chain/abis.ts';
+import { COIN_PAY_ABI, DEPOSIT_ROUTER_ABI, ensureChain, formatUnits, permitDomain, quoteCoins, rowForTx, stableUnits } from '../lib/anonymo/wallet.ts';
+
+const COIN = { price_usd: '0.0125', max_usd_per_payment: '250', token: { decimals: 18 } };
+
+void test('coin quote: usd / price, rounded up to the smallest unit, never short', () => {
+  const q = quoteCoins(10_000_000, COIN);
+  assert.equal(q.ok, true);
+  assert.equal(q.coins, 800n * 10n ** 18n, '$10 at $0.0125 is exactly 800 ANMO');
+  const odd = quoteCoins(1, { ...COIN, price_usd: '3' });
+  assert.equal(odd.coins, 333_333_333_334n, '$0.000001 at $3 rounds up');
+  fc.assert(
+    fc.property(fc.integer({ min: 1, max: 250_000_000 }), fc.integer({ min: 1, max: 10 ** 9 }), fc.integer({ min: 0, max: 8 }), (musd, p, scale) => {
+      const digits = String(p).padStart(scale + 1, '0');
+      const price = scale ? `${digits.slice(0, -scale)}.${digits.slice(-scale)}` : digits;
+      const r = quoteCoins(musd, { ...COIN, price_usd: price });
+      if (!r.ok) return false;
+      const [i, f = ''] = price.split('.');
+      const priceNum = BigInt(i + f);
+      const priceScale = BigInt(f.length);
+      // coins * price >= usd, and one unit fewer would fall short
+      const paid = (c) => c * priceNum * 1_000_000n; // compare in units of 10^-(18+scale) USD x 1e6
+      const owed = BigInt(musd) * 10n ** 18n * 10n ** priceScale;
+      return paid(r.coins) >= owed && paid(r.coins - 1n) < owed;
+    }),
+  );
+});
+
+void test('coin quote: refuses above max_usd_per_payment, and everything while price_usd is null', () => {
+  const over = quoteCoins(250_000_001, COIN);
+  assert.deepEqual([over.ok, over.reason, over.maxMusd], [false, 'over_max', 250_000_000]);
+  assert.equal(quoteCoins(250_000_000, COIN).ok, true);
+  assert.equal(quoteCoins(1_000_000, { ...COIN, price_usd: null }).reason, 'unavailable');
+  assert.equal(quoteCoins(0, COIN).reason, 'invalid_amount');
+});
+
+void test('stablecoin units are 1:1 with USD', () => {
+  assert.equal(stableUnits(12_345_678, 6), 12_345_678n);
+  assert.equal(stableUnits(1_000_000, 18), 10n ** 18n);
+  assert.throws(() => stableUnits(0, 6));
+  assert.equal(formatUnits(12_345_678n, 6), '12.345678');
+  assert.equal(formatUnits(800n * 10n ** 18n, 18), '800');
+  assert.equal(formatUnits(1n, 18), '0.000000000000000001');
+});
+
+void test('DepositRouter fragment matches the gateway ABI compiled from the contract', () => {
+  const sig = (f) => `${f.name}(${f.inputs.map((i) => i.type).join(',')})`;
+  const gateway = new Set(DepositRouterAbi.filter((f) => f.type === 'function').map((f) => toFunctionSelector(sig(f))));
+  for (const f of DEPOSIT_ROUTER_ABI) assert.ok(gateway.has(toFunctionSelector(sig(f))), `${sig(f)} is on the DepositRouter`);
+  assert.deepEqual(
+    COIN_PAY_ABI.map(sig),
+    ['pay(uint256,bytes32)', 'payWithPermit(uint256,bytes32,uint256,uint8,bytes32,bytes32)'],
+  );
+});
+
+const TOKEN = '0x5fc5360d0400a0fd4f2af552add042d716f1d168';
+function fakeToken({ name = 'Global Dollar', version = '1', reads = {} } = {}) {
+  const separator = domainSeparator({ domain: { name, version, chainId: 4663, verifyingContract: TOKEN } });
+  const values = { DOMAIN_SEPARATOR: separator, name, ...reads };
+  return {
+    readContract: async ({ functionName }) => {
+      if (!(functionName in values) || values[functionName] instanceof Error) throw new Error('execution reverted');
+      return values[functionName];
+    },
+  };
+}
+
+void test('permit domain: only a domain that hashes to the token DOMAIN_SEPARATOR is used', async () => {
+  assert.deepEqual(await permitDomain(fakeToken(), TOKEN, 4663), { name: 'Global Dollar', version: '1', chainId: 4663, verifyingContract: TOKEN });
+  const v2 = await permitDomain(fakeToken({ version: '2' }), TOKEN, 4663);
+  assert.equal(v2.version, '2');
+  const viaVersion = await permitDomain(fakeToken({ version: '7', reads: { version: '7' } }), TOKEN, 4663);
+  assert.equal(viaVersion.version, '7');
+  assert.equal(await permitDomain(fakeToken({ version: '9' }), TOKEN, 4663), null, 'an unguessable domain falls back to approve');
+  assert.equal(await permitDomain(fakeToken({ reads: { DOMAIN_SEPARATOR: new Error() } }), TOKEN, 4663), null, 'no EIP-2612');
+  assert.equal(await permitDomain(fakeToken(), TOKEN, 1), null, 'another chain id is another domain');
+});
+
+void test('ensureChain switches, adds an unknown chain, and confirms the result', async () => {
+  const calls = [];
+  let chain = 1;
+  let known = false;
+  const provider = {
+    request: async ({ method, params }) => {
+      calls.push(method);
+      if (method === 'eth_chainId') return `0x${chain.toString(16)}`;
+      if (method === 'wallet_switchEthereumChain') {
+        if (!known) throw Object.assign(new Error('Unrecognized chain'), { code: 4902 });
+        chain = Number.parseInt(params[0].chainId, 16);
+        return null;
+      }
+      if (method === 'wallet_addEthereumChain') {
+        assert.equal(params[0].chainId, '0x1237');
+        assert.deepEqual(params[0].rpcUrls, ['https://rpc.example']);
+        known = true;
+        chain = 4663;
+        return null;
+      }
+      throw new Error(`unexpected ${method}`);
+    },
+  };
+  const net = { chainId: 4663, name: 'Robinhood Chain', rpcUrl: 'https://rpc.example', explorer: null, nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 } };
+  await ensureChain(provider, net);
+  assert.deepEqual(calls, ['eth_chainId', 'wallet_switchEthereumChain', 'wallet_addEthereumChain', 'eth_chainId']);
+  calls.length = 0;
+  await ensureChain(provider, net);
+  assert.deepEqual(calls, ['eth_chainId'], 'already on the chain: nothing asked');
+  known = false; // the wallet does not know the testnet either
+  await assert.rejects(ensureChain(provider, { ...net, chainId: 46630, rpcUrl: '' }), /no RPC address/);
+});
+
+void test('the deposit row for a transaction is found by its hash in the ref', () => {
+  const rows = [{ ref: 'rhc:0xabc:0' }, { ref: 'coin:0xdef:1' }];
+  assert.equal(rowForTx(rows, '0xDEF').ref, 'coin:0xdef:1');
+  assert.equal(rowForTx(rows, '0x123'), undefined);
+});

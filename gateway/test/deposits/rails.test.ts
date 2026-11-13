@@ -105,13 +105,12 @@ describe("EVM watcher", () => {
       chain.ranges.push([fromBlock, toBlock]);
       return chain.logs.filter((l) => l.blockNumber >= fromBlock && l.blockNumber <= toBlock);
     },
-    getTransactionSender: async (h) => chain.senders.get(h)!,
   };
   let tx = 0;
   const emit = (block: bigint, keyCommit: Hex, token: Hex, amount: bigint, sender: Hex) => {
     const hash = `0x${(++tx).toString(16).padStart(64, "e")}` as Hex;
     chain.senders.set(hash, sender);
-    chain.logs.push({ args: { keyCommit, token, amount }, transactionHash: hash, logIndex: 0, blockNumber: block });
+    chain.logs.push({ args: { keyCommit, token, payer: sender, amount }, transactionHash: hash, logIndex: 0, blockNumber: block });
     return hash;
   };
 

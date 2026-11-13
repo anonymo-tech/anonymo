@@ -10,7 +10,8 @@
 //   ANONYMO_FLOOR_TIMEOUT_MS   per call, default 1500
 //   ANONYMO_FLOOR_CHUNK_CHARS  default 8000; ANONYMO_FLOOR_MAX_CHUNKS default 32 (longer input fails closed)
 //   ANONYMO_FLOOR_HIT_TTL_HOURS how long an unreported hit stays in memory, default 72
-//   ANONYMO_FLOOR_REQUIRED=1   with no URL, every check fails closed (every real deployment sets this)
+//   ANONYMO_FLOOR_REQUIRED=1   with no URL, every check fails closed (every real deployment sets this;
+//                              ANONYMO_ENV=production implies it)
 // With neither URL nor REQUIRED (local development), only the pre-filter runs.
 
 import { floorGateStub, type FloorCategory, type FloorGate, type FloorInput, type FloorVerdict } from "../seams.ts";
@@ -70,7 +71,8 @@ const FORMATS: GuardFormat[] = ["llama-guard", "llama-guard-chat", "shieldgemma"
 /** Build the floor gate from env. See the header of this file for the variables. */
 export function createFloorGate(env: Record<string, unknown>): FloorGate {
   const url = str(env.ANONYMO_FLOOR_URL);
-  const required = truthy(env.ANONYMO_FLOOR_REQUIRED);
+  // Production never runs on the pre-filter alone: without a guard model URL every check fails closed (503).
+  const required = truthy(env.ANONYMO_FLOOR_REQUIRED) || str(env.ANONYMO_ENV) === "production";
   if (!url) return required ? floorGateStub(true) : new AnonymoFloorGate({ classifier: null });
   const format = str(env.ANONYMO_FLOOR_FORMAT) ?? "llama-guard";
   if (!FORMATS.includes(format as GuardFormat)) throw new Error(`ANONYMO_FLOOR_FORMAT must be one of ${FORMATS.join(", ")}`);

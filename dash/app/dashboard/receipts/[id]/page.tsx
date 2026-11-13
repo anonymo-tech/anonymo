@@ -1,4 +1,4 @@
-import { ReceiptView } from '@/components/dashboard/receipts';
+import { ReceiptViewer } from '@/components/dashboard/receipts';
 import { WorkspaceShell } from '@/components/dashboard/workspace-shell';
 
 export const metadata = { title: 'Receipt — Anonymo' };
@@ -7,7 +7,7 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
   const { id } = await params;
   return (
     <WorkspaceShell section="Receipt">
-      <ReceiptView id={decodeURIComponent(id)} />
+      <ReceiptViewer id={decodeURIComponent(id)} />
     </WorkspaceShell>
   );
 }

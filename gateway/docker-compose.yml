@@ -82,7 +82,8 @@ services:
     environment:
       <<: *runtime
       WORKERS: "false"
-      ROUTER_PRIVATE_KEY: ${ROUTER_PRIVATE_KEY:?Inject only the restricted router role into the API}
+      # Contract mode and x402 relays only. Anonymo runs contract-free, where src/config.ts needs no router key.
+      ROUTER_PRIVATE_KEY: ${ROUTER_PRIVATE_KEY:-}
     depends_on:
       provider-init: { condition: service_completed_successfully }
     ports: ["127.0.0.1:8787:8787"]
@@ -117,7 +118,8 @@ services:
       RUNTIME_ROLE: worker
       WORKERS: "true"
       WORKER_JOBS: settlement
-      SETTLEMENT_PRIVATE_KEY: ${SETTLEMENT_PRIVATE_KEY:?Inject only into the isolated settlement worker}
+      # Contract mode only; src/config.ts refuses to boot when the job and the key do not match.
+      SETTLEMENT_PRIVATE_KEY: ${SETTLEMENT_PRIVATE_KEY:-}
     command: ["bun", "src/worker.ts"]
     networks: [storage, egress]
     depends_on:
@@ -135,7 +137,10 @@ services:
       RUNTIME_ROLE: worker
       WORKERS: "true"
       WORKER_JOBS: receipts-anchor,receipt-key-rotation
-      ANCHORER_PRIVATE_KEY: ${ANCHORER_PRIVATE_KEY:?Inject only into the isolated anchor worker}
+      # Set together with ANONYMO_RECEIPT_ROOTS_ADDRESS (rollout A3) to post hourly roots on-chain; with neither,
+      # roots stay "local" and proofs still verify. src/config.ts refuses one without the other.
+      ANCHORER_PRIVATE_KEY: ${ANCHORER_PRIVATE_KEY:-}
+      ANONYMO_RECEIPT_ROOTS_ADDRESS: ${ANONYMO_RECEIPT_ROOTS_ADDRESS:-}
     command: ["bun", "src/worker.ts"]
     networks: [storage, egress]
     depends_on:

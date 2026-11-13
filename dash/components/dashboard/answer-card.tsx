@@ -1,14 +1,14 @@
 'use client';
 
-// One answer in the thread, kept from Conclave's answer card: a model tab bar with Compare, the answer body, and a
-// footer with what it cost and where it ran. For anonymo-council the tabs are the merged reply plus each proposer,
-// and Compare lays the proposers side by side with the merged reply.
+// One answer in the thread, kept from Conclave's answer card: a model tab bar, the answer body, and a footer with what
+// it cost and where it ran. For anonymo-council the Council view lays out every seat (proposers and the aggregator or
+// judge) side by side with its route, status and cost. The gateway returns only the final reply's text.
 
 import Link from 'next/link';
 import { Columns3 } from 'lucide-react';
 import { Fragment, useState, type ReactNode } from 'react';
 import { CopyButton } from '../copy-button';
-import { formatUsd } from '@/lib/anonymo/money';
+import { formatUsdAmount } from '@/lib/anonymo/money';
 import type { Turn } from './chat-types';
 
 /** Paragraphs and fenced code only; everything renders as text, never as HTML. */
@@ -53,16 +53,18 @@ function PrivacyChip({ turn }: { turn: Turn }) {
 
 function Footer({ turn }: { turn: Turn }) {
   const r = turn.receipt;
+  const refusedRoutes = r?.routes.filter((x) => x.status === 'refused') ?? [];
   return (
     <div className="answer-foot">
       {turn.status === 'done' && <CopyButton text={turn.content} />}
       <PrivacyChip turn={turn} />
-      {r?.refused && (
-        <span className="chip chip-amber" title={`Refused on ${r.refused_routes.join(', ')}`}>
-          Refusal rerouted · {formatUsd(r.refund_musd)} refunded
+      {r && refusedRoutes.length > 0 && !r.refused && (
+        <span className="chip chip-amber" title={`Refused on ${refusedRoutes.map((x) => x.route).join(', ')}`}>
+          Refusal rerouted · refused attempt billed $0
         </span>
       )}
-      {r && <span className="mono">{formatUsd(r.cost_musd)}</span>}
+      {r?.refused && <span className="chip chip-amber">Refused twice · billed $0</span>}
+      {r && <span className="mono">{formatUsdAmount(r.cost)}</span>}
       {r && (
         <span className="faint">
           {r.tokens.in.toLocaleString()} in · {r.tokens.out.toLocaleString()} out
@@ -73,52 +75,67 @@ function Footer({ turn }: { turn: Turn }) {
   );
 }
 
+const SEAT_STATUS: Record<string, string> = { ok: 'answered', refused: 'refused · billed $0', late: 'late · not used, billed $0', failed: 'failed · billed $0' };
+
+function Seat({ title, seat }: { title: string; seat: { model: string; provider: string | null; status: string; cost: string; receipt_id: string | null; family?: string } }) {
+  return (
+    <section className="answer" aria-label={title}>
+      <div className="answer-head">
+        <span>{title}</span>
+        <span className="mono">{formatUsdAmount(seat.cost)}</span>
+      </div>
+      <dl className="kv">
+        {seat.family && (
+          <div>
+            <dt>Family</dt>
+            <dd>{seat.family}</dd>
+          </div>
+        )}
+        <div>
+          <dt>Route</dt>
+          <dd className="mono">{seat.provider ? `${seat.provider}:${seat.model}` : seat.model}</dd>
+        </div>
+        <div>
+          <dt>Status</dt>
+          <dd>{seat.status === 'ok' ? <span className="chip chip-signal">answered</span> : <span className="chip chip-amber">{SEAT_STATUS[seat.status] ?? seat.status}</span>}</dd>
+        </div>
+      </dl>
+    </section>
+  );
+}
+
 export function AnswerCard({ turn }: { turn: Turn }) {
   const council = turn.council;
-  const [tab, setTab] = useState<number>(-1); // -1 = merged / main answer, n = proposer n
   const [comparing, setComparing] = useState(false);
   const streaming = turn.status === 'streaming';
-  const label = (i: number) => `${String.fromCharCode(65 + i)} · ${council?.proposers[i]?.family ?? ''}`;
+  const lead = council?.aggregator ?? council?.judge ?? null;
 
   let body: ReactNode;
   if (turn.status === 'error') body = <p className="notice notice-rose">{turn.error}</p>;
   else if (council && comparing)
     body = (
       <div className="answer answer-compare">
+        <p className="faint">
+          {council.proposers.length} proposers from {new Set(council.proposers.map((p) => p.family)).size} model families answered;{' '}
+          {council.mode === 'select'
+            ? `a judge picked ${council.selected ?? 'one reply'}${council.outcome === 'invalid_verdict' ? ' (no valid verdict, so proposer A was used)' : ''}.`
+            : council.outcome === 'aggregator_refused'
+              ? 'the aggregator refused, so proposer A’s reply was used.'
+              : 'an aggregator merged them.'}{' '}
+          Proposer text is not kept or returned; each seat’s route, status and cost are below and on the receipt.
+        </p>
         <div className="compare-grid">
-          {council.proposers.map((p, i) => (
-            <section key={p.route_id} className="answer" aria-label={`Proposer ${label(i)}`}>
-              <div className="answer-head">
-                <span>{label(i)}</span>
-                <span>{p.route_id}</span>
-                {!p.used && <span className="chip">late, not used</span>}
-                <span className="mono">{formatUsd(p.cost_musd)}</span>
-              </div>
-              <AnswerText text={p.content} />
-            </section>
+          {council.proposers.map((p) => (
+            <Seat key={p.label} title={`Proposer ${p.label}${council.selected === p.label ? ' · picked' : ''}`} seat={p} />
           ))}
         </div>
-        <section className="merged answer" aria-label="Merged reply">
-          <div className="answer-head">
-            <span>{council.mode === 'select' ? 'Judge picked' : 'Merged reply'}</span>
-            {council.aggregator && <span>{council.aggregator.route_id}</span>}
-          </div>
-          <AnswerText text={turn.content} />
-        </section>
+        {lead && <Seat title={council.mode === 'select' ? 'Judge' : 'Aggregator'} seat={lead} />}
+        <p className="faint">
+          Council premium {formatUsdAmount(council.premium)} · total {formatUsdAmount(council.total_cost)}
+        </p>
       </div>
     );
-  else if (council && tab >= 0) {
-    const p = council.proposers[tab];
-    body = (
-      <div className="answer">
-        <div className="answer-head">
-          <span>{p.route_id}</span>
-          <span className="mono">{formatUsd(p.cost_musd)}</span>
-        </div>
-        <AnswerText text={p.content} />
-      </div>
-    );
-  } else
+  else
     body = (
       <div className="answer">
         {turn.character && <div className="answer-head">{turn.character}</div>}
@@ -133,19 +150,14 @@ export function AnswerCard({ turn }: { turn: Turn }) {
   return (
     <div className="answer">
       <div className="response-bar" role="tablist" aria-label="Answers">
-        <button type="button" role="tab" className="tab" aria-selected={!comparing && tab === -1} onClick={() => { setTab(-1); setComparing(false); }}>
-          {council ? (council.mode === 'select' ? 'Selected' : 'Merged') : turn.model}
+        <button type="button" role="tab" className="tab" aria-selected={!comparing} onClick={() => setComparing(false)}>
+          {council ? (council.mode === 'select' ? `Selected${council.selected ? ` · ${council.selected}` : ''}` : 'Merged') : turn.model}
         </button>
-        {council?.proposers.map((p, i) => (
-          <button key={p.route_id} type="button" role="tab" className="tab" aria-selected={!comparing && tab === i} onClick={() => { setTab(i); setComparing(false); }}>
-            {label(i)}
-          </button>
-        ))}
         <span className="spacer" />
         {council && (
           <button type="button" className="btn btn-small btn-ghost compare" aria-pressed={comparing} onClick={() => setComparing((c) => !c)}>
             <Columns3 size={14} aria-hidden="true" />
-            {comparing ? 'Focus' : 'Compare'}
+            {comparing ? 'Answer' : 'Council'}
           </button>
         )}
       </div>

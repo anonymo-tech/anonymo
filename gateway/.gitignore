@@ -33,3 +33,4 @@ sdks/*/dist/
 packages/client-py/build/
 
 **/.coverage
+contracts/deployments/*.dryrun.json

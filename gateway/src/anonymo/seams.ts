@@ -35,7 +35,8 @@ export const phraseRefusalStub: RefusalClassifier = {
 
 // ---- WS5 · Deposits ------------------------------------------------------------------------------------------------
 // Every chain watcher reports confirmed deposits through this one call. Idempotent on `ref` (ledger.ref is UNIQUE).
-export type DepositChain = "base" | "arbitrum" | "rhc" | "solana" | "tron" | "btc" | "ln" | "x402";
+// "coin" is an ANMO payment through CoinPay: burned on-chain, credited at the market price, usage only (never withdrawn).
+export type DepositChain = "base" | "arbitrum" | "rhc" | "solana" | "tron" | "btc" | "ln" | "x402" | "coin";
 export type ConfirmedDeposit = {
   keyHash: string;
   chain: DepositChain;

@@ -66,4 +66,14 @@ contract LocalSafe {
         if (!ok) revert CallFailed(ret);
         return ret;
     }
+
+    /// @notice Safe-compatible views the live deploy script checks: LocalSafe has no modules and no guard.
+    function getModulesPaginated(address, uint256) external pure returns (address[] memory array, address next) {
+        array = new address[](0);
+        next = address(0x1);
+    }
+
+    function getStorageAt(uint256, uint256 length) external pure returns (bytes memory) {
+        return new bytes(length * 32);
+    }
 }

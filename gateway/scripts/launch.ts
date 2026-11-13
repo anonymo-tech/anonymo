@@ -168,6 +168,7 @@ async function main() {
   spawn("mock providers", ["bun", "scripts/mock-providers.ts"], { log: resolve(DATA, "launch-providers.log") });
   await waitFor("the mock providers", async () => (await Promise.all(PROVIDER_PORTS.map(listening))).every(Boolean), 20_000);
   await run(["bun", "scripts/seed.ts", "config/providers.local.yaml"], ROOT, env);
+  await run(["bun", "scripts/launch-upstreams.ts"], ROOT, env); // the four Anonymo model IDs on the mock providers
   if (!readEnvFile(SECRETS_FILE).LAUNCH_KEY) {
     say("creating a local API key with $10 of test credit");
     const made = Bun.spawnSync(["bun", "scripts/launch-key.ts", "10"], { cwd: ROOT, env: { ...process.env, ...env }, stderr: "inherit" });

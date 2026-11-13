@@ -22,7 +22,7 @@ import { handleBtcpayEvent, refundTarget, verifyBtcpaySignature } from "./btcpay
 import { depositInstructions } from "./instructions.ts";
 import { anonymoBtcpayInvoices, anonymoDeposits, anonymoWithdrawals } from "./schema.ts";
 import { registerMoneyJobs, type MoneyDeps } from "./services.ts";
-import { attemptPayout, requestWithdrawal, withdrawalJson, withdrawDestinations } from "./withdraw.ts";
+import { attemptPayout, coinCreditPico, requestWithdrawal, withdrawalJson, withdrawDestinations } from "./withdraw.ts";
 
 const withdrawBody = z
   .object({
@@ -46,11 +46,15 @@ export function moneyRoutes(app: Hono, ctx: Ctx, deps: MoneyDeps, o: { jobs?: bo
     const b = await balanceOf(ctx.db, key.accountId);
     const dests = await withdrawDestinations(ctx.db, key.keyHash);
     const available = b.available > 0n ? b.available : 0n;
+    const coin = await coinCreditPico(ctx.db, key.keyHash);
+    const cashable = available > coin ? available - coin : 0n;
     return c.json({
       balance_usd: picoToUsd(b.balance),
       held_usd: picoToUsd(b.held),
       available_usd: picoToUsd(available),
-      withdraw_to: [...dests.values()].map((d) => ({ chain: d.chain, address: d.address, max_usd: picoToUsd(d.remaining === null || d.remaining > available ? available : d.remaining) })),
+      // Paid in the coin: spendable on usage, never withdrawn.
+      usage_only_usd: picoToUsd(available < coin ? available : coin),
+      withdraw_to: [...dests.values()].map((d) => ({ chain: d.chain, address: d.address, max_usd: picoToUsd(d.remaining === null || d.remaining > cashable ? cashable : d.remaining) })),
     });
   });
 

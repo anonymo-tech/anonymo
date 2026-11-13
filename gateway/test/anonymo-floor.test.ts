@@ -100,6 +100,10 @@ describe("floor input and defaults", () => {
     await expect(createAnonymoServices({ ANONYMO_FLOOR_REQUIRED: "1" }).floor.check({ text: "x", modality: "text", hasUpload: false })).rejects.toThrow();
     expect(await createAnonymoServices({}).floor.check({ text: "x", modality: "text", hasUpload: false })).toEqual({ ok: true });
   });
+
+  test("production implies a required floor: with no guard model URL every check fails closed", async () => {
+    await expect(createAnonymoServices({ ANONYMO_ENV: "production" }).floor.check({ text: "x", modality: "text", hasUpload: false })).rejects.toThrow();
+  });
 });
 
 describe("floor gate before council mode", () => {

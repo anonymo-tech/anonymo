@@ -10,7 +10,7 @@ import { ChartBar, Drama, KeyRound, ListTree, MessageSquare, Plug, ReceiptText, 
 import { useAnonymo } from '../anonymo-provider';
 import { AdultsOnly, VeniceBadge, Wordmark } from '../brand';
 import { DemoNotice } from '../demo-notice';
-import { formatUsd } from '@/lib/anonymo/money';
+import { formatUsd, usdToMusd } from '@/lib/anonymo/money';
 
 const NAV = [
   { href: '/dashboard', label: 'Chat', icon: MessageSquare },
@@ -82,7 +82,7 @@ function Purse() {
     if (!ready || !key) return;
     const controller = new AbortController();
     client.balance(controller.signal).then(
-      (b) => setAvailable(b.available_musd),
+      (b) => setAvailable(usdToMusd(b.available_usd)),
       () => setAvailable(null),
     );
     return () => controller.abort();

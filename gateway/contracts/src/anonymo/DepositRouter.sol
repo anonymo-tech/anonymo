@@ -11,7 +11,7 @@ import {IDepositRouter} from "./interfaces/IAnonymo.sol";
 
 /// @title DepositRouter
 /// @notice Adapted from the deposit side of Credits: instead of holding balances, every deposit is forwarded
-/// in the same call to the treasury Safe and announced as `Deposited(keyCommit, token, amount)`. The gateway
+/// in the same call to the treasury Safe and announced as `Deposited(keyCommit, token, payer, amount)`. The gateway
 /// credits the API key whose commitment is `keyCommit`. The router never holds funds.
 ///
 /// Same address on Base, Arbitrum and Robinhood Chain: deployed through the CREATE2 deployer with one salt
@@ -91,7 +91,7 @@ contract DepositRouter is IDepositRouter, TimelockOwned, Pausable, ReentrancyGua
         IERC20(token).safeTransferFrom(msg.sender, to, amount);
         uint256 received = IERC20(token).balanceOf(to) - before;
         if (received == 0) revert NothingReceived();
-        emit Deposited(keyCommit, token, received);
+        emit Deposited(keyCommit, token, msg.sender, received);
     }
 
     /// @notice Set the initial allowlist on this chain. Callable once, by the bootstrapper only.

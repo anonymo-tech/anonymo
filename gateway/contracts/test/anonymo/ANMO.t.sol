@@ -26,20 +26,20 @@ contract ANMOTest is Test {
         new ANMO(address(0));
     }
 
-    /// No mint or burn entry point exists after deploy.
-    function test_noMintOrBurnFunction() public {
-        bytes4[5] memory sels = [
-            bytes4(keccak256("mint(address,uint256)")),
-            bytes4(keccak256("mint(uint256)")),
-            bytes4(keccak256("burn(uint256)")),
-            bytes4(keccak256("burnFrom(address,uint256)")),
-            bytes4(keccak256("owner()"))
-        ];
+    /// No mint and no owner exist after deploy; holders can burn only their own coins (or with an allowance).
+    function test_noMintNoOwnerAndBurnLowersSupply() public {
+        bytes4[3] memory sels =
+            [bytes4(keccak256("mint(address,uint256)")), bytes4(keccak256("mint(uint256)")), bytes4(keccak256("owner()"))];
         for (uint256 i; i < sels.length; ++i) {
             (bool ok,) = address(anmo).call(abi.encodeWithSelector(sels[i], treasury, 1));
             assertFalse(ok);
         }
-        assertEq(anmo.totalSupply(), anmo.TOTAL_SUPPLY());
+        vm.prank(treasury);
+        anmo.burn(5e18);
+        assertEq(anmo.totalSupply(), anmo.TOTAL_SUPPLY() - 5e18);
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert();
+        anmo.burnFrom(treasury, 1);
     }
 
     function test_permit() public {

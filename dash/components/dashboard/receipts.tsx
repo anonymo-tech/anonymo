@@ -9,9 +9,9 @@ import { useEffect, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
 import { CopyButton } from '../copy-button';
 import { describeError } from '@/lib/anonymo/client';
-import { formatUsd } from '@/lib/anonymo/money';
+import { formatUsdAmount } from '@/lib/anonymo/money';
 import { rootFromProof } from '@/lib/anonymo/proof';
-import type { InclusionProof, SignedReceipt } from '@/lib/anonymo/types';
+import type { ProofView, ReceiptView } from '@/lib/anonymo/types';
 
 export function ReceiptsList() {
   const { ready, receipts, forgetReceipts } = useAnonymo();
@@ -24,8 +24,8 @@ export function ReceiptsList() {
           <h2>Look up a receipt</h2>
         </header>
         <p className="lede">
-          Every call returns its receipt id in the <code>x-anonymo-receipt</code> header. Receipts are public by id and hold no
-          prompt or output text.
+          Every call returns a signed receipt (the <code>x-anonymo-receipt</code> header, or <code>anonymo_receipt</code> on the
+          last stream event). Its <code>request_id</code> opens it here. Receipts are public by id and hold no prompt or output text.
         </p>
         <form
           className="row"
@@ -81,9 +81,9 @@ export function ReceiptsList() {
   );
 }
 
-type Loaded = { signed: SignedReceipt; proof: InclusionProof | null; proofError: string | null };
+type Loaded = { view: ReceiptView; proof: ProofView | null; proofError: string | null };
 
-export function ReceiptView({ id }: { id: string }) {
+export function ReceiptViewer({ id }: { id: string }) {
   const { ready, client } = useAnonymo();
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState('');
@@ -93,15 +93,15 @@ export function ReceiptView({ id }: { id: string }) {
     let live = true;
     void (async () => {
       try {
-        const signed = await client.receipt(id);
-        let proof: InclusionProof | null = null;
+        const view = await client.receipt(id);
+        let proof: ProofView | null = null;
         let proofError: string | null = null;
         try {
           proof = await client.receiptProof(id);
         } catch (e) {
           proofError = describeError(e);
         }
-        if (live) setData({ signed, proof, proofError });
+        if (live) setData({ view, proof, proofError });
       } catch (e) {
         if (live) setError(describeError(e));
       }
@@ -121,10 +121,12 @@ export function ReceiptView({ id }: { id: string }) {
     );
   if (!data) return <p className="muted">Loading receipt…</p>;
 
-  const { receipt: r, signer, signature, leaf } = data.signed;
-  const proof = data.proof;
+  const { view } = data;
+  const r = view.receipt;
+  const proof = data.proof?.rooted ? data.proof : null;
   const reached = proof ? rootFromProof(proof.leaf, proof.proof) : null;
-  const verified = proof !== null && reached !== null && reached === proof.root.toLowerCase() && proof.leaf.toLowerCase() === leaf.toLowerCase();
+  const verified = proof !== null && reached !== null && reached === proof.root.toLowerCase() && proof.leaf.toLowerCase() === view.leaf.toLowerCase();
+  const refusedRoutes = r.routes.filter((x) => x.status === 'refused');
 
   return (
     <div className="panel-stack">
@@ -132,12 +134,13 @@ export function ReceiptView({ id }: { id: string }) {
         <header>
           <h2 id="receipt-title">Receipt</h2>
           <div className="row">
-            {r.attestation_quote_hash ? (
+            {r.sealed && r.attestation_quote_hash ? (
               <span className="chip chip-signal">Attested enclave</span>
             ) : (
               <span className="chip">Zero retention (policy)</span>
             )}
-            {r.refused && <span className="chip chip-amber">Refusal rerouted</span>}
+            {refusedRoutes.length > 0 && <span className="chip chip-amber">{r.refused ? 'Refused twice' : 'Refusal rerouted'}</span>}
+            {view.signature_valid ? <span className="chip chip-signal">Signature valid</span> : <span className="chip chip-rose">Signature not valid</span>}
           </div>
         </header>
         <dl className="kv">
@@ -156,8 +159,8 @@ export function ReceiptView({ id }: { id: string }) {
           <div>
             <dt>Cost</dt>
             <dd className="mono">
-              {formatUsd(r.cost_musd)}
-              {r.refund_musd > 0 && <span className="faint"> · refused attempt refunded {formatUsd(r.refund_musd)}</span>}
+              {formatUsdAmount(r.cost)}
+              {refusedRoutes.length > 0 && <span className="faint"> · refused attempts billed $0</span>}
             </dd>
           </div>
           <div>
@@ -171,14 +174,31 @@ export function ReceiptView({ id }: { id: string }) {
             <dd>
               <ul className="path">
                 {r.routes.map((route, i) => (
-                  <li key={`${route}-${i}`}>
+                  <li key={`${route.route}-${i}`}>
                     <span>{i + 1}</span>
                     <div>
                       <div className="mono">
-                        {route}
-                        {r.refused_routes.includes(route) && <span className="chip chip-amber" style={{ marginLeft: 8 }}>refused · billed 0</span>}
+                        {route.route}
+                        <span className="chip" style={{ marginLeft: 8 }}>
+                          {route.role}
+                        </span>
+                        {route.status !== 'ok' && (
+                          <span className="chip chip-amber" style={{ marginLeft: 8 }}>
+                            {route.status} · billed {formatUsdAmount(route.cost)}
+                          </span>
+                        )}
+                        {route.attested && (
+                          <span className="chip chip-signal" style={{ marginLeft: 8 }}>
+                            attested
+                          </span>
+                        )}
                       </div>
-                      <div className="hash">weights {r.weights_hash[i] ?? 'not published by this upstream'}</div>
+                      <div className="faint">
+                        {route.family}
+                        {route.quant ? ` · ${route.quant}` : ''} · {route.tokens.in.toLocaleString()} in · {route.tokens.out.toLocaleString()} out ·{' '}
+                        {formatUsdAmount(route.cost)}
+                      </div>
+                      <div className="hash">weights {route.weights_hash ?? 'not published for this route'}</div>
                     </div>
                   </li>
                 ))}
@@ -190,21 +210,27 @@ export function ReceiptView({ id }: { id: string }) {
             <dd className="hash">{r.attestation_quote_hash ?? 'None. Only anonymo-sealed runs on attested enclaves.'}</dd>
           </div>
           <div>
-            <dt>Signer</dt>
-            <dd className="hash">{signer}</dd>
+            <dt>Signer key</dt>
+            <dd className="hash">
+              {view.key_id} · {view.alg}
+            </dd>
           </div>
           <div>
             <dt>Signature</dt>
-            <dd className="hash">{signature}</dd>
+            <dd className="hash">{view.sig}</dd>
           </div>
           <div>
             <dt>Leaf</dt>
-            <dd className="hash">{leaf}</dd>
+            <dd className="hash">{view.leaf}</dd>
           </div>
         </dl>
         <div className="row">
-          <CopyButton text={JSON.stringify(data.signed, null, 2)} label="Copy receipt JSON" />
+          <CopyButton text={JSON.stringify(view, null, 2)} label="Copy receipt JSON" />
         </div>
+        <p className="faint">
+          The signature is checked by the gateway against its receipt keys ({view.keys}); this page shows that answer. The receipt
+          JSON above is what was signed.
+        </p>
       </section>
 
       <section className="panel" aria-labelledby="proof-title">
@@ -218,12 +244,14 @@ export function ReceiptView({ id }: { id: string }) {
             ))}
         </header>
         {!proof ? (
-          <p className="notice">{data.proofError ?? 'No proof yet. Receipts roll into an hourly root.'}</p>
+          <p className="notice">
+            {data.proof && !data.proof.rooted ? data.proof.hint : (data.proofError ?? 'No proof yet. Receipts roll into an hourly root.')}
+          </p>
         ) : (
           <>
             <p className="lede">
-              The leaf hashes up through {proof.proof.length} sibling{proof.proof.length === 1 ? '' : 's'} (sorted-pair keccak256)
-              to the hourly root posted to ReceiptRoots on Robinhood Chain.
+              Leaf {proof.leaf_index + 1} of {proof.leaf_count} hashes up through {proof.proof.length} sibling{proof.proof.length === 1 ? '' : 's'}{' '}
+              (sorted-pair keccak256) to the hourly root for ReceiptRoots on Robinhood Chain.
             </p>
             <dl className="kv">
               <div>
@@ -236,14 +264,18 @@ export function ReceiptView({ id }: { id: string }) {
               <div>
                 <dt>Path</dt>
                 <dd>
-                  <ol className="path">
-                    {proof.proof.map((p, i) => (
-                      <li key={`${p}-${i}`}>
-                        <span>{i + 1}</span>
-                        <span className="hash">{p}</span>
-                      </li>
-                    ))}
-                  </ol>
+                  {proof.proof.length === 0 ? (
+                    <span className="faint">Empty: this receipt is the only leaf in its hour, so the leaf is the root.</span>
+                  ) : (
+                    <ol className="path">
+                      {proof.proof.map((p, i) => (
+                        <li key={`${p}-${i}`}>
+                          <span>{i + 1}</span>
+                          <span className="hash">{p}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  )}
                 </dd>
               </div>
               <div>
@@ -253,15 +285,14 @@ export function ReceiptView({ id }: { id: string }) {
               <div>
                 <dt>Anchor</dt>
                 <dd>
-                  <span className={proof.anchor.status === 'anchored' ? 'chip chip-signal' : 'chip'}>{proof.anchor.status}</span>{' '}
-                  <span className="hash">ReceiptRoots {proof.anchor.contract}</span>
-                  {proof.anchor.tx_hash && <div className="hash">tx {proof.anchor.tx_hash}</div>}
+                  <span className={proof.posted ? 'chip chip-signal' : 'chip'}>{proof.posted ? 'posted on-chain' : proof.status}</span>
+                  {proof.tx_hash && <div className="hash">tx {proof.tx_hash}</div>}
                 </dd>
               </div>
             </dl>
             <p className="faint">
-              Checked here: the path from the leaf reaches the root. Not checked in the browser: the gateway signature, and that
-              the root matches ReceiptRoots.rootOf(hour) on-chain.
+              Checked here: the path from the leaf reaches the root. Not checked in the browser: that the root matches
+              ReceiptRoots.rootOf(hour) on-chain{proof.posted ? '' : ', which it can only once the root is posted'}.
             </p>
           </>
         )}

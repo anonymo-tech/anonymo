@@ -96,6 +96,18 @@ describe("GET /leaderboard", () => {
     expect(html).toContain("20.00%");
   });
 
+  test("a browser on another origin (the dashboard) may read /manifest and /leaderboard", async () => {
+    for (const path of ["/manifest", "/leaderboard"]) {
+      const r = await h.request(path, { headers: { origin: "https://dash.example", accept: "application/json" } });
+      expect(r.status).toBe(200);
+      expect(r.headers.get("access-control-allow-origin")).toBe("*");
+      const pre = await h.request(path, { method: "OPTIONS", headers: { origin: "https://dash.example", "access-control-request-method": "GET", "access-control-request-headers": "accept" } });
+      expect(pre.status).toBe(204);
+      expect(pre.headers.get("access-control-allow-origin")).toBe("*");
+      expect(pre.headers.get("access-control-allow-methods")).toContain("GET");
+    }
+  });
+
   test("without WS03's refusal_stats table every rate is unknown, not zero", async () => {
     await h.ctx.db.execute(sql`DROP TABLE refusal_stats`);
     const doc = (await (await h.request("/leaderboard")).json()) as any;

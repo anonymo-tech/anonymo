@@ -523,7 +523,7 @@ describe("media store, provenance endpoints and privacy", () => {
     const j = (await (await post("/v1/images/generations", { model: "flux.1-schnell", prompt: "a green square" })).json()) as { data: { url: string }[] };
     const u = new URL(j.data[0].url, "http://local");
     expect((await h.request(u.pathname + u.search)).status).toBe(200);
-    expect((await h.request(u.pathname + u.search.replace(/sig=./, "sig=0"))).status).toBe(404);
+    expect((await h.request(u.pathname + u.search.replace(/sig=(.)/, (_m, c: string) => `sig=${c === "0" ? "1" : "0"}`))).status).toBe(404);
     expect((await h.request(u.pathname)).status).toBe(404);
     expect((await h.request(u.pathname.replace(/.$/, "x") + u.search)).status).toBe(404);
     const expires = Number(u.searchParams.get("expires"));

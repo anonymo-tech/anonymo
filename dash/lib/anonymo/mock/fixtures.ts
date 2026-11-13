@@ -2,7 +2,7 @@
 // names follow the spec's examples, hashes are derived from the route name, and refusal counts are illustrative.
 
 import { keccakHex } from '../proof.ts';
-import type { Leaderboard, Manifest, ModelInfo } from '../types.ts';
+import type { Leaderboard, Manifest, ManifestRoute, ModelInfo } from '../types.ts';
 
 const enc = new TextEncoder();
 const fakeHash = (label: string) => keccakHex(enc.encode(`demo-weights:${label}`));
@@ -10,8 +10,23 @@ const fakeHash = (label: string) => keccakHex(enc.encode(`demo-weights:${label}`
 export const DEMO_GENERATED_AT = '2026-11-12T12:00:00.000Z';
 export const DEMO_SIGNER = '0xabababababababababababababababababababab';
 export const DEMO_RECEIPT_ROOTS = '0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd';
+/** Sample contract addresses for the demo deposit instructions. Not deployed anywhere. */
+export const DEMO_ROUTER = '0xabababababababababababababababababababab';
+export const DEMO_COIN_PAY = '0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd';
+export const DEMO_ANMO = '0xefefefefefefefefefefefefefefefefefefefef';
 
-type RouteFixture = Manifest['routes'][number] & { refusal: [number, number] };
+type RouteFixture = {
+  id: string;
+  upstream: 'venice' | 'selfhost' | 'phala' | 'chutes' | 'nanogpt' | 'featherless';
+  tier: 'T0' | 'T1' | 'T2' | 'T3';
+  family: string;
+  model: string;
+  quant: string;
+  weights_hash: string | null;
+  attested: boolean;
+  serves: string[];
+  refusal: [number, number];
+};
 
 const route = (
   upstream: RouteFixture['upstream'],
@@ -32,7 +47,6 @@ const route = (
   weights_hash: upstream === 'venice' ? null : fakeHash(`${upstream}:${model}`),
   attested,
   serves,
-  enabled: true,
   refusal,
 });
 
@@ -49,93 +63,77 @@ export const DEMO_ROUTES: RouteFixture[] = [
   route('featherless', 'T3', 'llama-4-scout-abliterated', 'llama', 'bf16', false, ['anonymo-1'], [1_220, 18]),
 ];
 
-export const DEMO_MANIFEST: Manifest = {
-  generated_at: DEMO_GENERATED_AT,
-  routes: DEMO_ROUTES.map(({ refusal: _refusal, ...r }) => r),
-};
-
-export const DEMO_LEADERBOARD: Leaderboard = {
-  generated_at: DEMO_GENERATED_AT,
-  window_days: 30,
-  rows: DEMO_ROUTES.map((r) => ({
-    route_id: r.id,
-    family: r.family,
-    upstream: r.upstream,
-    total: r.refusal[0],
-    refused: r.refusal[1],
-    refusal_rate: r.refusal[1] / r.refusal[0],
-  })).sort((a, b) => a.refusal_rate - b.refusal_rate),
-};
-
-const rate = (ids: string[]) => {
-  const rows = DEMO_ROUTES.filter((r) => ids.includes(r.id));
+const rate = (rows: RouteFixture[]) => {
   const [total, refused] = rows.reduce(([t, f], r) => [t + r.refusal[0], f + r.refusal[1]], [0, 0]);
-  return total ? refused / total : null;
+  return total ? Number((refused / total).toFixed(4)) : null;
 };
-const servesIds = (model: string) => DEMO_ROUTES.filter((r) => r.serves.includes(model)).map((r) => r.id);
+const servers = (model: string) => DEMO_ROUTES.filter((r) => r.serves.includes(model) || r.model === model);
+const shared = <T>(xs: T[]): T | null => (xs.length && xs.every((x) => x === xs[0]) ? xs[0] : null);
 
-export const DEMO_MODELS: ModelInfo[] = [
-  {
-    id: 'anonymo-1',
-    object: 'model',
-    owned_by: 'anonymo',
-    family: null,
-    quant: null,
-    weights_hash: null,
-    attested: false,
-    refusal_rate_30d: rate(servesIds('anonymo-1')),
-    context_length: 131072,
-    description: 'Best uncensored route for the request. Refusals reroute to another family and are refunded.',
-  },
-  {
-    id: 'anonymo-rp',
-    object: 'model',
-    owned_by: 'anonymo',
-    family: null,
-    quant: null,
-    weights_hash: null,
-    attested: false,
-    refusal_rate_30d: rate(servesIds('anonymo-rp')),
-    context_length: 65536,
-    description: 'Cheap long-context roleplay on self-hosted 24–27B models, with character cards.',
-  },
-  {
-    id: 'anonymo-council',
-    object: 'model',
-    owned_by: 'anonymo',
-    family: null,
-    quant: null,
-    weights_hash: null,
-    attested: false,
-    refusal_rate_30d: rate(servesIds('anonymo-council')),
-    context_length: 65536,
-    description: 'Three model families answer and check each other; one merged reply. Slower, priced at 4–5×.',
-  },
-  {
-    id: 'anonymo-sealed',
-    object: 'model',
-    owned_by: 'anonymo',
-    family: null,
-    quant: null,
-    weights_hash: null,
-    attested: true,
-    refusal_rate_30d: rate(servesIds('anonymo-sealed')),
-    context_length: 65536,
-    description: 'Runs only on hardware-attested enclaves. Fails instead of downgrading.',
-  },
-  ...DEMO_ROUTES.filter((r) => r.upstream !== 'venice' && r.upstream !== 'featherless').map(
-    (r): ModelInfo => ({
-      id: r.model,
-      object: 'model',
-      owned_by: r.upstream,
-      family: r.family,
-      quant: r.quant,
-      weights_hash: r.weights_hash,
-      attested: r.attested,
-      refusal_rate_30d: r.refusal[1] / r.refusal[0],
-    }),
-  ).filter((m, i, all) => all.findIndex((n) => n.id === m.id) === i),
-];
+const MODEL_INFO: Record<string, { context_length: number; description: string }> = {
+  'anonymo-1': { context_length: 131072, description: 'Best uncensored route for the request. Refusals reroute to another family and are refunded.' },
+  'anonymo-rp': { context_length: 65536, description: 'Cheap long-context roleplay on self-hosted 24–27B models, with character cards.' },
+  'anonymo-council': { context_length: 65536, description: 'Three model families answer and check each other; one merged reply. Slower, priced at 4–5×.' },
+  'anonymo-sealed': { context_length: 65536, description: 'Runs only on hardware-attested enclaves. Fails instead of downgrading.' },
+};
+
+const DIRECT_IDS = [...new Set(DEMO_ROUTES.filter((r) => r.upstream !== 'venice' && r.upstream !== 'featherless').map((r) => r.model))];
+
+/** `GET /v1/models` entries (only the fields the dashboard reads). */
+export const DEMO_MODELS: ModelInfo[] = [...Object.keys(MODEL_INFO), ...DIRECT_IDS].map((id) => {
+  const rows = servers(id);
+  return {
+    id,
+    ...MODEL_INFO[id],
+    family: shared(rows.map((r) => r.family)) ?? rows[0]?.family ?? null,
+    quant: shared(rows.map((r) => r.quant)),
+    weights_hash: shared(rows.map((r) => r.weights_hash)),
+    attested: rows.some((r) => r.attested),
+    refusal_rate_30d: rate(rows),
+  };
+});
+
+const manifestRoute = (r: RouteFixture): ManifestRoute => ({
+  route: `${r.upstream}:${r.model}`,
+  upstream: r.upstream,
+  family: r.family,
+  quant: r.quant,
+  weights_hash: r.weights_hash,
+  attested: r.attested,
+  tee: r.attested ? 'tdx' : null,
+  attestation_hash: r.attested ? fakeHash(`quote:${r.id}`) : null,
+  attested_at: r.attested ? DEMO_GENERATED_AT : null,
+});
+
+export const DEMO_MANIFEST: Manifest = (() => {
+  const models = DEMO_MODELS.map((m) => ({ ...m, routes: servers(m.id).map(manifestRoute) })).map(
+    ({ id, family, quant, weights_hash, attested, refusal_rate_30d, routes }) => ({ id, family, quant, weights_hash, attested, refusal_rate_30d, routes }),
+  );
+  const routes = models.flatMap((m) => m.routes);
+  return {
+    generated_at: DEMO_GENERATED_AT,
+    counts: { models: models.length, routes: routes.length, attested_routes: routes.filter((r) => r.attested).length, families: new Set(routes.map((r) => r.family)).size },
+    notes: ['Demo data: invented sample routes, not a live manifest.'],
+    models,
+  };
+})();
+
+export const DEMO_LEADERBOARD: Leaderboard = (() => {
+  const routes = DEMO_ROUTES.map((r) => ({ route: `${r.model}@${r.upstream}`, model: r.model, family: r.family, total_30d: r.refusal[0], refused_30d: r.refusal[1], refusal_rate_30d: rate([r]) })).sort(
+    (a, b) => (a.refusal_rate_30d ?? 1) - (b.refusal_rate_30d ?? 1),
+  );
+  const fam = new Map<string, { total: number; refused: number }>();
+  for (const r of routes) {
+    const f = fam.get(r.family) ?? { total: 0, refused: 0 };
+    f.total += r.total_30d;
+    f.refused += r.refused_30d;
+    fam.set(r.family, f);
+  }
+  const families = [...fam.entries()]
+    .map(([family, f]) => ({ family, total_30d: f.total, refused_30d: f.refused, refusal_rate_30d: f.total ? Number((f.refused / f.total).toFixed(4)) : null }))
+    .sort((a, b) => (a.refusal_rate_30d ?? 1) - (b.refusal_rate_30d ?? 1));
+  return { generated_at: DEMO_GENERATED_AT, window_days: 30, available: true, routes, families };
+})();
 
 /** Example micro-USD prices per 1M tokens (Overview §5 is "EXAMPLE until upstream contracts are signed"). */
 export const DEMO_PRICES: Record<string, { in: number; out: number }> = {
@@ -164,29 +162,14 @@ const SENTENCES: Record<string, string[]> = {
   ],
 };
 
-const PROPOSER_SENTENCES = [
-  [
-    'Proposer A (mistral family): the strongest reading of the question is practical; start with the constraint that matters most.',
-    'Then work outward to the details, and say plainly where the evidence is thin.',
-  ],
-  [
-    'Proposer B (deepseek family): agree on the starting point, but add the edge case the first answer skips.',
-    'Flag one disagreement: B would order the steps differently.',
-  ],
-  [
-    'Proposer C (glm family): a shorter answer that matches A on the main point and B on the edge case.',
-  ],
-];
-
 export const COUNCIL_MERGED = [
   'This is a merged demo reply from the mock council: three proposers from three model families answered, then an aggregator kept what they agree on.',
   'All three start from the same practical constraint. Two of them add the same edge case, so it stays in.',
   'They disagree on the order of the later steps; the merge marks that disagreement instead of hiding it.',
-  'Use Compare to read each proposer side by side.',
+  'Open Council to see which proposers answered and what each cost.',
 ].join(' ');
 
 export function demoReply(model: string): string {
   return (SENTENCES[model] ?? SENTENCES['anonymo-1']).join(' ');
 }
 
-export const demoProposers = () => PROPOSER_SENTENCES.map((s) => s.join(' '));

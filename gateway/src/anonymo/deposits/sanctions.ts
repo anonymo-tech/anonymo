@@ -14,7 +14,7 @@ import { isTronAddress } from "./addresses.ts";
 export type AddressFamily = "evm" | "tron" | "solana" | "btc" | "other";
 
 export const familyOfChain = (chain: DepositChain): AddressFamily =>
-  chain === "base" || chain === "arbitrum" || chain === "rhc" || chain === "x402" ? "evm" : chain === "solana" ? "solana" : chain === "tron" ? "tron" : chain === "btc" ? "btc" : "other";
+  chain === "base" || chain === "arbitrum" || chain === "rhc" || chain === "x402" || chain === "coin" ? "evm" : chain === "solana" ? "solana" : chain === "tron" ? "tron" : chain === "btc" ? "btc" : "other";
 
 /** One spelling per address: EVM and bech32 are case-insensitive (lowercased); base58 is case-sensitive (kept). */
 export function normalizeAddress(value: string): { address: string; family: AddressFamily } | null {

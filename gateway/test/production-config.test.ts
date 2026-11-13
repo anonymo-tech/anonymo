@@ -13,3 +13,21 @@ test("privileged workers require a matching role and never share signing authori
   expect(() => loadConfig({ ...worker, ANCHORER_PRIVATE_KEY: "0x" + "2".repeat(64) })).toThrow();
   expect(() => loadConfig({ ...worker, WORKER_JOBS: "unknown" })).toThrow();
 });
+test("a contract-free router signs for Anonymo ReceiptRoots only: the anchoring key alone, on the receipts-anchor worker", () => {
+  const free = { ...base, CREDITS_ADDRESS: "", CALLPAY_ADDRESS: "", PROVIDER_BOND_ADDRESS: "", RECEIPT_ANCHOR_ADDRESS: "", ROUTER_PRIVATE_KEY: "" };
+  const anchorKey = "0x" + "2".repeat(64);
+  const roots = { ...free, ANONYMO_RECEIPT_ROOTS_ADDRESS: address };
+  const worker = { ...roots, RUNTIME_ROLE: "worker", WORKER_JOBS: "receipts-anchor", ANCHORER_PRIVATE_KEY: anchorKey };
+  const cfg = loadConfig(worker);
+  expect(cfg.chain.anonymoReceiptRoots).toBe(address);
+  expect(cfg.chain.anchorerKey).toBe(anchorKey);
+  // Without ReceiptRoots configured the key is refused, as before.
+  expect(() => loadConfig({ ...worker, ANONYMO_RECEIPT_ROOTS_ADDRESS: "" })).toThrow("contract-free");
+  // Never on the public API, never next to another signing role, never on a worker that does not anchor.
+  expect(() => loadConfig({ ...roots, ANCHORER_PRIVATE_KEY: anchorKey })).toThrow();
+  expect(() => loadConfig({ ...worker, SETTLEMENT_PRIVATE_KEY: "0x" + "1".repeat(64) })).toThrow();
+  expect(() => loadConfig({ ...worker, WORKER_JOBS: "catalog-refresh" })).toThrow("must match");
+  expect(() => loadConfig({ ...worker, ANCHORER_PRIVATE_KEY: "" })).toThrow("must match");
+  // A worker without ReceiptRoots still anchors locally with no key.
+  expect(loadConfig({ ...free, RUNTIME_ROLE: "worker", WORKER_JOBS: "receipts-anchor" }).workerJobs).toEqual(["receipts-anchor"]);
+});

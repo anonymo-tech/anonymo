@@ -22,3 +22,28 @@ export function parseUsd(input: string): MicroUsd | null {
   if (!m) return null;
   return Number(m[1]) * MUSD_PER_USD + Number((m[2] ?? '').padEnd(6, '0'));
 }
+
+/**
+ * Converts a USD amount as the gateway sends it (a JSON number like 10 or 0.0000154, or a decimal string on receipts)
+ * to integer micro-USD, rounded to the nearest micro-USD. Anything that is not a finite amount becomes NaN.
+ */
+export function usdToMusd(usd: number | string | null | undefined): MicroUsd {
+  if (usd === null || usd === undefined) return Number.NaN;
+  if (typeof usd === 'number') return Number.isFinite(usd) ? Math.round(usd * MUSD_PER_USD) : Number.NaN;
+  const m = /^\s*(-)?(\d{1,15})(?:\.(\d*))?\s*$/.exec(usd);
+  if (!m) return Number.NaN;
+  const frac = (m[3] ?? '').padEnd(7, '0');
+  const value = Number(m[2]) * MUSD_PER_USD + Number(frac.slice(0, 6)) + (Number(frac[6]) >= 5 ? 1 : 0);
+  return m[1] ? -value : value;
+}
+
+/** Micro-USD as the decimal string the gateway accepts for `amount_usd` (no float rounding). */
+export function musdToUsdString(musd: MicroUsd): string {
+  const abs = Math.abs(Math.trunc(musd));
+  const whole = Math.floor(abs / MUSD_PER_USD);
+  const frac = String(abs % MUSD_PER_USD).padStart(6, '0').replace(/0+$/, '');
+  return `${musd < 0 ? '-' : ''}${whole}${frac ? `.${frac}` : ''}`;
+}
+
+/** Formats a gateway USD amount (number or decimal string). */
+export const formatUsdAmount = (usd: number | string | null | undefined, opts: { sign?: boolean } = {}) => formatUsd(usdToMusd(usd), opts);

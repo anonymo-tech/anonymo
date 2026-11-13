@@ -13,12 +13,12 @@ The product spec is in [`docs/spec/`](docs/spec/): the Overview and the Backend 
 | [`port/anonyma/`](port/anonyma/) | Reference code to port, not wired in: image, speech and video endpoints, media storage, the support inbox, and their tests (Node/Express/SQLite) | Anonyma-backend |
 | [`docs/spec/`](docs/spec/) | The product and backend specs | — |
 
-Everything is still branded and wired as its source project. Turning it into Anonymo is the work described in HANDOFF.md.
+All workstreams in HANDOFF.md are built and merged. **To go live, follow [LAUNCH.md](LAUNCH.md)**: the ordered list of keys, servers, contract deploys and checks for mainnet.
 
 ## Run it
 
 ```bash
-cd gateway && bun install && bun run launch   # dev chain, contracts, mock providers, API
+cd gateway && bun install && bun run launch   # mock providers, local database, API with a funded test key
 ```
 
 ```bash

@@ -5,12 +5,14 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
+import {AnonymoTimelock} from "../../src/anonymo/AnonymoTimelock.sol";
 
 import {ReceiptRoots} from "../../src/anonymo/ReceiptRoots.sol";
 import {DepositRouter} from "../../src/anonymo/DepositRouter.sol";
 import {ANMO} from "../../src/anonymo/ANMO.sol";
 import {CreditPass} from "../../src/anonymo/CreditPass.sol";
 import {FeeRouter} from "../../src/anonymo/FeeRouter.sol";
+import {CoinPay} from "../../src/anonymo/CoinPay.sol";
 import {IStakerCredit} from "../../src/anonymo/interfaces/IAnonymo.sol";
 import {MockStable, MockStableNoPermit} from "../../src/anonymo/mocks/MockStable.sol";
 import {LocalSafe} from "./LocalSafe.sol";
@@ -61,6 +63,7 @@ contract DeployAnonymo is Script {
         address anmo;
         address creditPass;
         address feeRouter;
+        address coinPay;
         address usdc;
         address usdt;
     }
@@ -118,6 +121,9 @@ contract DeployAnonymo is Script {
         vm.stopBroadcast();
 
         require(d.feeRouter == predictedFeeRouter, "DeployAnonymo: FeeRouter address mismatch");
+        vm.startBroadcast(p.deployerKey);
+        d.coinPay = address(new CoinPay(d.anmo));
+        vm.stopBroadcast();
         check(d);
         if (bytes(p.outPath).length != 0) _write(p.outPath, d);
         _log(d);
@@ -159,7 +165,7 @@ contract DeployAnonymo is Script {
     function timelockInitCode(address safe) public pure returns (bytes memory) {
         address[] memory s = new address[](1);
         s[0] = safe;
-        return abi.encodePacked(type(TimelockController).creationCode, abi.encode(TIMELOCK_DELAY, s, s, address(0)));
+        return abi.encodePacked(type(AnonymoTimelock).creationCode, abi.encode(TIMELOCK_DELAY, s, s, address(0)));
     }
 
     function depositRouterInitCode(address timelock, address safe, address deployer)
@@ -200,6 +206,7 @@ contract DeployAnonymo is Script {
         vm.serializeAddress(k, "anmo", d.anmo);
         vm.serializeAddress(k, "creditPass", d.creditPass);
         vm.serializeAddress(k, "feeRouter", d.feeRouter);
+        vm.serializeAddress(k, "coinPay", d.coinPay);
         vm.serializeAddress(k, "usdc", d.usdc);
         string memory json = vm.serializeAddress(k, "usdt", d.usdt);
         vm.writeJson(json, path);
@@ -213,6 +220,7 @@ contract DeployAnonymo is Script {
         console2.log("ANMO              ", d.anmo);
         console2.log("CreditPass        ", d.creditPass);
         console2.log("FeeRouter         ", d.feeRouter);
+        console2.log("CoinPay           ", d.coinPay);
         console2.log("USDC (local)      ", d.usdc);
         console2.log("USDT (local)      ", d.usdt);
     }
