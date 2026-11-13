@@ -11,9 +11,6 @@ import httpx
 
 from .attestation import fetch_router_attestation, verify_provider
 from .errors import AnonymoError, AttestationRefused, ReceiptInvalid
-from .agent import AgentClient
-from .playbooks import PlaybookClient
-from .agent_errors import request_error
 from .receipts import fetch_receipt_keys, verify_receipt
 from .types import ExpectedDigests, ProviderVerification, ReceiptVerification
 
@@ -71,7 +68,6 @@ class Anonymo:
         base_url: str,
         api_key: str | None = None,
         *,
-        private_token: str | None = None,
         http: httpx.Client | None = None,
         headers: dict[str, str] | None = None,
         disclosure: str | None = None,
@@ -87,7 +83,6 @@ class Anonymo:
         self._own_http = http is None
         self._http = http or httpx.Client(timeout=60)
         self._api_key = api_key
-        self._private_token = private_token
         self._headers = headers or {}
         self._disclosure = disclosure
         self._lane = lane
@@ -96,8 +91,6 @@ class Anonymo:
         self._pinned = receipt_keys
         self._keys = receipt_keys
         self._now_ms = now_ms
-        self.agent = AgentClient(self.base_url, self._http, lambda: {**self._headers, **self._auth()})
-        self.playbooks = PlaybookClient(self.base_url, self._http, lambda: {**self._headers, **self._auth()})
         self._verified: dict[str, tuple[float, ProviderVerification]] = {}
 
     def close(self) -> None:
@@ -110,13 +103,7 @@ class Anonymo:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
-    def with_private_token(self, token: str) -> "Anonymo":
-        """A copy that authenticates with a blind token instead of an API key."""
-        return Anonymo(self.base_url, None, private_token=token, http=self._http, headers=self._headers, disclosure=self._disclosure, lane=self._lane, verify_receipts=self._verify_receipts, strict_receipts=self._strict, receipt_keys=self._pinned, now_ms=self._now_ms)
-
     def _auth(self) -> dict[str, str]:
-        if self._private_token:
-            return {"authorization": f"PrivateToken token={self._private_token}"}
         return {"authorization": f"Bearer {self._api_key}"} if self._api_key else {}
 
     # ---- receipts -------------------------------------------------------------------------------------------------
@@ -212,7 +199,7 @@ class Anonymo:
             data = None
         if res.status_code != 200 or not isinstance(data, dict):
             err = (data or {}).get("error", {}) if isinstance(data, dict) else {}
-            raise request_error(err.get("message") or f"chat request failed with {res.status_code}", err.get("type") or "request_failed", res.status_code, err.get("metadata"))
+            raise AnonymoError(err.get("message") or f"chat request failed with {res.status_code}", err.get("type") or "request_failed", res.status_code, err.get("metadata"))
         receipt = data.get("receipt")
         verification: ReceiptVerification | None = None
         if receipt and (verify_receipt_on_response if verify_receipt_on_response is not None else self._verify_receipts):

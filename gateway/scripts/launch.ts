@@ -1,31 +1,22 @@
-// One command to run all of Anonymo on this machine: a local chain with every contract deployed,
-// three mock model providers, the router, and the website served at /.
+// One command to run the gateway on this machine: three mock model providers, the router (contract-free), and a local
+// API key funded with test credit.
 //   bun run launch              # http://127.0.0.1:8787
 //   bun run launch --fresh      # wipe the local chain and database first
 //   bun run launch --open       # also open the site in the default browser
 //   bun run launch --port 8800  # serve on another port
 // If it is already running, it prints the address instead of starting a second copy.
-// Chain state, the database and the admin token persist in .data/ between runs. Everything here is
-// local test infrastructure: anvil's public development keys, mock USDG and Stock Tokens, mock models.
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+// The database, the admin token and the local key persist in .data/ between runs. Everything here is local test
+// infrastructure: mock models and test credit. No chain is started; deposits are WS05's and need real chains.
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import type { Subprocess } from "bun";
 
 const ROOT = resolve(import.meta.dir, "..");
 const DATA = resolve(ROOT, ".data");
-const WEB = resolve(ROOT, "web");
-const FOUNDRY_BIN = process.env.FOUNDRY_BIN ?? `${process.env.HOME}/.foundry/bin`;
-const CHAIN_PORT = 8546;
-const CHAIN_ID = 4663;
-const RPC = `http://127.0.0.1:${CHAIN_PORT}`;
-const STATE_FILE = resolve(DATA, "anvil-4663.json");
 const DB_DIR = resolve(DATA, "pglite-launch");
 const SECRETS_FILE = resolve(DATA, "launch.env");
-const ENV_LOCAL = resolve(ROOT, ".env.local");
 const PROVIDER_PORTS = [9101, 9102, 9103];
-// anvil development account #9 ("test test … junk"): funds the local test-USDG faucet.
-const FAUCET_KEY = "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6";
 
 const args = process.argv.slice(2);
 const fresh = args.includes("--fresh");
@@ -48,7 +39,7 @@ function die(msg: string): never {
 async function shutdown(code = 0) {
   if (stopping) return;
   stopping = true;
-  // Router first (it may be writing), then providers, then the chain (SIGINT makes anvil save its state).
+  // Router first (it may be writing), then the providers.
   for (const c of [...children].reverse()) {
     if (c.proc.exitCode !== null) continue;
     c.proc.kill(c.signal);
@@ -89,13 +80,6 @@ async function listening(port: number) {
   }
 }
 
-async function rpc<T>(method: string, params: unknown[] = []): Promise<T> {
-  const res = await fetch(RPC, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
-  const body = (await res.json()) as { result?: T; error?: { message: string } };
-  if (body.error) throw new Error(body.error.message);
-  return body.result as T;
-}
-
 async function waitFor(what: string, check: () => Promise<boolean>, timeoutMs = 60_000) {
   const until = Date.now() + timeoutMs;
   while (Date.now() < until) {
@@ -115,41 +99,16 @@ function readEnvFile(file: string): Record<string, string> {
   return out;
 }
 
-function newestMtime(dir: string): number {
-  let t = 0;
-  for (const name of readdirSync(dir, { withFileTypes: true })) {
-    if (name.name === "node_modules" || name.name.startsWith(".")) continue;
-    const p = resolve(dir, name.name);
-    t = Math.max(t, name.isDirectory() ? newestMtime(p) : statSync(p).mtimeMs);
-  }
-  return t;
-}
-
-async function buildWebsite() {
-  const index = resolve(WEB, "out/index.html");
-  const sources = ["app", "components", "lib", "public"].map((d) => resolve(WEB, d)).filter(existsSync);
-  const stale = !existsSync(index) || Math.max(...sources.map(newestMtime), statSync(resolve(WEB, "package.json")).mtimeMs) > statSync(index).mtimeMs;
-  if (!stale) return say("website build is up to date");
-  if (!Bun.which("pnpm")) {
-    if (existsSync(index)) return say("website sources changed but pnpm is not installed; serving the existing build");
-    return say("pnpm is not installed, so the website cannot be built; the router will serve its small built-in page");
-  }
-  if (!existsSync(resolve(WEB, "node_modules"))) {
-    say("installing website dependencies (first run)…");
-    await run(["pnpm", "install", "--frozen-lockfile"], WEB);
-  }
-  say("building the website…");
-  await run(["pnpm", "build"], WEB);
-}
-
-/** An Anonymo router started by this launcher (local chain + test faucet) already serving on a nearby port? */
+/** A router started by this launcher already serving on a nearby port? (It answers with the launch database's marker.) */
 async function runningInstance(): Promise<string | null> {
+  const marker = readEnvFile(SECRETS_FILE).LAUNCH_MARKER;
+  if (!marker) return null;
   for (let port = 8787; port < 8807; port++) {
     if (!(await listening(port))) continue;
     try {
       const r = await fetch(`http://127.0.0.1:${port}/api/v1/status`, { signal: AbortSignal.timeout(1500) });
-      const d = ((await r.json()) as { data?: { dev_faucet?: boolean; chain?: { chain_id?: number } } }).data;
-      if (d?.dev_faucet && d.chain?.chain_id === CHAIN_ID) return `http://127.0.0.1:${port}`;
+      const d = ((await r.json()) as { data?: { env?: string; receipts?: { key_id?: string } } }).data;
+      if (d?.env === "development" && (await listening(PROVIDER_PORTS[0]))) return `http://127.0.0.1:${port}`;
     } catch {
       /* not ours */
     }
@@ -164,11 +123,10 @@ function openUrl(url: string) {
 async function main() {
   const existing = fresh ? null : await runningInstance();
   if (existing) {
-    console.log(`\n  Anonymo is already running: ${existing}/  (dashboard: ${existing}/dashboard/)\n  Stop it with Ctrl-C in the terminal that started it, then run this again to restart.\n`);
+    console.log(`\n  The gateway is already running: ${existing}/v1\n  Stop it with Ctrl-C in the terminal that started it, then run this again to restart.\n`);
     if (openBrowser) openUrl(existing + "/");
     process.exit(0);
   }
-  for (const tool of ["anvil", "forge"]) if (!existsSync(`${FOUNDRY_BIN}/${tool}`)) die(`${tool} not found in ${FOUNDRY_BIN}. Install Foundry: https://getfoundry.sh`);
   if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) die("--port needs a port number.");
   if (await listening(PORT)) {
     if (PORT_FIXED) die(`port ${PORT} is already in use. Stop whatever is using it or pick another --port.`);
@@ -182,59 +140,27 @@ async function main() {
   mkdirSync(DATA, { recursive: true });
 
   if (fresh) {
-    say("--fresh: removing the local chain state and launch database");
-    for (const p of [STATE_FILE, DB_DIR]) rmSync(p, { recursive: true, force: true });
+    say("--fresh: removing the launch database and its key");
+    rmSync(DB_DIR, { recursive: true, force: true });
+    rmSync(SECRETS_FILE, { force: true });
   }
-
-  await buildWebsite();
-
-  // ---- chain
-  if (await listening(CHAIN_PORT)) {
-    const id = Number(await rpc<string>("eth_chainId").catch(() => "0x0"));
-    if (id !== CHAIN_ID) die(`port ${CHAIN_PORT} is in use by something that is not the local Anonymo chain (chain id ${id}).`);
-    say(`reusing the local chain already running on ${RPC}`);
-  } else {
-    say(`starting the local chain on ${RPC}${existsSync(STATE_FILE) ? " (restoring saved state)" : ""}`);
-    spawn("anvil", [`${FOUNDRY_BIN}/anvil`, "--port", String(CHAIN_PORT), "--chain-id", String(CHAIN_ID), "--block-time", "1", "--state", STATE_FILE, "--state-interval", "15", "--silent"], { signal: "SIGINT" });
-    await waitFor("the local chain", async () => Number(await rpc<string>("eth_chainId")) === CHAIN_ID, 30_000);
-  }
-  const deployed = async () => {
-    const credits = readEnvFile(ENV_LOCAL).CREDITS_ADDRESS;
-    return !!credits && (await rpc<string>("eth_getCode", [credits, "latest"]).catch(() => "0x")) !== "0x";
-  };
-  if (!(await deployed())) {
-    say("deploying the contracts (first run, about a minute)…");
-    rmSync(DB_DIR, { recursive: true, force: true }); // a new chain needs a new ledger
-    await run(["bun", "scripts/deploy-local.ts"], ROOT);
-    if (!(await deployed())) die("the contracts did not deploy; see the output above.");
-  } else say("contracts already deployed");
 
   // ---- secrets for this local install (never committed; .data/ is ignored)
   if (!existsSync(SECRETS_FILE)) {
-    writeFileSync(SECRETS_FILE, `APP_SECRET=${randomBytes(32).toString("hex")}\nADMIN_TOKEN=${randomBytes(24).toString("hex")}\n`, { mode: 0o600 });
+    writeFileSync(SECRETS_FILE, `APP_SECRET=${randomBytes(32).toString("hex")}\nADMIN_TOKEN=${randomBytes(24).toString("hex")}\nLAUNCH_MARKER=1\n`, { mode: 0o600 });
   }
-  const local = readEnvFile(ENV_LOCAL);
   const env: Record<string, string> = {
-    ...local,
     ...readEnvFile(SECRETS_FILE),
     ANONYMO_ENV: "development",
     HOST: "127.0.0.1",
     PORT: String(PORT),
     PUBLIC_BASE_URL: URL_BASE,
     DATABASE_URL: `pglite://${DB_DIR}`,
-    PUBLIC_RPC_URL: RPC,
-    EXPLORER_URL: "",
-    CHAIN_START_BLOCK: local.DEPLOY_BLOCK ?? "0",
     ALLOW_DEV_ATTESTATION: "true",
     CANARIES: "false",
-    DEV_FAUCET: "true",
-    DEV_FAUCET_PRIVATE_KEY: FAUCET_KEY,
-    // Faster than production so the full flow is visible within minutes.
+    // Faster than production so the hourly receipt root is visible within minutes.
     ANCHOR_INTERVAL_MS: "120000",
-    SETTLEMENT_INTERVAL_MS: "300000",
-    PAYWITH_THRESHOLD_USD: "0.000001",
     LOG_LEVEL: process.env.LOG_LEVEL ?? "warn",
-    WEB_DIR: resolve(WEB, "out"),
   };
 
   // ---- mock providers, then seed them (the database is single-process, so seed before the router)
@@ -242,27 +168,32 @@ async function main() {
   spawn("mock providers", ["bun", "scripts/mock-providers.ts"], { log: resolve(DATA, "launch-providers.log") });
   await waitFor("the mock providers", async () => (await Promise.all(PROVIDER_PORTS.map(listening))).every(Boolean), 20_000);
   await run(["bun", "scripts/seed.ts", "config/providers.local.yaml"], ROOT, env);
+  if (!readEnvFile(SECRETS_FILE).LAUNCH_KEY) {
+    say("creating a local API key with $10 of test credit");
+    const made = Bun.spawnSync(["bun", "scripts/launch-key.ts", "10"], { cwd: ROOT, env: { ...process.env, ...env }, stderr: "inherit" });
+    const key = made.stdout.toString().trim().split("\n").at(-1) ?? "";
+    if (made.exitCode !== 0 || !key) die("could not create the local API key.");
+    writeFileSync(SECRETS_FILE, `${readFileSync(SECRETS_FILE, "utf8")}LAUNCH_KEY=${key}\n`, { mode: 0o600 });
+  }
 
-  // ---- router + website
+  // ---- router
   say(`starting the router on ${URL_BASE}`);
   spawn("router", ["bun", "src/index.ts"], { env });
   await waitFor("the router", async () => (await fetch(`${URL_BASE}/health`)).ok, 60_000);
 
-  const token = readEnvFile(SECRETS_FILE).ADMIN_TOKEN;
+  const secrets = readEnvFile(SECRETS_FILE);
   console.log(`
-  Anonymo is running locally.
+  The gateway is running locally.
 
-    Website    ${URL_BASE}/
-    Dashboard  ${URL_BASE}/dashboard/
-    API        ${URL_BASE}/api/v1   (OpenAI/OpenRouter-compatible)
-    Chain      ${RPC}   (local test chain, id ${CHAIN_ID})
+    API        ${URL_BASE}/v1   (OpenAI-compatible; /api/v1 works too)
+    Key        ${secrets.LAUNCH_KEY.slice(0, 12)}… in .data/launch.env (LAUNCH_KEY), $10 of test credit
 
-  Try it: open the dashboard → "Create a new key" → Payments → Deposit → "Add 10 test USDG" →
-  Playground. All money and models here are test fixtures.
+  Try it:
+    curl ${URL_BASE}/v1/chat/completions -H "authorization: Bearer $LAUNCH_KEY" \\
+      -H "content-type: application/json" -d '{"model":"meta-llama/llama-3.3-70b-instruct","messages":[{"role":"user","content":"hello"}]}'
 
-  Admin token (tRPC at /trpc, header x-admin-token): ${token.slice(0, 6)}… in .data/launch.env
-  Your chain, keys and balances are kept in .data/ between runs; "bun run launch --fresh" starts over.
-  Press Ctrl-C to stop everything.
+  The models are local mocks and the credit is test credit. The admin token (tRPC at /trpc, header x-admin-token) is
+  ADMIN_TOKEN in .data/launch.env. "bun run launch --fresh" starts over. Press Ctrl-C to stop everything.
 `);
   if (openBrowser) openUrl(URL_BASE + "/");
 }

@@ -285,7 +285,7 @@ describe("the same label on the client", () => {
 });
 
 describe("the OpenAPI document", () => {
-  const spec = JSON.parse(readFileSync(new URL("../web/public/openapi.json", import.meta.url), "utf8"));
+  const spec = JSON.parse(readFileSync(new URL("../docs/openapi.json", import.meta.url), "utf8"));
   const resolve = (node: any): any => (node && typeof node.$ref === "string" ? node.$ref.replace(/^#\//, "").split("/").reduce((n: any, k: string) => n[k], spec) : node);
 
   /** A small structural check of a value against a schema: types, enums, consts, required keys, and no key the schema does not list. */
@@ -343,14 +343,6 @@ describe("the OpenAPI document", () => {
       [{ lane: undefined, mode: undefined, disclosure: undefined, provider: undefined, id: undefined }, {}],
     ];
     for (const [over, opts] of matrix) expect(conforms(privacyLabel(receipt(over), opts), spec.components.schemas.PrivacyLabel)).toEqual([]);
-  });
-
-  test("the developer docs describe the label in the router's own terms", () => {
-    const docs = readFileSync(new URL("../web/app/docs/page.jsx", import.meta.url), "utf8");
-    expect(docs).toContain('id="what-we-saw"');
-    expect(docs).toContain("/api/v1/receipts/&#123;id&#125;/privacy");
-    expect(docs).toContain("privacyLabel");
-    expect(docs).toContain("/verify/?r=");
   });
 });
 

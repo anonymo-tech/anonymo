@@ -68,14 +68,12 @@ describe("production Compose graph", () => {
 });
 
 describe("pinned images", () => {
-  const workflow = read(".github/workflows/release-checks.yml");
   const smoke = read("scripts/container-smoke.sh");
 
-  test("container smoke uses the same PostgreSQL and Redis digests as CI and rejects mutable tags", () => {
-    const ciImages = [...workflow.matchAll(/\b((?:postgres|redis):[\w.-]+@sha256:[0-9a-f]{64})/g)].map((m) => m[1]);
+  // gateway/.github (never run: GitHub only reads the repository root's .github) was removed in WS01.
+  test("container smoke pins PostgreSQL and Redis by digest and rejects mutable tags", () => {
     const smokeImages = [...smoke.matchAll(/\b((?:postgres|redis):[\w.-]+@sha256:[0-9a-f]{64})/g)].map((m) => m[1]);
     expect(smokeImages.length).toBe(2);
-    for (const image of smokeImages) expect(ciImages).toContain(image);
     const runs = smoke.split("\n").filter((l) => l.includes("docker run"));
     for (const line of runs) expect(line).not.toMatch(/\s(?:postgres|redis):[\w.-]+(?:\s|$)/);
     expect(runs.some((l) => l.includes('"$postgres_image"'))).toBe(true);
@@ -89,9 +87,7 @@ describe("pinned images", () => {
     expect(r.stderr.toString()).toContain("Refusing mutable fixture image reference: postgres:16");
   });
 
-  test("every workflow and deploy image reference is digest-pinned", () => {
-    for (const m of workflow.matchAll(/^\s*image:\s*(\S+)/gm)) expect(m[1]).toMatch(DIGEST);
-    for (const m of workflow.matchAll(/docker run [^\n]*?\s((?:prom|postgres|redis|ghcr\.io)[^\s]*:[^\s]+)/g)) expect(m[1]).toMatch(DIGEST);
+  test("every deploy image reference is digest-pinned", () => {
     for (const f of readdirSync(resolve(root, "deploy/railway")).filter((f) => f.endsWith("Dockerfile"))) {
       const text = read(`deploy/railway/${f}`);
       for (const m of text.matchAll(/^(?:FROM|ARG POSTGRES_CLIENT_IMAGE=)\s*(\S+)/gm)) if (!m[1].startsWith("${")) expect(m[1]).toMatch(DIGEST);
@@ -140,6 +136,5 @@ describe("Alertmanager delivery", () => {
     expect(compose.services.alertmanager.secrets).toEqual(["alert_webhook_url"]);
     expect(compose.secrets.alert_webhook_url.file).toContain("ALERT_WEBHOOK_URL_FILE");
     expect(read("monitoring/prometheus.yml")).toContain("alertmanager:9093");
-    expect(read(".github/workflows/release-checks.yml")).toMatch(/amtool[^\n]+prom\/alertmanager:v[\d.]+@sha256:[0-9a-f]{64} check-config alertmanager\.yml/);
   });
 });

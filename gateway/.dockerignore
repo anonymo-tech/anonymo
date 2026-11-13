@@ -6,22 +6,8 @@
 .data
 .env
 .env.*
-docs
 test
 contracts
-# Website: only the sources the image build needs
-web/*
-!web/app
-!web/components
-!web/lib
-!web/public
-!web/package.json
-!web/pnpm-lock.yaml
-!web/pnpm-workspace.yaml
-!web/scripts/build-pwa.mjs
-!web/scripts/check-public-wording.mjs
-!web/scripts/whitepaper-wording.mjs
-!web/next.config.mjs
 
 .audit-grade
 .solidity-auditor

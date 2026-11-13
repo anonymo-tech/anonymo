@@ -16,7 +16,7 @@ fi
 for tool in node openssl curl; do
   command -v "$tool" >/dev/null 2>&1 || { echo "Missing required tool: $tool" >&2; exit 2; }
 done
-for tool in anvil forge cast; do
+for tool in anvil cast; do
   bash scripts/foundry.sh "$tool" --version >/dev/null 2>&1 || { echo "Missing Foundry tool: $tool" >&2; exit 2; }
 done
 
@@ -91,12 +91,8 @@ providers:
 YAML
 printf 'TOPOLOGY_PROVIDER_TOKEN=%s\n' "$provider_token" >"$tmp/provider-secrets.env"
 
+# The router runs contract-free (WS01 removed the Anonymo contracts): anvil is only the chain the indexer reads.
 write_env() {
-  local usdg=${1:-0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168}
-  local credits=${2:-0x1111111111111111111111111111111111111111}
-  local callpay=${3:-0x2222222222222222222222222222222222222222}
-  local anchor=${4:-0x3333333333333333333333333333333333333333}
-  local provider_bond=${5:-0x4444444444444444444444444444444444444444}
   cat >"$tmp/compose.env" <<ENV
 ANONYMO_IMAGE=$ANONYMO_IMAGE
 POSTGRES_IMAGE=$POSTGRES_IMAGE
@@ -115,11 +111,6 @@ APP_SECRET=$app_secret
 ADMIN_TOKEN=$admin_token
 PUBLIC_BASE_URL=https://router.fixture.invalid
 RHC_RPC_URL=http://anvil:8545
-USDG_ADDRESS=$usdg
-CREDITS_ADDRESS=$credits
-CALLPAY_ADDRESS=$callpay
-PROVIDER_BOND_ADDRESS=$provider_bond
-RECEIPT_ANCHOR_ADDRESS=$anchor
 ROUTER_PRIVATE_KEY=$router_key
 SETTLEMENT_PRIVATE_KEY=$settlement_key
 ANCHORER_PRIVATE_KEY=$anchorer_key
@@ -148,21 +139,6 @@ if (( ! anvil_host_ready )); then
   exit 1
 fi
 
-# Work in a temporary copy so Foundry cannot mutate ignored build/deployment evidence in the repo.
-cp -R "$root/contracts" "$tmp/contracts"
-mkdir -p "$tmp/contracts/deployments"
-ln -s "$root/node_modules" "$tmp/node_modules"
-deployment_rel="deployments/.topology-${project}.json"
-(cd "$tmp/contracts" && DEPLOYMENTS_PATH="$deployment_rel" MOCK=1 DEPLOYER_PRIVATE_KEY="$fixture_deployer_key" \
-  bash "$root/scripts/foundry.sh" forge script script/Deploy.s.sol --rpc-url "$rpc" --broadcast --slow --private-key "$fixture_deployer_key")
-
-read -r usdg credits callpay anchor provider_bond <<<"$(node -e 'const d=require(process.argv[1]);const c=d.contracts;process.stdout.write([c.usdg,c.credits,c.callPay,c.receiptAnchor,c.providerBond].join(" "))' "$tmp/contracts/$deployment_rel")"
-if [[ -z "$credits" || -z "$provider_bond" ]]; then
-  echo 'Fixture deployment did not produce the required contracts.' >&2
-  exit 1
-fi
-write_env "$usdg" "$credits" "$callpay" "$anchor" "$provider_bond"
-"${compose[@]}" config --quiet
 "${compose[@]}" up -d --no-build
 
 base_url="http://127.0.0.1:${http_port}"

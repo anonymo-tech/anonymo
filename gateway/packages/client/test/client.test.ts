@@ -96,13 +96,6 @@ describe("chat", () => {
     expect(e.details).toEqual({ requested: { disclosure: "none" } });
   });
 
-  test("blind tokens authenticate with the PrivateToken scheme", async () => {
-    const r = await router();
-    const c = new Anonymo({ baseUrl: "https://router.test", apiKey: "k", fetch: r.fetch }).withPrivateToken("TOKEN123");
-    await c.chat.completions.create(chatBody);
-    expect(r.chatRequests[0].headers.authorization).toBe("PrivateToken token=TOKEN123");
-  });
-
   test("streaming yields chunks and resolves the receipt verification at the end", async () => {
     const r = await router();
     const c = new Anonymo({ baseUrl: "https://router.test", apiKey: "k", fetch: r.fetch });

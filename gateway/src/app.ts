@@ -12,12 +12,11 @@ import { laneReportRoutes } from "./api/lane-report.ts"; // Lane report
 import { insightsRoutes } from "./api/insights.ts"; // V88: spend insights.
 import { webhookRoutes } from "./webhooks/routes.ts"; // V86: signed destinations.
 import { activityRoutes } from "./api/activity.ts";
-import { siteCsp } from "./lib/csp.ts";
 import { EXPOSED_RESPONSE_HEADERS } from "./api/common.ts";
 import { kv } from "./db/schema.ts";
+import { inventoryJson } from "./privacy/inventory.ts";
 import { Hono } from "hono";
-import { serveStatic } from "hono/bun";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { cors } from "hono/cors";
 import { ZodError } from "zod";
@@ -112,9 +111,8 @@ export async function createApp(opts: AppOptions = {}) {
   };
 
   await initializeUpstreamMonitor(ctx); // ON3
-  const webDir = resolve(cfg.webDir ?? resolve(import.meta.dir, "../web/out"));
-  const webBuilt = existsSync(resolve(webDir, "index.html"));
-  const csp = webBuilt ? siteCsp(webDir) : "frame-ancestors 'none'; object-src 'none'; base-uri 'none'";
+  // The workspace UI is dash/ (WS07), deployed on its own; the router serves the API and a small built-in page.
+  const csp = "frame-ancestors 'none'; object-src 'none'; base-uri 'none'";
   const app = new Hono();
   app.use("*", originLockMiddleware(ctx)); // HD1: authenticate ingress before CORS, including preflights.
   // The OpenAI-style /v1/* aliases get the same CORS as /api/*, so a browser can read the receipt, lane and policy headers on either.
@@ -173,29 +171,15 @@ export async function createApp(opts: AppOptions = {}) {
   responsesRoutes(app, ctx);
   facilitatorRoutes(app, ctx); // v6 F: answers 503 facilitator_disabled until FACILITATOR_ENABLED
   adminRoutes(app, ctx);
-  // The website (web/out, a static Next.js export) is served at / when it has been built; otherwise
-  // a small built-in page lists models and rankings.
-
-  if (webBuilt) {
-    app.use("/_next/static/*", async (c, next) => {
-      await next();
-      c.header("cache-control", "public, max-age=31536000, immutable");
-    });
-    app.use("*", serveStatic({ root: webDir }));
-    // /registry/<provider id>/ is one static page (exported as /registry/_/) that reads the id from the address.
-    const registryShell = resolve(webDir, "registry/_/index.html");
-    if (existsSync(registryShell)) {
-      const html = readFileSync(registryShell, "utf8");
-      app.get("/registry/:id/", (c) => (/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(c.req.param("id")) ? c.html(html) : c.notFound()));
-      app.get("/registry/:id", (c) => (/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(c.req.param("id")) ? c.redirect(`/registry/${c.req.param("id")}/`, 308) : c.notFound()));
-    }
-    if (existsSync(resolve(webDir, "brand/anonymo-symbol.png"))) app.get("/favicon.ico", (c) => c.redirect("/brand/anonymo-symbol.png", 301));
-  } else siteRoutes(app, ctx);
-  const notFoundPage = webBuilt && existsSync(resolve(webDir, "404.html")) ? readFileSync(resolve(webDir, "404.html"), "utf8") : null;
+  // Public documents that used to ship inside the website: the OpenAPI description and the data inventory ("what we keep").
+  const openapi = readFileSync(resolve(import.meta.dir, "../docs/openapi.json"), "utf8");
+  app.get("/openapi.json", (c) => c.body(openapi, 200, { "content-type": "application/json; charset=utf-8", "cache-control": "public, max-age=300" }));
+  const inventory = inventoryJson();
+  app.get("/keep/inventory.json", (c) => c.body(inventory, 200, { "content-type": "application/json; charset=utf-8", "cache-control": "public, max-age=300" }));
+  siteRoutes(app, ctx); // a small built-in page that lists models and rankings
 
   app.notFound((c) => {
     const path = new URL(c.req.url).pathname;
-    if (notFoundPage && c.req.method === "GET" && !/^\/(api|v1|trpc)\//.test(path)) return c.html(notFoundPage, 404);
     return c.json(new ApiError(404, `No route for ${c.req.method} ${path}.`, "not_found").toJSON(), 404);
   });
   app.onError((err, c) => {

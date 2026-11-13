@@ -12,10 +12,6 @@ x-runtime: &runtime
   ADMIN_TOKEN: ${ADMIN_TOKEN:?Inject the operator token}
   RHC_RPC_URL: ${RHC_RPC_URL:?Set the verified chain RPC}
   USDG_ADDRESS: ${USDG_ADDRESS:-0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168}
-  CREDITS_ADDRESS: ${CREDITS_ADDRESS:?Set verified Credits address}
-  CALLPAY_ADDRESS: ${CALLPAY_ADDRESS:?Set verified CallPay address}
-  PROVIDER_BOND_ADDRESS: ${PROVIDER_BOND_ADDRESS:?Set verified ProviderBond address}
-  RECEIPT_ANCHOR_ADDRESS: ${RECEIPT_ANCHOR_ADDRESS:?Set verified ReceiptAnchor address}
   # Set true once the scheduled backup below runs, so readiness reports backup_fresh.
   BACKUP_REQUIRED: ${BACKUP_REQUIRED:-false}
 services:

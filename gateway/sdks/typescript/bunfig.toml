@@ -1,5 +1,0 @@
-[test]
-root = "./test"
-
-[install]
-minimumReleaseAge = 604800

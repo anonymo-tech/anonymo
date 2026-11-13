@@ -1,5 +1,0 @@
-blank_issues_enabled: false
-contact_links:
-  - name: Report a security vulnerability privately
-    url: https://github.com/anonymo-tech/anonymo/security/advisories/new
-    about: Share security findings with maintainers without a public issue.

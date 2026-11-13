@@ -1,7 +1,7 @@
 // Writes the data inventory (src/privacy/inventory.ts) as the exact JSON the "What we keep" page publishes at
-// /keep/inventory.json: canonical JSON generated from the descriptions and the live schema.
+// /keep/inventory.json (src/app.ts serves it): canonical JSON generated from the descriptions and the live schema.
 //
-//   bun scripts/gen-inventory.ts                 write web/app/keep/inventory.generated.json
+//   bun scripts/gen-inventory.ts                 write docs/inventory.generated.json
 //   bun scripts/gen-inventory.ts --out <file>    write somewhere else (the image build does this)
 //   bun scripts/gen-inventory.ts --check         exit 1 when the committed file is not what would be generated
 //
@@ -10,7 +10,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { inventoryDigest, inventoryJson } from "../src/privacy/inventory.ts";
 
-export const DEFAULT_OUT = resolve(import.meta.dir, "../web/app/keep/inventory.generated.json");
+export const DEFAULT_OUT = resolve(import.meta.dir, "../docs/inventory.generated.json");
 
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(name);

@@ -1,16 +1,9 @@
-import { agreementClient } from "./agreements.js";
-import { agentClient } from "./agent.js";
-import { playbookClient } from "./playbooks.js";
-import { requestError } from "./agent-errors.js";
-import { e2eeChat, type E2eeChatBody, type E2eeOptions } from "./e2ee.js";
 import { verifyProvider, fetchRouterAttestation, type AttestFetcher, type ExpectedDigests, type ProviderVerification, type QuoteVerifier, type RouterAttestation } from "./attestation.js";
 import type { Ed25519Verifier } from "./ed25519.js";
 import { AnonymoError, AttestationRefused, ReceiptInvalid } from "./errors.js";
 import { routingHeaders, withRouting, type DisclosureMax, type Lane } from "./options.js";
 import { fetchReceiptKeys, verifyReceipt, type ReceiptVerification } from "./receipts.js";
 import { checkChain, type ChainedEvent } from "./receipts-v2.js";
-import { TransparencyLog, type TransparencyOptions } from "./tlog.js";
-import { base64ToBytes } from "./bytes.js";
 import type { Fetch, KeySet, ReceiptEnvelope } from "./types.js";
 
 export type ClientOptions = {
@@ -18,8 +11,6 @@ export type ClientOptions = {
   baseUrl: string;
   /** A router API key, sent as `Authorization: Bearer`. */
   apiKey?: string;
-  /** A finished blind token, sent as `Authorization: PrivateToken token=...`. Takes the place of the API key on chat. */
-  privateToken?: string;
   fetch?: Fetch;
   headers?: Record<string, string>;
   /** Default disclosure ceiling for every request. A per-request option can only tighten it. */
@@ -35,14 +26,6 @@ export type ClientOptions = {
   ed25519?: Ed25519Verifier;
   /** Clock used for freshness checks (milliseconds). Defaults to Date.now; set it only to replay recorded evidence. */
   now?: () => number;
-  /**
-   * Opt-in split-view checks against the router's witnessed transparency log. When set, a receipt verifies only if its
-   * signing key is logged under a checkpoint cosigned by `quorum` of `witnesses` and consistent with every checkpoint
-   * this client saw before (check `key_logged`). `client.transparency` checks other keys (Oblivious HTTP key
-   * configurations, blind-token issuer keys, sidecar bindings) the same way. With `rekor`, a verified Rekor anchor of the
-   * checkpoint counts in place of the cosignatures (or besides them, when witnesses are listed too). Off by default.
-   */
-  transparency?: Omit<TransparencyOptions, "fetch" | "ed25519">;
 };
 
 export type AttestedOptions = {
@@ -92,37 +75,20 @@ export type ChatCompletion = { id?: string; model?: string; choices?: unknown[];
 export type ChatResult = ChatCompletion & { anonymo: AnonymoMeta };
 
 export class Anonymo {
-  e2eeChat(body: E2eeChatBody, options: Omit<E2eeOptions, "baseUrl" | "headers" | "fetch">) { return e2eeChat(body, { ...options, baseUrl: this.baseUrl, headers: this.authHeaders(), fetch: this.f }); }
-  readonly agent: ReturnType<typeof agentClient>;
-  /** Playbooks: one rulebook many keys follow (management or team owner/admin keys). */
-  readonly playbooks: ReturnType<typeof playbookClient>;
-  readonly agreements: ReturnType<typeof agreementClient>;
   readonly baseUrl: string;
   private readonly f: Fetch;
   private keys: KeySet | null;
   private keyFetch: Promise<KeySet> | null = null;
   private verified = new Map<string, { at: number; v: ProviderVerification }>();
-  /** Set when `transparency` was given: the split-view checker for this router's log. */
-  readonly transparency: TransparencyLog | null;
 
   constructor(private readonly opts: ClientOptions) {
     if (!opts?.baseUrl) throw new AnonymoError("baseUrl is required", "bad_options");
     this.baseUrl = opts.baseUrl.replace(/\/$/, "");
     this.f = opts.fetch ?? ((...a: Parameters<Fetch>) => fetch(...a));
-    this.agreements = agreementClient(this.baseUrl, this.f, () => ({ ...this.opts.headers, ...this.authHeaders() }));
-    this.agent = agentClient(this.baseUrl, this.f, () => ({ ...this.opts.headers, ...this.authHeaders() }));
-    this.playbooks = playbookClient(this.baseUrl, this.f, () => ({ ...this.opts.headers, ...this.authHeaders() }));
     this.keys = opts.receiptKeys ?? null;
-    this.transparency = opts.transparency ? new TransparencyLog({ logUrl: this.baseUrl, ...opts.transparency, fetch: this.f, ed25519: opts.ed25519 }) : null;
-  }
-
-  /** A copy that authenticates with a blind token (see buyTokens in @anonymo/client/blind) instead of an API key. */
-  withPrivateToken(token: string): Anonymo {
-    return new Anonymo({ ...this.opts, apiKey: undefined, privateToken: token });
   }
 
   private authHeaders(): Record<string, string> {
-    if (this.opts.privateToken) return { authorization: `PrivateToken token=${this.opts.privateToken}` };
     if (this.opts.apiKey) return { authorization: `Bearer ${this.opts.apiKey}` };
     return {};
   }
@@ -141,19 +107,7 @@ export class Anonymo {
   async verifyReceipt(receipt: ReceiptEnvelope): Promise<ReceiptVerification> {
     let keys = await this.receiptKeys();
     if (!keys.keys.some((k) => k.kid === receipt?.key_id) && !this.opts.receiptKeys) keys = await this.receiptKeys(true);
-    const v = await verifyReceipt(receipt, { keys, ed25519: this.opts.ed25519 });
-    if (!this.transparency) return v;
-    // Opt-in: the key must also be in the witnessed log, with no split view.
-    const jwk = keys.keys.find((k) => k.kid === receipt?.key_id);
-    let logged: ReceiptVerification["checks"][number];
-    try {
-      if (!jwk) throw new Error("the receipt names no published key");
-      const r = await this.transparency.requireLogged("receipt_key", base64ToBytes(jwk.x));
-      logged = { id: "key_logged", status: "pass", detail: `key is entry ${r.index} of the transparency log, under a checkpoint of size ${r.checkpoint.size} cosigned by ${r.cosignedBy.join(", ")}` };
-    } catch (e) {
-      logged = { id: "key_logged", status: "fail", detail: (e as Error).message };
-    }
-    return { ...v, valid: v.valid && logged.status === "pass", checks: [...v.checks, logged] };
+    return verifyReceipt(receipt, { keys, ed25519: this.opts.ed25519 });
   }
 
   /** GET /api/v1/receipts/:id, including its anchor proof once the receipt has been anchored. */
@@ -239,7 +193,7 @@ export class Anonymo {
         const { routed, headers, provider } = await this.prepare(body, o);
         const res = await this.post("/api/v1/chat/completions", routed, headers, o);
         const json = (await res.json().catch(() => null)) as (ChatCompletion & { error?: { message?: string; type?: string; metadata?: unknown } }) | null;
-        if (!res.ok || !json) throw requestError(json?.error?.message ?? `chat request failed with ${res.status}`, json?.error?.type ?? "request_failed", res.status, json?.error?.metadata);
+        if (!res.ok || !json) throw new AnonymoError(json?.error?.message ?? `chat request failed with ${res.status}`, json?.error?.type ?? "request_failed", res.status, json?.error?.metadata);
         const meta = await this.finish(res, json.receipt ?? null, provider, o);
         return { ...json, anonymo: meta };
       },
@@ -252,7 +206,7 @@ export class Anonymo {
         const res = await this.post("/api/v1/chat/completions", routed, headers, o);
         if (!res.ok || !res.body) {
           const json = (await res.json().catch(() => null)) as { error?: { message?: string; type?: string; metadata?: unknown } } | null;
-          throw requestError(json?.error?.message ?? `chat request failed with ${res.status}`, json?.error?.type ?? "request_failed", res.status, json?.error?.metadata);
+          throw new AnonymoError(json?.error?.message ?? `chat request failed with ${res.status}`, json?.error?.type ?? "request_failed", res.status, json?.error?.metadata);
         }
         return new ChatStream(res, (receipt) => this.finish(res, receipt, provider, o));
       },

@@ -1,7 +1,7 @@
 {
   "name": "@anonymo/client",
   "version": "0.1.0",
-  "description": "OpenAI-compatible client for Anonymo with receipt verification, verify-before-send for attested providers, blind tokens, chunked Oblivious HTTP and an HPKE hook. No runtime dependencies.",
+  "description": "OpenAI-compatible client with receipt verification and verify-before-send for attested providers. No runtime dependencies.",
   "type": "module",
   "license": "Apache-2.0",
   "sideEffects": false,
@@ -16,20 +16,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./blind": {
-      "bun": "./src/blind.ts",
-      "types": "./dist/blind.d.ts",
-      "import": "./dist/blind.js"
-    },
     "./node": {
       "bun": "./src/node.ts",
       "types": "./dist/node.d.ts",
       "import": "./dist/node.js"
-    },
-    "./ohttp": {
-      "bun": "./src/ohttp.ts",
-      "types": "./dist/ohttp.d.ts",
-      "import": "./dist/ohttp.js"
     },
     "./characters": {
       "bun": "./src/characters.ts",
@@ -47,27 +37,8 @@
     "test": "bun test",
     "prepublishOnly": "npm run typecheck && npm run build"
   },
-  "peerDependencies": {
-    "@cloudflare/blindrsa-ts": "0.4.6",
-    "hpke": "1.1.7",
-    "ohttp-ts": "0.6.0"
-  },
-  "peerDependenciesMeta": {
-    "@cloudflare/blindrsa-ts": {
-      "optional": true
-    },
-    "hpke": {
-      "optional": true
-    },
-    "ohttp-ts": {
-      "optional": true
-    }
-  },
   "devDependencies": {
-    "@cloudflare/blindrsa-ts": "0.4.6",
     "@types/bun": "1.4.2",
-    "hpke": "1.1.7",
-    "ohttp-ts": "0.6.0",
     "typescript": "7.0.2"
   }
 }

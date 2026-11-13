@@ -159,8 +159,8 @@ describe("the page's summary claims only what the data proves", () => {
 });
 
 describe("the published document", () => {
-  test("web/app/keep/inventory.generated.json is exactly what the code generates (run: bun scripts/gen-inventory.ts)", () => {
-    const committed = readFileSync(join(ROOT, "web/app/keep/inventory.generated.json"), "utf8");
+  test("docs/inventory.generated.json is exactly what the code generates (run: bun scripts/gen-inventory.ts)", () => {
+    const committed = readFileSync(join(ROOT, "docs/inventory.generated.json"), "utf8");
     expect(committed).toBe(inventoryJson());
     expect(sha256(committed)).toBe(inventoryDigest());
   });

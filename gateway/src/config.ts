@@ -87,7 +87,6 @@ const schema = z.object({
   RHC_RPC_URL: z.string().default("https://rpc.mainnet.chain.robinhood.com"),
   PUBLIC_RPC_URL: z.string().default("https://rpc.mainnet.chain.robinhood.com"), // shown to wallets (never the private node URL)
   EXPLORER_URL: z.string().default("https://robinhoodchain.blockscout.com"),
-  WEB_DIR: opt, // built website (web/out) served at /; default ./web/out when present
   CHAIN_CONFIRMATIONS: int(2),
   CHAIN_START_BLOCK: z.coerce.bigint().optional(),
   USDG_ADDRESS: addr.default("0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"),
@@ -417,7 +416,6 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     },
     canaries: { intervalMs: e.CANARY_INTERVAL_MS, enabled: e.CANARIES, shadowDays: e.SHADOW_DAYS },
     hfBaseUrl: e.HF_BASE_URL.replace(/\/$/, ""),
-    webDir: e.WEB_DIR,
     status: {
       targets: { public: e.STATUS_SLO_PUBLIC, attested: e.STATUS_SLO_ATTESTED },
       suggestMinRequests: e.STATUS_SUGGEST_MIN_REQUESTS,

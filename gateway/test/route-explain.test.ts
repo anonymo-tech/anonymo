@@ -9,8 +9,6 @@ import type { Attempt, RouteSuccess } from "../src/router/execute.ts";
 import { buildClaimsV2, coseSign1, encodeClaims } from "../src/receipts/v2.ts";
 import { canonicalJson, sha256 } from "../src/lib/util.ts";
 import { verifyReceipt as sdkV1, verifyReceiptV2 as sdkV2 } from "../packages/client/src/index.ts";
-import { verifyReceipt as webVerify } from "../web/lib/verify.js";
-import { validRouteExplanation } from "../web/lib/route-explanation.js";
 import { MODELS, startRouter } from "./helpers.ts";
 import { loadConfig } from "../src/config.ts";
 
@@ -61,7 +59,6 @@ test("fallback uses actual attempts, aggregate classes only, including an earlie
   expect(Object.keys(route.fallback!)).toEqual(["timeout"]);
   expect(JSON.stringify(route)).not.toMatch(/secret|internal|earlier|Sensitive|address|apiKey|baseUrl/);
   expect(JSON.parse(routeResponseHeaders(true, r)["x-anonymo-route"])).toEqual(route);
-  expect(validRouteExplanation(route, "beta")).toBe(true);
 });
 
 test("arbitrary skip strings cannot leak; allowlist includes only fixed names and counts", () => {
@@ -112,17 +109,15 @@ test("flag-off preserves response, canonical JSON, signature and COSE bytes agai
   expect(JSON.stringify({ "x-receipt-id": "gen-fixture", ...routeResponseHeaders(false, r) })).toBe('{"x-receipt-id":"gen-fixture"}');
 });
 
-test("route is covered by both signatures and independent SDK/browser verifiers; tampering fails", async () => {
+test("route is covered by both signatures and the independent SDK verifier; tampering fails", async () => {
   const route = explanation(plan(undefined, { sort: "price" }));
   const v2 = { cose: Buffer.from(cose(buildClaimsV2({ ...claimsInput, route }))).toString("base64") };
   const receipt = { ...envelope({ v: 1, provider: "alpha", route }), v2 };
   const options = { publicKeyHex: pub.toString("hex") };
   expect((await sdkV1(receipt, options)).valid).toBe(true);
   expect((await sdkV2(v2.cose, options)).valid).toBe(true);
-  expect((await webVerify(receipt, options)).valid).toBe(true);
   const changed = { ...receipt, payload: { ...receipt.payload, route: { ...route, eligible: 999 } } };
   expect((await sdkV1(changed, options)).valid).toBe(false);
-  expect((await webVerify(changed, options)).valid).toBe(false);
   // A valid signature must not promote a malformed or mismatched versioned claim.
   for (const bad of [{ ...route, v: 2 }, { ...route, provider: "wrong" }, { ...route, url: "secret" }]) {
     expect((await sdkV1(envelope({ provider: "alpha", route: bad }), options)).valid).toBe(false);

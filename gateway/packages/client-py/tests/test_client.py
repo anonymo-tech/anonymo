@@ -76,12 +76,6 @@ def test_disclosure_and_lane_never_loosen_what_the_caller_set():
     assert with_routing(BODY) is BODY
 
 
-def test_blind_token_authorization():
-    r = FakeRouter()
-    client(r).with_private_token("TOKEN123").chat(BODY)
-    assert r.chat[0]["headers"]["authorization"] == "PrivateToken token=TOKEN123"
-
-
 def test_a_verified_provider_is_used_exclusively_and_the_receipt_is_checked_against_it():
     r = FakeRouter()
     res = client(r).chat(BODY, attested=AttestedOptions(**ATTESTED))
