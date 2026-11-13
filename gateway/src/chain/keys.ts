@@ -10,13 +10,14 @@ import { sha256 } from "../lib/util.ts";
 // So anyone can generate a key offline, deposit USDG to its chainKeyHash, start calling the
 // API immediately (no account), and withdraw by signing with the derived key.
 
+/** Keys minted before the rebrand (WS01). Still accepted; nothing mints them any more. */
 export const KEY_PREFIX = "sk-ar-v1-";
-/** Anonymo keys (src/anonymo/keys/): the same 32 random bytes and the same derivation, under the Anonymo prefix. */
+/** Every key minted now: the same 32 random bytes and the same derivation as the old prefix. */
 export const ANONYMO_KEY_PREFIX = "anm_live_";
 export const KEY_RE = /^(?:sk-ar-v1-|anm_live_)[0-9a-f]{64}$/;
 
 export function generateApiKey(): string {
-  return KEY_PREFIX + randomBytes(32).toString("hex");
+  return ANONYMO_KEY_PREFIX + randomBytes(32).toString("hex");
 }
 
 export function keyPrivateKey(secret: string): `0x${string}` {

@@ -380,7 +380,7 @@ export function mcpRoutes(app: Hono, ctx: Ctx) {
     if (!parsed.success) throw new RpcError(INVALID_PARAMS, `Invalid arguments for ${p.name}: ${issues(parsed.error)}.`);
     try {
       if (NEEDS_KEY.has(p.name) && !bearer(c.req.header("authorization")))
-        throw new ApiError(401, `The ${p.name} tool needs an Anonymo API key. Send it as \`Authorization: Bearer sk-ar-v1-...\` in this MCP server's HTTP headers. list_models, get_receipt and verify_receipt work without one.`, "missing_key");
+        throw new ApiError(401, `The ${p.name} tool needs an Anonymo API key. Send it as \`Authorization: Bearer anm_live_...\` in this MCP server's HTTP headers. list_models, get_receipt and verify_receipt work without one.`, "missing_key");
       switch (p.name) {
         case "list_models":
           return await listModels(parsed.data as z.infer<typeof listModelsArgs>);

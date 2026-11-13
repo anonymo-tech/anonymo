@@ -1,22 +1,22 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.anonymo-tech/anonymo",
+  "name": "io.github.OWNER/anonymo",
   "title": "Anonymo",
   "description": "Call 350+ AI models with signed receipts, or keep a prompt on attested TEE providers only.",
   "version": "0.1.0",
   "repository": {
-    "url": "https://github.com/anonymo-tech/anonymo",
+    "url": "https://github.com/OWNER/anonymo",
     "source": "github"
   },
-  "websiteUrl": "https://anonymo.tech/docs",
+  "websiteUrl": "https://anonymo.invalid/docs",
   "remotes": [
     {
       "type": "streamable-http",
-      "url": "https://anonymo.tech/mcp",
+      "url": "https://anonymo.invalid/mcp",
       "headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <your Anonymo API key (sk-ar-v1-...)>. Only the chat tool needs it; the model lists, verify_provider and the receipt tools answer without one.",
+          "description": "Bearer <your Anonymo API key (anm_live_...)>. Only the chat tool needs it; the model lists, verify_provider and the receipt tools answer without one.",
           "isRequired": false,
           "isSecret": true
         },

@@ -19,7 +19,7 @@ bun scripts/gen-integrations.ts --from models.json   # or from a saved response
 
 ```sh
 pip install 'litellm[proxy]'
-export ANONYMO_API_KEY=sk-ar-v1-...
+export ANONYMO_API_KEY=anm_live_...
 litellm --config integrations/litellm/config.yaml
 ```
 
@@ -30,7 +30,7 @@ From the Python SDK, without the proxy:
 ```python
 import litellm
 litellm.completion(model="openai/meta-llama/llama-3.3-70b-instruct",
-                   api_base="https://anonymo.tech/api/v1",
+                   api_base="https://anonymo.invalid/api/v1",
                    api_key=os.environ["ANONYMO_API_KEY"],
                    messages=[{"role": "user", "content": "hi"}])
 ```

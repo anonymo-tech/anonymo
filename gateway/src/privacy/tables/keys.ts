@@ -19,7 +19,7 @@ export const keyTables: Record<string, TableDoc> = {
       account_id: "The account the key belongs to.",
       parent_hash: "For a key made from another key (an agent session), the parent's key hash.",
       name: "The label the owner gave the key.",
-      label: "A masked display form of the key, such as sk-ar-v1-abcd...wxyz: the first and last few characters only.",
+      label: "A masked display form of the key, such as anm_live_abcd...wxyz: the first and last few characters only.",
       budget: "The key's spend limit in pico-USD. Empty means unlimited.",
       budget_reset: "How often the budget resets: daily, weekly or monthly, or never.",
       period_start: "When the current budget period began.",

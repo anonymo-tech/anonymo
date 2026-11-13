@@ -9,7 +9,7 @@ services:
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=15d"]
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./monitoring/alerts.yml:/etc/prometheus/anonymo-alerts.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/router-alerts.yml:ro
       - ./monitoring/anonymo-alerts.yml:/etc/prometheus/anonymo-alerts.yml:ro
       - prometheusdata:/prometheus
     networks: [egress, front]

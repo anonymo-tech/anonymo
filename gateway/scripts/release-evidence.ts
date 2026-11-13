@@ -225,7 +225,7 @@ export async function collectEvidence(baseUrl: string, opts: { expectCommit?: st
   const contracts = summary?.chain.configured_contracts ?? 0;
   const deployment = statusData?.release?.deployment?.status ?? (contracts ? "unknown" : "none");
   if (contracts && deployment !== "verified") findings.push({ severity: "high", id: "contracts.unverified", detail: `Contracts are configured but the deployment status is ${deployment}.` });
-  if (!contracts) notes.push("No Anonymo contract addresses are configured (escrow/no-contract mode): protocol deployment and governance evidence (H-02) does not apply to this release.");
+  if (!contracts) notes.push("No Anonymo-era contract addresses are configured (escrow/no-contract mode): protocol deployment and governance evidence (H-02) does not apply to this release.");
 
   const securityHeadersEvidence = PAGES.map((p, i) => securityHeaders(p, pages[i], findings));
   let tlsEvidence: Record<string, unknown> | null = null;

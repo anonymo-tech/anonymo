@@ -48,6 +48,7 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
   // ---- Receipts ----
   app.get("/api/v1/receipts/keys", async (c) => c.json(await ctx.signer.jwks()));
   app.get("/.well-known/anonymo-receipt-keys.json", async (c) => c.json(await ctx.signer.jwks()));
+  app.get("/.well-known/anonymo-receipt-keys.json", async (c) => c.json(await ctx.signer.jwks())); // WS01: old path, kept for clients pinned to it
   const anchorInput = z.object({ root: z.string(), proof: z.array(z.string()), index: z.number().int().optional() }).optional();
   app.post("/api/v1/receipts/verify", async (c) => {
     const raw = await readJson(c);
@@ -184,7 +185,7 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
         // hourly counters, at /api/v1/stats.
         launch: await launchMetrics(),
         private_lanes: { lanes: PRIVATE_LANES, stats: "/api/v1/stats", epsilon_spent_today: privateLaneStats(ctx).budget().epsilon_spent_today },
-        router: "https://anonymo.tech", // HD1: canonical public router address.
+        router: ctx.cfg.publicUrl, // HD1: canonical public router address (PUBLIC_BASE_URL).
         env: ctx.cfg.env,
         // The running build (RELEASE_COMMIT; null when unset) and whether its contracts were verified.
         release: {

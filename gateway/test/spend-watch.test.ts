@@ -101,7 +101,7 @@ describe("Spend Watch: aggregation", () => {
     expect(byModel.breakdown[0].share).toBeCloseTo(17 / 18.5, 3);
     const byKey = await spendReport(h.ctx.db, { accountId: acct, keyHash: null }, { periodDays: 30, groupBy: "key", now: NOW });
     expect(byKey.breakdown.map((r) => [r.id, r.cost_usd, r.name])).toEqual([[A, 17, "test"], [B, 1.5, "batch"]]);
-    expect(byKey.breakdown[1].label).toMatch(/^sk-ar-v1-/);
+    expect(byKey.breakdown[1].label).toMatch(/^anm_live_/);
     const byProvider = await spendReport(h.ctx.db, { accountId: acct, keyHash: null }, { periodDays: 7, groupBy: "provider", now: NOW });
     expect(byProvider.breakdown.map((r) => [r.id, r.cost_usd])).toEqual([["alpha", 3], ["beta", 1.5]]);
     expect(byProvider.totals.period_usd).toBe(4.5);
@@ -407,7 +407,7 @@ describe("Spend Watch: the spend-watch job", () => {
     expect(sent.map((x) => x.body)).toEqual([{ alert_id: r.id, kind: "anomaly", window: "day", value_usd: 3.5, threshold_usd: 3, pct: 350, period: "day:2026-09-15", at: new Date(NOW).toISOString() }]);
     await gen(h, acct, root.hash, NOW + 1000, "1"); // $4.50: now over 4x too
     expect((await tick(NOW + 120_000)).fired).toBe(1);
-    expect((await history(strict.id))[0]).toMatchObject({ period: "day:2026-09-15", key_label: expect.stringMatching(/^sk-ar-v1-/) });
+    expect((await history(strict.id))[0]).toMatchObject({ period: "day:2026-09-15", key_label: expect.stringMatching(/^anm_live_/) });
   });
 
   test("two replicas evaluating at once fire and deliver exactly once; a stale copy cannot re-fire", async () => {

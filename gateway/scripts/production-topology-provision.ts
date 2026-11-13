@@ -8,7 +8,7 @@ import { creditAccount } from "../src/ledger/ledger.ts";
 
 const secret = process.argv[2];
 if (process.env.TOPOLOGY_SMOKE_ACK !== "disposable-docker-host") throw new Error("This fixture helper is restricted to the disposable topology smoke.");
-if (!secret?.startsWith("sk-ar-v1-")) throw new Error("Supply the newly created fixture key.");
+if (!secret?.startsWith("anm_live_")) throw new Error("Supply the newly created fixture key.");
 const cfg = loadConfig();
 if (!cfg.production) throw new Error("The topology fixture must keep production configuration enabled.");
 const handle = await openDatabase(cfg.databaseUrl, { migrate: false });

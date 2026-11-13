@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "anonymo",
+      "name": "anonymo-gateway",
       "dependencies": {
         "@electric-sql/pglite": "0.5.8",
         "@hono/trpc-server": "0.4.2",

@@ -57,18 +57,48 @@ export const isAnonymoRoute = (c: Pick<Candidate, "tier">) => c.tier != null;
 /** `upstream:model`, the route id Backend §4 shows (for example "venice:venice-uncensored"). */
 export const routeIdOf = (c: Pick<Candidate, "upstream" | "providerId" | "providerModelId">) => `${c.upstream ?? c.providerId}:${c.providerModelId}`;
 
-// Name prefixes for routes whose config does not state a family. Order matters: the first match wins.
-const FAMILY_HINTS: [RegExp, string][] = [
-  [/deepseek/i, "deepseek"],
-  [/\bglm|chatglm|zhipu/i, "glm"],
-  [/qwen|qwq/i, "qwen"],
-  [/gemma/i, "gemma"],
-  [/kimi|moonshot/i, "kimi"],
-  [/dolphin|mistral|mixtral|magistral|venice-uncensored/i, "mistral"],
-  [/llama|hermes/i, "llama"],
-  [/\bwan[-_ ]?\d/i, "wan"],
-  [/kokoro/i, "kokoro"],
+/**
+ * Every known model family and the name pattern that implies it, matched in order against a lower-cased model name or
+ * repository: the first match wins, so more specific names come before the families they contain. This is the single
+ * table for the router (WS01): the refusal reroute (anonymo/refusal/family.ts) and the council and manifest
+ * (anonymo/trust/families.ts) read it through familyFromName. Fine-tunes count as their base family.
+ */
+export const MODEL_FAMILIES: readonly (readonly [string, RegExp])[] = [
+  ["deepseek", /deepseek/],
+  ["glm", /\bglm|chatglm|zhipu|z-ai\b|\bzai\b/],
+  ["qwen", /qwen|qwq|\bqvq\b/],
+  ["gemma", /gemma/],
+  ["gemini", /gemini/],
+  ["kimi", /kimi|moonshot/],
+  // Venice's uncensored model is Dolphin Mistral 24B. Dolphin builds on Mistral bases unless the name says Llama.
+  ["mistral", /mistral|mixtral|magistral|ministral|codestral|devstral|pixtral|\bvenice-uncensored\b|dolphin-?venice|dolphin.*(?:24b|mistral)/],
+  ["llama", /llama|hermes|nemotron|\btulu\b|dolphin.*(?:llama|8b|70b)/],
+  ["mistral", /dolphin/],
+  ["minimax", /minimax/],
+  ["phi", /\bphi-?\d/],
+  ["command", /command-?[ra]|cohere|aya/],
+  ["gpt-oss", /gpt-oss/],
+  ["gpt", /\bgpt-|openai\/|\bo[134](?:-|$)/],
+  ["claude", /claude|anthropic/],
+  ["grok", /grok|x-ai\//],
+  ["yi", /\byi-|01-ai/],
+  ["falcon", /falcon/],
+  ["granite", /granite/],
+  ["olmo", /olmo/],
+  ["ernie", /ernie|baidu/],
+  ["hunyuan", /hunyuan|tencent/],
+  ["seed", /seed-oss|bytedance/],
+  ["wan", /\bwan[-_ ]?\d/],
+  ["kokoro", /kokoro/],
+  ["flux", /flux/],
 ];
+
+/** The family a free-form model name or repository implies, or null when no known family matches. */
+export function familyFromName(name: string): string | null {
+  const n = name.toLowerCase();
+  for (const [family, re] of MODEL_FAMILIES) if (re.test(n)) return family;
+  return null;
+}
 
 /**
  * The model family of a route, for refusal rerouting (WS03: "retry on a route whose family differs") and the council
@@ -79,8 +109,7 @@ const FAMILY_HINTS: [RegExp, string][] = [
 export function familyOf(c: Pick<RouteFields, "family" | "providerModelId"> & Partial<Pick<RouteFields, "modelId">>): string {
   if (c.family) return c.family.toLowerCase();
   const name = c.providerModelId || c.modelId || "";
-  for (const [re, fam] of FAMILY_HINTS) if (re.test(name)) return fam;
-  return `model:${name.toLowerCase()}`;
+  return familyFromName(name) ?? `model:${name.toLowerCase()}`;
 }
 
 export const sameFamily = (a: Parameters<typeof familyOf>[0], b: Parameters<typeof familyOf>[0]) => familyOf(a) === familyOf(b);

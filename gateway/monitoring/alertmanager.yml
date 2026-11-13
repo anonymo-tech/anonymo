@@ -19,7 +19,7 @@ receivers:
 inhibit_rules:
   # An unreachable router explains every readiness-derived alert; page once.
   - source_matchers: [alertname="AnonymoUnavailable"]
-    target_matchers: [alertname=~"AnonymoNotReady|AnonymoDependencyFailed|AnonymoeadinessMetricsMissing|AnonymoBackupStale"]
+    target_matchers: [alertname=~"AnonymoNotReady|AnonymoDependencyFailed|AnonymoReadinessMetricsMissing|AnonymoBackupStale"]
     equal: [job]
   # A stale backup also makes overall readiness 0; the specific alert is the actionable one.
   - source_matchers: [alertname="AnonymoBackupStale"]

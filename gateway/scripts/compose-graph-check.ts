@@ -92,7 +92,7 @@ export function checkComposeGraph(services: Record<string, ComposeService>): str
   for (const oneShot of ["migrate", "runtime-role-grants", "provider-init"])
     if (services[oneShot].restart !== "no") errors.push(`${oneShot} is a one-shot job and must use restart: "no"`);
 
-  const appImage = (s: ComposeService) => text(s.image).includes("ANONYMO_IMAGE");
+  const appImage = (s: ComposeService) => /\b(?:ANONYMO|ANONYMO)_IMAGE\b/.test(text(s.image)); // WS01: either name until WS10 renames it
   const longRunning = Object.entries(services).filter(([, s]) => appImage(s) && s.restart && s.restart !== "no" && !s.profiles?.length);
   const workers = longRunning.filter(([, s]) => text(s.command).includes("src/worker.ts"));
   if (!workers.length) errors.push("no worker service runs src/worker.ts");

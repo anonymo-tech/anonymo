@@ -1,9 +1,9 @@
 {
-  "name": "anonymo",
+  "name": "anonymo-gateway",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Any model. One key. Paid per call. OpenRouter-compatible inference router settled in USDG on Robinhood Chain.",
+  "description": "Anonymo: an OpenAI-compatible router for open-weight models with a floor gate, refusal catch and signed receipts.",
   "scripts": {
     "prepare": "bash scripts/install-hooks.sh",
     "launch": "bun scripts/launch.ts",

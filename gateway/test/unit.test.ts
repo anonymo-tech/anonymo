@@ -135,7 +135,7 @@ describe("keys", () => {
     const b = deriveKey(s);
     expect(a.chainKeyHash).toBe(b.chainKeyHash);
     expect(a.chainKeyHash).toBe(keccak256(encodePacked(["address"], [a.keyAddress])));
-    expect(a.label.startsWith("sk-ar-v1-")).toBe(true);
+    expect(a.label.startsWith("anm_live_")).toBe(true);
   });
 });
 

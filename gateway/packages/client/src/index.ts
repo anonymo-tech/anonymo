@@ -1,6 +1,10 @@
 export { Anonymo, ChatStream } from "./client.js";
-export type { AnonymoMeta, AttestedOptions, ChatBody, ChatCompletion, ChatResult, ClientOptions, RequestOptions } from "./client.js";
+/** @deprecated Renamed to `Anonymo`; this alias is removed in the next release. */
+export { Anonymo as Anonymo } from "./client.js";
+export type { AnonymoMeta, AnonymoMeta as AnonymoMeta, AttestedOptions, ChatBody, ChatCompletion, ChatResult, ClientOptions, RequestOptions } from "./client.js";
 export { AnonymoError, AttestationRefused, ReceiptInvalid } from "./errors.js";
+/** @deprecated Renamed to `AnonymoError`; this alias is removed in the next release. */
+export { AnonymoError as AnonymoError } from "./errors.js";
 export { canonical, canonicalJson } from "./canonical.js";
 export { defaultEd25519Verify, UnsupportedCrypto } from "./ed25519.js";
 export type { Ed25519Verifier } from "./ed25519.js";

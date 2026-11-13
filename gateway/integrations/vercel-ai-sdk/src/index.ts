@@ -7,13 +7,13 @@ import { createOpenAICompatible, type MetadataExtractor, type OpenAICompatiblePr
 import { type FetchFunction, loadApiKey, loadOptionalSetting, withoutTrailingSlash } from "@ai-sdk/provider-utils";
 
 /** The public Anonymo router. Point `baseURL` elsewhere to use a self-hosted router. */
-export const ANONYMO_BASE_URL = "https://anonymo.tech/api/v1";
+export const ANONYMO_BASE_URL = "https://anonymo.invalid/api/v1";
 
 /** Any id from GET /api/v1/models, e.g. "meta-llama/llama-3.3-70b-instruct" or "z-ai/glm-5.3". */
 export type AnonymoModelId = string & {};
 
 export interface AnonymoProviderSettings {
-  /** Anonymo API key (sk-ar-v1-...). Defaults to the ANONYMO_API_KEY environment variable, read per request. */
+  /** Anonymo API key (anm_live_...). Defaults to the ANONYMO_API_KEY environment variable, read per request. */
   apiKey?: string;
   /** Router base URL including /api/v1. Defaults to ANONYMO_BASE_URL, then the public router. */
   baseURL?: string;

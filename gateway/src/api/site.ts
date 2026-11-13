@@ -25,7 +25,7 @@ code{font:12.5px ui-monospace,SFMono-Regular,Menlo,monospace}
 <section><div class="grid" id="stats"></div></section>
 <section><h2>Switch in two lines</h2><pre><code>const client = new OpenAI({
   baseURL: "<span id="base"></span>/api/v1",
-  apiKey: "sk-ar-v1-…",            // POST /api/v1/keys, deposit USDG to its key hash
+  apiKey: "anm_live_…",            // POST /api/v1/keys, deposit USDG to its key hash
 });</code></pre></section>
 <section><h2>Models</h2><div class="tw"><table><thead><tr><th>Model</th><th class="n">Prompt $/M</th><th class="n">Completion $/M</th><th class="n">Context</th><th class="n">Providers</th><th>Private</th><th>Creator royalty</th></tr></thead><tbody id="models"></tbody></table></div></section>
 <section><h2>Rankings · last 24h</h2><div class="tw"><table><thead><tr><th>Model</th><th class="n">Tokens</th><th class="n">Requests</th><th class="n">Paid to creator</th></tr></thead><tbody id="rank"></tbody></table></div></section>

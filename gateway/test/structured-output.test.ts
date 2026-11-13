@@ -37,7 +37,7 @@ describe("structured-output real router with fake provider", () => {
     expect(json.choices[0].message.content).toBe('{"ok":true}'); expect(check.valid).toBe(true);
     expect(check.errors).toEqual([]); expect(check.calls.length).toBe(1); expect(check.retry_attempted).toBe(false);
     expect(check.total_cost).toBe(json.receipt.payload.cost); expect(received() - before).toBe(1);
-    expect(bodies.at(-1).anonymo).toBeUndefined(); await checkReceipt(json.receipt);
+    expect(bodies.at(-1).anonymo).toBeUndefined(); expect(bodies.at(-1).anonymo).toBeUndefined(); await checkReceipt(json.receipt);
   });
   test("invalid validate returns the original text without a second call", async () => {
     replies = ["broken"]; const before = received(); const { res } = await chat("validate");
@@ -166,6 +166,11 @@ describe("structured-output real router with fake provider", () => {
     expect(normalizePreset(doc).anonymo).toEqual({ json_check: "repair" });
     const body: any = { messages: [{ role: "user", content: "JSON" }], anonymo: { json_check: "validate" } };
     applyPreset(body, doc); expect(body.anonymo.json_check).toBe("validate");
+    // WS01: a preset saved under the old name `anonymo` still applies, as `anonymo`.
+    const old = presetDocSchema.parse({ models: [model], response_format: { type: "json_object" }, anonymo: { json_check: "repair" } });
+    expect(normalizePreset(old).anonymo).toEqual({ json_check: "repair" });
+    const fresh: any = { messages: [{ role: "user", content: "JSON" }] };
+    applyPreset(fresh, old); expect(fresh.anonymo.json_check).toBe("repair");
     const key = await h.fundedKey();
     const saved = await h.request("/api/v1/presets/json-settings", { method: "PUT", headers: key.auth, json: doc });
     expect(saved.ok).toBe(true); replies = ['{"ok":true}'];

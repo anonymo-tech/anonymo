@@ -1,6 +1,6 @@
 // Offline key tool. Keys are self-custodial: nothing here talks to the router.
 //   bun scripts/key.ts new                          new API key + its on-chain identity
-//   bun scripts/key.ts info <sk-ar-v1-...>          derive key hash / address
+//   bun scripts/key.ts info <anm_live_...>          derive key hash / address
 //   bun scripts/key.ts withdraw <sk> <amountUSDG> <to> <nonce> [deadlineUnix]
 //        -> EIP-712 signature for Credits.requestWithdrawal (needs CREDITS_ADDRESS, CHAIN_ID)
 import { encodeFunctionData, parseUnits } from "viem";

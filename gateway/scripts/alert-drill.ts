@@ -16,7 +16,8 @@ export async function runAlertDrill(env: Record<string, string | undefined>, fet
   if (explicit && !FORMATS.includes(explicit as AlertFormat)) return { code: 2, line: { ok: false, error: "ALERT_WEBHOOK_FORMAT must be ntfy, slack, discord or json." } };
   const format = resolveFormat(url, (explicit || undefined) as AlertFormat | undefined);
   const at = now.toISOString();
-  const env_ = env.ANONYMO_ENV && /^[a-z]{1,16}$/.test(env.ANONYMO_ENV) ? env.ANONYMO_ENV : "production";
+  const envName = env.ANONYMO_ENV ?? env.ANONYMO_ENV; // WS01: the old name is read for one release
+  const env_ = envName && /^[a-z]{1,16}$/.test(envName) ? envName : "production";
   const result = await deliverAlert(url, format, { kind: "test", environment: env_, at, transitions: [{ check: "alert_delivery", state: "test", since: at }] }, fetchImpl);
   return result.ok
     ? { code: 0, line: { ok: true, format, status: result.status, sent_at: at } }

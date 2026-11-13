@@ -1,3 +1,4 @@
+import { withLegacyEnv } from "./lib/legacy-names.ts";
 import { hardeningEnv, hardeningSettings } from "./hardening/config.ts"; // HD1
 import { rpcEnv, rpcSettings } from "./chain/rpc-config.ts"; // RPC1: private transport settings.
 import { rushEnv, rushSettings } from "./rush/config.ts"; // ON3
@@ -211,7 +212,7 @@ const schema = z.object({
   ANTHROPIC_MODEL_MAP: opt,
 
   // Council mode (model "anonymo/council") and dual verification (verify: "dual"). Off unless enabled.
-  ANONYMO_FEATURE_COUNCIL: bool.default(false),
+  ANONYMO_FEATURE_COUNCIL: bool.default(true),
   ANONYMO_COUNCIL_MODELS: opt, // comma list of 2-5 model ids used when a council request names none
   ANONYMO_COUNCIL_JUDGE: opt, // model id of the judge used when a council request names none
   ANONYMO_COUNCIL_MODE: z.enum(["judge", "fuse"]).default("judge"),
@@ -252,7 +253,7 @@ const schema = z.object({
 export type Config = ReturnType<typeof loadConfig>;
 
 export function loadConfig(overrides: Record<string, unknown> = {}) {
-  const parsed = schema.safeParse({ ...process.env, ...overrides });
+  const parsed = schema.safeParse(withLegacyEnv({ ...process.env, ...overrides } as Record<string, unknown>));
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
     throw new Error(`Invalid configuration: ${issues}`);
@@ -272,7 +273,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     if (!e.PUBLIC_BASE_URL.startsWith("https://")) throw new Error("PUBLIC_BASE_URL must be https in production.");
     if (!/^postgres(?:ql)?:/.test(e.DATABASE_URL)) throw new Error("PostgreSQL is required in production.");
     const database = new URL(e.DATABASE_URL);
-    if (!database.password || ["anonymo", "postgres", "password"].includes(decodeURIComponent(database.password))) throw new Error("Nondefault database credential is required in production.");
+    if (!database.password || ["anonymo", "anonymo", "postgres", "password"].includes(decodeURIComponent(database.password))) throw new Error("Nondefault database credential is required in production.");
     if (!e.REDIS_URL || !/^rediss?:/.test(e.REDIS_URL) || !new URL(e.REDIS_URL).password) throw new Error("Production requires authenticated Redis.");
     if (e.RUNTIME_ROLE === "all") throw new Error("Production requires separate api and worker roles.");
     if (e.AUTO_MIGRATE) throw new Error("Production requires AUTO_MIGRATE=false and a completed migration job.");

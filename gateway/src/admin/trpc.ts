@@ -314,7 +314,7 @@ export function adminRoutes(app: Hono, ctx: Ctx) {
         const token = c.req.header("x-admin-token") ?? bearer(c.req.header("authorization"));
         const admin = !!ctx.cfg.adminToken && !!token && safeEqual(token, ctx.cfg.adminToken);
         let key: KeyRow | null = null;
-        if (!admin && token?.startsWith("sk-ar-")) key = await resolveKey(ctx, token).catch(() => null);
+        if (!admin && (token?.startsWith("anm_live_") || token?.startsWith("sk-ar-"))) key = await resolveKey(ctx, token).catch(() => null);
         const appFetch = (path: string, init: RequestInit) => app.request(path, init);
         return { app: { ...ctx, appFetch }, admin, key, secret: key ? token : null } as TCtx as unknown as Record<string, unknown>;
       },

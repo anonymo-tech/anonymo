@@ -49,7 +49,7 @@ export const keys = pgTable(
     accountId: text("account_id").notNull(),
     parentHash: text("parent_hash"),
     name: text("name").notNull().default(""),
-    label: text("label").notNull(), // sk-ar-v1-abcd...wxyz
+    label: text("label").notNull(), // anm_live_abcd...wxyz
     budget: money("budget"), // null = unlimited (pico)
     budgetReset: text("budget_reset"), // null | daily | weekly | monthly
     periodStart: ts("period_start"),

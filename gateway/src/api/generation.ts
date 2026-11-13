@@ -80,7 +80,7 @@ export function generationRoutes(app: Hono, ctx: Ctx) {
   app.get("/api/v1/generations", async (c) => {
     const secret = bearer(c.req.header("authorization"));
     const key = secret ? await resolveKey(ctx, secret) : null;
-    if (!key) fail(401, "Provide an API key as `Authorization: Bearer sk-ar-v1-...`.", "missing_key");
+    if (!key) fail(401, "Provide an API key as `Authorization: Bearer anm_live_...`.", "missing_key");
     const limit = Math.min(200, Math.max(1, Number(c.req.query("limit") ?? 50) || 50));
     const before = c.req.query("before");
     // A session key lists only its own calls, not the whole account's.

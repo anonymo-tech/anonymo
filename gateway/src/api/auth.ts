@@ -84,7 +84,7 @@ export async function resolveKey(ctx: Ctx, secret: string): Promise<KeyRow | nul
 
 export async function requireKey(ctx: Ctx, authorization: string | undefined | null) {
   const secret = bearer(authorization);
-  if (!secret) fail(401, "Provide an API key as `Authorization: Bearer sk-ar-v1-...`.", "missing_key");
+  if (!secret) fail(401, "Provide an API key as `Authorization: Bearer anm_live_...`.", "missing_key");
   const key = await resolveKey(ctx, secret);
   if (!key) fail(401, "Unknown API key. Create one (POST /api/v1/keys) or deposit USDG to its key hash first.", "invalid_key");
   return key;

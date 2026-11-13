@@ -1,6 +1,6 @@
 # Security reporting and privileged operations
 
-Report vulnerabilities through [GitHub private vulnerability reporting](https://github.com/anonymo-tech/anonymo/security/advisories/new). Include affected components, a local reproduction and expected impact. Use test keys and test funds. Keep credentials, customer prompts and personal information out of reports and alert channels.
+Report vulnerabilities through GitHub private vulnerability reporting on this repository. Include affected components, a local reproduction and expected impact. Use test keys and test funds. Keep credentials, customer prompts and personal information out of reports and alert channels.
 
 Only the current main branch is maintained. Three app contracts are published; the full core deployment and production image/TEE/KMS provenance remain unverified. There is no production security certification or response-time guarantee. Real-funds expansion requires the release and governance gates below.
 

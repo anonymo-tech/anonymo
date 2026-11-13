@@ -19,7 +19,7 @@ const STRATEGY: Record<string, ProviderPrefs["sort"] | undefined> = {
 };
 
 function resolveModel(catalog: Catalog, raw: string): string | null {
-  const s = raw.replace(/^openrouter\//, "").replace(/^anonymo\//, "").toLowerCase();
+  const s = raw.replace(/^openrouter\//, "").replace(/^(?:anonymo|anonymo)\//, "").toLowerCase();
   if (catalog.resolve(s)) return catalog.resolve(s)!.model.id;
   // "<litellm-provider>/<model>" -> find a catalog model whose slug ends with the model part.
   const tail = s.split("/").slice(1).join("/") || s;

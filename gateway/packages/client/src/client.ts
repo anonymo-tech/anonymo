@@ -72,7 +72,11 @@ export type AnonymoMeta = {
 
 export type ChatBody = { model: string; messages: unknown[]; stream?: boolean; provider?: Record<string, unknown>; [k: string]: unknown };
 export type ChatCompletion = { id?: string; model?: string; choices?: unknown[]; usage?: Record<string, unknown>; receipt?: ReceiptEnvelope; [k: string]: unknown };
-export type ChatResult = ChatCompletion & { anonymo: AnonymoMeta };
+export type ChatResult = ChatCompletion & {
+  anonymo: AnonymoMeta;
+  /** @deprecated The same object as `anonymo`; removed in the next release. */
+  anonymo: AnonymoMeta;
+};
 
 export class Anonymo {
   readonly baseUrl: string;
@@ -195,7 +199,7 @@ export class Anonymo {
         const json = (await res.json().catch(() => null)) as (ChatCompletion & { error?: { message?: string; type?: string; metadata?: unknown } }) | null;
         if (!res.ok || !json) throw new AnonymoError(json?.error?.message ?? `chat request failed with ${res.status}`, json?.error?.type ?? "request_failed", res.status, json?.error?.metadata);
         const meta = await this.finish(res, json.receipt ?? null, provider, o);
-        return { ...json, anonymo: meta };
+        return { ...json, anonymo: meta, anonymo: meta };
       },
       /**
        * POST with stream: true. Iterate for the parsed chunks; `meta()` resolves after the stream ends with the

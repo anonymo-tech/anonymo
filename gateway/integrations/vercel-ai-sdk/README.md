@@ -4,7 +4,7 @@ Anonymo for the [Vercel AI SDK](https://ai-sdk.dev). 350+ models behind one key,
 
 ```sh
 npm i @anonymo/ai-sdk-provider ai
-export ANONYMO_API_KEY=sk-ar-v1-...
+export ANONYMO_API_KEY=anm_live_...
 ```
 
 ```ts
@@ -27,7 +27,7 @@ import { createAnonymo } from "@anonymo/ai-sdk-provider";
 
 const attested = createAnonymo({
   lane: "attested",          // only providers whose enclave the router verified; refuses rather than falls back
-  apiKey: "sk-ar-v1-...",    // default: ANONYMO_API_KEY, read when a request is sent
+  apiKey: "anm_live_...",    // default: ANONYMO_API_KEY, read when a request is sent
   baseURL: "https://.../api/v1", // default: ANONYMO_BASE_URL, then the public router
 });
 ```

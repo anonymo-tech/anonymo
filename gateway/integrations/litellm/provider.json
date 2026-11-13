@@ -1,6 +1,6 @@
 {
     "anonymo": {
-        "base_url": "https://anonymo.tech/api/v1",
+        "base_url": "https://anonymo.invalid/api/v1",
         "api_key_env": "ANONYMO_API_KEY"
     }
 }

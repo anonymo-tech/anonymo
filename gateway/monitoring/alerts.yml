@@ -32,7 +32,7 @@ groups:
         labels: { severity: critical }
         annotations:
           summary: Anonymo has no verified off-host backup inside its freshness window
-      - alert: AnonymoeadinessMetricsMissing
+      - alert: AnonymoReadinessMetricsMissing
         expr: up{job="anonymo"} == 1 unless on(job, instance) anonymo_ready{job="anonymo"}
         for: 2m
         labels: { severity: critical }

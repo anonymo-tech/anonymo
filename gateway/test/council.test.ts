@@ -404,9 +404,9 @@ describe("council mode", () => {
   });
 });
 
-describe("council mode is off unless enabled", () => {
+describe("council mode is off when disabled", () => {
   let h: Harness;
-  beforeAll(async () => (h = await startRouter()));
+  beforeAll(async () => (h = await startRouter({ env: { ANONYMO_FEATURE_COUNCIL: "false" } }))); // on by default since WS01
   afterAll(async () => h.close());
 
   test("anonymo/council is an unknown model and verify is refused, not ignored", async () => {
