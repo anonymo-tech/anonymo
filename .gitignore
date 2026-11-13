@@ -7,3 +7,6 @@ node_modules/
 *.log
 .claude/
 .data/
+
+# pnpm download cache (created when pnpm runs with a repo-local store)
+.pnpm-store/
