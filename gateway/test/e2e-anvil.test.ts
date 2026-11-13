@@ -14,9 +14,8 @@ import { runRegistry } from "../src/services/registry.ts";
 import { pollChain } from "../src/chain/indexer.ts";
 import { runAnchor, runKeyRotation } from "../src/services/anchor.ts";
 import { postSpentRoot } from "../src/services/settlement.ts";
-import { runPaywithAggregator, clearFairCache } from "../src/pay/paywith.ts";
 import { runSlasher } from "../src/services/slasher.ts";
-import { providers, keys, paywithDebts } from "../src/db/schema.ts";
+import { providers, keys } from "../src/db/schema.ts";
 import { balanceOf, verifyInvariants } from "../src/ledger/ledger.ts";
 import { serveMockProvider } from "../src/providers/mock.ts";
 import { deriveKey } from "../src/chain/keys.ts";
@@ -97,7 +96,6 @@ describe.skipIf(!RUN)("E2E on anvil with the real contracts", () => {
         // USDG_EIP712_NAME deliberately unset: the router must read the mock domain from the chain.
         CREDITS_ADDRESS: C.credits,
         CALLPAY_ADDRESS: C.callPay,
-        PAYWITHSTOCK_ADDRESS: C.payWithStock,
         PROVIDER_BOND_ADDRESS: C.providerBond,
         RECEIPT_ANCHOR_ADDRESS: C.receiptAnchor,
         ROYALTY_ADDRESS: C.royalty,
@@ -108,7 +106,6 @@ describe.skipIf(!RUN)("E2E on anvil with the real contracts", () => {
         ANCHORER_PRIVATE_KEY: PK.anchorer,
         SLASHER_PRIVATE_KEY: PK.slasher,
         PAYMASTER_SIGNER_KEY: PK.paymaster,
-        PAYWITH_TOKENS: JSON.stringify([{ symbol: "NVDA", address: dep.mocks.nvda, decimals: 18 }]),
         PAYWITH_THRESHOLD_USD: "0.000001",
         PAYMENT_WAIT_MS: "5000",
         NEW_KEYS_PER_HOUR: "1000",
@@ -237,81 +234,6 @@ describe.skipIf(!RUN)("E2E on anvil with the real contracts", () => {
     expect(v).toMatchObject({ signature_valid: true, inclusion_valid: true });
     expect(v.onchain_root.toLowerCase()).toBe(r.anchor.root.toLowerCase());
   }, 60_000);
-
-  const openNvdaSession = async (k: Awaited<ReturnType<typeof newKey>>) => {
-    const userA = privateKeyToAccount(PK.userA).address;
-    const open = await (await req("/api/v1/paywith/open", { method: "POST", headers: k.auth, json: { token: "NVDA", cap_raw_per_day: parseUnits("1", 18).toString(), wallet: userA } })).json();
-    for (const t of open.data.transactions) {
-      const hash = await wallet(PK.userA).sendTransaction({ to: t.to, data: t.data } as never);
-      expect((await pub.waitForTransactionReceipt({ hash })).status).toBe("success");
-    }
-    await pollChain(app.ctx);
-    const s = await (await req("/api/v1/paywith/session", { headers: k.auth })).json();
-    expect(s.data.active).toBe(true);
-    return userA;
-  };
-  const nvdaOf = async (who: Hex) => (await pub.readContract({ address: dep.mocks.nvda, abi: erc20Abi, functionName: "balanceOf", args: [who] })) as bigint;
-  const payWithNvda = async (k: Awaited<ReturnType<typeof newKey>>, n: number) => {
-    for (let i = 0; i < n; i++) {
-      const r = await req("/api/v1/chat/completions", { method: "POST", headers: { ...k.auth, "x-pay-with": "NVDA" }, json: { model: LLAMA, max_tokens: 30, messages: [{ role: "user", content: `nvda pays ${k.hash} ${i}` }] } });
-      expect(r.status).toBe(200);
-      expect((await r.json()).receipt.paid_with.token).toBe("NVDA");
-    }
-  };
-
-  test("pay with NVDA: session opened on-chain -> wallet signs an allowance -> calls accrue -> real allowance charge -> credited + allocated", async () => {
-    clearFairCache();
-    const k = await newKey();
-    const userA = await openNvdaSession(k);
-    // The wallet signs a bounded EIP-712 allowance; the router registers it with the first charge.
-    const td = (await (await req("/api/v1/paywith/allowance/typed-data", { method: "POST", headers: k.auth, json: {} })).json()).data.typed_data;
-    const signature = await signApiTypedData(privateKeyToAccount(PK.userA), td);
-    expect((await req("/api/v1/paywith/allowance", { method: "POST", headers: k.auth, json: { message: td.message, signature } })).status).toBe(201);
-    const nvdaBefore = await nvdaOf(userA);
-    await payWithNvda(k, 2);
-    const res = await runPaywithAggregator(app.ctx);
-    const mine = (res.settled as any[]).find((r) => r.key === k.chainKeyHash);
-    expect(mine.tx).toMatch(/^0x/);
-    expect(mine.mode).toBe("allowance");
-    const nvdaAfter = await nvdaOf(userA);
-    expect(nvdaAfter).toBeLessThan(nvdaBefore);
-    const debts = await app.ctx.db.select().from(paywithDebts).where(eq(paywithDebts.chainKeyHash, k.chainKeyHash));
-    expect(debts.every((d) => d.swapId && d.rawAllocated != null)).toBe(true);
-    expect(debts.reduce((a, d) => a + (d.rawAllocated ?? 0n), 0n)).toBe(nvdaBefore - nvdaAfter);
-    // On-chain: the allowance is registered and accounts for exactly what left the wallet; the usage batch is spent.
-    const al = await app.ctx.chain.allowance(k.chainKeyHash);
-    expect(al.spentRaw).toBe(nvdaBefore - nvdaAfter);
-    expect(al.maxRawTotal).toBe(BigInt(td.message.maxRawTotal));
-    expect(await app.ctx.chain.commitmentCharged(k.chainKeyHash, mine.usage_commitment)).toBe(true);
-    const [key] = await app.ctx.db.select().from(keys).where(eq(keys.keyHash, k.hash));
-    expect((await balanceOf(app.ctx.db, key.accountId)).balance >= 0n).toBe(true);
-  }, 90_000);
-
-  test("pay with NVDA without an allowance: the router proposes, the wallet signs, the signed charge settles on-chain once", async () => {
-    clearFairCache();
-    const k = await newKey();
-    const userA = await openNvdaSession(k);
-    await payWithNvda(k, 2);
-    const nvdaBefore = await nvdaOf(userA);
-    const proposed = (await runPaywithAggregator(app.ctx)).settled as any[];
-    expect(proposed.find((r) => r.key === k.chainKeyHash).awaiting_signature).toMatch(/^swap_/);
-    expect(await nvdaOf(userA)).toBe(nvdaBefore); // nothing moves without the wallet
-    const [c] = (await (await req("/api/v1/paywith/charges", { headers: k.auth })).json()).data;
-    const signature = await signApiTypedData(privateKeyToAccount(PK.userA), c.typed_data);
-    expect((await req(`/api/v1/paywith/charges/${c.id}/signature`, { method: "POST", headers: k.auth, json: { signature } })).status).toBe(200);
-    const res = await runPaywithAggregator(app.ctx);
-    const mine = (res.settled as any[]).find((r) => r.key === k.chainKeyHash);
-    expect(mine.mode).toBe("signature");
-    const spent = nvdaBefore - (await nvdaOf(userA));
-    expect(spent > 0n && spent <= BigInt(c.max_raw)).toBe(true);
-    const debts = await app.ctx.db.select().from(paywithDebts).where(eq(paywithDebts.chainKeyHash, k.chainKeyHash));
-    expect(debts.every((d) => d.swapId === c.id && d.rawAllocated != null)).toBe(true);
-    // The same signature cannot be charged twice, not even by the router key.
-    const m = c.typed_data.message;
-    const auth = { keyHash: m.keyHash, token: m.token, usdgAmount: BigInt(m.usdgAmount), maxRaw: BigInt(m.maxRaw), usageCommitment: m.usageCommitment, nonce: BigInt(m.nonce), epoch: BigInt(m.epoch), deadline: BigInt(m.deadline), router: m.router };
-    await expect(app.ctx.chain.payCall(auth, signature, 100)).rejects.toThrow();
-    expect(await nvdaOf(userA)).toBe(nvdaBefore - spent);
-  }, 90_000);
 
   test("self-custodial withdrawal: request (key signature) -> spent root -> finalize with proof -> USDG out", async () => {
     const k = await newKey();

@@ -1,12 +1,11 @@
 import { and, desc, eq } from "drizzle-orm";
 import type { Ctx } from "../context.ts";
 import { attestations } from "../db/schema.ts";
-import { unlinkableTransports } from "../onion/lane.ts";
 import { privacyLabel, type PrivacyLabel } from "./label.ts";
 
 /**
  * The privacy label for a stored receipt, with the two facts only the router knows: the TEE type recorded for the
- * attestation the receipt cites, and the transports this router serves lane "unlinkable" over. The label itself is
+ * attestation the receipt cites. The label itself is
  * computed from the receipt alone (label.ts); a receipt with no payload gets a label that says nothing was recorded.
  */
 export async function labelForReceipt(ctx: Ctx, receipt: { id?: string | null; payload?: unknown }): Promise<PrivacyLabel> {
@@ -27,5 +26,5 @@ export async function labelForReceipt(ctx: Ctx, receipt: { id?: string | null; p
       teeKind = null; // the label then says the receipt does not name the TEE type
     }
   }
-  return privacyLabel({ id: receipt.id ?? undefined, payload }, { teeKind, unlinkableTransports: unlinkableTransports(ctx.cfg), baseUrl: ctx.cfg.siteUrl });
+  return privacyLabel({ id: receipt.id ?? undefined, payload }, { teeKind, unlinkableTransports: [], baseUrl: ctx.cfg.siteUrl });
 }

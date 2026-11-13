@@ -1,12 +1,8 @@
 import { addSuggestions, availabilityFailure, selectWithSuggestions } from "../model-alternatives/suggest.ts"; // B121
 import { refuseCreditExhaustion, refuseCreditOutage } from "../rush/errors.ts"; // ON3
-import { noteFailedPaidCall, noteServedCall } from "../services/makegood.ts"; // V6 R
 import { guardInferenceModels } from "../provisioning/inference.ts"; // ZK6
 import { explainedStream, rememberRoutePlan, routeReceiptFields, routeResponseHeaders } from "../router/explain.ts"; // V84
 import { captureStructuredOutput } from "../structured-output/chat.ts"; // V83
-import { linkNetworkReceipt } from "../network/receipt-link.ts";
-import { agentReservation, enforceAgentCached } from "../agents/enforce.ts";
-import { blindReceipt } from "../blind/set.ts";
 import type { Context, Hono } from "hono";
 import { and, eq } from "drizzle-orm";
 import type { Ctx } from "../context.ts";
@@ -30,37 +26,27 @@ import { bumpRefusalStats, recordRefusedAttempts, refusalCatchEnabled, routeIdOf
 import { providerKey } from "../providers/upstream.ts";
 import { compactUpstream, recordGpuAttested, unverifiedUpstream, verifyAciExchange, type UpstreamAttestation } from "../providers/aci.ts";
 import { receiptLeaf } from "../receipts/merkle.ts";
-import { decisionTagFields, decisionTagOf } from "../receipts/decision-tag.ts"; // B: X-Anonymo-Decision-Tag
 import { buildClaimsV2, chainComment, ChunkChain, COSE_CONTENT_TYPE } from "../receipts/v2.ts";
 import { applyGuardrails, mergeGuardrails, redactOutput, type GuardrailConfig } from "../gateway/guardrails.ts";
 import { middleOut } from "../gateway/transforms.ts";
 import type { CacheMode } from "../gateway/cache.ts";
 import { bearer, requireRole, resolveKey, walletAuth, type KeyRow } from "./auth.ts";
 import { addressBucket, generationHeaders, readJson, sharedPolicyHash } from "./common.ts";
-import { grantFor, recordDebt, type PaywithGrant } from "../pay/paywith.ts";
 import { resolveSavedRoute } from "../routing/saved-routes.ts";
 import { resolvePreset } from "../routing/presets.ts";
-import { applyRouteDefault } from "../routing/route-default.ts"; // U101
 import { recordCharacterUse, resolveCharacter, type CharacterMeta } from "../characters/registry.ts";
 import { payPerCall } from "../pay/percall.ts";
 import { paymentHeaderOf, x402ResponseHeaders } from "../pay/x402.ts";
-import { holderTier, scaleLimit, walletOfAccount } from "../holders/tiers.ts";
-import type { HolderTier } from "../config.ts";
 import { COUNCIL_MODEL, applyDualDecoding, runCouncil, runDual, validateMulti } from "./council.ts";
 import { receiptForCall, sealedForRequest, sealedLane, sealedSelection } from "../anonymo/trust/hooks.ts"; // WS09
-import { gatewayOrigin } from "../ohttp/origin.ts";
-import { requestLane } from "../ohttp/lane.ts";
+import { requestLane } from "../router/request-lane.ts";
 import { blockReasonForStatus, isPrivateLaneRequest, noteLane, recordPrivateLane } from "../services/private-stats.ts";
 import { parseTraceparent, shouldExportTrace } from "../services/tracing.ts";
-import { BLIND_POOL, claimToken, confirmToken, isBlindRequest, presentBlindToken, redemptionSummary, requireValue, unclaimToken, type BlindPass } from "../blind/redeem.ts";
 
 export type Kind = "chat" | "completion";
 export type Billing =
   | { mode: "prepaid"; accountId: string; key: KeyRow }
-  | { mode: "paywith"; accountId: string; key: KeyRow; grant: PaywithGrant }
-  | { mode: "per_call"; accountId: string; payer: string; paymentTx?: string; paymentResponse?: string; key?: undefined }
-  // A Privacy Pass token, charged to the pooled internal account: no key, no wallet, no buyer. `hold` is set once known.
-  | { mode: "blind"; accountId: string; pass: BlindPass; hold: Pico; key?: undefined };
+  | { mode: "per_call"; accountId: string; payer: string; paymentTx?: string; paymentResponse?: string; key?: undefined };
 
 const ROLES = new Set(["system", "developer", "user", "assistant", "tool", "function"]);
 // Parameters that change what a provider must be able to do; never silently dropped.
@@ -123,24 +109,11 @@ async function byokFor(ctx: Ctx, accountId: string | undefined) {
   return map;
 }
 
-/** Who pays: the key's prepaid balance, a Stock Token pay-with grant, or (no key) a wallet / per-call payment. */
-async function resolveBilling(ctx: Ctx, c: Context, key: KeyRow | null, wallet: { accountId: string; wallet: string } | null, pass: BlindPass | null): Promise<{ billing: Billing | null; paywithNote?: string }> {
-  const paySymbol = c.req.header("x-pay-with") ?? (key?.payWithDefault || undefined);
-  let billing: Billing | null = null;
-  let paywithNote: string | undefined;
-  if (key) {
-    billing = { mode: "prepaid", accountId: key.accountId, key };
-    if (paySymbol) {
-      const { grant, reason } = await grantFor(ctx, key, paySymbol);
-      if (grant) billing = { mode: "paywith", accountId: key.accountId, key, grant };
-      else paywithNote = reason; // falls back to prepaid USDG (then 402 if empty)
-    }
-  } else if (pass) {
-    billing = { mode: "blind", accountId: BLIND_POOL, pass, hold: 0n };
-  } else if (wallet) {
-    billing = { mode: "per_call", accountId: wallet.accountId, payer: wallet.wallet };
-  }
-  return { billing, paywithNote };
+/** Who pays: the key's prepaid balance, or (no key) a wallet / per-call payment. */
+async function resolveBilling(_ctx: Ctx, _c: Context, key: KeyRow | null, wallet: { accountId: string; wallet: string } | null): Promise<{ billing: Billing | null; paywithNote?: string }> {
+  if (key) return { billing: { mode: "prepaid", accountId: key.accountId, key } };
+  if (wallet) return { billing: { mode: "per_call", accountId: wallet.accountId, payer: wallet.wallet } };
+  return { billing: null };
 }
 
 /**
@@ -205,10 +178,9 @@ function selectTargets(
   return { targets, excluded };
 }
 
-/** Undo a hold whose request was not served. A blind token is given back with it, so a failed request does not cost the token. */
-async function giveBack(ctx: Ctx, billing: Billing, holdId: string) {
+/** Undo a hold whose request was not served. */
+async function giveBack(ctx: Ctx, _billing: Billing, holdId: string) {
   await release(ctx.db, holdId);
-  if (billing.mode === "blind") await unclaimToken(ctx, billing.pass);
 }
 
 /** x402: the settlement receipt rides on the served response. */
@@ -256,29 +228,16 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   const batchLine = batchLineOf(c);
   let key: KeyRow | null = null;
   let wallet: { accountId: string; wallet: string; exists: boolean } | null = null;
-  // A verified Privacy Pass token (Authorization: PrivateToken), when ANONYMO_FEATURE_BLIND is on.
-  let pass: BlindPass | null = null;
-  // $ANMO holder tier of the wallet behind this request (null unless HOLDER_TIERS is live).
-  let tier: HolderTier | null = null;
   if (batchLine || secret) {
     key = batchLine ? await batchKey(ctx, batchLine.keyHash) : await resolveKey(ctx, secret!);
     if (!key) fail(401, "Unknown API key. Create one (POST /api/v1/keys) or deposit USDG to its key hash first.", "invalid_key");
     await requireRole(ctx, key, ["owner", "admin", "member"]);
-    tier = await holderTier(ctx, walletOfAccount(key.accountId));
-    await limitOrThrow(ctx, `k:${key.keyHash}`, 1, scaleLimit(key.rpm ?? ctx.cfg.limits.defaultRpm, tier), "requests");
+    await limitOrThrow(ctx, `k:${key.keyHash}`, 1, key.rpm ?? ctx.cfg.limits.defaultRpm, "requests");
   } else {
-    // A token carries its own quota (one request), so token callers get their own, larger per-address limit:
-    // behind a relay many strangers share an address. A request the Oblivious HTTP gateway dispatched has no client
-    // address (the gateway already limited it per relay), so it has no per-address bucket here.
-    // A request that came over Tor has no client address: it counts against the shared onion bucket (see addressBucket).
-    if (!gatewayOrigin(c.req.raw)) {
-      const from = addressBucket(c, ctx.cfg);
-      if (isBlindRequest(ctx, c.req.header("authorization"))) await limitOrThrow(ctx, `blind-ip:${from.id}`, 1, from.scale(ctx.cfg.blind.redeemRpm), "requests");
-      else await limitOrThrow(ctx, `ip:${from.id}`, 1, from.scale(ctx.cfg.limits.unauthRpm), "requests");
-    }
-    pass = await presentBlindToken(ctx, c.req.header("authorization"));
+    const from = addressBucket(c, ctx.cfg);
+    await limitOrThrow(ctx, `ip:${from.id}`, 1, from.scale(ctx.cfg.limits.unauthRpm), "requests");
     const wa = c.req.header("x-wallet-auth");
-    if (wa && !pass) wallet = await walletAuth(ctx, wa, bodySha);
+    if (wa) wallet = await walletAuth(ctx, wa, bodySha);
   }
 
   // ---- 2. Key presets, model resolution, guardrails, transforms --------------------------------
@@ -304,18 +263,14 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   captureStructuredOutput(ctx, c, kind, body); // V83: resolved defaults, opt-in only.
   // Disclosure ceiling and lane: `provider.disclosure` / `provider.lane` and the X-Anonymo-* headers, the
   // stricter of the two winning, after the key's default and the saved route filled in what the request left unset.
-  // A request naming no lane is public, except one relayed through the Oblivious HTTP gateway and paid with a blind
-  // token, which defaults to unlinkable. Defaults (any, public) add nothing to `prefs`, so such requests route as before.
-  // Lane "unlinkable" (OHTTP_ENABLED or UNLINKABLE_VIA_ONION): only through an independent relay or the onion service, only with a blind token and no key or wallet.
-  // Checked before anything is priced or spent (ohttp/lane.ts).
-  await applyRouteDefault(ctx, c, body, key, { params: requestParams(body) }); // U101: the key's default privacy route, only when the request names no lane
+  // A request naming no lane is public. Defaults (any, public) add nothing to `prefs`, so such requests route as before.
+  // Lane "unlinkable" is refused (501) before anything is priced or spent (router/request-lane.ts).
   const { disclosure: _wantDisclosure, lane: _wantLane, lane_downgrade: _wantDowngrade, ...basePrefs } = (body.provider ?? {}) as ProviderPrefs & { lane_downgrade?: unknown };
   // Sealed (WS09): `anonymo-sealed`, `x-anonymo-sealed: required` or a sealed_only key runs on the attested lane only.
   const sealed = sealedForRequest(ctx, c, key, body);
-  const disc = sealedLane(sealed, requestLane(ctx, c, (body.provider ?? {}) as Record<string, unknown>, { hasKey: !!key, hasWallet: !!wallet || (!key && !pass && !!paymentHeaderOf(c)), hasToken: !!pass }));
+  const disc = sealedLane(sealed, requestLane(c, (body.provider ?? {}) as Record<string, unknown>));
   // Private-lane traffic (and `:private`, stored as private) is published only through noisy hourly counters.
   noteLane(c.req.raw, disc.lane !== "public" ? disc.lane : (body.provider as ProviderPrefs | undefined)?.private === true || String(body.model ?? "").includes(":private") ? "attested" : "public");
-  decisionTagOf(ctx.cfg.decisionTagsEnabled, c, disc.lane); // B: a malformed tag is refused before anything is priced or spent.
   const strict = disc.max !== "any";
   const prefs: ProviderPrefs = { ...basePrefs, ...(strict ? { disclosure: disc.max } : {}), ...(disc.lane !== "public" ? { lane: disc.lane } : {}) };
 
@@ -324,14 +279,10 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   // served, charged, sent to any provider or rerouted. A gate that cannot answer fails closed.
   await floorCheck(ctx, body);
 
-  // A blind token pays for one provider call. Council mode and dual verification make several, each with its own hold.
-  if (pass && ((ctx.cfg.features.council && body.model === COUNCIL_MODEL) || body.verify != null))
-    fail(400, "Council mode and dual verification make several provider calls, so they cannot be paid with a blind token. Use an API key.", "blind_unsupported");
-
   if (batchLine && (stream || body.verify != null || (ctx.cfg.features.council && body.model === COUNCIL_MODEL)))
     fail(400, "Batch lines cannot stream, use council mode or use dual verification.", "invalid_request");
   // Council mode (`model: "anonymo/council"`): several member calls plus a judge call, each billed and receipted.
-  if (ctx.cfg.features.council && body.model === COUNCIL_MODEL) return runCouncil(toolkit, { ctx, c, kind, body, bodySha, t0, key, wallet, tier, prefs, disc });
+  if (ctx.cfg.features.council && body.model === COUNCIL_MODEL) return runCouncil(toolkit, { ctx, c, kind, body, bodySha, t0, key, wallet, prefs, disc });
 
   const modelIds = [...new Set([...(typeof body.model === "string" ? [body.model] : []), ...((body.models as string[] | undefined) ?? [])])];
   if (!modelIds.length) fail(400, "`model` is required (e.g. \"meta-llama/llama-3.3-70b-instruct\").", "invalid_request");
@@ -382,8 +333,8 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   }
   const promptTokens = estimatePromptTokens(body);
 
-  // ---- 3. Accounts: key, pay-with, wallet change, per-call payment -------------------------------
-  const { billing: resolvedBilling, paywithNote } = await resolveBilling(ctx, c, key, wallet, pass);
+  // ---- 3. Accounts: key, wallet change, per-call payment -------------------------------------------
+  const { billing: resolvedBilling, paywithNote } = await resolveBilling(ctx, c, key, wallet);
   let billing: Billing | null = resolvedBilling;
 
   // ---- 4. Cache (opt-in, never across accounts, keys, policies or end users) ----------------------
@@ -391,8 +342,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   // The response cache keeps prompts and answers in the router, and a hit is served without any provider, so a
   // request with a disclosure ceiling never reads or writes it. Nor does a restricted variant (abliterated,
   // native_low_refusal): those are served only under attested retention, and the router must not keep their prompts.
-  // Blind-token callers all share one internal account, so a cached answer would cross between strangers: never cache.
-  const cacheMode: CacheMode | null = !strict && billing?.mode !== "blind" && !resolved.some((r) => isRestricted(ctx.catalog.laneOf(r.model).variant)) && (cacheSpec?.mode === "exact" || cacheSpec?.mode === "semantic") ? cacheSpec.mode : null;
+  const cacheMode: CacheMode | null = !strict && !resolved.some((r) => isRestricted(ctx.catalog.laneOf(r.model).variant)) && (cacheSpec?.mode === "exact" || cacheSpec?.mode === "semantic") ? cacheSpec.mode : null;
   // `user` is forwarded to the provider as the end-user identity; a response made for one end user
   // must never be replayed to another behind the same key (exact or semantic).
   const cacheScope = billing ? `${billing.accountId}:policy-v3:${sha256(canonicalJson({ key: key?.keyHash ?? null, user: body.user ?? null, guardrails: guardCfg, provider: prefs, kind, models: resolved.map((r) => ({ id: r.model.id, modifiers: [...r.modifiers].sort() })), ...(savedRoute ? { route: savedRoute } : {}), ...(presetMeta ? { preset: presetMeta } : {}) }))}` : "";
@@ -414,7 +364,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
     throw addSuggestions(new ApiError(404, "No providers match this request's model and routing preferences.", "no_providers", { excluded: excluded.slice(0, 50) }), ctx, alternatives); // B121
 
   // Dual verification (`verify: "dual"`): the same request to two providers, outputs compared.
-  if (body.verify != null) return runDual(toolkit, { ctx, c, kind, body, bodySha, t0, key, wallet, tier, billing, paywithNote, prefs, disc, resolved, targets, excluded, promptTokens, byok, guard, guardCfg, middle, savedRoute, preset: presetMeta });
+  if (body.verify != null) return runDual(toolkit, { ctx, c, kind, body, bodySha, t0, key, wallet, billing, paywithNote, prefs, disc, resolved, targets, excluded, promptTokens, byok, guard, guardCfg, middle, savedRoute, preset: presetMeta });
 
   // ---- 6. Hold the worst case --------------------------------------------------------------------
   const fees = { royaltyBps: 0, perCallMarginBps: ctx.cfg.fees.perCallMarginBps, byokFeeBps: ctx.cfg.fees.byokFeeBps };
@@ -427,28 +377,19 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
     const r = await payPerCall(ctx, c, { pricePico: hold, bodySha, modelId: primary.id });
     billing = { mode: "per_call", accountId: r.accountId, payer: r.payer, paymentTx: r.txHash, paymentResponse: r.paymentResponse };
   }
-  if (billing.mode === "per_call") tier = await holderTier(ctx, billing.payer);
-  if (billing.mode === "blind") {
-    requireValue(ctx, billing.pass, hold); // the token pays for at most its face value
-    billing.hold = hold;
-    await claimToken(ctx, billing.pass); // spends once: a second claim of the same token fails; undone if nothing is served
-  }
-  if (billing.key?.tpm) await limitOrThrow(ctx, `kt:${billing.key.keyHash}`, promptTokens, scaleLimit(billing.key.tpm, tier), "tokens");
+  if (billing.key?.tpm) await limitOrThrow(ctx, `kt:${billing.key.keyHash}`, promptTokens, billing.key.tpm, "tokens");
 
   const holdId = batchLine?.generationId ?? genId(); // a batch line's id is chosen by the runner, so an interrupted line can be traced to its charge
   try {
     await reserve(ctx.db, {
-      ...agentReservation(ctx, () => ({ models: attemptable.map(t => t.model.id), lane: disc.lane, max_output_tokens: Math.max(...attemptable.map(t => maxOutputTokens(body, t.cand, t.model, promptTokens))), body })),
       id: holdId,
       accountId: billing.accountId,
       keyHash: billing.key?.keyHash ?? null,
       amount: hold,
       kind: "usage",
       ttlMs: ctx.cfg.routing.providerTimeoutMs * (ctx.cfg.routing.maxAttempts + 1),
-      creditLine: billing.mode === "paywith" ? billing.grant.creditLine : 0n,
     });
   } catch (e) {
-    if (billing.mode === "blind") await unclaimToken(ctx, billing.pass);
     if (isApiError(e) && e.type === "insufficient_credits" && paywithNote) e.metadata = { ...e.metadata, pay_with: paywithNote };
     throw e;
   }
@@ -467,7 +408,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   const planned = classes.size === 1 ? [...classes][0] : null;
   // Likewise the policy hash: up front on a stream only when every reachable endpoint attested the same one.
   const plannedPolicy = sharedPolicyHash(attemptable.map(({ cand }) => servedPolicyHash(ctx, cand)));
-  const common = { ctx, c, body, billing, holdId, t0, bodySha, stream, kind, byok, meta, guardCfg, promptTokens, tier, disc, planned, plannedPolicy, sealed, unavailable: (attempts: Attempt[], last?: Parameters<typeof allFailed>[1]) => availabilityFailure(() => allFailed(attempts, last), ctx, alternatives, attempts) }; // B121
+  const common = { ctx, c, body, billing, holdId, t0, bodySha, stream, kind, byok, meta, guardCfg, promptTokens, disc, planned, plannedPolicy, sealed, unavailable: (attempts: Attempt[], last?: Parameters<typeof allFailed>[1]) => availabilityFailure(() => allFailed(attempts, last), ctx, alternatives, attempts) }; // B121
 
   if (stream) return explainedStream(ctx.cfg.routeExplain, () => route({ appSecret: ctx.cfg.appSecret, targets, path, body, stream: true, keyFor, signal: abort.signal, health: ctx.health, maxAttempts: ctx.cfg.routing.maxAttempts, timeoutMs: ctx.cfg.routing.providerTimeoutMs, firstTokenTimeoutMs: ctx.cfg.routing.firstTokenTimeoutMs, production: ctx.cfg.production, caller: sha256(billing.accountId).slice(0, 16), refusal }), (run, routeHeaders) => streamResponse({ ...common, run, routeHeaders, abort })); // V84
 
@@ -480,7 +421,6 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   }
   if (!result.ok) {
     await giveBack(ctx, billing, holdId);
-    await noteFailedPaidCall(ctx, billing, holdId, result.attempts); // V6 R
     throw common.unavailable(result.attempts, result.last); // B121
   }
   const r = result as Extract<RouteSuccess, { kind: "json" }>;
@@ -586,7 +526,6 @@ export type Common = {
   meta: { guard: ReturnType<typeof applyGuardrails>; middle: { removed: number; truncated: number } | null; paywithNote?: string; cacheMode: CacheMode | null; excluded: unknown[]; route: string | null; preset?: { name: string; version: number; hash: string } | null; character?: CharacterMeta | null };
   guardCfg: GuardrailConfig | null;
   promptTokens: number;
-  tier: HolderTier | null;
   disc: DisclosureRequest;
   /** The disclosure class every reachable provider shares, or null when it depends on who serves the call. */
   planned: DisclosureClass | null;
@@ -634,7 +573,7 @@ async function finalize(p: FinalizeInput) {
   const { ctx, billing, r } = p;
   const isByok = p.byok.has(r.candidate.providerId);
   const mode: Mode = isByok ? "byok" : billing.mode;
-  const fees = { royaltyBps: r.model.royaltyBps, perCallMarginBps: ctx.cfg.fees.perCallMarginBps, byokFeeBps: ctx.cfg.fees.byokFeeBps, discountBps: p.tier?.discountBps ?? 0 };
+  const fees = { royaltyBps: r.model.royaltyBps, perCallMarginBps: ctx.cfg.fees.perCallMarginBps, byokFeeBps: ctx.cfg.fees.byokFeeBps };
   const listCost = priceUsage(r.candidate, r.model, p.usage, billing.mode === "per_call" ? "per_call" : mode, fees, isByok);
   // A batch line is charged the discounted price (BATCH_DISCOUNT_BPS); everything else the list price.
   const batchLine = batchLineOf(p.c);
@@ -642,8 +581,7 @@ async function finalize(p: FinalizeInput) {
   const id = p.holdId;
   const budget = p.extra?.budget;
   const overBudget = budget != null && cost.total > budget;
-  // A blind token pays for at most its face value: anything above the hold would come out of the pool's other tokens.
-  const payable = overBudget ? budget : billing.mode === "blind" && cost.total > billing.hold ? billing.hold : cost.total;
+  const payable = overBudget ? budget : cost.total;
   // Anonymo refusal catch: an answer that is itself a refusal is billed 0 (its cost goes on the ledger with an equal
   // refusal_refund, below), and so is every refused attempt before it.
   const servedRefused = r.refusal?.served === "refused";
@@ -651,17 +589,11 @@ async function finalize(p: FinalizeInput) {
   const settled = await settle(ctx.db, p.holdId, settleAmount, {
     description: `${r.model.id} via ${r.candidate.providerId}`,
     generationId: id,
-    creditLine: billing.mode === "paywith" ? billing.grant.creditLine : 0n,
   });
   const charged = settled.charged;
   const refusalReceipt = r.refusal ? await recordRefusal(p, { fees, served: payable }) : null;
 
-  // Pay-with: record the debt and an estimate of the share fraction it will cost.
-  let paidWith: Record<string, unknown> | null = null;
-  if (billing.mode === "paywith") {
-    const raw = await recordDebt(ctx, { key: billing.key, generationId: id, amount: charged, grant: billing.grant });
-    paidWith = { token: billing.grant.symbol, token_address: billing.grant.token, raw_units: raw?.toString() ?? "0", fair_price: billing.grant.fairPrice18.toString(), swap_tx: null, status: "accrued" };
-  }
+  const paidWith: Record<string, unknown> | null = null; // receipts keep the field; nothing pays with tokens any more
 
   const attestation = r.candidate.provider.attested && r.candidate.provider.attestationHash ? r.candidate.provider.attestationHash : null;
   const ua = p.upstreamAttestation !== undefined ? p.upstreamAttestation : await upstreamAttestationOf(ctx, r, p.byok);
@@ -693,14 +625,11 @@ async function finalize(p: FinalizeInput) {
     ...(served.simulated ? { attestation_simulated: true } : {}),
     payer,
     payment_tx: billing.mode === "per_call" ? (billing.paymentTx ?? null) : null,
-    // A blind redemption names no account: the receipt carries the hash of the spent token (its nullifier) and the key that signed it.
-    ...(billing.mode === "blind" ? blindReceipt(billing.pass) : {}),
     request_sha256: p.bodySha,
     response_sha256: sha256(p.responseText),
     ...(ua ? { upstream_attestation: compactUpstream(ua) } : {}),
     ...(batchLine ? { batch: { id: batchLine.batchId, line: batchLine.idx } } : {}),
     ...routeReceiptFields(ctx.cfg.routeExplain, r), // V84: signed optional extension.
-    ...decisionTagFields(decisionTagOf(ctx.cfg.decisionTagsEnabled, p.c, p.disc.lane)), // B: signed optional extension.
     ...(refusalReceipt ?? {}), // Anonymo WS03: `refused`, every route the call touched, and the refund
     ...(p.extra?.payload ?? {}),
   };
@@ -729,16 +658,15 @@ async function finalize(p: FinalizeInput) {
     disclosure: served.class,
     mode,
     chargedPico: charged,
-    keyset: billing.mode === "blind" && !billing.pass.tokens ? billing.pass.keyId : null,
-    decisionTag: payload.decision_tag ?? null, // B
+    keyset: null,
   });
   const signedV2 = ctx.signer.signCose(claimsV2);
 
   const referer = p.c.req.header("http-referer") ?? p.c.req.header("referer");
   const title = p.c.req.header("x-title");
   let appId: string | null = null;
-  // App attribution names where a call came from, so it is never recorded for the unlinkable lane.
-  if ((referer || title) && p.disc.lane !== "unlinkable") {
+  // App attribution: where a call came from, cut to a bounded length.
+  if (referer || title) {
     appId = sha256((referer ?? "") + "|" + (title ?? "")).slice(0, 24);
     await ctx.db.insert(apps).values({ id: appId, url: referer?.slice(0, 500) ?? null, title: title?.slice(0, 200) ?? null }).onConflictDoNothing();
   }
@@ -789,11 +717,8 @@ async function finalize(p: FinalizeInput) {
     requestSha256: p.bodySha,
     responseSha256: payload.response_sha256,
   });
-  await linkNetworkReceipt(ctx, id, r.candidate.providerId, r);
-  await noteServedCall(ctx, { id, accountId: billing.accountId, keyHash: billing.key?.keyHash ?? null, billingMode: billing.mode, paymentTx: billing.mode === "per_call" ? (billing.paymentTx ?? null) : null, payer: billing.mode === "per_call" ? billing.payer : null, candidate: r.candidate, model: r.model, attempts: r.attempts, usage: p.usage, delivered: p.delivered, cost, charged, priceMode: billing.mode === "per_call" ? "per_call" : mode, fees, isByok, byokProviders: [...p.byok.keys()], batchDiscountBps: batchLine?.discountBps ?? null, servedClass: served.class, upstreamAttested: ua ? ua.attested : null, attestedLane: requiresAttestedUpstream(p.body, p.disc), lane: p.disc.lane, finishReason: p.finishReason, cancelled: p.cancelled, stream: p.stream }); // V6 R
-  if (billing.mode === "blind") await confirmToken(ctx, billing.pass, id);
-  // Creator attribution for a public character: a count and a cost per day, never on the unlinkable lane.
-  if (p.meta.character?.attribute && p.disc.lane !== "unlinkable") await recordCharacterUse(ctx, p.meta.character.id, charged);
+  // Creator attribution for a public character: a count and a cost per day.
+  if (p.meta.character?.attribute) await recordCharacterUse(ctx, p.meta.character.id, charged);
 
   // A private-lane request is counted once in the noisy counters and sends no per-request trace span.
   const privateLane = isPrivateLaneRequest(p.c.req.raw);
@@ -812,7 +737,7 @@ async function finalize(p: FinalizeInput) {
     "anonymo.attempts": r.attempts.length,
     "anonymo.streamed": p.stream,
   }, undefined, p.c.req.header("traceparent")?.split("-")[1]);
-  // The key owner's own trace export (services/tracing.ts): public-lane calls only. An attested or unlinkable call
+  // The key owner's own trace export (services/tracing.ts): public-lane calls only. An attested call
   // never reaches the queue, whatever the key is configured to do. Queued without waiting; it cannot fail the call.
   if (billing.key?.tracing && shouldExportTrace({ lane: p.disc.lane, privateLaneRequest: privateLane, privateRoute })) {
     const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
@@ -847,7 +772,7 @@ async function finalize(p: FinalizeInput) {
     total_tokens: p.usage.prompt + p.usage.completion,
     cost: picoToUsd(charged),
     is_byok: isByok,
-    cost_details: { upstream_inference_cost: picoToUsd(cost.upstream), royalty: picoToUsd(cost.royalty), margin: picoToUsd(cost.margin), ...(p.tier ? { holder_discount: picoToUsd(cost.holderDiscount) } : {}), ...(batchLine ? { batch_discount: picoToUsd(cost.batchDiscount) } : {}) },
+    cost_details: { upstream_inference_cost: picoToUsd(cost.upstream), royalty: picoToUsd(cost.royalty), margin: picoToUsd(cost.margin), ...(batchLine ? { batch_discount: picoToUsd(cost.batchDiscount) } : {}) },
     prompt_tokens_details: { cached_tokens: p.usage.cachedRead, cache_write_tokens: p.usage.cacheWrite },
     completion_tokens_details: { reasoning_tokens: p.usage.reasoning },
   };
@@ -885,8 +810,6 @@ async function finalize(p: FinalizeInput) {
       if (p.meta.guard || redactions) x.guardrails = { ...(p.meta.guard ?? {}), output_redactions: redactions };
       if (p.meta.middle && (p.meta.middle.removed || p.meta.middle.truncated)) x.transforms = { "middle-out": p.meta.middle };
       if (p.meta.paywithNote) x.pay_with_fallback = p.meta.paywithNote;
-      if (p.billing.mode === "blind") x.blind = redemptionSummary(p.billing.pass, charged);
-      if (p.tier) x.holder = { tier: p.tier.name, rpm_multiplier: p.tier.rpmMultiplier, discount_bps: p.tier.discountBps };
       if (r.dropped.length) x.dropped_parameters = r.dropped;
       if (refusalReceipt && (refusalReceipt.routes.length > 1 || servedRefused)) x.refusal = refusalReceipt.refusal;
       return Object.keys(x).length ? x : null;
@@ -922,7 +845,6 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
       clearInterval(keepalive);
       if (!result.ok) {
         await giveBack(ctx, p.billing, p.holdId);
-        await noteFailedPaidCall(ctx, p.billing, p.holdId, result.attempts); // V6 R
         const err = p.unavailable(result.attempts, result.last); // B121
         event(err.toJSON());
         send("data: [DONE]\n\n");
@@ -1037,7 +959,6 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
 
 async function cachedResponse(ctx: Ctx, c: Context, p: { body: Record<string, unknown>; hit: { response: any; upstream: bigint; similarity: number }; billing: Billing; model: ModelRow; t0: number; bodySha: string; disc: DisclosureRequest }) {
   const id = genId();
-  await enforceAgentCached(ctx, p.billing.key, p.model.id, p.disc.lane, p.body, id);
   const payload = {
     v: 1,
     id,
@@ -1058,7 +979,6 @@ async function cachedResponse(ctx: Ctx, c: Context, p: { body: Record<string, un
     payer: p.billing.key?.chainKeyHash ?? (p.billing.mode === "per_call" ? p.billing.payer : null),
     request_sha256: p.bodySha,
     response_sha256: sha256((p.hit.response?.choices ?? []).map((ch: any) => ch?.message?.content ?? "").join("")),
-    ...decisionTagFields(decisionTagOf(ctx.cfg.decisionTagsEnabled, c, p.disc.lane)), // B
   };
   const signed = ctx.signer.sign(payload);
   const leaf = receiptLeaf(signed.bytes, signed.sigBytes);

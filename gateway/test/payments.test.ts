@@ -1,11 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq, inArray, sql } from "drizzle-orm";
 import { privateKeyToAccount } from "viem/accounts";
-import { NVDA, fakeTx, paywithKey, sse, startRouter, type Harness } from "./helpers.ts";
+import { fakeTx, sse, startRouter, type Harness } from "./helpers.ts";
 import { decodeFunctionData } from "viem";
 import { balanceOf, post, verifyInvariants } from "../src/ledger/ledger.ts";
-import { accounts, generations, keys, kv, paywithDebts, paywithSessions, quotes, spentRoots } from "../src/db/schema.ts";
-import { runPaywithAggregator, clearFairCache } from "../src/pay/paywith.ts";
+import { accounts, generations, keys, kv, quotes, spentRoots } from "../src/db/schema.ts";
 import { postSpentRoot, computeSpentLeaves, withdrawableFor } from "../src/services/settlement.ts";
 import { MerkleTree, SpentTree } from "../src/receipts/merkle.ts";
 import { CreditsAbi } from "../src/chain/abis.ts";
@@ -98,104 +97,6 @@ describe("HTTP 402 per-call payments", () => {
     const k = await (await h.request("/api/v1/auth/wallet", { method: "POST", json: { address: wallet.address, nonce: challenge.nonce, signature: await wallet.signMessage({ message: challenge.message }) } })).json();
     const credits = await (await h.request("/api/v1/credits", { headers: { authorization: `Bearer ${k.key}` } })).json();
     expect(credits.data.available).toBeGreaterThan(0);
-  });
-});
-
-describe("Pay with Stock Tokens (X-Pay-With)", () => {
-  let h: Harness;
-  beforeAll(async () => (h = await startRouter()));
-  afterAll(async () => h.close());
-
-  // The session wallet signs a bounded allowance, so the aggregator can settle without asking again.
-  const sessionKey = (capRaw = 10n ** 18n) => paywithKey(h, { capRaw, allowance: true });
-
-  test("calls accrue a debt priced at fair value; receipt shows the share fraction; aggregator swaps at >= $1; allocations sum to the swap", async () => {
-    clearFairCache();
-    const k = await sessionKey();
-    const ids: string[] = [];
-    for (let i = 0; i < 3; i++) {
-      const r = await h.request("/api/v1/chat/completions", { method: "POST", headers: { ...k.auth, "x-pay-with": "NVDA" }, json: { model: LLAMA, max_tokens: 20, messages: [{ role: "user", content: "hello nvda " + i }] } });
-      expect(r.status).toBe(200);
-      const j = await r.json();
-      ids.push(j.id);
-      expect(j.receipt.payload.mode).toBe("paywith");
-      expect(j.receipt.paid_with).toMatchObject({ token: "NVDA", raw_units: expect.any(String), fair_price: (225n * 10n ** 18n).toString(), status: "accrued" });
-    }
-    const debts = await h.ctx.db.select().from(paywithDebts).where(eq(paywithDebts.chainKeyHash, k.chainKeyHash));
-    expect(debts.length).toBe(3);
-    // Below the $1 threshold nothing settles yet...
-    expect((await runPaywithAggregator(h.ctx)).settled).toEqual([]);
-    // ...unless the oldest debt is older than 24h.
-    await h.ctx.db.execute(sql`UPDATE paywith_debts SET created_at = now() - interval '25 hours'`);
-    const res = await runPaywithAggregator(h.ctx);
-    expect((res.settled as any[]).length).toBe(1);
-    const call = h.chain.payCalls.at(-1)!;
-    const owedPico = debts.reduce((a, d) => a + d.amount, 0n);
-    expect(call.usdg).toBe(picoToUsdg(owedPico, "ceil"));
-    // Charged under the wallet's allowance, bound to the Merkle root of exactly these three receipts.
-    expect(call.mode).toBe("allowance");
-    const leaves = (await h.ctx.db.select({ leaf: generations.receiptLeaf }).from(generations).where(inArray(generations.id, ids))).map((g) => g.leaf!);
-    const [paidDebt] = await h.ctx.db.select().from(paywithDebts).where(eq(paywithDebts.generationId, ids[0]));
-    const [charge] = await h.ctx.db.select().from(kv).where(eq(kv.key, `paywith-charge:${paidDebt.swapId}`));
-    const record = charge.value as { leaves: `0x${string}`[]; usageCommitment: string };
-    expect(record.leaves.slice().sort()).toEqual(leaves.sort());
-    expect(call.usageCommitment).toBe(new MerkleTree(record.leaves).root);
-    expect(record.usageCommitment).toBe(call.usageCommitment);
-    const after = await h.ctx.db.select().from(paywithDebts).where(eq(paywithDebts.chainKeyHash, k.chainKeyHash));
-    const allocated = after.reduce((a, d) => a + (d.rawAllocated ?? 0n), 0n);
-    const expectedRaw = (call.usdg * 10n ** 36n) / (225n * 10n ** 18n * 10n ** 6n) + 1000n;
-    expect(allocated).toBe(expectedRaw);
-    // The swap credited the key: balance back to >= 0 (it pays whole USDG units, rounding up).
-    const [key] = await h.ctx.db.select().from(keys).where(eq(keys.keyHash, k.hash));
-    expect((await balanceOf(h.ctx.db, key.accountId)).balance >= 0n).toBe(true);
-    // /generation now shows the settled swap.
-    const g = await (await h.request(`/api/v1/generation?id=${ids[0]}`, { headers: k.auth })).json();
-    expect(g.data.paid_with.status).toBe("settled");
-    expect(g.data.paid_with.swap_tx).toMatch(/^0x/);
-    // Monthly statement.
-    const st = await (await h.request(`/api/v1/paywith/statement?month=${new Date().toISOString().slice(0, 7)}`, { headers: k.auth })).json();
-    expect(st.data.totals[0].line).toContain("NVDA spent on inference");
-    expect((await verifyInvariants(h.ctx.db)).ok).toBe(true);
-  });
-
-  test("oracle stale -> falls back to prepaid USDG, else 402", async () => {
-    clearFairCache();
-    const k = await sessionKey();
-    h.chain.fair18 = null;
-    clearFairCache(); // signing the allowance priced the token a moment ago
-    const body = { model: LLAMA, max_tokens: 20, messages: [{ role: "user", content: "stale" }] };
-    const r = await h.request("/api/v1/chat/completions", { method: "POST", headers: { ...k.auth, "x-pay-with": "NVDA" }, json: body });
-    expect(r.status).toBe(402);
-    expect((await r.json()).error.metadata.pay_with).toContain("stale");
-    await h.chain.deposit(h.ctx, k.chainKeyHash, 1_000_000n);
-    const ok = await h.request("/api/v1/chat/completions", { method: "POST", headers: { ...k.auth, "x-pay-with": "NVDA" }, json: body });
-    expect(ok.status).toBe(200);
-    const j = await ok.json();
-    expect(j.receipt.payload.mode).toBe("prepaid");
-    expect(j.pay_with_fallback).toContain("stale");
-    h.chain.fair18 = 225n * 10n ** 18n;
-    clearFairCache();
-  });
-
-  test("daily cap bounds the credit line", async () => {
-    clearFairCache();
-    const tiny = 10n ** 9n; // 1e-9 NVDA ≈ $2.25e-7 per day
-    const k = await sessionKey(tiny);
-    const r = await h.request("/api/v1/chat/completions", { method: "POST", headers: { ...k.auth, "x-pay-with": "NVDA" }, json: { model: LLAMA, max_tokens: 2000, messages: [{ role: "user", content: "big" }] } });
-    expect(r.status).toBe(402);
-  });
-
-  test("failed swaps leave the debt open (and the key blocked beyond its line)", async () => {
-    clearFairCache();
-    const k = await sessionKey();
-    await h.request("/api/v1/chat/completions", { method: "POST", headers: { ...k.auth, "x-pay-with": "NVDA" }, json: { model: LLAMA, max_tokens: 20, messages: [{ role: "user", content: "x" }] } });
-    await h.ctx.db.execute(sql`UPDATE paywith_debts SET created_at = now() - interval '25 hours' WHERE swap_id IS NULL`);
-    h.chain.failPayCall = true;
-    const res = await runPaywithAggregator(h.ctx);
-    expect((res.settled as any[]).some((s) => s.error)).toBe(true);
-    const open = await h.ctx.db.select().from(paywithDebts).where(eq(paywithDebts.chainKeyHash, k.chainKeyHash));
-    expect(open.every((d) => d.swapId === null)).toBe(true);
-    h.chain.failPayCall = false;
   });
 });
 
@@ -400,7 +301,7 @@ describe("self-custodial withdrawals: spent roots", () => {
   });
 });
 
-export { sha256, sse, paywithSessions };
+export { sha256, sse };
 
 describe("indexer robustness", () => {
   let h: Harness;

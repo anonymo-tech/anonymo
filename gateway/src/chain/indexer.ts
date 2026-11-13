@@ -1,4 +1,3 @@
-import { withHostStatus } from "../webhooks/hosts.ts"; // V86: atomic host status notices.
 import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { keccak256, toBytes, type Hex } from "viem";
 import type { Ctx } from "../context.ts";
@@ -10,9 +9,6 @@ import {
   keys,
   kv,
   models,
-  paywithDebts,
-  paywithSessions,
-  paywithSwaps,
   providers,
   quotes,
   receiptKeys,
@@ -46,7 +42,7 @@ export async function recordEvents(ctx: Ctx, logs: DecodedLog[]) {
 
 /** Pull new confirmed logs from the chain, then apply them. */
 export async function pollChain(ctx: Ctx, maxRange = 2_000n) {
-  const anyContract = ["credits", "callPay", "payWithStock", "providerBond", "receiptAnchor", "royalty"].some((n) => ctx.chain.address(n as never));
+  const anyContract = ["credits", "callPay", "providerBond", "receiptAnchor", "royalty"].some((n) => ctx.chain.address(n as never));
   if (!anyContract) return { skipped: "no contracts configured" };
   const head = await ctx.chain.blockNumber();
   const safeHead = head - BigInt(Math.max(0, ctx.cfg.chain.confirmations - 1));
@@ -138,14 +134,13 @@ async function applyEvent(ctx: Ctx, e: EventRow): Promise<boolean> {
     case "credits.Credited": {
       const key = await keyByChainHash(ctx, a.keyHash);
       if (!key) return unclaimed(ctx, e);
-      const fromPayWith = e.event === "Credited" && ctx.chain.address("payWithStock")?.toLowerCase() === String(a.source).toLowerCase();
       await ctx.db.transaction(async (tx) => {
         await ensureAccount(tx, key.accountId);
         await post(tx, {
           accountId: key.accountId,
           keyHash: key.keyHash,
           amount: usdgToPico(BigInt(a.amount)),
-          kind: e.event === "Deposited" ? "deposit" : fromPayWith ? "paywith" : "credit",
+          kind: e.event === "Deposited" ? "deposit" : "credit",
           ref: ref(e, e.event === "Deposited" ? "dep" : "cred"),
           description: e.event === "Deposited" ? `USDG deposit ${e.txHash}` : `USDG credit ${e.txHash}`,
         });
@@ -214,28 +209,6 @@ async function applyEvent(ctx: Ctx, e: EventRow): Promise<boolean> {
         await ctx.db.update(quotes).set({ status: "paid", payer: String(a.payer).toLowerCase(), txHash: e.txHash.toLowerCase(), accountId }).where(eq(quotes.nonce, a.nonce));
       return true;
     }
-    case "payWithStock.SessionOpened": {
-      const token = ctx.cfg.paywith.tokens.find((t) => t.address.toLowerCase() === String(a.token).toLowerCase());
-      const wallet = String(a.wallet).toLowerCase();
-      // Only sessions from a wallet the key holder registered (POST /api/v1/paywith/open) are honoured.
-      const intent = await getKv<{ wallet: string; token: string }>(ctx, `paywith-intent:${a.keyHash}`);
-      const trusted = !!intent && intent.wallet === wallet && intent.token === String(a.token).toLowerCase();
-      const row = { wallet, token: String(a.token).toLowerCase(), symbol: token?.symbol ?? "?", capRawDay: BigInt(a.capRawPerDay), active: trusted, openedTx: e.txHash };
-      await ctx.db
-        .insert(paywithSessions)
-        .values({ keyHash: a.keyHash, ...row })
-        .onConflictDoUpdate({ target: paywithSessions.keyHash, set: { ...row, updatedAt: new Date() } });
-      if (!trusted) log.warn("ignoring pay-with session from an unregistered wallet", { keyHash: a.keyHash, wallet });
-      return true;
-    }
-    case "payWithStock.SessionClosed": {
-      await ctx.db.update(paywithSessions).set({ active: false, updatedAt: new Date() }).where(eq(paywithSessions.keyHash, a.keyHash));
-      return true;
-    }
-    case "payWithStock.PaidWithStock": {
-      await allocateSwap(ctx, { keyHash: a.keyHash, token: a.token, rawSpent: BigInt(a.rawSpent), fairPrice18: a.fairPrice18, usdgOwed: BigInt(a.usdgOwed), tx: e.txHash, usageCommitment: a.usageCommitment ?? undefined });
-      return true;
-    }
     case "receiptAnchor.Anchored": {
       await ctx.db.update(anchors).set({ status: "confirmed", txHash: e.txHash }).where(eq(anchors.root, a.root));
       return true;
@@ -266,13 +239,13 @@ async function applyEvent(ctx: Ctx, e: EventRow): Promise<boolean> {
       await ctx.db.update(slashes).set({ status: "executed", executedAt: new Date(), txHash: e.txHash }).where(eq(slashes.onchainId, a.slashId));
       const all = await ctx.db.select({ id: providers.id, bond: providers.bondUsdg }).from(providers);
       const p = all.find((x) => idHash(x.id) === a.providerId);
-      if (p) await withHostStatus(ctx, p.id, db => db.update(providers).set({ bondUsdg: p.bond - BigInt(a.amount) > 0n ? p.bond - BigInt(a.amount) : 0n, ...(a.delisted ? { status: "delisted" } : {}), updatedAt: new Date() }).where(eq(providers.id, p.id)));
+      if (p) await ctx.db.update(providers).set({ bondUsdg: p.bond - BigInt(a.amount) > 0n ? p.bond - BigInt(a.amount) : 0n, ...(a.delisted ? { status: "delisted" } : {}), updatedAt: new Date() }).where(eq(providers.id, p.id));
       return true;
     }
     case "providerBond.Delisted": {
       const all = await ctx.db.select({ id: providers.id }).from(providers);
       const p = all.find((x) => idHash(x.id) === a.providerId);
-      if (p) await withHostStatus(ctx, p.id, db => db.update(providers).set({ status: "delisted", updatedAt: new Date() }).where(eq(providers.id, p.id)));
+      if (p) await ctx.db.update(providers).set({ status: "delisted", updatedAt: new Date() }).where(eq(providers.id, p.id));
       return true;
     }
     case "royalty.Registered":
@@ -287,53 +260,5 @@ async function applyEvent(ctx: Ctx, e: EventRow): Promise<boolean> {
   }
 }
 
-/** Allocate a confirmed stock swap across the key's open pay-with debts, proportionally, so
- *  per-call raw allocations sum exactly to rawSpent. */
-export async function allocateSwap(ctx: Ctx, s: { keyHash: string; token: string; rawSpent: bigint; fairPrice18: string; usdgOwed: bigint; tx: string; usageCommitment?: string }) {
-  await ctx.db.transaction(async (tx) => {
-    let [swap] = await tx.select().from(paywithSwaps).where(eq(paywithSwaps.tx, s.tx));
-    if (!swap && s.usageCommitment) {
-      // A charge the aggregator claimed debts for but never saw land (e.g. its send timed out): its usage
-      // commitment names the claiming swap.
-      const [hit] = await tx.select().from(kv).where(eq(kv.key, `paywith-commitment:${s.usageCommitment.toLowerCase()}`));
-      const claimedBy = (hit?.value as { swapId?: string } | undefined)?.swapId;
-      if (claimedBy) [swap] = await tx.update(paywithSwaps).set({ tx: s.tx }).where(and(eq(paywithSwaps.id, claimedBy), eq(paywithSwaps.keyHash, s.keyHash), isNull(paywithSwaps.tx))).returning();
-    }
-    if (!swap) {
-      [swap] = await tx
-        .insert(paywithSwaps)
-        .values({ id: `swap_${s.tx.slice(2, 18)}`, keyHash: s.keyHash, token: String(s.token).toLowerCase(), usdgOut: s.usdgOwed, tx: s.tx, status: "confirmed" })
-        .onConflictDoNothing()
-        .returning();
-      if (!swap) [swap] = await tx.select().from(paywithSwaps).where(eq(paywithSwaps.tx, s.tx));
-    }
-    // Debts claimed by this swap (the aggregator claims them before sending it). If the swap row was
-    // never claimed (e.g. recovered from chain after a crash), cover only whole open debts that fit.
-    let covered = await tx.select().from(paywithDebts).where(eq(paywithDebts.swapId, swap.id)).orderBy(asc(paywithDebts.createdAt));
-    if (!covered.length) {
-      const open = await tx.select().from(paywithDebts).where(and(eq(paywithDebts.chainKeyHash, s.keyHash), isNull(paywithDebts.swapId))).orderBy(asc(paywithDebts.createdAt));
-      let remaining = usdgToPico(s.usdgOwed);
-      covered = [];
-      for (const d of open) {
-        if (d.amount > remaining) break;
-        covered.push(d);
-        remaining -= d.amount;
-      }
-    }
-    const parts = allocate(s.rawSpent, covered.map((d) => d.amount));
-    for (let i = 0; i < covered.length; i++)
-      await tx.update(paywithDebts).set({ swapId: swap.id, rawAllocated: parts[i] }).where(eq(paywithDebts.id, covered[i].id));
-    await tx
-      .update(paywithSwaps)
-      .set({
-        status: "confirmed",
-        token: String(s.token).toLowerCase(),
-        rawSpent: s.rawSpent,
-        fairPrice: s.fairPrice18,
-        allocations: covered.map((d, i) => ({ generation_id: d.generationId, usd_pico: d.amount.toString(), raw: parts[i].toString() })),
-      })
-      .where(eq(paywithSwaps.id, swap.id));
-  });
-}
 
 export { accounts };

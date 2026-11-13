@@ -18,10 +18,4 @@ describe("src is self-contained", () => {
     }
     expect(escapes).toEqual([]);
   });
-  test("the record-certificate validators are identical in the server and client copies", () => {
-    const client = readFileSync(resolve(root, "../packages/client/src/record-certificate.ts"), "utf8");
-    const server = readFileSync(resolve(root, "agents/record-certificate-shared.ts"), "utf8");
-    const part = (t: string, end: string) => t.slice(t.indexOf("export const RECORD_CERTIFICATE_TTL_MS"), t.indexOf(end));
-    expect(part(server, "/** Checks the signature")).toBe(part(client, "/** Offline:"));
-  });
 });

@@ -9,9 +9,6 @@ import type { ResponseCache } from "./gateway/cache.ts";
 import type { Telemetry } from "./gateway/otel.ts";
 import type { TracingExporter } from "./services/tracing.ts";
 import type { Jobs } from "./services/jobs.ts";
-import type { BlindIssuer } from "./blind/issuer.ts";
-import type { OhttpKeys } from "./ohttp/keys.ts";
-import type { TransparencyLog } from "./tlog/log.ts";
 import type { AnonymoServices } from "./anonymo/services.ts";
 
 export type Ctx = {
@@ -28,16 +25,8 @@ export type Ctx = {
   /** Customer trace export: spans of public-lane calls sent to the destination a key's owner configured. */
   tracing: TracingExporter;
   jobs: Jobs;
-  /** Set only when TELEGRAM_BOT_TOKEN is configured; stopped before the jobs on shutdown. */
-  telegram?: { stop(): Promise<void> };
-  /** Set only when ANONYMO_FEATURE_BLIND is on: the blind-token issuer keys and verifier. */
-  blind?: BlindIssuer;
   /** The fetch used for Hugging Face API calls (day-zero discovery, creator claims); the global fetch when unset. Tests inject one. */
   hfFetch?: typeof fetch;
-  /** Set only when OHTTP_ENABLED is on: the Oblivious HTTP gateway keys. */
-  ohttp?: OhttpKeys;
-  /** Set only when TLOG_ENABLED is on: the transparency log of keys and configurations. */
-  tlog?: TransparencyLog;
   /** Anonymo's floor gate and refusal classifier (src/anonymo/services.ts). */
   anonymo: AnonymoServices;
   /** Test hook: deterministic provider shuffle. */

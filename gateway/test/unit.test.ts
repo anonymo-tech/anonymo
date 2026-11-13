@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { allocate, mulBps, picoToUsd, picoToUsdString, picoToUsdg, usdToPico } from "../src/lib/money.ts";
 import { MerkleTree, SENTINEL_NEIGHBOUR, SpentTree, spentCommitment, spentLeaf, type SpentProof } from "../src/receipts/merkle.ts";
 import { CreditsAbi } from "../src/chain/abis.ts";
-import { sponsorable } from "../src/api/paymaster.ts";
 import type { Ctx } from "../src/context.ts";
 import { attestationFresh, selectProviders, weightedShuffle, type HealthView } from "../src/router/select.ts";
 import type { Candidate } from "../src/catalog/catalog.ts";
@@ -120,17 +119,6 @@ describe("spent tree (Credits SPENT_TREE_VERSION 2)", () => {
     const inc = t.prove(word(20));
     expect(SpentTree.verify(t.root, { ...inc, leafCount: 4 } as SpentProof)).toBe(false);
     expect(SpentTree.verify(t.root, { ...inc, index: 0 } as SpentProof)).toBe(false);
-  });
-
-  test("the paymaster sponsors both finalize paths (its ABI matches Credits)", () => {
-    const credits = "0x00000000000000000000000000000000000c0001" as const;
-    const ctx = { cfg: { chain: { credits, usdg: "0x00000000000000000000000000000000000000d1" }, paywith: { tokens: [] } } } as unknown as Ctx;
-    const kh = key(1);
-    const execute = (data: `0x${string}`) => encodeFunctionData({ abi: parseAbi(["function execute(address dest, uint256 value, bytes func)"]), functionName: "execute", args: [credits, 0n, data] });
-    const inclusion = encodeFunctionData({ abi: CreditsAbi, functionName: "finalizeWithdrawal", args: [kh, 1n, 0n, 1n, []] });
-    const absent = encodeFunctionData({ abi: CreditsAbi, functionName: "finalizeWithdrawalAbsent", args: [kh, 0n, 0n, SENTINEL_NEIGHBOUR, SENTINEL_NEIGHBOUR] });
-    expect(sponsorable(ctx, execute(inclusion))).toEqual({ ok: true });
-    expect(sponsorable(ctx, execute(absent))).toEqual({ ok: true });
   });
 
   test("rejects duplicate or malformed key hashes", () => {

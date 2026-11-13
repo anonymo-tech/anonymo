@@ -100,8 +100,6 @@ describe("labels for receipts produced by every current route", () => {
 
   const routes = [
     ["chat", "/api/v1/chat/completions", { model: MODELS.llama.slug, messages: [{ role: "user", content: "hello" }], max_tokens: 30 }],
-    ["embeddings", "/api/v1/embeddings", { model: MODELS.embed.slug, input: ["hello", "world"] }],
-    ["rag", "/api/v1/rag", { model: MODELS.llama.slug, embedding_model: MODELS.embed.slug, question: "What reaches orbit?", documents: ["Rockets reach orbit.", "Bread rises."], top_k: 1, max_tokens: 30 }],
     ["responses", "/api/v1/responses", { model: MODELS.llama.slug, input: "hello", max_output_tokens: 30 }],
     ["messages", "/v1/messages", { model: MODELS.llama.slug, messages: [{ role: "user", content: "hello" }], max_tokens: 30 }],
     ["council", "/api/v1/chat/completions", { model: "anonymo/council", messages: [{ role: "user", content: "hello" }], max_tokens: 30, council: { models: [MODELS.llama.slug, MODELS.qwen.slug], judge: MODELS.llama.slug, mode: "fuse" } }],

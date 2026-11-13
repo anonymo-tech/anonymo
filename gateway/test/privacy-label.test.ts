@@ -6,9 +6,6 @@ import { encrypt } from "../src/lib/util.ts";
 import { runAttestor } from "../src/services/attestor.ts";
 import { runRegistry } from "../src/services/registry.ts";
 import { keysetDigest } from "../src/providers/aci.ts";
-import { buyTokens } from "../src/blind/client.ts";
-import { authorizationHeader, decodeBase64 } from "../src/blind/privacy-token.ts";
-import { ONION_HEADER } from "../src/lib/onion.ts";
 import { privacyLabel, shortLine, type PrivacyLabel } from "../src/privacy/label.ts";
 import { fetchPrivacyLabel, privacyLabel as clientLabel, privacyPath, shortLine as clientShortLine } from "../packages/client/src/privacy.ts";
 import { ADMIN, startRouter, type Harness } from "./helpers.ts";
@@ -18,7 +15,7 @@ setDefaultTimeout(60_000);
 
 // "What we saw" (src/privacy/label.ts): the plain-English privacy label computed from a signed receipt. The first half
 // checks the pure function on every lane and payment combination; the second half runs real requests through the router
-// (an attested gateway, a plain provider, the unlinkable lane over Tor with a blind token, a withheld reply, a legacy
+// (an attested gateway, a plain provider, a withheld reply, a legacy
 // receipt) and reads the label back through GET /api/v1/receipts/{id}/privacy.
 
 const KEY_HASH = "0x" + "ab".repeat(32);
@@ -361,9 +358,6 @@ describe("the OpenAPI document", () => {
 
 const GW_MODEL = "acme/attested-chat";
 const PLAIN = { id: "plain", slug: "lanetest/plain-chat", prompt: "0.0000001", completion: "0.0000002" };
-const ADDRESS = "a2w2k7bgvjopikpj6lakthr6jjbnv3gul7cmsvoxye4zvnbcplunvlyd.onion";
-const SECRET = "privacy-label-proxy-secret-0123456789abcdef";
-const PROXY_PEER = { requestIP: () => ({ address: "10.20.30.40" }) };
 const claim = { source: "https://gateway.example/terms", as_of: "2025-01-15" };
 
 type GwState = { report: ReportOptions; upstream: "verified" | "routed" };
@@ -418,7 +412,7 @@ describe("the label through the router", () => {
     verifier = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async (req) => Response.json(phalaVerifierAnswer(((await req.json()) as { hex: string }).hex, true)) });
     h = await startRouter({
       providers: [{ id: "vendor", name: "Vendor", models: [PLAIN] }],
-      env: { ATTESTATION_VERIFIERS: "phala", PHALA_VERIFIER_URL: `http://127.0.0.1:${verifier.port}/verify`, ANONYMO_FEATURE_BLIND: "true", BLIND_PURCHASE_RPM: "1000", ONION_ADDRESS: ADDRESS, ONION_PROXY_SECRET: SECRET, UNLINKABLE_VIA_ONION: "true" },
+      env: { ATTESTATION_VERIFIERS: "phala", PHALA_VERIFIER_URL: `http://127.0.0.1:${verifier.port}/verify` },
     });
     const model = (id: string, name: string) => ({ id, name, anonymo: { slug: id }, context_length: 32768, max_completion_tokens: 4096, pricing: { prompt: "0.000001", completion: "0.000002" }, supported_parameters: ["max_tokens", "temperature"] });
     await h.ctx.db.insert(providers).values({
@@ -470,7 +464,7 @@ describe("the label through the router", () => {
     expect(l.label.stored).toMatchObject({ prompt_text: false, reply_text: false, client_address: false, linked_to: "api_key", cache: "only_if_requested" });
     expect(l.label.hardware.attested).toBe(false);
     expect(l.summary).toHaveLength(5);
-    expect(l).toEqual(privacyLabel(j.receipt, { unlinkableTransports: ["onion"], baseUrl: h.ctx.cfg.publicUrl }));
+    expect(l).toEqual(privacyLabel(j.receipt, { unlinkableTransports: [], baseUrl: h.ctx.cfg.publicUrl }));
   });
 
   test("attested lane, paid from a key, through the attested gateway: a proven enclave, GPU asserted, the TEE from the router's record", async () => {
@@ -486,30 +480,6 @@ describe("the label through the router", () => {
     expect(l.label.network.hidden).toBe(false);
     expect(l.summary[4]).toBe("Hardware: attested (Intel TDX with GPU attestation), checked from the gateway's signed receipt.");
     expect(l.short).toBe("Read by: router + proven enclave · IP: seen, not saved · Paid: API key balance");
-  });
-
-  test("unlinkable lane over Tor, paid with a blind token: the address is hidden and no account is named", async () => {
-    const api = await h.fundedKey(2n);
-    const [token] = (await buyTokens({ baseUrl: "http://router.test", apiKey: api.secret, denomination: 10_000, count: 1, fetch: shim() })).tokens;
-    const res = await h.app.request(
-      "/api/v1/chat/completions",
-      { method: "POST", headers: { "content-type": "application/json", [ONION_HEADER]: SECRET, authorization: authorizationHeader(decodeBase64(token)!) }, body: JSON.stringify({ model: GW_MODEL, messages: [{ role: "user", content: "hello" }], max_tokens: 16, provider: { lane: "unlinkable" } }) },
-      PROXY_PEER,
-    );
-    expect(res.status).toBe(200);
-    const j = (await res.json()) as any;
-    expect(j.receipt.payload).toMatchObject({ lane: "unlinkable", disclosure: "attested", mode: "blind", payer: null });
-    const l = await privacy(j.id);
-    expect(l.lane).toBe("unlinkable");
-    expect(l.label.network).toMatchObject({ hidden: true, via: "tor", counter: "none" });
-    expect(l.label.payment).toMatchObject({ kind: "blind_token", identifies: "spent_token" });
-    expect(l.label.stored).toMatchObject({ linked_to: "nobody", cache: "never" });
-    expect(l.label.hardware).toMatchObject({ attested: true, verified_by: "gateway_receipt" });
-    expect(l.short).toBe("Read by: router + proven enclave · IP: hidden (Tor) · Paid: blind token, no account");
-    expect(JSON.stringify(l)).not.toContain(api.secret);
-    // Nothing that names the payer is in the record either: no key, no account.
-    const [g] = await h.ctx.db.select().from(generations).where(eq(generations.id, j.id));
-    expect(g.keyHash).toBeNull();
   });
 
   test("a withheld reply: the provider had read the prompt, the enclave was not proven, the reply was not delivered", async () => {
@@ -575,7 +545,7 @@ describe("the label through the router", () => {
     // The client helper reads it through the real route, and computes the same label from the receipt it holds.
     const fetched = await fetchPrivacyLabel("http://router.test", id, shim());
     expect(fetched).toEqual(got.data.privacy);
-    expect(clientLabel(got.data, { teeKind: "tdx", unlinkableTransports: ["onion"], baseUrl: h.ctx.cfg.publicUrl })).toEqual(fetched);
+    expect(clientLabel(got.data, { teeKind: "tdx", unlinkableTransports: [], baseUrl: h.ctx.cfg.publicUrl })).toEqual(fetched);
   });
 
   test("the MCP chat tool result carries the summary", async () => {

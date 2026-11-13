@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { eq, sql } from 'drizzle-orm';
 import { startRouter, type Harness } from './helpers.ts';
-import { accounts, keys, ledger, generations, teamMembers } from '../src/db/schema.ts';
+import { accounts, keys, ledger, generations } from '../src/db/schema.ts';
 import { loadConfig } from '../src/config.ts';
 import { readStatement, reconcile, statementMonth } from '../src/statements/read.ts';
 import { verifyReceipt } from '../web/lib/verify.js';
@@ -56,15 +56,13 @@ test('ledger totals, fee classification and all usage groups reconcile exactly a
   expect(own.scope).toBe('key'); expect(own.key_hash).toBe(agent.hash);expect(own.deposits).toBe('0'); expect(own.calls).toBe('1'); expect(own.usage_by_key_agent).toHaveLength(1); expect(own.fees).toBe('0');
   const other=await fixture();expect((await fetchStatement(other.owner.auth)).payload.usage).toBe('0');
 });
-test('ordinary, team owner/admin and session scope follows Activity rules',async()=>{
+test('ordinary, management and session scope follows Activity rules',async()=>{
   const {owner,k}=await fixture(), admin=await child(owner), peer=await child(owner);
-  await h.ctx.db.update(keys).set({teamId:'statement-team-'+owner.hash.slice(0,8)}).where(eq(keys.keyHash,admin.hash));
-  await h.ctx.db.insert(teamMembers).values({teamId:'statement-team-'+owner.hash.slice(0,8),keyHash:admin.hash,role:'admin'});
+  await h.ctx.db.update(keys).set({management:true}).where(eq(keys.keyHash,admin.hash));
   const id='scope-'+owner.hash.slice(0,12);
   await h.ctx.db.insert(ledger).values({id,ref:id,accountId:k.accountId,keyHash:peer.hash,kind:'deposit',amount:9n,createdAt:at});
   expect((await fetchStatement(admin.auth)).payload).toMatchObject({scope:'account',deposits:'0.000000000009'});
   expect((await fetchStatement(peer.auth)).payload.scope).toBe('key');
-  await h.ctx.db.update(teamMembers).set({role:'owner'}).where(eq(teamMembers.keyHash,admin.hash));expect((await fetchStatement(admin.auth)).payload.scope).toBe('account');
   const session=(await (await h.request('/api/v1/sessions',{method:'POST',headers:owner.auth,json:{budget_usd:1}})).json()).data;
   // Even a session key with management metadata must stay key-scoped.
   await h.ctx.db.update(keys).set({management:true}).where(eq(keys.keyHash,session.key_hash));

@@ -1,6 +1,5 @@
 import { creditUnavailable } from "../rush/monitor.ts"; // ON3
 import { rememberRouteResult } from "./explain.ts"; // V84
-import { forwardNetworkReceipt } from "../network/receipt-link.ts";
 import type { Candidate, ModelRow } from "../catalog/catalog.ts";
 import { callUpstream, type ErrorKind, upstreamBody, type UpstreamFailure } from "../providers/upstream.ts";
 import type { HealthTracker } from "../services/health.ts";
@@ -192,7 +191,7 @@ export async function route(opts: {
   const familyOk = (t: RouteTarget, c: Candidate) => phase !== "retry" || !refusedFamilies.has(rc!.familyOf(t.model, c));
   const finish = (s: RouteSuccess, upstream: object): RouteSuccess => {
     const withRefusal = rc && outcome.checked.length ? { ...s, refusal: outcome } : s;
-    return rememberRouteResult<RouteSuccess>(forwardNetworkReceipt(withRefusal, upstream), opts.targets);
+    return rememberRouteResult<RouteSuccess>(withRefusal, opts.targets);
   };
   // Reads the head of an answer. Returns the result to serve, or null to retry on another family.
   const check = async (s: RouteSuccess, target: RouteTarget, upstream: object, untried: () => boolean): Promise<RouteSuccess | null> => {

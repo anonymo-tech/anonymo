@@ -3,7 +3,7 @@ import { getAddress, type Hex } from "viem";
 import type { Ctx } from "../context.ts";
 import { ApiError, fail, isApiError } from "../lib/errors.ts";
 import { uid } from "../lib/util.ts";
-import { assertNotSanctioned } from "../network/sanctions.ts";
+import { dbSanctionsScreen } from "../anonymo/deposits/sanctions.ts";
 import { facilitatorSellers } from "./schema.ts";
 import { caip2 } from "./verify.ts";
 
@@ -81,12 +81,9 @@ export async function upsertListing(ctx: Ctx, l: Listing) {
   if (!(await ctx.chain.verifyWalletSignature(l.payTo, listingTypedData(ctx.cfg.chain.id, unsigned) as never, signature))) fail(401, "The listing is not signed by its payTo key.", "invalid_listing_signature");
   // Screening covers listings only: the facilitator holds no funds, so payers are not screened.
   if (l.listed && ctx.cfg.sanctions.enabled) {
-    try {
-      await assertNotSanctioned(ctx, l.payTo);
-    } catch (e) {
-      if (isApiError(e) && e.type === "sanctioned_address") throw new ApiError(403, "This payTo address is on the public OFAC SDN list, so it cannot be listed.", "sanctioned_address");
-      throw e;
-    }
+    // The same OFAC list the deposit watchers screen senders against (anonymo/deposits/sanctions.ts). No list: fail closed.
+    const blocked = await dbSanctionsScreen(ctx.db, { requireList: true }).isBlocked("rhc", l.payTo).catch(() => fail(503, "The sanctions list is not loaded yet, so listings cannot be screened.", "sanctions_unavailable"));
+    if (blocked) throw new ApiError(403, "This payTo address is on the public OFAC SDN list, so it cannot be listed.", "sanctioned_address");
   }
   const signedAt = new Date(Number(l.issuedAt) * 1000);
   const values = { payTo: l.payTo, priceHint: l.priceHint > 0n ? l.priceHint : null, outputSchema: l.outputSchema ? JSON.parse(l.outputSchema) : null, tags: l.tags, listed: l.listed, signature, signedAt, updatedAt: new Date() };

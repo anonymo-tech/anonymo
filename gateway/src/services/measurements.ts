@@ -1,4 +1,4 @@
-import { validSidecarBindingVersion } from "../network/sidecar-binding-version.ts";
+import { validSidecarBindingVersion } from "./sidecar-binding-version.ts";
 import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { encodeFunctionData, keccak256, toBytes, type Hex } from "viem";

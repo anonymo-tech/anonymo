@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
-import { accounts, keys, keyTopups, ledger, teams } from "../src/db/schema.ts";
+import { accounts, keys, keyTopups, ledger } from "../src/db/schema.ts";
 import { balanceOf, reserve, settle, verifyInvariants } from "../src/ledger/ledger.ts";
 import { topupWeekStart } from "../src/ledger/topup.ts";
 import { usdToPico } from "../src/lib/money.ts";
@@ -8,7 +8,7 @@ import { startRouter, MODELS, type Harness } from "./helpers.ts";
 
 // Auto top-up: a key's limit rises from the account's own credits when it runs low, within a weekly maximum.
 let h: Harness;
-beforeAll(async () => { h = await startRouter({ env: { AGENT_POLICY_ENABLED: "true" } }); });
+beforeAll(async () => { h = await startRouter(); });
 afterAll(async () => { await h?.close(); });
 
 type Key = { hash: string; auth: Record<string, string> };
@@ -33,13 +33,14 @@ async function hold(k: Key, usd: number, agent = false) {
 async function debit(k: Key, usd: number, agent = false) {
   await settle(h.ctx.db, await hold(k, usd, agent), usdToPico(usd));
 }
+/** Top-up notes as the account's Activity lists them (the inbox went with WS01). */
 async function inbox(k: Key) {
-  const r = await h.request("/api/v1/inbox", { headers: k.auth });
+  const r = await h.request("/api/v1/activity?kind=topup", { headers: k.auth });
   expect(r.status).toBe(200);
-  return (await r.json()).data.filter((item: any) => item.kind === "topup");
+  return (await r.json()).data;
 }
 
-test("crossing the threshold tops the key up once, recorded, in Activity and the inbox; the balance does not move", async () => {
+test("crossing the threshold tops the key up once, recorded in Activity; the balance does not move", async () => {
   const owner = await h.fundedKey(20n), k = await agentKey(owner);
   const r = await patch(owner, k, { topup: rule(2, 5, 20) });
   expect(r.status).toBe(200);
@@ -64,7 +65,7 @@ test("crossing the threshold tops the key up once, recorded, in Activity and the
   expect(await getKey(owner, k)).toMatchObject({ limit: 15, limit_remaining: 6.4, topup: rule(2, 5, 20), topups_this_week_usd: 5 });
   const items = await inbox(owner);
   expect(items).toHaveLength(1);
-  expect(items[0]).toMatchObject({ title: "Topped up Research agent by $5; $15 left this week", status: "added", key_label: "Research agent", href: "/dashboard/#api-keys" });
+  expect(items[0]).toMatchObject({ title: "Topped up Research agent by $5; $15 left this week", status: "added", key_label: "Research agent" });
   expect((await inbox(k)).map((item: any) => item.id)).toEqual([items[0].id]); // the key sees its own top-ups
   const activity = await (await h.request("/api/v1/activity?kind=topup", { headers: owner.auth })).json();
   expect(activity.data.map((a: any) => [a.title, a.amount, a.status])).toEqual([["Topped up Research agent by $5; $15 left this week", "0", "added"]]);
@@ -93,7 +94,7 @@ test("concurrent debits and requests make exactly one top-up per crossing", asyn
   expect((await verifyInvariants(h.ctx.db)).ok).toBe(true);
 });
 
-test("the weekly maximum is respected, last week's top-ups do not count, and the inbox says why once", async () => {
+test("the weekly maximum is respected, last week's top-ups do not count, and Activity says why once", async () => {
   const owner = await h.fundedKey(50n), k = await agentKey(owner);
   expect((await patch(owner, k, { topup: rule(2, 5, 8) })).status).toBe(200);
   const { accountId } = await row(k);
@@ -118,7 +119,7 @@ test("the weekly maximum is respected, last week's top-ups do not count, and the
   expect((await records(k)).filter((r) => r.id !== "kt_last_week")).toHaveLength(2);
 });
 
-test("an account that cannot cover the top-up gets no top-up and a clear inbox note, then resumes after a deposit", async () => {
+test("an account that cannot cover the top-up gets no top-up and a clear Activity note, then resumes after a deposit", async () => {
   const owner = await h.fundedKey(3n), k = await agentKey(owner, 2);
   expect((await patch(owner, k, { topup: rule(1, 5, 20) })).status).toBe(200);
   await debit(k, 1.5); // $0.50 left, the account has $1.50: a $5.50 allowance would be above what it holds
@@ -135,18 +136,6 @@ test("an account that cannot cover the top-up gets no top-up and a clear inbox n
   expect((await row(k)).budget).toBe(usdToPico(7));
   expect((await records(k)).map((r) => r.outcome)).toEqual(["skipped_balance", "added"]);
   expect((await verifyInvariants(h.ctx.db)).ok).toBe(true);
-});
-
-test("a team key's top-up must fit the org budget", async () => {
-  const owner = await h.fundedKey(50n), k = await agentKey(owner);
-  const { accountId } = await row(k);
-  await h.ctx.db.insert(teams).values({ id: `topup-team-${k.hash.slice(0, 8)}`, name: "Agents", ownerAccount: accountId, budget: usdToPico(12) });
-  await h.ctx.db.update(keys).set({ teamId: `topup-team-${k.hash.slice(0, 8)}` }).where(eq(keys.keyHash, k.hash));
-  expect((await patch(owner, k, { topup: rule(2, 5, 20) })).status).toBe(200);
-  await debit(k, 9);
-  expect((await row(k)).budget).toBe(usdToPico(10));
-  expect((await records(k)).map((r) => r.outcome)).toEqual(["skipped_org_budget"]);
-  expect((await inbox(owner))[0].title).toBe("Could not top up Research agent by $5: the team budget is fully allocated");
 });
 
 test("the rule is validated, needs a total limit, and clearing it stops top-ups", async () => {
@@ -174,18 +163,6 @@ test("the rule is validated, needs a total limit, and clearing it stops top-ups"
   expect(await records(k)).toHaveLength(0);
   expect((await patch(owner, k, { limit: null, topup: null })).status).toBe(200);
   expect((await (await h.request("/api/v1/keys", { headers: owner.auth })).json()).data.find((x: any) => x.hash === k.hash).topup).toBeNull();
-});
-
-test("rulebook caps still apply after a top-up", async () => {
-  const owner = await h.fundedKey(30n), k = await agentKey(owner);
-  expect((await patch(owner, k, { topup: rule(2, 5, 20) })).status).toBe(200);
-  const policy = await h.request(`/api/v1/agents/${k.hash}/policy`, { method: "PUT", headers: owner.auth, json: { version: 1, models: {}, caps: { per_day_usd: 9 }, on_breach: "deny" } });
-  expect(policy.status).toBe(200);
-  await debit(k, 8.5, true); // $1.50 left: topped up to $15
-  expect((await row(k)).budget).toBe(usdToPico(15));
-  // The key's limit has room, but $9.50 today is over the $9 cap per day.
-  await expect(hold(k, 1, true)).rejects.toMatchObject({ status: 403, type: "agent_policy_denied" });
-  expect(await records(k)).toHaveLength(1);
 });
 
 test("chat requests through the router top up after the debit, and a stalled key resumes", async () => {

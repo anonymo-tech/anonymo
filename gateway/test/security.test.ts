@@ -3,15 +3,14 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { privateKeyToAccount } from "viem/accounts";
 import { parseSignature, serializeSignature } from "viem";
-import { MODELS, NVDA, fakeTx, paywithKey, startRouter, type Harness } from "./helpers.ts";
+import { MODELS, fakeTx, startRouter, type Harness } from "./helpers.ts";
 import { balanceOf, release, reserve, verifyInvariants } from "../src/ledger/ledger.ts";
-import { keys, paywithDebts, providers, quotes } from "../src/db/schema.ts";
+import { keys, providers, quotes } from "../src/db/schema.ts";
 import { recordEvents, processEvents } from "../src/chain/indexer.ts";
 import { computeSpentLeaves } from "../src/services/settlement.ts";
 import { generateApiKey, deriveKey } from "../src/chain/keys.ts";
 import { usdgToPico } from "../src/lib/money.ts";
 import { worstCase } from "../src/router/pricing.ts";
-import { runPaywithAggregator, clearFairCache } from "../src/pay/paywith.ts";
 import { requestHash } from "../src/api/chat.ts";
 import { sanitizeUpstream } from "../src/providers/upstream.ts";
 
@@ -92,24 +91,6 @@ describe("payments", () => {
     expect((await h.request("/api/v1/chat/completions", { method: "POST", json: { model: LLAMA, n: 50, messages: [{ role: "user", content: "x" }] } })).status).toBe(400);
   });
 
-  test("pay-with: a call finishing while a swap is mined stays open for the next swap", async () => {
-    clearFairCache();
-    const k = await paywithKey(h, { allowance: true });
-    const call = () => h.request("/api/v1/chat/completions", { method: "POST", headers: { ...k.auth, "x-pay-with": "NVDA" }, json: { model: LLAMA, max_tokens: 20, messages: [{ role: "user", content: "x" }] } });
-    await call();
-    await call();
-    await h.ctx.db.execute(sql`UPDATE paywith_debts SET created_at = now() - interval '25 hours'`);
-    const orig = h.chain.payCallWithAllowance.bind(h.chain);
-    h.chain.payCallWithAllowance = (async (...a: Parameters<typeof orig>) => {
-      expect((await call()).status).toBe(200); // finishes while the swap is in flight
-      return orig(...a);
-    }) as typeof orig;
-    await runPaywithAggregator(h.ctx);
-    h.chain.payCallWithAllowance = orig;
-    const debts = await h.ctx.db.select().from(paywithDebts).where(eq(paywithDebts.chainKeyHash, k.chainKeyHash));
-    expect(debts.filter((d) => d.swapId).length).toBe(2);
-    expect(debts.filter((d) => !d.swapId).length).toBe(1);
-  });
 });
 
 describe("abuse and access control", () => {
@@ -124,19 +105,14 @@ describe("abuse and access control", () => {
     expect(performance.now() - t).toBeLessThan(500);
   });
 
-  test("M1/M2: sub-keys cannot edit others' routing; team admins stay inside their team and below their role", async () => {
+  test("M1/M2: sub-keys cannot edit others' routing, keys or settings", async () => {
     const root = await h.fundedKey(1n);
     const member = await (await h.request("/api/v1/keys", { method: "POST", headers: root.auth, json: { name: "member" } })).json();
     const r = await h.request("/trpc/keys.importLiteLLM", { method: "POST", headers: { authorization: `Bearer ${member.key}`, "content-type": "application/json" }, body: JSON.stringify({ hash: root.hash, yaml: "model_list: []" }) });
     expect(r.status).toBe(403);
-    const teamA = (await (await h.request("/api/v1/teams", { method: "POST", headers: root.auth, json: { name: "A" } })).json()).data.id;
-    const teamB = (await (await h.request("/api/v1/teams", { method: "POST", headers: root.auth, json: { name: "B" } })).json()).data.id;
-    const adminA = await (await h.request("/api/v1/keys", { method: "POST", headers: root.auth, json: { team: teamA } })).json();
-    await h.request(`/api/v1/teams/${teamA}/members/${adminA.data.hash}`, { method: "PUT", headers: root.auth, json: { role: "admin" } });
-    const inB = await (await h.request("/api/v1/keys", { method: "POST", headers: root.auth, json: { team: teamB } })).json();
-    const adminAuth = { authorization: `Bearer ${adminA.key}` };
-    expect((await h.request(`/api/v1/teams/${teamA}/members/${inB.data.hash}`, { method: "PUT", headers: adminAuth, json: { role: "member" } })).status).toBe(403);
-    expect((await h.request(`/api/v1/teams/${teamA}/members/${adminA.data.hash}`, { method: "PUT", headers: adminAuth, json: { role: "owner" } })).status).toBe(403);
+    const memberAuth = { authorization: `Bearer ${member.key}` };
+    expect((await h.request(`/api/v1/keys/${root.hash}`, { method: "PATCH", headers: memberAuth, json: { limit: 1 } })).status).toBe(403);
+    expect((await h.request("/api/v1/keys", { headers: memberAuth })).status).toBe(403);
   });
 
   test("M3: a re-encoded wallet signature is still a replay", async () => {

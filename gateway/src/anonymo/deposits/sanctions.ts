@@ -1,5 +1,5 @@
-// OFAC screening of deposit senders, for every chain we accept. Copied from network/sdn.ts and network/sanctions-download.ts
-// (which WS01 deletes) and widened: the SDN list publishes Tron, Solana and Bitcoin addresses too, not only EVM ones.
+// OFAC screening of deposit senders, for every chain we accept (also used for facilitator listings and provider payouts).
+// Copied from Anonymo's network sanctions code (removed in WS01) and widened: the SDN list publishes Tron, Solana and Bitcoin addresses too, not only EVM ones.
 // A deposit from a listed address is held, never credited (sink.ts). Screening that cannot run also holds.
 
 import { eq, sql } from "drizzle-orm";

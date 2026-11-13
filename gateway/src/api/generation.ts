@@ -2,14 +2,13 @@ import type { Hono } from "hono";
 import { and, asc, desc, eq, lt } from "drizzle-orm";
 import type { Hex } from "viem";
 import type { Ctx } from "../context.ts";
-import { agentSessions, anchors, blindNullifiers, facilitatorSettlements, generations, paywithDebts, paywithSwaps } from "../db/schema.ts";
+import { agentSessions, anchors, facilitatorSettlements, generations } from "../db/schema.ts";
 import { fail } from "../lib/errors.ts";
 import { picoToUsd } from "../lib/money.ts";
 import { MerkleTree, receiptLeaf } from "../receipts/merkle.ts";
 import { canonicalBytes, inspectCose, verifyCoseWithRawKey, verifyWithRawKey } from "../receipts/signer.ts";
 import { chainOf, receiptLeafV2 } from "../receipts/v2.ts";
 import { bearer, resolveKey, walletAuth } from "./auth.ts";
-import { nullifierOf, parsePrivateToken } from "../blind/privacy-token.ts";
 
 /** Rebuild an anchor's tree from the stored leaf positions (v1 leaves, and v2 leaves where a receipt has one). */
 async function anchorTree(ctx: Ctx, anchorIndex: number) {
@@ -111,24 +110,9 @@ export function generationRoutes(app: Hono, ctx: Ctx) {
     } else if (c.req.header("x-wallet-auth")) {
       const w = await walletAuth(ctx, c.req.header("x-wallet-auth")!, (await import("../lib/util.ts")).sha256(""));
       allowed = w.accountId === g.accountId;
-    } else if (ctx.blind) {
-      // A blind redemption has no account. Whoever holds the spent token owns its receipt: the token hashes to the
-      // nullifier recorded against this generation.
-      const token = parsePrivateToken(c.req.header("authorization"));
-      if (token) {
-        const [spent] = await ctx.db.select({ id: blindNullifiers.generationId }).from(blindNullifiers).where(eq(blindNullifiers.nullifier, nullifierOf(token)));
-        allowed = !!spent && spent.id === g.id;
-      }
     }
     if (!allowed) fail(404, "Generation not found.", "not_found");
-    let paidWith = g.paidWith as Record<string, unknown> | null;
-    if (paidWith) {
-      const [d] = await ctx.db.select().from(paywithDebts).where(eq(paywithDebts.generationId, g.id));
-      if (d?.swapId) {
-        const [s] = await ctx.db.select().from(paywithSwaps).where(eq(paywithSwaps.id, d.swapId));
-        paidWith = { ...paidWith, raw_units: d.rawAllocated?.toString() ?? paidWith.raw_units, fair_price: s?.fairPrice ?? paidWith.fair_price, swap_tx: s?.tx ?? null, status: s?.status === "confirmed" ? "settled" : "accrued" };
-      }
-    }
+    const paidWith = g.paidWith as Record<string, unknown> | null; // historic pay-with-stock calls only
     return c.json({
       data: {
         id: g.id,

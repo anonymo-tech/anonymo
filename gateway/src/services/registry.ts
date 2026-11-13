@@ -1,5 +1,3 @@
-import { withHostStatus } from "../webhooks/hosts.ts"; // V86: atomic host status notices.
-import { probationDiscovery, probationRegistryFilter } from "../network/offers.ts";
 import { openProviderHeaders } from "../providers/headers.ts";
 import { and, eq, inArray, notInArray, or } from "drizzle-orm";
 import { z } from "zod";
@@ -88,11 +86,10 @@ export function parseProviderModels(json: unknown) {
   return { ok, errors };
 }
 
-type RegistryConfig = { cfg: Pick<Ctx["cfg"], "appSecret" | "production"> & Partial<Pick<Ctx["cfg"], "networkHosts">> };
-type DiscoveryProvider = Pick<typeof providers.$inferSelect, "status" | "staticModels" | "headers" | "apiKeyEnc" | "baseUrl"> & { networkHost?: boolean; tlsPin?: TlsPin | null };
+type RegistryConfig = { cfg: Pick<Ctx["cfg"], "appSecret" | "production"> };
+type DiscoveryProvider = Pick<typeof providers.$inferSelect, "status" | "staticModels" | "headers" | "apiKeyEnc" | "baseUrl"> & { tlsPin?: TlsPin | null };
 
 export async function fetchProviderModels(ctx: RegistryConfig, p: DiscoveryProvider) {
-  if (probationDiscovery(ctx.cfg, p)) return parseProviderModels({ data: p.staticModels ?? [] });
   if (!["shadow", "live"].includes(p.status)) throw new Error("Provider requires operator approval before discovery.");
   if (p.staticModels) return parseProviderModels({ data: p.staticModels });
   const headers: Record<string, string> = { accept: "application/json", ...openProviderHeaders(ctx.cfg.appSecret, p.headers) };
@@ -151,12 +148,11 @@ export async function syncProvider(ctx: RegistryConfig & { db: Db | Tx }, p: typ
     await ctx.db
       .insert(offers)
       .values({ modelId: slug, providerId: p.id, status: offerStatus, ...values })
-      .onConflictDoUpdate({ target: [offers.modelId, offers.providerId], set: probationDiscovery(ctx.cfg, p) ? { ...values, status: "shadow" } : values });
+      .onConflictDoUpdate({ target: [offers.modelId, offers.providerId], set: values });
     seen.push(slug);
   }
   // Offers the provider no longer lists are disabled (never deleted: generations reference them).
   if (seen.length) await ctx.db.update(offers).set({ status: "disabled", updatedAt: now }).where(and(eq(offers.providerId, p.id), notInArray(offers.modelId, seen)));
-  if (!seen.length && probationDiscovery(ctx.cfg, p)) await ctx.db.update(offers).set({ status: "disabled", updatedAt: now }).where(eq(offers.providerId, p.id));
   return { models: ok.length, errors };
 }
 
@@ -167,7 +163,7 @@ async function advanceOnboarding(ctx: Ctx, p: typeof providers.$inferSelect, _sc
     const recent = rows.filter((r) => r.ts.getTime() >= p.shadowUntil!.getTime() - ctx.cfg.canaries.shadowDays * 86_400_000);
     const mismatch = recent.some((r) => r.quantMatch === false);
     if (recent.length && !mismatch) {
-      await withHostStatus(ctx, p.id, db => db.update(providers).set({ status: "live", updatedAt: new Date() }).where(eq(providers.id, p.id)));
+      await ctx.db.update(providers).set({ status: "live", updatedAt: new Date() }).where(eq(providers.id, p.id));
       await ctx.db.update(offers).set({ status: "live" }).where(and(eq(offers.providerId, p.id), eq(offers.status, "shadow")));
       log.info("provider promoted to live", { provider: p.id });
     }
@@ -175,7 +171,7 @@ async function advanceOnboarding(ctx: Ctx, p: typeof providers.$inferSelect, _sc
 }
 
 export async function runRegistry(ctx: Ctx) {
-  const rows = await ctx.db.select().from(providers).where(or(inArray(providers.status, ["shadow", "live"]), probationRegistryFilter(ctx.cfg)));
+  const rows = await ctx.db.select().from(providers).where(inArray(providers.status, ["shadow", "live"]));
   const pins = await loadTlsPins(ctx.db);
   const results: Record<string, unknown> = {};
   for (const p of rows) {

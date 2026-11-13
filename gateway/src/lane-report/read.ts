@@ -8,9 +8,7 @@ import { picoToUsdString } from "../lib/money.ts";
 // Lane report: where an account's calls ran over a date range. For each lane (public, attested, unlinkable) the calls
 // and the charged spend; the share that ran on proven hardware; and, for the two proven lanes, each provider and model
 // with a link to that provider's hardware evidence. It reads the existing call records only (the lane each call's
-// receipt records, its provider, model, charged cost and time) and keeps nothing. The same summary is a section of the
-// proof pack (src/proof-pack/read.ts), built from the calls listed in that file, and scripts/verify-proof-pack.mjs
-// recomputes it from those calls.
+// receipt records, its provider, model, charged cost and time) and keeps nothing.
 //
 // Not recorded per call, so not in the report: whether a lane was filled in by a key's default route (U101 only sets a
 // response header), and requests refused because no endpoint on a lane could take them (those feed only the
@@ -113,9 +111,9 @@ const LIMITS = [
 
 /** GET /api/v1/lane-report: the account's calls (or only this key's, as for statements and Activity) grouped by lane. */
 export async function readLaneReport(ctx: Ctx, key: KeyRow, q: LaneReportQuery, now = new Date()) {
-  const { whole } = await activityAccess(ctx, key); // the Activity, statement and proof pack scope rule, unchanged
+  const { whole } = await activityAccess(ctx, key); // the Activity and statement scope rule, unchanged
   const from = q.from.toISOString(), to = q.toExclusive.toISOString();
-  // The rows the proof pack lists as calls for the same key and range (src/proof-pack/read.ts), grouped.
+  // The calls of the key (or account) in the range, grouped.
   const result = await ctx.db.execute(sql`
     select coalesce(g.receipt->>'lane', g.receipt_v2->>'lane') lane, g.provider_id provider, g.model_id model, count(*)::int calls, coalesce(sum(g.cost), 0)::text pico
     from generations g left join keys k on k.key_hash = g.key_hash

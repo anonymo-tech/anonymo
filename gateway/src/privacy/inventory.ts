@@ -1,26 +1,8 @@
-import { describeLowBalance } from "./low-balance.ts"; // B119
 import { describeAbuse } from "../anonymo/abuse/privacy.ts"; // Anonymo WS02
-import { guardTables } from "./tables/agent-guard.ts"; // V98
-import { describeWeeklySummary } from "./weekly-summary.ts"; // B120
 import { mediaTables } from "../anonymo/media/inventory.ts"; // WS06 media
-import { agentPayTables } from "./agent-pay.ts"; // Pay another agent
 import { webhookTables } from "./webhooks.ts"; // V86: retained webhook configuration and attempt metadata.
 import { facilitatorTables } from "./facilitator.ts"; // v6 F: hosted x402 facilitator.
-import { makegoodTables } from "./makegood.ts"; // V6 R: make-good refunds.
-import { toolTables } from "./tools.ts"; // v6 T: paid tool market.
-import { identityTables } from "./identity.ts"; // v6 I: identity choices, paid feedback, liveness probes, track records.
-import { profileTables } from "./tables/agent-profiles.ts";
-import { describeSealed } from "./sealed.ts";
-import { agreementTables } from "./tables/agreements.ts";
-import { networkPayoutTables } from "./tables/network-payouts.ts";
-import { hostBondTables } from "./tables/host-bonds.ts";
-import { describeAutonomy } from "./autonomy.ts";
-import { agentLedgerTables } from "./tables/agent-ledger.ts";
-import { agentTables } from "./tables/agents.ts";
-import { approvalTables } from "./tables/agent-approvals.ts";
-import { sanctionsTables } from "./tables/sanctions.ts";
 import { x402RecoveryTables } from "./x402-recovery.ts";
-import { commerceTables } from "./tables/commerce.ts"; // v6 L
 import { refusalTables } from "./refusal.ts"; // Anonymo WS03
 import { canonicalJson, sha256 } from "../lib/util.ts";
 import { columnFlags, informationSchemaType } from "./rules.ts";
@@ -30,14 +12,12 @@ import { billingTables } from "./tables/billing.ts";
 import { chainTables } from "./tables/chain.ts";
 import { characterTables } from "./tables/characters.ts";
 import { keyTables } from "./tables/keys.ts";
-import { networkTables } from "./tables/network.ts";
 import { operationTables } from "./tables/operations.ts";
 import { providerTables } from "./tables/providers.ts";
 import { receiptTables } from "./tables/receipts.ts";
 import { anonymoReceiptTables } from "./tables/anonymo-receipts.ts"; // WS09
 import { describeAnonymoMoney } from "./anonymo-money.ts"; // WS05
 import { requestTables } from "./tables/request.ts";
-import { skillTables } from "./tables/skills.ts";
 import { CATEGORIES, CATEGORY_INFO, type AboutRequest, type ColumnDoc, type ExternalDoc, type Review, type TableDoc } from "./types.ts";
 
 // The data inventory: a description of every table and column in src/db/schema.ts, of the Redis keys the router writes, of what
@@ -48,13 +28,9 @@ import { CATEGORIES, CATEGORY_INFO, type AboutRequest, type ColumnDoc, type Exte
 
 export const INVENTORY_FORMAT = "anonymo.data-inventory/1";
 
-export const TABLE_DOCS: Record<string, TableDoc> = { ...guardTables, ...agentPayTables, ...webhookTables, ...requestTables, ...billingTables, ...receiptTables, ...keyTables, ...providerTables, ...chainTables, ...operationTables, ...characterTables, ...skillTables, ...networkTables, ...networkPayoutTables, ...sanctionsTables, ...agentTables, ...approvalTables, ...hostBondTables, ...agentLedgerTables, ...profileTables, ...agreementTables, ...x402RecoveryTables, ...facilitatorTables, ...makegoodTables, ...toolTables, ...identityTables, ...commerceTables, ...refusalTables, ...mediaTables, ...anonymoReceiptTables };
+export const TABLE_DOCS: Record<string, TableDoc> = { ...webhookTables, ...requestTables, ...billingTables, ...receiptTables, ...keyTables, ...providerTables, ...chainTables, ...operationTables, ...characterTables, ...x402RecoveryTables, ...facilitatorTables, ...refusalTables, ...mediaTables, ...anonymoReceiptTables };
 describeAnonymoMoney(TABLE_DOCS); // WS05: keys, deposits, withdrawals
-describeLowBalance(TABLE_DOCS); // B119
 describeAbuse(TABLE_DOCS); // Anonymo WS02: abuse inbox, hash blocks, preservation vault
-describeAutonomy(TABLE_DOCS);
-describeSealed(TABLE_DOCS);
-describeWeeklySummary(TABLE_DOCS); // B120
 export { EXTERNAL };
 
 // ---- consistency -----------------------------------------------------------------------------------------------------

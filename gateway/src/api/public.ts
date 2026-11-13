@@ -1,11 +1,9 @@
-import { makegoodStatus, refundReceipt } from "../services/makegood.ts"; // V6 R
 import type { Hono } from "hono";
-import { dataToolsStatus } from "../data-tools/routes.ts"; // B
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { encodeFunctionData, keccak256, toBytes, type Hex } from "viem";
 import { z } from "zod";
 import type { Ctx } from "../context.ts";
-import { apps, generations, kv, models, offers, paywithSessions, providers } from "../db/schema.ts";
+import { apps, generations, kv, models, offers, providers } from "../db/schema.ts";
 import { ApiError, fail } from "../lib/errors.ts";
 import { picoToUsd, usdToPico } from "../lib/money.ts";
 import { providerApplication, submitProviderApplication } from "../providers/application.ts";
@@ -14,22 +12,13 @@ import { readinessMetrics } from "../services/readiness-metrics.ts";
 import { readJson } from "./common.ts";
 import { requireKey } from "./auth.ts";
 import { verifyReceipt, verifyReceiptV2, anchorProof } from "./generation.ts";
-import { identityStatus } from "../identity/status.ts"; // v6 I
 import { COSE_CONTENT_TYPE } from "../receipts/v2.ts";
-import { decisionTagCheck, expectedDecisionTag } from "../receipts/decision-tag.ts"; // B
-import { holdersStatus } from "../holders/tiers.ts";
 import { laneSummary } from "./models.ts";
-import { allowanceProposal, allowanceView, chargeProposals, fairPrice, forgetAllowance, openDebt, rawToPico, saveAllowance, signCharge, statement, typedDataJson } from "../pay/paywith.ts";
-import { PayWithStockAbi, erc20Abi } from "../chain/abis.ts";
-import { acceptedTokens, anmoSummary, escrowEnabled, usdgSummary } from "../pay/escrow.ts";
 import { X402_VERSIONS, x402Enabled } from "../pay/x402.ts";
 import { RECOVERY_TTL_MS, recoveryMessage } from "../pay/recovery.ts";
 import { facilitatorStatus } from "../facilitator/routes.ts"; // v6 F
-import { toolsStatus } from "../tools/routes.ts"; // v6 T
-import { agreementsStatus } from "../agreements/status.ts";
 import { PRIVATE_LANES, PUBLIC_LANE_ROWS, privateLaneStats } from "../services/private-stats.ts";
 import { labelForReceipt } from "../privacy/resolve.ts";
-import { commerceStatus } from "../commerce/stats.ts"; // v6 L
 
 export { providerApplication } from "../providers/application.ts";
 
@@ -65,17 +54,12 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
     // v2: a COSE_Sign1 (base64), optionally with the hashes, the streamed event data and an anchor proof to check.
     if (raw && typeof raw === "object" && typeof (raw as { cose?: unknown }).cose === "string") {
       const b = z
-        .object({ cose: z.string().max(16_384), request_sha256: z.string().optional(), response_sha256: z.string().optional(), chunks: z.array(z.string()).max(100_000).optional(), anchor: anchorInput, decision_tag: expectedDecisionTag.optional() })
+        .object({ cose: z.string().max(16_384), request_sha256: z.string().optional(), response_sha256: z.string().optional(), chunks: z.array(z.string()).max(100_000).optional(), anchor: anchorInput })
         .parse(raw);
-      const v = await verifyReceiptV2(ctx, b);
-      const tag = decisionTagCheck(v.claims?.decision_tag, b.decision_tag); // B
-      return c.json({ data: { ...v, ...tag, valid: v.valid && tag.decision_tag_valid !== false } });
+      return c.json({ data: await verifyReceiptV2(ctx, b) });
     }
-    const b = z.object({ payload: z.record(z.string(), z.unknown()), sig: z.string(), key_id: z.string(), anchor: anchorInput, decision_tag: expectedDecisionTag.optional() }).parse(raw);
-    const v = await verifyReceipt(ctx, b);
-    // B: the signed decision tag, and whether it is the order hash the caller computed. A mismatch makes the result invalid.
-    const tag = decisionTagCheck(b.payload.decision_tag, b.decision_tag);
-    return c.json({ data: { ...v, ...tag, valid: v.valid && tag.decision_tag_valid !== false } });
+    const b = z.object({ payload: z.record(z.string(), z.unknown()), sig: z.string(), key_id: z.string(), anchor: anchorInput }).parse(raw);
+    return c.json({ data: await verifyReceipt(ctx, b) });
   });
   // The anchor path for a receipt once its hour has been rooted. `anchored` is true only when the root was posted to
   // ReceiptAnchor on chain; without a configured chain the root is kept off chain (status "local") and says so.
@@ -98,7 +82,6 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
   });
   app.get("/api/v1/receipts/:id", async (c) => {
     const [g] = await ctx.db.select().from(generations).where(eq(generations.id, c.req.param("id")));
-    if (!g) { const refund = c.req.query("format") ? null : await refundReceipt(ctx, c.req.param("id")); if (refund) return c.json({ data: refund }); } // V6 R
     if (!g) fail(404, "Receipt not found.", "not_found");
     const format = c.req.query("format");
     if (format === "cose") {
@@ -158,132 +141,6 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
     });
   });
 
-  // ---- Pay with Stock Tokens ----
-  app.get("/api/v1/paywith/tokens", (c) =>
-    c.json({
-      data: {
-        contract: ctx.cfg.chain.payWithStock ?? null,
-        threshold_usd: ctx.cfg.paywith.thresholdUsd,
-        max_age_hours: ctx.cfg.paywith.maxAgeH,
-        max_debt_usd: ctx.cfg.paywith.maxDebtUsd,
-        tokens: ctx.cfg.paywith.tokens.map((t) => ({ symbol: t.symbol, address: t.address, decimals: t.decimals, feed: t.feed ?? null })),
-      },
-    }),
-  );
-  app.get("/api/v1/paywith/session", async (c) => {
-    const k = await requireKey(ctx, c.req.header("authorization"));
-    const [s] = await ctx.db.select().from(paywithSessions).where(eq(paywithSessions.keyHash, k.chainKeyHash));
-    if (!s) return c.json({ data: null });
-    const tok = ctx.cfg.paywith.tokens.find((t) => t.address.toLowerCase() === s.token.toLowerCase());
-    // Today's spend, the authorization epoch and the allowance come from the contract (UTC day window);
-    // the indexed row is the fallback.
-    let spentToday = s.spentRawToday;
-    let epoch: string | null = null;
-    let allowance: Awaited<ReturnType<typeof allowanceView>> = null;
-    try {
-      const onchain = await ctx.chain.session(k.chainKeyHash as Hex);
-      const today = BigInt(Math.floor(Date.now() / 86_400_000) * 86_400);
-      spentToday = onchain.dayStart < today ? 0n : onchain.spentRawToday;
-      epoch = onchain.epoch.toString();
-      allowance = await allowanceView(ctx, k.chainKeyHash, onchain);
-    } catch {
-      /* chain unavailable: indexed value */
-    }
-    const charges = await chargeProposals(ctx, k.chainKeyHash);
-    return c.json({
-      data: {
-        token: s.token,
-        symbol: s.symbol,
-        decimals: tok?.decimals ?? 18,
-        wallet: s.wallet,
-        cap_raw_per_day: s.capRawDay.toString(),
-        spent_raw_today: spentToday.toString(),
-        active: s.active,
-        pay_with_default: k.payWithDefault ?? null,
-        open_debt_usd: picoToUsd(await openDebt(ctx, k.chainKeyHash)),
-        opened_tx: s.openedTx,
-        epoch,
-        allowance,
-        charges_awaiting_signature: charges.filter((x) => x.status === "awaiting_signature").length,
-      },
-    });
-  });
-  // Unsigned transactions the wallet signs to open/close a session (the router never holds user funds).
-  app.post("/api/v1/paywith/open", async (c) => {
-    const k = await requireKey(ctx, c.req.header("authorization"));
-    const v = z.object({ token: z.string(), cap_raw_per_day: z.string().regex(/^\d+$/), wallet: z.string().regex(/^0x[0-9a-fA-F]{40}$/) }).parse(await readJson(c));
-    const tok = ctx.cfg.paywith.tokens.find((t) => t.symbol.toLowerCase() === v.token.toLowerCase() || t.address.toLowerCase() === v.token.toLowerCase());
-    if (!tok) fail(404, `${v.token} is not a registered Stock Token.`, "not_found");
-    const pws = ctx.chain.require("payWithStock");
-    // Every charge needs the wallet's own authorization; the daily cap stays an extra bound, and the API
-    // only builds sessions worth at most PAYWITH_MAX_DAILY_CAP_USD a day (required in production).
-    const maxCapUsd = ctx.cfg.paywith.maxDailyCapUsd;
-    if (maxCapUsd !== null) {
-      const fair = await fairPrice(ctx, tok.address);
-      if (!fair) fail(503, `The ${tok.symbol} price is unavailable, so the session cap cannot be checked.`, "price_unavailable");
-      if (rawToPico(BigInt(v.cap_raw_per_day), tok.decimals, fair) > usdToPico(maxCapUsd)) fail(400, `cap_raw_per_day is worth more than this router's $${maxCapUsd} daily session limit.`, "cap_too_high");
-    }
-    // Anyone can open a session on any key hash on-chain; the router only honours sessions whose
-    // wallet the key holder registered here (authenticated by the key itself).
-    const intent = { wallet: v.wallet.toLowerCase(), token: tok.address.toLowerCase(), at: new Date().toISOString() };
-    await ctx.db.insert(kv).values({ key: `paywith-intent:${k.chainKeyHash}`, value: intent }).onConflictDoUpdate({ target: kv.key, set: { value: intent, updatedAt: new Date() } });
-    return c.json({
-      data: {
-        chain: ctx.cfg.chain.id,
-        wallet: intent.wallet,
-        transactions: [
-          { to: tok.address, data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [pws, BigInt(v.cap_raw_per_day) * 31n] }), description: `Approve ${tok.symbol} for PayWithStock (31 days of cap)` },
-          { to: pws, data: encodeFunctionData({ abi: PayWithStockAbi, functionName: "openSession", args: [k.chainKeyHash as Hex, tok.address as Hex, BigInt(v.cap_raw_per_day)] }), description: `Open a ${tok.symbol} session for this key` },
-        ],
-        next: "Once the session is indexed, sign a bounded allowance (POST /api/v1/paywith/allowance/typed-data, then POST /api/v1/paywith/allowance), or sign each charge from GET /api/v1/paywith/charges.",
-      },
-    });
-  });
-  // EIP-712 AllowanceAuthorization for the session wallet to sign once: a total and a per-charge token limit,
-  // at most 7 days, at most $5 per charge on-chain, every charge tied to the receipts it pays.
-  app.post("/api/v1/paywith/allowance/typed-data", async (c) => {
-    const k = await requireKey(ctx, c.req.header("authorization"));
-    const v = z
-      .object({ max_raw_total: z.string().regex(/^\d{1,78}$/).optional(), max_raw_per_charge: z.string().regex(/^\d{1,78}$/).optional(), valid_seconds: z.number().int().positive().optional() })
-      .parse(await readJson(c));
-    const p = await allowanceProposal(ctx, k, { maxRawTotal: v.max_raw_total ? BigInt(v.max_raw_total) : undefined, maxRawPerCharge: v.max_raw_per_charge ? BigInt(v.max_raw_per_charge) : undefined, validSeconds: v.valid_seconds });
-    return c.json({ data: { wallet: p.wallet, symbol: p.symbol, decimals: p.decimals, typed_data: typedDataJson(p.typedData) } });
-  });
-  app.post("/api/v1/paywith/allowance", async (c) => {
-    const k = await requireKey(ctx, c.req.header("authorization"));
-    const v = z.object({ message: z.record(z.string(), z.unknown()), signature: z.string().regex(/^0x[0-9a-fA-F]+$/) }).parse(await readJson(c));
-    return c.json({ data: await saveAllowance(ctx, k, { message: v.message, signature: v.signature as Hex }) }, 201);
-  });
-  // Charges the router proposes (exact USDG, token maximum, usage commitment) for the wallet to sign.
-  app.get("/api/v1/paywith/charges", async (c) => {
-    const k = await requireKey(ctx, c.req.header("authorization"));
-    return c.json({ data: await chargeProposals(ctx, k.chainKeyHash) });
-  });
-  app.post("/api/v1/paywith/charges/:id/signature", async (c) => {
-    const k = await requireKey(ctx, c.req.header("authorization"));
-    const v = z.object({ signature: z.string().regex(/^0x[0-9a-fA-F]+$/) }).parse(await readJson(c));
-    return c.json({ data: await signCharge(ctx, k, c.req.param("id"), v.signature as Hex) });
-  });
-  // One transaction voids every outstanding charge signature and the allowance (the session stays open).
-  app.post("/api/v1/paywith/revoke", async (c) => {
-    const k = await requireKey(ctx, c.req.header("authorization"));
-    const pws = ctx.chain.require("payWithStock");
-    await forgetAllowance(ctx, k.chainKeyHash);
-    return c.json({ data: { chain: ctx.cfg.chain.id, transactions: [{ to: pws, data: encodeFunctionData({ abi: PayWithStockAbi, functionName: "revokeAuthorizations", args: [k.chainKeyHash as Hex] }), description: "Revoke every charge authorization and the allowance (instant)" }] } });
-  });
-  app.post("/api/v1/paywith/close", async (c) => {
-    const k = await requireKey(ctx, c.req.header("authorization"));
-    const pws = ctx.chain.require("payWithStock");
-    await forgetAllowance(ctx, k.chainKeyHash);
-    return c.json({ data: { chain: ctx.cfg.chain.id, transactions: [{ to: pws, data: encodeFunctionData({ abi: PayWithStockAbi, functionName: "closeSession", args: [k.chainKeyHash as Hex] }), description: "Close the session and revoke its authorizations (instant)" }] } });
-  });
-  app.get("/api/v1/paywith/statement", async (c) => {
-    const k = await requireKey(ctx, c.req.header("authorization"));
-    const month = c.req.query("month") ?? new Date().toISOString().slice(0, 7);
-    if (!/^\d{4}-\d{2}$/.test(month)) fail(400, "month must be YYYY-MM.", "invalid_request");
-    return c.json({ data: await statement(ctx, k.chainKeyHash, month) });
-  });
-
   // ---- Provider onboarding: apply -> schema check -> bond -> 7-day shadow (canaries) -> live ----
   app.post("/api/v1/providers/apply", async (c) => {
     const data = await submitProviderApplication(ctx, providerApplication.parse(await readJson(c)), c.req.header("x-application-token"));
@@ -323,14 +180,11 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
     await ctx.catalog.ensureFresh();
     return c.json({
       data: {
-        // Raw launch metrics count the public lane only. Attested and unlinkable traffic is published only as noisy
+        // Raw launch metrics count the public lane only. Attested traffic is published only as noisy
         // hourly counters, at /api/v1/stats.
         launch: await launchMetrics(),
         private_lanes: { lanes: PRIVATE_LANES, stats: "/api/v1/stats", epsilon_spent_today: privateLaneStats(ctx).budget().epsilon_spent_today },
         router: "https://anonymo.tech", // HD1: canonical public router address.
-        network: { hosts_open: ctx.cfg.networkHosts.enabled === true, payouts_open: ctx.cfg.networkPayouts.enabled === true, fee_bps: ctx.cfg.networkPayouts.feeBps },
-        // v6 I: ERC-8004 identity, paid feedback and liveness probes; each says whether it is switched on here.
-        identity: identityStatus(ctx),
         env: ctx.cfg.env,
         // The running build (RELEASE_COMMIT; null when unset) and whether its contracts were verified.
         release: {
@@ -350,13 +204,6 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
         receipts: { key_id: ctx.signer.keyId, rotation_days: ctx.cfg.receipts.rotationDays, anchor_interval_ms: ctx.cfg.receipts.anchorIntervalMs },
         settlement: { spent_root_interval_ms: ctx.cfg.workers.settlementIntervalMs },
         fees: { prepaid_bps: 0, per_call_margin_bps: ctx.cfg.fees.perCallMarginBps, provider_fee_bps: ctx.cfg.fees.providerFeeBps, byok_fee_bps: ctx.cfg.fees.byokFeeBps },
-        paywith: { tokens: ctx.cfg.paywith.tokens.map((t) => t.symbol), configured: !!ctx.cfg.chain.payWithStock },
-        // Escrow payments: the tokens it credits, the Stock Token haircut, $ANMO's own terms (null when not accepted)
-        // and whether USDG is credited 1:1 (usdg.enabled; its haircut and per-deposit limit are null while off).
-        escrow: { enabled: escrowEnabled(ctx), tokens: escrowEnabled(ctx) ? acceptedTokens(ctx).map((t) => t.symbol) : [], haircut_bps: ctx.cfg.escrow.haircutBps, anmo: anmoSummary(ctx), usdg: usdgSummary(ctx) },
-        ...(ctx.cfg.agentGuardEnabled ? { agent_guard: { enabled: true } } : {}), // V98: preserve status bytes while off
-        // Pay another agent: Agent Guard decides, the payer's wallet sends USDG straight to the recipient, the router verifies it.
-        agent_pay: { enabled: ctx.cfg.agentPayEnabled },
         per_call: {
           configured: !!ctx.cfg.chain.callPay || x402Enabled(ctx),
           max_usd: ctx.cfg.fees.perCallMaxUsd,
@@ -373,27 +220,11 @@ export function publicRoutes(app: Hono, ctx: Ctx) {
         },
         // v6 F: the hosted x402 facilitator for other sellers; `relay.above_floor` is the last reading taken, null before any.
         facilitator: facilitatorStatus(ctx),
-        // v6 T: paying x402 tools from a key's balance; ready only when the market is on and a buyer wallet is set.
-        tools: toolsStatus(ctx),
-        // v6 L: the honest commerce ledger: whether it is on, which receipt kinds feed it, and whether its filters can work here.
-        commerce: commerceStatus(ctx),
-        // Agent agreements: the contracts this router indexes, and whether the isolated jury worker is posting rulings
-        // (its fresh heartbeat after matching the oracle's jury on chain; the API itself never holds the signer keys).
-        agreements: await agreementsStatus(ctx),
-        // $ANMO holder tiers: the token, the tier ladder, and whether tiers apply to requests.
-        holders: holdersStatus(ctx),
         telemetry: ctx.telemetry.enabled,
-        // B: per-call market-data tools and decision tags in receipts; both off unless switched on.
-        data_tools: dataToolsStatus(ctx),
-        decision_tags: { enabled: ctx.cfg.decisionTagsEnabled, header: "X-Anonymo-Decision-Tag" },
-        // The onion service that reaches this router over Tor (null when none is configured). Clients that reach it hide
-        // their network address from the router; requests carry no address here, so limits for unkeyed calls are shared.
-        onion: ctx.cfg.onion.address ? { address: ctx.cfg.onion.address, url: `http://${ctx.cfg.onion.address}` } : null,
         jobs: ctx.jobs.status().map((job) => ({ ...job, last_error: job.last_error ? "Job failed" : null })),
         catalog: { models: ctx.catalog.models.size, providers: ctx.catalog.providers.size },
         // Privacy lanes: how many models and live endpoints can serve each one right now, and the selection weight.
         lanes: laneSummary(ctx),
-        makegood: await makegoodStatus(ctx), // V6 R: make-good refunds, from the refund records.
       },
     });
   });

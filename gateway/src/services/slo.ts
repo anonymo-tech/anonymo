@@ -6,9 +6,7 @@ import type { Ctx } from "../context.ts";
 import { health, statusDpHours, statusIncidents, statusWindows } from "../db/schema.ts";
 import { LATENCY_EDGES_MS, bucketLabels, bucketOf } from "../lib/dpstats.ts";
 import { log } from "../lib/util.ts";
-import { viaOnion } from "../api/common.ts";
 import { batchLineOf } from "../router/batch-line.ts";
-import { gatewayOrigin } from "../ohttp/origin.ts";
 import { PRIVATE_LANES, isPrivateLaneRequest, privateLaneStats } from "./private-stats.ts";
 
 // The public status page: availability, latency and error budgets per privacy lane and per API surface.
@@ -16,15 +14,14 @@ import { PRIVATE_LANES, isPrivateLaneRequest, privateLaneStats } from "./private
 // Where each number comes from, and nothing else:
 //   public lane   the outcome (status class) and latency of each public-lane request, summed per surface into five-minute
 //                 buckets (status_windows). No key, account, model or address is kept, and no row is per request.
-//   attested,     only the differentially private hourly releases (lib/dpstats.ts, the same counters GET /api/v1/stats
-//   unlinkable    publishes), copied as released into status_dp_hours. A private-lane request never reaches status_windows:
-//                 the middleware below drops it, and every figure for these lanes says `source: "dp-noised"`.
-// The two private lanes share one set of noisy counters (requests are counted per lane, refusals and latency are not), so
-// their availability and latency are one combined figure, shown on both lanes, and they have no per-surface breakdown.
+//   attested      only the differentially private hourly releases (lib/dpstats.ts, the same counters GET /api/v1/stats
+//                 publishes), copied as released into status_dp_hours. A private-lane request never reaches status_windows:
+//                 the middleware below drops it, and every figure for this lane says `source: "dp-noised"`. It has no
+//                 per-surface breakdown.
 
 export const LANES = ["public", ...PRIVATE_LANES] as const;
 export type Lane = (typeof LANES)[number];
-export const SURFACES = ["chat", "embeddings", "batch", "messages", "ollama", "rerank"] as const;
+export const SURFACES = ["chat", "batch", "messages"] as const;
 export type Surface = (typeof SURFACES)[number];
 export const WINDOWS = { "1h": 3_600_000, "24h": 86_400_000, "7d": 7 * 86_400_000, "30d": 30 * 86_400_000 } as const;
 export type WindowName = keyof typeof WINDOWS;
@@ -46,11 +43,8 @@ export function surfaceOf(method: string, path: string): Surface | null {
   const p = path.length > 1 ? path.replace(/\/+$/, "") : path;
   if (method === "OPTIONS" || method === "HEAD") return null;
   if (method === "POST" && /^\/(api\/)?v1\/(chat\/completions|completions|responses)$/.test(p)) return "chat";
-  if (method === "POST" && /^\/(api\/)?v1\/embeddings$/.test(p)) return "embeddings";
   if (/^\/(api\/)?v1\/batches(\/|$)/.test(p)) return "batch";
   if (method === "POST" && /^\/(api\/)?v1\/messages$/.test(p)) return "messages";
-  if (method === "POST" && /^\/ollama\/api\/(chat|generate|embed|embeddings)$/.test(p)) return "ollama";
-  if (method === "POST" && /^\/(api\/)?v1\/rerank$/.test(p)) return "rerank";
   return null;
 }
 
@@ -183,7 +177,7 @@ export function sloRecorder(ctx: Ctx): SloRecorder {
   return r;
 }
 
-// An in-process call made while serving a counted request (messages and ollama call the chat handler, responses too)
+// An in-process call made while serving a counted request (messages calls the chat handler, responses too)
 // belongs to the outer request: it is not counted again, but it reports whether the request turned out to be private.
 const scope = new AsyncLocalStorage<{ private: boolean }>();
 
@@ -219,8 +213,7 @@ export function statusMiddleware(ctx: Ctx): MiddlewareHandler {
     let surface = surfaceOf(c.req.method, new URL(c.req.url).pathname);
     if (!surface) return next();
     if (batchLineOf(c)) surface = "batch";
-    // Onion and Oblivious HTTP arrivals are treated as private from the start, whatever lane they end up on.
-    const state = { private: privateByHeader(c) || viaOnion(c, ctx.cfg) || !!gatewayOrigin(c.req.raw) };
+    const state = { private: privateByHeader(c) };
     const t0 = performance.now();
     await scope.run(state, () => next());
     if (state.private || isPrivateLaneRequest(c.req.raw) || (await privateByResponse(c.res))) return;
@@ -352,7 +345,7 @@ export async function suggestIncidents(ctx: Ctx, now = Date.now()) {
   if (dp.length) {
     const s = sumDp(dp.map((d) => d.counts as DpCounts));
     const a = dpAvailability(s, Math.max(min, DP_MIN_ELIGIBLE));
-    const t = Math.min(ctx.cfg.status.targets.attested, ctx.cfg.status.targets.unlinkable);
+    const t = ctx.cfg.status.targets.attested;
     if (a != null && a < t) found.push({ lanes: [...PRIVATE_LANES], surfaces: [], window: "1h", availability: round(a, 4), target: t, requests: Math.round(s.eligible), source: "dp-noised", from: hourStart });
   }
   if (!found.length) return [];
@@ -511,7 +504,7 @@ export async function buildSlo(ctx: Ctx, surfaces: readonly Surface[] = SURFACES
       source: "dp-noised" as const,
       target,
       state: stateOf(dpAvailability(dpW["1h"]), target, worstImpact(lane)),
-      scope: "attested+unlinkable",
+      scope: "attested",
       windows: Object.fromEntries(
         (Object.keys(WINDOWS) as WindowName[]).map((w) => {
           const s = dpW[w];
@@ -541,7 +534,7 @@ export async function buildSlo(ctx: Ctx, surfaces: readonly Surface[] = SURFACES
         epsilon_per_hour: stats.epsilon,
         scale_per_hour: 1 / stats.epsilon.requests,
         min_eligible: DP_MIN_ELIGIBLE,
-        note: "Every figure for this lane is summed from the differentially private hourly releases published at /api/v1/stats, never from per-request records. The attested and unlinkable lanes share one set of noisy counters, so their availability and latency are one combined figure. A window with fewer than min_eligible noisy requests shows no share.",
+        note: "Every figure for this lane is summed from the differentially private hourly releases published at /api/v1/stats, never from per-request records. A window with fewer than min_eligible noisy requests shows no share.",
       },
     };
   };
@@ -568,7 +561,7 @@ export async function buildSlo(ctx: Ctx, surfaces: readonly Surface[] = SURFACES
     cache_seconds: 30,
     windows: Object.keys(WINDOWS),
     targets,
-    lanes: [publicLane, privateLane("attested"), privateLane("unlinkable")],
+    lanes: [publicLane, privateLane("attested")],
     surfaces: surfaceViews,
     surfaces_note: "Per-surface figures cover the public lane only: the private lanes' noisy counters are not split by surface.",
     synthetic_24h: { source: "provider probes and canaries", ok: Number(syn.ok), total: Number(syn.total), availability: Number(syn.total) ? round(Number(syn.ok) / Number(syn.total), 5) : null },

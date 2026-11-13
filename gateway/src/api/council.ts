@@ -1,9 +1,7 @@
 import { inheritRoutePlan, routeResponseHeaders } from "../router/explain.ts"; // V84
-import { agentReservation, enforceAgentCouncil } from "../agents/enforce.ts";
 import { randomBytes } from "node:crypto";
 import type { Context } from "hono";
 import type { Ctx } from "../context.ts";
-import type { HolderTier } from "../config.ts";
 import type { Candidate, ModelRow, Modifier } from "../catalog/catalog.ts";
 import { fail, isApiError, ApiError } from "../lib/errors.ts";
 import { type Pico, maxPico, picoToUsd, picoToUsdString, usdToPico } from "../lib/money.ts";
@@ -16,7 +14,6 @@ import type { DisclosureRequest } from "../router/disclosure.ts";
 import { providerKey } from "../providers/upstream.ts";
 import { applyGuardrails, mergeGuardrails, redactOutput, type GuardrailConfig } from "../gateway/guardrails.ts";
 import { payPerCall } from "../pay/percall.ts";
-import { holderTier, scaleLimit } from "../holders/tiers.ts";
 import {
   COUNCIL_MODEL,
   DUAL_SEED,
@@ -85,7 +82,6 @@ type Base = {
   t0: number;
   key: KeyRow | null;
   wallet: { accountId: string; wallet: string } | null;
-  tier: HolderTier | null;
   /** Routing preferences with the disclosure ceiling and lane already folded in. */
   prefs: ProviderPrefs;
   disc: DisclosureRequest;
@@ -158,23 +154,17 @@ function maxOutFor(ctx: Ctx, targets: RouteTarget[], body: Record<string, unknow
 }
 
 /** Reserve every hold or none: a failure part-way releases what was already held. */
-async function reserveAll(ctx: Ctx, billing: Chat.Billing, holds: { holdId: string; hold: Pico; targets: RouteTarget[]; body: Record<string, unknown>; promptTokens: number }[], paywithNote: string | undefined, lane: "public" | "attested" | "unlinkable") {
-  if (!ctx.cfg.agentPolicyEnabled) return reserveAllUnchecked(ctx, billing, holds, paywithNote, lane);
-  return enforceAgentCouncil(ctx, billing, () => holds.map(h => ({ ...h, models: h.targets.map(t => t.model.id), max_output_tokens: maxOutFor(ctx, h.targets, h.body, h.promptTokens) })), lane, ctx => reserveAllUnchecked(ctx, billing, holds, paywithNote, lane));
-}
-async function reserveAllUnchecked(ctx: Ctx, billing: Chat.Billing, holds: { holdId: string; hold: Pico; targets: RouteTarget[]; body: Record<string, unknown>; promptTokens: number }[], paywithNote: string | undefined, lane: "public" | "attested" | "unlinkable") {
+async function reserveAll(ctx: Ctx, billing: Chat.Billing, holds: { holdId: string; hold: Pico; targets: RouteTarget[]; body: Record<string, unknown>; promptTokens: number }[], paywithNote: string | undefined, _lane: "public" | "attested" | "unlinkable") {
   const held: string[] = [];
   try {
     for (const h of holds) {
       await reserve(ctx.db, {
-        ...agentReservation(ctx, () => ({ models: h.targets.map(t => t.model.id), lane, max_output_tokens: maxOutFor(ctx, h.targets, h.body, h.promptTokens), body: h.body })),
         id: h.holdId,
         accountId: billing.accountId,
         keyHash: billing.key?.keyHash ?? null,
         amount: h.hold,
         kind: "usage",
         ttlMs: ctx.cfg.routing.providerTimeoutMs * (ctx.cfg.routing.maxAttempts + 1) * 2,
-        creditLine: billing.mode === "paywith" ? billing.grant.creditLine : 0n,
       });
       held.push(h.holdId);
     }
@@ -248,7 +238,7 @@ const refPayload = (attested: boolean, cand: Candidate) => {
 };
 
 /** What the caller was billed across all calls, in the shape of a normal `usage` object. */
-function aggregateUsage(fins: Fin[], withHolder: boolean) {
+function aggregateUsage(fins: Fin[]) {
   const n = (f: (x: Fin) => number) => fins.reduce((s, x) => s + f(x), 0);
   const p = (f: (x: Fin) => Pico) => fins.reduce((s, x) => s + f(x), 0n);
   const prompt = n((x) => x.usageJson.prompt_tokens);
@@ -263,7 +253,6 @@ function aggregateUsage(fins: Fin[], withHolder: boolean) {
       upstream_inference_cost: picoToUsd(p((x) => x.cost.upstream)),
       royalty: picoToUsd(p((x) => x.cost.royalty)),
       margin: picoToUsd(p((x) => x.cost.margin)),
-      ...(withHolder ? { holder_discount: picoToUsd(p((x) => x.cost.holderDiscount)) } : {}),
     },
     prompt_tokens_details: { cached_tokens: n((x) => x.usageJson.prompt_tokens_details.cached_tokens), cache_write_tokens: n((x) => x.usageJson.prompt_tokens_details.cache_write_tokens) },
     completion_tokens_details: { reasoning_tokens: n((x) => x.usageJson.completion_tokens_details.reasoning_tokens) },
@@ -287,7 +276,7 @@ export async function runCouncil(tk: Toolkit, p: Base): Promise<Response> {
 
 async function runLegacyCouncil(tk: Toolkit, p: Base): Promise<Response> {
   const { ctx, c, kind, body, bodySha, t0, key, wallet } = p;
-  let { tier, prefs, disc } = p;
+  let { prefs, disc } = p;
   validateMulti(ctx, kind, body);
   const spec = parseCouncilSpec(body.council, ctx.cfg.council);
   // Attested council: `council.attested: true` or lane "attested". Either way it is the attested lane for every member and
@@ -315,7 +304,7 @@ async function runLegacyCouncil(tk: Toolkit, p: Base): Promise<Response> {
   const guardCfg = mergeGuardrails(key?.guardrails as GuardrailConfig | null, key ? (body.guardrails as GuardrailConfig | undefined) : undefined);
   const guard = applyGuardrails(body, guardCfg);
 
-  const { billing: resolvedBilling, paywithNote } = await tk.resolveBilling(ctx, c, key, wallet, null); // blind tokens are refused before council mode
+  const { billing: resolvedBilling, paywithNote } = await tk.resolveBilling(ctx, c, key, wallet);
   let billing = resolvedBilling;
   const byok = await tk.byokFor(ctx, billing?.accountId);
   const modeForPrice: Mode = billing?.mode ?? "per_call";
@@ -380,8 +369,7 @@ async function runLegacyCouncil(tk: Toolkit, p: Base): Promise<Response> {
     const r = await payPerCall(ctx, c, { pricePico: total, bodySha, modelId: LEGACY_COUNCIL_MODEL });
     billing = { mode: "per_call", accountId: r.accountId, payer: r.payer, paymentTx: r.txHash, paymentResponse: r.paymentResponse };
   }
-  if (billing.mode === "per_call") tier = await holderTier(ctx, billing.payer);
-  if (billing.key?.tpm) await tk.limitOrThrow(ctx, `kt:${billing.key.keyHash}`, legs.reduce((s, l) => s + l.promptTokens, judgeWorstTokens), scaleLimit(billing.key.tpm, tier), "tokens");
+  if (billing.key?.tpm) await tk.limitOrThrow(ctx, `kt:${billing.key.keyHash}`, legs.reduce((s, l) => s + l.promptTokens, judgeWorstTokens), billing.key.tpm, "tokens");
   const bill: Chat.Billing = billing;
 
   await reserveAll(ctx, bill, [...legs, { holdId: judgeHoldId, hold: judgeHold, targets: judgeTargets, body: judgeBase, promptTokens: judgeWorstTokens }], paywithNote, disc.lane);
@@ -391,7 +379,7 @@ async function runLegacyCouncil(tk: Toolkit, p: Base): Promise<Response> {
   const call = { ctx, kind, billing: bill, byok, signal: abort.signal };
   const meta = { guard, middle: null, paywithNote, cacheMode: null, excluded: excludedAll, route: null };
   const budget = (l: { hold: Pico }) => (cap != null ? l.hold : undefined);
-  const common = (leg: Leg, bodySha_: string) => ({ ctx, c, body: leg.body, billing: bill, holdId: leg.holdId, t0, bodySha: bodySha_, stream: false, kind, byok, meta, guardCfg, promptTokens: leg.promptTokens, tier, disc, planned: null });
+  const common = (leg: Leg, bodySha_: string) => ({ ctx, c, body: leg.body, billing: bill, holdId: leg.holdId, t0, bodySha: bodySha_, stream: false, kind, byok, meta, guardCfg, promptTokens: leg.promptTokens, disc, planned: null });
 
   try {
     // ---- Members, concurrently, through the normal routing path ----------------------------------------
@@ -521,7 +509,7 @@ async function runLegacyCouncil(tk: Toolkit, p: Base): Promise<Response> {
       model: LEGACY_COUNCIL_MODEL,
       provider: (source ?? judged).r.candidate.provider.name,
       object: "chat.completion",
-      usage: aggregateUsage(fins, tier != null),
+      usage: aggregateUsage(fins),
       receipt: judgeFin.receiptJson,
       council: {
         ...signedBlock,
@@ -564,7 +552,7 @@ const decodesDeterministically = (cand: Candidate) => {
 
 export async function runDual(tk: Toolkit, p: DualInput): Promise<Response> {
   const { ctx, c, kind, body, bodySha, t0, disc, resolved, targets, promptTokens, byok, guard, guardCfg, middle, savedRoute, paywithNote } = p;
-  let { billing, tier } = p;
+  let { billing } = p;
   validateMulti(ctx, kind, body);
   if (resolved.length !== 1 || targets.length !== 1) fail(400, "`verify: \"dual\"` works on exactly one model; remove `models`.", "invalid_verify");
   const target = targets[0];
@@ -599,8 +587,7 @@ export async function runDual(tk: Toolkit, p: DualInput): Promise<Response> {
     const r = await payPerCall(ctx, c, { pricePico: total, bodySha, modelId: target.model.id });
     billing = { mode: "per_call", accountId: r.accountId, payer: r.payer, paymentTx: r.txHash, paymentResponse: r.paymentResponse };
   }
-  if (billing.mode === "per_call") tier = await holderTier(ctx, billing.payer);
-  if (billing.key?.tpm) await tk.limitOrThrow(ctx, `kt:${billing.key.keyHash}`, promptTokens * 2, scaleLimit(billing.key.tpm, tier), "tokens");
+  if (billing.key?.tpm) await tk.limitOrThrow(ctx, `kt:${billing.key.keyHash}`, promptTokens * 2, billing.key.tpm, "tokens");
   const bill: Chat.Billing = billing;
 
   await reserveAll(ctx, bill, legs, paywithNote, disc.lane);
@@ -614,7 +601,7 @@ export async function runDual(tk: Toolkit, p: DualInput): Promise<Response> {
   const settle = (leg: Leg, done: Done, verification: unknown) => {
     const f = firstFinish(done.json);
     return tk.finalize({
-      ctx, c, body, billing: bill, holdId: leg.holdId, t0, bodySha, stream: false, kind, byok, meta, guardCfg, promptTokens, tier, disc, planned: null,
+      ctx, c, body, billing: bill, holdId: leg.holdId, t0, bodySha, stream: false, kind, byok, meta, guardCfg, promptTokens, disc, planned: null,
       r: done.r, usage: done.usage, responseText: done.text, finishReason: f.finish, nativeFinish: f.native, generationMs: done.doneAt - t0, cancelled: false,
       extra: { payload: { verification, ...refPayload(attested, done.r.candidate) } },
       ...(checkedUpstream.has(done) ? { upstreamAttestation: checkedUpstream.get(done) } : {}),
@@ -688,7 +675,7 @@ export async function runDual(tk: Toolkit, p: DualInput): Promise<Response> {
       model: a.r.model.id,
       provider: a.r.candidate.provider.name,
       object: kind === "chat" ? "chat.completion" : "text_completion",
-      usage: aggregateUsage([finA, finB], tier != null),
+      usage: aggregateUsage([finA, finB]),
       receipt: finA.receiptJson,
       verification: shown,
       ...extras,
@@ -768,7 +755,7 @@ const attemptable = (ctx: Ctx, targets: RouteTarget[]) => targets.flatMap((t) =>
 
 async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
   const { ctx, c, kind, body, bodySha, t0, key, wallet } = p;
-  let { tier, prefs, disc } = p;
+  let { prefs, disc } = p;
   validateMulti(ctx, kind, body);
   const spec = parseAnonymoSpec(body.council);
   const mode: AnonymoCouncilMode = parseCouncilMode(c.req.header(COUNCIL_MODE_HEADER), spec.mode, "merge");
@@ -798,7 +785,7 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
 
   const guardCfg = mergeGuardrails(key?.guardrails as GuardrailConfig | null, key ? (body.guardrails as GuardrailConfig | undefined) : undefined);
   const guard = applyGuardrails(body, guardCfg);
-  const { billing: resolvedBilling, paywithNote } = await tk.resolveBilling(ctx, c, key, wallet, null);
+  const { billing: resolvedBilling, paywithNote } = await tk.resolveBilling(ctx, c, key, wallet);
   let billing = resolvedBilling;
   const byok = await tk.byokFor(ctx, billing?.accountId);
   const modeForPrice: Mode = billing?.mode ?? "per_call";
@@ -896,8 +883,7 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
     const r = await payPerCall(ctx, c, { pricePico: total, bodySha, modelId: ANONYMO_COUNCIL_MODEL });
     billing = { mode: "per_call", accountId: r.accountId, payer: r.payer, paymentTx: r.txHash, paymentResponse: r.paymentResponse };
   }
-  if (billing.mode === "per_call") tier = await holderTier(ctx, billing.payer);
-  if (billing.key?.tpm) await tk.limitOrThrow(ctx, `kt:${billing.key.keyHash}`, legs.reduce((s, l) => s + l.promptTokens, aggWorstTokens), scaleLimit(billing.key.tpm, tier), "tokens");
+  if (billing.key?.tpm) await tk.limitOrThrow(ctx, `kt:${billing.key.keyHash}`, legs.reduce((s, l) => s + l.promptTokens, aggWorstTokens), billing.key.tpm, "tokens");
   const bill: Chat.Billing = billing;
   await reserveAll(
     ctx,
@@ -910,7 +896,7 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
   const abort = new AbortController();
   c.req.raw.signal?.addEventListener("abort", () => abort.abort(new DOMException("client disconnected", "AbortError")), { once: true });
   const meta = { guard, middle: null, paywithNote, cacheMode: null, excluded: [...new Set(legs.flatMap((l) => planCache.get(l.model.id)?.excluded.slice(0, 10) ?? []))], route: null };
-  const common = (leg: Leg, sha: string) => ({ ctx, c, body: leg.body, billing: bill, holdId: leg.holdId, t0, bodySha: sha, stream: false, kind, byok, meta, guardCfg, promptTokens: leg.promptTokens, tier, disc, planned: null });
+  const common = (leg: Leg, sha: string) => ({ ctx, c, body: leg.body, billing: bill, holdId: leg.holdId, t0, bodySha: sha, stream: false, kind, byok, meta, guardCfg, promptTokens: leg.promptTokens, disc, planned: null });
   const budget = (l: { hold: Pico }) => (budgetCap != null ? l.hold : undefined);
   const promptText = transcript(shared.messages);
   const refusedHead = async (json: any) => {
@@ -1073,7 +1059,7 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
     const extras = ((aggFin ?? fins[0]).extras(redactions) ?? {}) as Record<string, unknown>;
     delete extras.dropped_parameters;
     if (dropped.length) extras.dropped_parameters = dropped;
-    const usage = aggregateUsage(fins, tier != null);
+    const usage = aggregateUsage(fins);
     const out = {
       ...source.json,
       id: requestId,

@@ -1,4 +1,3 @@
-import { enforceAgentReservation, type AgentReservation } from "../agents/enforce.ts";
 import { and, eq, sql } from "drizzle-orm";
 import type { Db, Tx } from "../db/client.ts";
 import { accounts, holds, keys, ledger } from "../db/schema.ts";
@@ -72,26 +71,20 @@ function periodStart(reset: string | null, at: Date): Date | null {
 }
 
 export type ReserveInput = {
-  agent?: AgentReservation | (() => AgentReservation);
   id: string;
   accountId: string;
   keyHash?: string | null;
   amount: Pico;
   kind?: string;
   ttlMs?: number;
-  /** Allow the available balance to go negative by up to this much (pay-with sessions). */
-  creditLine?: Pico;
-  /** v6 T: a paid x402 tool call; the rulebook evaluates it as a paid_tool intent priced at `amount`. */
-  tool?: { resource: string; seller: string; listing?: string };
 };
 
-export const reserve = (db: Db, r: ReserveInput): Promise<Pico> => enforceAgentReservation(db, r, db => reserveUnchecked(db, r));
-async function reserveUnchecked(db: Db, r: ReserveInput): Promise<Pico> {
+export async function reserve(db: Db, r: ReserveInput): Promise<Pico> {
   if (r.amount < 0n) fail(400, "Invalid reservation.");
   const out = await db.transaction(async (tx): Promise<{ value: Pico } | { refusal: ApiError }> => {
     const [acct] = await tx.select().from(accounts).where(eq(accounts.id, r.accountId)).for("update");
     if (!acct) fail(402, "This key has no balance. Deposit USDG to its key hash or pay per call.", "insufficient_credits");
-    const available = acct.balance - acct.held + (r.creditLine ?? 0n);
+    const available = acct.balance - acct.held;
     if (available < r.amount)
       fail(
         402,
@@ -156,7 +149,7 @@ export async function settle(
   db: Db,
   holdId: string,
   actual: Pico,
-  meta: { description?: string; generationId?: string | null; kind?: string; creditLine?: Pico } = {},
+  meta: { description?: string; generationId?: string | null; kind?: string } = {},
 ): Promise<SettleResult> {
   if (actual < 0n) fail(502, "Usage cost could not be verified.", "invalid_cost");
   return db.transaction(async (tx) => {
@@ -169,8 +162,8 @@ export async function settle(
     const [acct] = await tx.select().from(accounts).where(eq(accounts.id, h.accountId)).for("update");
     let charged = actual;
     if (actual > h.amount) {
-      // Spare balance outside this hold (plus any credit line) may cover the overage.
-      const spare = acct.balance - acct.held + (meta.creditLine ?? 0n);
+      // Spare balance outside this hold may cover the overage.
+      const spare = acct.balance - acct.held;
       const extra = actual - h.amount;
       charged = h.amount + (extra <= spare ? extra : spare > 0n ? spare : 0n);
     }
@@ -195,7 +188,7 @@ export async function settle(
           .update(keys)
           .set({ spent: sql`${keys.spent} + ${charged}`, spentTotal: sql`${keys.spentTotal} + ${charged}`, lastUsed: new Date() })
           .where(eq(keys.keyHash, h.keyHash))
-          .returning({ keyHash: keys.keyHash, accountId: keys.accountId, budget: keys.budget, budgetReset: keys.budgetReset, spent: keys.spent, topup: keys.topup, disabled: keys.disabled, expiresAt: keys.expiresAt, teamId: keys.teamId });
+          .returning({ keyHash: keys.keyHash, accountId: keys.accountId, budget: keys.budget, budgetReset: keys.budgetReset, spent: keys.spent, topup: keys.topup, disabled: keys.disabled, expiresAt: keys.expiresAt });
         // Auto top-up after the debit, under the same key row lock (src/ledger/topup.ts).
         if (k?.topup) await applyTopup(tx, k, `settle:${holdId}`);
       }

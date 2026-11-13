@@ -204,7 +204,7 @@ describe("Agent Sessions", () => {
     expect((await h.request("/api/v1/sessions/as_missing", { method: "DELETE", headers: owner.auth })).status).toBe(404);
   });
 
-  test("roles: members and viewers read; owners/admins create and end within their scope; session keys only see themselves", async () => {
+  test("roles: members read; owners create and end; session keys only see themselves", async () => {
     const mine = await newSession(owner.auth, { name: "owner's", budget_usd: 1 });
     // A plain sub-key (member role).
     const memberKey = await subKey(owner.auth, { name: "ci" });
@@ -215,24 +215,8 @@ describe("Agent Sessions", () => {
     expect(denied.status).toBe(403);
     expect((await denied.json()).error.type).toBe("forbidden");
     expect((await h.request(`/api/v1/sessions/${mine.id}`, { method: "DELETE", headers: member })).status).toBe(403);
-    // Team viewer reads; team admin creates and ends its team's sessions, not the owner's.
-    const team = (await (await h.request("/api/v1/teams", { method: "POST", headers: owner.auth, json: { name: "agents" } })).json()).data;
-    const viewerKey = await subKey(owner.auth, { team: team.id });
-    await h.request(`/api/v1/teams/${team.id}/members/${viewerKey.data.hash}`, { method: "PUT", headers: owner.auth, json: { role: "viewer" } });
-    const adminKey = await subKey(owner.auth, { team: team.id });
-    await h.request(`/api/v1/teams/${team.id}/members/${adminKey.data.hash}`, { method: "PUT", headers: owner.auth, json: { role: "admin" } });
-    const viewer = bearer(viewerKey.key);
-    const admin = bearer(adminKey.key);
-    expect((await h.request("/api/v1/sessions", { headers: viewer })).status).toBe(200);
-    expect((await create(viewer, { budget_usd: 1 })).status).toBe(403);
-    const teamSession = await newSession(admin, { name: "team run", budget_usd: 1 });
-    const [tk] = await h.ctx.db.select().from(keysTable).where(eq(keysTable.keyHash, teamSession.key_hash));
-    expect(tk.teamId).toBe(team.id);
-    expect((await h.request(`/api/v1/sessions/${mine.id}`, { method: "DELETE", headers: admin })).status).toBe(403);
-    expect((await h.request(`/api/v1/sessions/${teamSession.id}`, { method: "DELETE", headers: viewer })).status).toBe(403);
-    expect((await h.request(`/api/v1/sessions/${teamSession.id}`, { method: "DELETE", headers: admin })).status).toBe(200);
     // Management keys end any session of the account.
-    const other = await newSession(admin, { name: "team run 2", budget_usd: 1 });
+    const other = await newSession(owner.auth, { name: "run 2", budget_usd: 1 });
     expect((await h.request(`/api/v1/sessions/${other.id}`, { method: "DELETE", headers: owner.auth })).status).toBe(200);
     // A session key reads only itself and cannot create sessions or keys.
     const sk = bearer(mine.key);
@@ -289,10 +273,8 @@ describe("Agent Sessions", () => {
     await h.ctx.db.insert(savedRoutes).values({ id: "rt_test", accountId: acct.accountId, slug: "fast", name: "Fast", config: { models: [LLAMA] } });
     const routed = await newSession(owner.auth, { budget_usd: 1, allowed_models: ["@route/fast", QWEN, QWEN] });
     expect(routed.allowed_models).toEqual(["@route/fast", QWEN]);
-    // A team admin limited to qwen, $0.50 and 10 minutes creates sessions within those bounds only.
-    const team = (await (await h.request("/api/v1/teams", { method: "POST", headers: owner.auth, json: { name: "bounded" } })).json()).data;
-    const bounded = await subKey(owner.auth, { team: team.id, allowed_models: [QWEN], limit: 0.5, expires_at: new Date(Date.now() + 10 * 60_000).toISOString() });
-    await h.request(`/api/v1/teams/${team.id}/members/${bounded.data.hash}`, { method: "PUT", headers: owner.auth, json: { role: "admin" } });
+    // A management sub-key limited to qwen, $0.50 and 10 minutes creates sessions within those bounds only.
+    const bounded = await subKey(owner.auth, { management: true, allowed_models: [QWEN], limit: 0.5, expires_at: new Date(Date.now() + 10 * 60_000).toISOString() });
     const b = bearer(bounded.key);
     expect((await create(b, { budget_usd: 0.1, ttl_minutes: 5, allowed_models: [LLAMA] })).status).toBe(403);
     expect((await create(b, { budget_usd: 0.6, ttl_minutes: 5 })).status).toBe(400);

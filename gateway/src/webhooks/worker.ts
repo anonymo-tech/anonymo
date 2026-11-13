@@ -11,8 +11,7 @@ import type { SpendWatchOptions } from "../services/spend-watch.ts";
 import type { Destination } from "./store.ts";
 export function activityEvent(row: { id: string; kind: string; status: string }) {
   if (row.kind === "deposit" && row.status === "posted") return "deposit.credited";
-  if (row.kind === "alert") return row.id.startsWith("spend-alert:") ? "spend.alert" : "agent.alert";
-  if (row.kind === "agreement") return ({ MilestoneFunded: "agreement.funded", DisputeOpened: "agreement.disputed", RulingPosted: "agreement.ruled" } as Record<string, string>)[row.status] ?? null;
+  if (row.kind === "alert" && row.id.startsWith("spend-alert:")) return "spend.alert";
   return null;
 }
 async function ownerActive(ctx: Ctx, key: KeyRow | undefined, d: Destination) {
@@ -37,7 +36,7 @@ async function ingest(ctx: Ctx, destination: Destination) {
       for (const row of page.data) {
         const event = activityEvent(row);
         // Linked rules continue to own the exact spend/agent payload and retry lease.
-        if (event && !(d.ruleId && ["spend.alert", "agent.alert"].includes(event))) await enqueue(ctx, d, { id: row.id, event, reference: row.reference ?? row.id, at: new Date(row.at), status: row.status }, tx);
+        if (event && !(d.ruleId && event === "spend.alert")) await enqueue(ctx, d, { id: row.id, event, reference: row.reference ?? row.id, at: new Date(row.at), status: row.status }, tx);
       }
       if (page.next_cursor) Object.assign(state, { to, cursor: page.next_cursor });
       else { state.from = new Date(Math.max(Date.parse(d.createdAt.toISOString()), Date.parse(to) - 300_000)).toISOString(); delete state.to; delete state.cursor; }

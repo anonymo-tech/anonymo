@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { keys, ledger, agentApprovals, spendAlerts, accounts, providers } from "../src/db/schema.ts";
+import { keys, ledger, spendAlerts, accounts } from "../src/db/schema.ts";
 import { webhookDestinations, webhookDeliveries } from "../src/webhooks/schema.ts";
 import { webhookSignature, verifyWebhook } from "../src/webhooks/signature.ts";
 import { runWebhooks, activityEvent } from "../src/webhooks/worker.ts";
@@ -35,7 +35,7 @@ test("secret encrypted and shown once; list, logs and subsequent writes omit it"
     const text = await (await h.request(path,{headers:owner.auth})).text();
     expect(text).not.toContain(result.signing_secret); expect(text).not.toContain('credential-path'); expect(text).not.toContain('receiver-credential'); expect(text).not.toContain('secret_enc');
   }
-  const r = await h.request('/api/v1/webhooks/'+result.data.id,{method:'PATCH',headers:owner.auth,json:{events:['approval.requested']}});
+  const r = await h.request('/api/v1/webhooks/'+result.data.id,{method:'PATCH',headers:owner.auth,json:{events:['deposit.credited']}});
   expect(r.status).toBe(200); expect(await r.text()).not.toContain(result.signing_secret);
 });
 test("account isolation and ordinary-key/session management guards", async () => {
@@ -72,30 +72,25 @@ test("legacy unsigned path, rotation signs, subscription filtering and revoke st
   await sendRuleWebhook(h.ctx,'legacy-signing',hook,event,payload,{send:async (_url,init) => { expect(new Headers(init.headers).has('x-anonymo-signature')).toBe(false); expect(JSON.parse(String(init.body))).toEqual(payload); return new Response(null,{status:200}); }});
   const rotation = await (await h.request('/api/v1/webhooks/'+d.id+'/rotate',{method:'POST',headers:owner.auth})).json();
   await sendRuleWebhook(h.ctx,'legacy-signing',hook,{...event,id:'signed-event'},payload,{send:async (_url,init) => { expect(verifyWebhook(rotation.signing_secret,String(init.body),new Headers(init.headers).get('x-anonymo-signature')!)).toBe(true); return new Response(null,{status:200}); }});
-  await h.request('/api/v1/webhooks/'+d.id,{method:'PATCH',headers:owner.auth,json:{events:['approval.requested']}});
+  await h.request('/api/v1/webhooks/'+d.id,{method:'PATCH',headers:owner.auth,json:{events:['deposit.credited']}});
   const noSend = {send:async () => { throw new Error('must not send'); }};
   expect((await sendRuleWebhook(h.ctx,'legacy-signing',hook,{...event,id:'filtered'},payload,noSend)).ok).toBe(true);
   await h.request('/api/v1/webhooks/'+d.id+'/revoke',{method:'POST',headers:owner.auth});
   const [stored] = await h.ctx.db.select().from(webhookDestinations).where(eq(webhookDestinations.id,d.id)); expect(stored.secretEnc).toBeNull(); expect(stored.revoked).toBe(true);
   expect((await sendRuleWebhook(h.ctx,'legacy-signing',hook,{...event,id:'revoked'},payload,noSend)).ok).toBe(true);
 });
-test("worker filters subscriptions, account credits and atomically queued approval requests/decisions; deduplicates scans", async () => {
-  const owner = await h.newKey(), other = await h.newKey(), r = await make(owner,['deposit.credited','approval.requested','approval.decided']);
+test("worker filters subscriptions and account credits; deduplicates scans", async () => {
+  const owner = await h.newKey(), other = await h.newKey(), r = await make(owner,['deposit.credited']);
   const [k] = await h.ctx.db.select().from(keys).where(eq(keys.keyHash,owner.hash));
   const [otherKey] = await h.ctx.db.select().from(keys).where(eq(keys.keyHash,other.hash));
   const at = new Date(Date.now()-2000);
   await h.ctx.db.update(webhookDestinations).set({createdAt:new Date(at.getTime()-1000),scan:{from:new Date(at.getTime()-1000).toISOString()}}).where(eq(webhookDestinations.id,r.data.id));
   await h.ctx.db.insert(ledger).values([{id:'webhook-credit',accountId:k.accountId,keyHash:k.keyHash,kind:'deposit',amount:1n,ref:'webhook-credit',createdAt:at},{id:'webhook-other-credit',accountId:otherKey.accountId,keyHash:otherKey.keyHash,kind:'deposit',amount:1n,ref:'other-credit',createdAt:at}]);
-  const { prepareApproval, decideApproval } = await import('../src/agents/approvals.ts');
-  const { ApiError } = await import('../src/lib/errors.ts');
-  await h.ctx.db.transaction(tx => prepareApproval(h.ctx.db, tx, [], [{ kind:'inference',model:'sample/model',lane:'public',tools:[],est_cost_pico:1n }], k.keyHash,new ApiError(403,'Approval required','agent_approval_required'),new Date()));
-  const [approval] = await h.ctx.db.select().from(agentApprovals).where(eq(agentApprovals.keyHash,k.keyHash));
-  await decideApproval(h.ctx.db,k.accountId,approval.id,k.keyHash,'approve');
   const types: string[] = [];
   const opts = {send:async (_url: string,init:RequestInit) => { const body = JSON.parse(String(init.body)); expect(String(init.body)).not.toContain('must not be copied'); expect(body.reference).not.toBe('webhook-other-credit'); types.push(body.type); return new Response(null,{status:200}); }};
-  await runWebhooks(h.ctx,opts); expect(types.sort()).toEqual(['approval.decided','approval.requested','deposit.credited']);
-  await runWebhooks(h.ctx,opts); expect(types).toHaveLength(3);
-  expect(activityEvent({id:'x',kind:'agreement',status:'MilestoneFunded'})).toBe('agreement.funded'); expect(activityEvent({id:'x',kind:'agreement',status:'Settled'})).toBeNull();
+  await runWebhooks(h.ctx,opts); expect(types.sort()).toEqual(['deposit.credited']);
+  await runWebhooks(h.ctx,opts); expect(types).toHaveLength(1);
+  expect(activityEvent({id:'x',kind:'agreement',status:'MilestoneFunded'})).toBeNull(); expect(activityEvent({id:'spend-alert:x',kind:'alert',status:'sent'})).toBe('spend.alert');
 });
 test("flag off preserves unsigned transport and hides routes and jobs", async () => {
   const disabled = await startRouter();
@@ -133,21 +128,4 @@ test("bounded retries keep the same id, log each result, and never retry after t
   await runWebhooks(h.ctx,opts); expect(ids).toHaveLength(3);
   const [row] = await h.ctx.db.select().from(webhookDeliveries).where(eq(webhookDeliveries.eventId,check.data.event_id)); expect(row.status).toBe('failed'); expect(row.history.map(a => a.retry_count)).toEqual([0,1,2]);
   expect(JSON.stringify(row)).not.toContain(r.signing_secret); expect(JSON.stringify(row)).not.toContain('credential-path');
-});
-
-test("host transitions queue atomically for only the operated account, including rapid changes", async () => {
-  const owner = await h.newKey(), other = await h.newKey(), r = await make(owner,['host.status_changed']), otherDest = await make(other,['host.status_changed']);
-  const [key] = await h.ctx.db.select().from(keys).where(eq(keys.keyHash,owner.hash));
-  const wallet = '0x'+'5'.repeat(40);
-  await h.ctx.db.update(accounts).set({wallet}).where(eq(accounts.id,key.accountId));
-  await h.ctx.db.insert(providers).values({id:'webhook-host',name:'Sample host',kind:'sidecar',baseUrl:'https://host.example.com/v1',networkHost:true,operator:wallet,status:'pending'});
-  const { withHostStatus } = await import('../src/webhooks/hosts.ts');
-  for(const status of ['probation','rejected']) await withHostStatus(h.ctx,'webhook-host',db => db.update(providers).set({status,updatedAt:new Date()}).where(eq(providers.id,'webhook-host')));
-  expect(await h.ctx.db.select().from(webhookDeliveries).where(eq(webhookDeliveries.destinationId,otherDest.data.id))).toHaveLength(0);
-  const queued = await h.ctx.db.select().from(webhookDeliveries).where(eq(webhookDeliveries.destinationId,r.data.id)); expect(queued.map(e => e.eventStatus).sort()).toEqual(['probation','rejected']);
-  const got: string[] = [];
-  await runWebhooks(h.ctx,{send:async (_url,init) => { got.push(JSON.parse(String(init.body)).status); return new Response(null,{status:200}); }}); expect(got.sort()).toEqual(['probation','rejected']);
-  await expect(withHostStatus(h.ctx,'webhook-host',async db => { await db.update(providers).set({status:'live'}).where(eq(providers.id,'webhook-host')); throw new Error('rollback'); })).rejects.toThrow('rollback');
-  expect((await h.ctx.db.select().from(providers).where(eq(providers.id,'webhook-host')))[0].status).toBe('rejected');
-  expect(await h.ctx.db.select().from(webhookDeliveries).where(eq(webhookDeliveries.destinationId,r.data.id))).toHaveLength(2);
 });

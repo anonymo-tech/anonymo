@@ -118,10 +118,10 @@ describe("columns that look like request content or a network address", () => {
     expect(checkInventory(schema, docs).join("\n")).toContain("health.body: the review covers [type:json] but the rules flag [name:content, type:json]");
   });
 
-  test("only declared agreement evidence and jury statements hold request text; no column holds a caller network address", () => {
+  test("no column holds request text or a caller network address", () => {
     // This is the privacy invariant stated at the top of src/db/schema.ts. A column that breaks it must say so in its verdict, and
     // then this test (and the page's headline) change on purpose, in a reviewed commit.
-    expect(columnsHoldingRequestData()).toEqual(["agreement_evidence.content", "agreement_jury.statement"]);
+    expect(columnsHoldingRequestData()).toEqual([]);
   });
 });
 
@@ -129,9 +129,9 @@ describe("the page's summary claims only what the data proves", () => {
   const tables = buildInventory().postgres.tables;
   const ext: ExternalDoc = EXTERNAL;
 
-  test("the inventory names retained agreement evidence and jury answer text, and lists other exceptions exactly", () => {
+  test("the headline claims no stored prompt or answer text, and the summary lists the other exceptions exactly", () => {
     const s = summarize(tables, ext);
-    expect(s.headline).toContain("agreement_evidence.content"); expect(s.headline).toContain("agreement_jury.statement");
+    expect(s.headline).toBe("We store no prompt or answer text in our database.");
     const text = JSON.stringify(s);
     expect(text).toContain("response cache");
     expect(text).toContain("generations.attempts");
@@ -238,7 +238,7 @@ describe("Redis", () => {
       const family = families.find((f) => f.limiterPrefix === s.prefix)!;
       expect(family.holds === "address", `${s.file}: ${s.prefix}`).toBe(s.address);
     }
-    expect(families.filter((f) => f.holds === "address").length).toBeGreaterThanOrEqual(9);
+    expect(families.filter((f) => f.holds === "address").length).toBeGreaterThanOrEqual(7);
   });
 
   test("the stated window matches the code, and the lifetime is the window plus one second", () => {
@@ -322,7 +322,7 @@ describe("who reads a caller's address, and who reads a request body", () => {
 
   test("the routes that carry prompts or answers are the ones that say so", () => {
     const carry = EXTERNAL.bodyReaders.filter((r) => r.carries === "prompt-or-answer").map((r) => r.file);
-    expect(carry).toEqual(expect.arrayContaining(["src/api/chat.ts", "src/api/embeddings.ts", "src/api/anthropic.ts", "src/api/responses.ts", "src/api/mcp.ts", "src/api/rag.ts", "src/ohttp/gateway.ts", "src/gateway/cache.ts"]));
+    expect(carry).toEqual(expect.arrayContaining(["src/api/chat.ts", "src/api/anthropic.ts", "src/api/responses.ts", "src/api/mcp.ts", "src/gateway/cache.ts"]));
   });
 });
 

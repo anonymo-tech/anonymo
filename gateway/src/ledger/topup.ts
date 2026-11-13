@@ -1,7 +1,7 @@
 import { and, eq, gt, gte, isNull, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Db, Tx } from "../db/client.ts";
-import { accounts, holds, keys, keyTopups, teams } from "../db/schema.ts";
+import { accounts, holds, keys, keyTopups } from "../db/schema.ts";
 import { type Pico, usdToPico } from "../lib/money.ts";
 import { uid } from "../lib/util.ts";
 
@@ -55,8 +55,8 @@ export async function topupsThisWeek(db: Db | Tx, keyHash: string, now = new Dat
   return BigInt(r?.n ?? 0);
 }
 
-export type TopupKey = { keyHash: string; accountId: string; budget: Pico | null; budgetReset: string | null; spent: Pico; topup: unknown; disabled: boolean; expiresAt: Date | null; teamId: string | null };
-export type TopupOutcome = "added" | "skipped_balance" | "skipped_weekly" | "skipped_org_budget";
+export type TopupKey = { keyHash: string; accountId: string; budget: Pico | null; budgetReset: string | null; spent: Pico; topup: unknown; disabled: boolean; expiresAt: Date | null };
+export type TopupOutcome = "added" | "skipped_balance" | "skipped_weekly";
 export type TopupResult = { outcome: TopupOutcome; limitAfter: Pico; recorded: boolean };
 
 /**
@@ -82,7 +82,6 @@ export async function applyTopup(tx: Tx, k: TopupKey, ref: string, now = new Dat
   if (week + rule.add > rule.maxPerWeek) outcome = "skipped_weekly";
   // Never above what the account holds: the key's free allowance after the top-up must fit in the account's free credits.
   else if (after - k.spent - BigInt(inflight) > available) outcome = "skipped_balance";
-  else if (k.teamId && (await overOrgBudget(tx, k.teamId, k.keyHash, after, now))) outcome = "skipped_org_budget";
   const added = outcome === "added";
   const inserted = await tx
     .insert(keyTopups)
@@ -109,13 +108,3 @@ export async function applyTopup(tx: Tx, k: TopupKey, ref: string, now = new Dat
   return { outcome, limitAfter: added && recorded ? after : k.budget, recorded };
 }
 
-/** Whether `limit` for this key would exceed its team's org budget, counted as src/teams/org.ts allocated() does. */
-async function overOrgBudget(tx: Tx, teamId: string, keyHash: string, limit: Pico, now: Date) {
-  const [team] = await tx.select({ budget: teams.budget }).from(teams).where(eq(teams.id, teamId));
-  if (team?.budget == null) return false;
-  const [r] = await tx
-    .select({ n: sql<string>`coalesce(sum(${keys.budget}), 0)` })
-    .from(keys)
-    .where(and(eq(keys.teamId, teamId), eq(keys.disabled, false), or(isNull(keys.expiresAt), gt(keys.expiresAt, now)), ne(keys.keyHash, keyHash)));
-  return BigInt(r?.n ?? 0) + limit > team.budget;
-}

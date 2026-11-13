@@ -5,7 +5,8 @@ import { getAddress, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 import { startRouter, type Harness } from "./helpers.ts";
 import { loadConfig } from "../src/config.ts";
-import { facilitatorSellers, facilitatorSettlements, sanctionsAddresses, sanctionsMeta, sellerGasFloats } from "../src/db/schema.ts";
+import { facilitatorSellers, facilitatorSettlements, kv, sellerGasFloats } from "../src/db/schema.ts";
+import { anonymoSanctions } from "../src/anonymo/deposits/schema.ts";
 import { EIP3009_TYPES } from "../src/facilitator/verify.ts";
 import { LISTING_TYPES, listingDomain } from "../src/facilitator/discovery.ts";
 import { runAnchor } from "../src/services/anchor.ts";
@@ -313,9 +314,9 @@ describe("facilitator rate limits", () => {
 describe("facilitator fee and screening", () => {
   let h: Harness;
   beforeAll(async () => {
-    h = await startRouter({ env: facilitatorEnv({ FACILITATOR_FEE_BPS: "100", SANCTIONS_SCREENING_ENABLED: "true" }) });
-    const listDate = new Date(Date.now() - 86_400_000);
-    await h.ctx.db.insert(sanctionsMeta).values({ id: 1, listDate, sourceHash: "fixture", entryCount: 1, ignoredCount: 0, refreshedAt: new Date() });
+    h = await startRouter({ env: facilitatorEnv({ FACILITATOR_FEE_BPS: "100", ANONYMO_SANCTIONS_ENABLED: "true" }) });
+    // The OFAC list the deposit watchers use (anonymo/deposits/sanctions.ts), as its refresh job stores it.
+    await h.ctx.db.insert(kv).values({ key: "anonymo:sanctions:meta", value: { entry_count: 1 } });
   });
   afterAll(async () => h.close());
   const post = (path: string, json: unknown) => h.request(path, { method: "POST", json });
@@ -339,7 +340,7 @@ describe("facilitator fee and screening", () => {
 
   test("a sanctioned payTo cannot be listed; payers are not screened", async () => {
     const s = seller();
-    await h.ctx.db.insert(sanctionsAddresses).values({ address: s.address.toLowerCase(), listDate: new Date(Date.now() - 86_400_000), sourceHash: "fixture" });
+    await h.ctx.db.insert(anonymoSanctions).values({ address: s.address.toLowerCase(), family: "evm", listDate: new Date(Date.now() - 86_400_000) });
     const message = { payTo: s.address, resource: "https://listed.example/x", priceHint: 0n, outputSchema: "", tags: [] as string[], listed: true, issuedAt: now() };
     const signature = await s.signTypedData({ domain: listingDomain(4663), types: LISTING_TYPES, primaryType: "SellerListing", message });
     const r = await post("/facilitator/sellers", { ...message, priceHint: "0", issuedAt: Number(message.issuedAt), signature });

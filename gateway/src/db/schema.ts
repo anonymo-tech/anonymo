@@ -1,7 +1,5 @@
-export * from "./low-balance.ts"; // B119
 export * from "../anonymo/abuse/schema.ts"; // Anonymo WS02: abuse inbox, hash blocks, preservation vault
 export * from "../anonymo/media/schema.ts"; // WS06 media_jobs
-export * from "../network/bond-schema.ts";
 export * from "../anonymo/refusal/schema.ts"; // Anonymo WS03: refusal_stats, refusal_key_settings
 export * from "./anonymo-receipts.ts"; // WS09: Anonymo receipts and hourly roots
 import { sql } from "drizzle-orm";
@@ -32,9 +30,7 @@ export const accounts = pgTable(
   "accounts",
   {
     id: text("id").primaryKey(),
-    lowBalancePico: money("low_balance_pico"), lowBalanceAlerted: boolean("low_balance_alerted").notNull().default(false), // B119
     inferenceKeysDefault: boolean("inference_keys_default").notNull().default(false), // ZK6: new child-key default
-    lastSentWeek: text("last_sent_week"), // B120: ISO week of the account's Telegram summary
     kind: text("kind").notNull().default("key"), // key | wallet
     wallet: text("wallet"),
     balance: money("balance").notNull().default(sql`0`), // settled ledger sum (denormalized, trigger-checked)
@@ -42,68 +38,6 @@ export const accounts = pgTable(
     createdAt: ts("created_at").notNull().defaultNow(),
   },
   (t) => [uniqueIndex("accounts_wallet_uq").on(t.wallet)],
-);
-
-// Teams are anonymous organisations: an owning account, optionally bound to a wallet or a Safe (EIP-1271), members who
-// join by passkey or wallet, roles, an org budget and an append-only, hash-chained audit log (src/teams/).
-export const teams = pgTable("teams", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  ownerAccount: text("owner_account").notNull(),
-  ownerAddress: text("owner_address"), // lowercase 0x address of the owning wallet or Safe, once proven by signature
-  ownerKind: text("owner_kind").notNull().default("account"), // account | eoa | contract
-  ownerVerifiedAt: ts("owner_verified_at"),
-  budget: money("budget"), // org budget (pico): cap on the sum of key limits in the team; null = no cap
-  createdAt: ts("created_at").notNull().defaultNow(),
-});
-
-export const teamMembers = pgTable(
-  "team_members",
-  {
-    teamId: text("team_id").notNull(),
-    keyHash: text("key_hash").notNull(),
-    role: text("role").notNull().default("member"), // owner | admin | dev | viewer | agent (member = dev, legacy)
-    principalId: text("principal_id"), // the passkey or wallet member the key was issued to at sign-in
-    createdAt: ts("created_at").notNull().defaultNow(),
-  },
-  (t) => [primaryKey({ columns: [t.teamId, t.keyHash] })],
-);
-
-// Members of an organisation who sign in without an API key: a WebAuthn passkey (public key only) or a wallet address.
-export const teamPrincipals = pgTable(
-  "team_principals",
-  {
-    id: text("id").primaryKey(), // tp_...
-    teamId: text("team_id").notNull(),
-    kind: text("kind").notNull(), // passkey | wallet
-    subject: text("subject").notNull(), // passkey: credential id (base64url); wallet: lowercase address
-    publicKey: text("public_key"), // passkey: the COSE public key, base64url
-    alg: integer("alg"), // passkey: COSE algorithm (-7 ES256, -8 EdDSA, -257 RS256)
-    signCount: bigint("sign_count", { mode: "number" }).notNull().default(0),
-    role: text("role").notNull(), // admin | dev | viewer | agent
-    disabled: boolean("disabled").notNull().default(false),
-    createdAt: ts("created_at").notNull().defaultNow(),
-    lastUsed: ts("last_used"),
-  },
-  (t) => [uniqueIndex("team_principals_team_kind_subject_uq").on(t.teamId, t.kind, t.subject)],
-);
-
-// The organisation's audit log: append-only (a trigger rejects UPDATE and DELETE), one hash chain per team:
-// hash = sha256(prev_hash bytes || canonical JSON of {team, seq, at, actor, action, target, detail}).
-export const teamAudit = pgTable(
-  "team_audit",
-  {
-    teamId: text("team_id").notNull(),
-    seq: integer("seq").notNull(), // 1, 2, 3, ... per team
-    at: ts("at").notNull(),
-    actor: text("actor").notNull(), // key:<16 hex> | passkey:<principal id> | wallet:<address>
-    action: text("action").notNull(),
-    target: text("target").notNull(),
-    detail: jsonb("detail").notNull(),
-    prevHash: text("prev_hash").notNull(),
-    hash: text("hash").notNull(),
-  },
-  (t) => [primaryKey({ columns: [t.teamId, t.seq] })],
 );
 
 export const keys = pgTable(
@@ -123,9 +57,7 @@ export const keys = pgTable(
     spentTotal: money("spent_total").notNull().default(sql`0`),
     rpm: integer("rpm"),
     tpm: integer("tpm"),
-    teamId: text("team_id"),
     allowedModels: text("allowed_models").array(),
-    payWithDefault: text("pay_with_default"),
     scope: text("scope"), // ZK6: null keeps existing account access; inference restricts routes
     includeByokInLimit: boolean("include_byok_in_limit").notNull().default(false), // ZK6: compatibility selection
     management: boolean("management").notNull().default(false),
@@ -184,7 +116,7 @@ export const ledger = pgTable(
     accountId: text("account_id").notNull(),
     keyHash: text("key_hash"),
     amount: money("amount").notNull(),
-    kind: text("kind").notNull(), // deposit | credit | usage | refund | paywith | change | adjustment | withdrawal_lock | withdrawal | blind_purchase
+    kind: text("kind").notNull(), // deposit | credit | usage | refund | change | adjustment | withdrawal_lock | withdrawal (historic rows may carry paywith or blind_purchase)
     ref: text("ref").notNull(),
     generationId: text("generation_id"),
     description: text("description").notNull().default(""),
@@ -210,7 +142,6 @@ export const holds = pgTable(
 );
 
 export const providers = pgTable("providers", {
-  networkHost: boolean("network_host").notNull().default(false), networkModels: text("network_models").array().notNull().default(sql`'{}'::text[]`), networkReasons: jsonb("network_reasons").$type<string[]>().notNull().default([]),
   id: text("id").primaryKey(), // slug, e.g. "deepinfra"
   name: text("name").notNull(),
   baseUrl: text("base_url").notNull(),
@@ -239,7 +170,7 @@ export const providers = pgTable("providers", {
   contact: text("contact"),
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
-}, (t) => [uniqueIndex("providers_network_wallet_endpoint_uq").on(t.operator, t.baseUrl).where(sql`${t.networkHost} = true`)]);
+});
 
 export const models = pgTable("models", {
   id: text("id").primaryKey(), // author/slug
@@ -360,7 +291,7 @@ export const generations = pgTable(
     royalty: money("royalty").notNull().default(sql`0`),
     margin: money("margin").notNull().default(sql`0`),
     cacheDiscount: money("cache_discount").notNull().default(sql`0`),
-    mode: text("mode").notNull(), // prepaid | per_call | paywith | byok | cache | blind
+    mode: text("mode").notNull(), // prepaid | per_call | byok | cache (historic rows may carry paywith or blind)
     latencyMs: integer("latency_ms"),
     generationTimeMs: integer("generation_time_ms"),
     finishReason: text("finish_reason"),
@@ -488,51 +419,6 @@ export const x402PaidResults = pgTable(
   },
   (t) => [primaryKey({ columns: [t.payer, t.nonce] }), index("x402_paid_results_created_idx").on(t.createdAt)],
 );
-
-export const paywithSessions = pgTable("paywith_sessions", {
-  keyHash: text("key_hash").primaryKey(), // chain key hash
-  wallet: text("wallet").notNull(),
-  token: text("token").notNull(),
-  symbol: text("symbol").notNull(),
-  capRawDay: bigint("cap_raw_day", { mode: "bigint" }).notNull(),
-  spentRawToday: bigint("spent_raw_today", { mode: "bigint" }).notNull().default(sql`0`),
-  dayStart: ts("day_start"),
-  active: boolean("active").notNull().default(true),
-  openedTx: text("opened_tx"),
-  updatedAt: ts("updated_at").notNull().defaultNow(),
-});
-
-export const paywithDebts = pgTable(
-  "paywith_debts",
-  {
-    id: text("id").primaryKey(),
-    chainKeyHash: text("chain_key_hash").notNull(),
-    accountId: text("account_id").notNull(),
-    generationId: text("generation_id").notNull(),
-    token: text("token").notNull(),
-    amount: money("amount").notNull(),
-    rawEstimate: bigint("raw_estimate", { mode: "bigint" }),
-    fairPrice18: text("fair_price18"),
-    swapId: text("swap_id"),
-    rawAllocated: bigint("raw_allocated", { mode: "bigint" }),
-    createdAt: ts("created_at").notNull().defaultNow(),
-  },
-  (t) => [index("paywith_debts_open_idx").on(t.chainKeyHash, t.swapId)],
-);
-
-export const paywithSwaps = pgTable("paywith_swaps", {
-  id: text("id").primaryKey(),
-  keyHash: text("key_hash").notNull(),
-  token: text("token").notNull(),
-  rawSpent: bigint("raw_spent", { mode: "bigint" }),
-  fairPrice: text("fair_price"),
-  usdgOut: bigint("usdg_out", { mode: "bigint" }).notNull(),
-  tx: text("tx"),
-  status: text("status").notNull().default("pending"), // pending | submitted | confirmed | failed
-  error: text("error"),
-  ts: ts("ts").notNull().defaultNow(),
-  allocations: jsonb("allocations"),
-});
 
 export const settlements = pgTable(
   "settlements",
@@ -721,46 +607,9 @@ export const measurementBundles = pgTable(
 
 export const kv = pgTable("kv", {
   key: text("key").primaryKey(),
-  weeklySummaryOptedIn: boolean("weekly_summary_opted_in"), // B120: only Telegram link rows
   value: jsonb("value").notNull(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
-
-// Stock Token transfers into the escrow wallet (PAYMENTS_MODE=escrow). One row per Transfer log;
-// the ledger credit uses ref `escrow:<tx>:<logIndex>`, so a deposit can never be credited twice, and a
-// reversal (the transfer left the canonical chain after crediting) uses `escrow-reversal:<tx>:<logIndex>`.
-// raw_amount is numeric: 18-decimal token amounts overflow bigint above ~9.2 whole tokens.
-export const escrowDeposits = pgTable(
-  "escrow_deposits",
-  {
-    id: text("id").primaryKey(), // <tx>:<logIndex>
-    txHash: text("tx_hash").notNull(),
-    logIndex: integer("log_index").notNull(),
-    blockNumber: bigint("block_number", { mode: "bigint" }).notNull(),
-    token: text("token").notNull(),
-    symbol: text("symbol").notNull(),
-    fromAddress: text("from_address").notNull(),
-    rawAmount: numeric("raw_amount", { precision: 78, scale: 0 }).notNull(),
-    // pending_finality: seen above the finality point, not credited yet and may still disappear
-    // pending: at or below the finality point, waiting for a price and the pre-credit canonical check
-    // credited | orphaned (left the canonical chain before crediting; never credited)
-    // reversed (left the canonical chain after crediting; a compensating debit was posted)
-    status: text("status").notNull().default("pending"),
-    blockHash: text("block_hash"), // hash of block_number when recorded; the credit is checked against it
-    accountId: text("account_id"),
-    price18: text("price18"), // USD per whole token, 18 decimals, as read from the feed
-    priceUpdatedAt: ts("price_updated_at"),
-    credited: money("credited"), // pico-USD after the haircut
-    error: text("error"),
-    createdAt: ts("created_at").notNull().defaultNow(),
-    creditedAt: ts("credited_at"),
-    checkedAt: ts("checked_at"), // last time a credit was re-verified against the canonical chain
-    reversedAt: ts("reversed_at"),
-    reviewReason: text("review_reason"), // set when an operator must look (a reversal, or an orphan after finality)
-    reviewedAt: ts("reviewed_at"), // set by the operator once reconciled; clears the readiness alert
-  },
-  (t) => [index("escrow_deposits_from_idx").on(t.fromAddress), index("escrow_deposits_status_idx").on(t.status)],
-);
 
 // ---- Workspace features (settings and billing data only; the privacy invariant above still holds) ----
 
@@ -860,47 +709,6 @@ export const providerDisclosure = pgTable("provider_disclosure", {
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
-// ---- Blind tokens (Privacy Pass type 0x0002; ANONYMO_FEATURE_BLIND) ----------------------------------
-// Nothing here links a buyer to a token: purchases store per-key counts only, and the nullifier table holds
-// only a hash of a token, which the issuer cannot connect to the blinded request it signed.
-
-// Issuer keys, one per (epoch, denomination). The private half is AES-GCM encrypted with APP_SECRET and is
-// wiped when the epoch stops issuing; the public half stays so old tokens remain verifiable.
-export const blindKeys = pgTable(
-  "blind_keys",
-  {
-    keyId: text("key_id").primaryKey(), // token_key_id: hex SHA-256 of the RFC 9578 SPKI
-    epoch: integer("epoch").notNull(),
-    denomination: integer("denomination").notNull(), // token-units the key's tokens are worth: 1000 | 10000 | 100000
-    unitPrice: money("unit_price").notNull(), // pico-USD per token-unit, fixed when the key is created: a token's value never changes
-    spki: text("spki").notNull(), // base64url RFC 9578 SubjectPublicKeyInfo
-    privateEnc: text("private_enc"), // PKCS#8, encrypted; null once the key no longer issues
-    validFrom: ts("valid_from").notNull(),
-    issueUntil: ts("issue_until").notNull(),
-    redeemUntil: ts("redeem_until").notNull(),
-    revokedAt: ts("revoked_at"),
-    issued: bigint("issued", { mode: "number" }).notNull().default(0), // tokens signed: a count, nothing else
-    createdAt: ts("created_at").notNull().defaultNow(),
-  },
-  (t) => [uniqueIndex("blind_keys_epoch_denomination_uq").on(t.epoch, t.denomination)],
-);
-
-// Spent tokens. The primary key is the unique constraint that stops a double spend: a token is reserved by
-// inserting its nullifier (SHA-256 of the token) before the request runs, and confirmed after it is served.
-// A request that fails before anything is served deletes its reservation so the token can be used again.
-export const blindNullifiers = pgTable(
-  "blind_nullifiers",
-  {
-    nullifier: text("nullifier").primaryKey(),
-    keyId: text("key_id").notNull(),
-    status: text("status").notNull().default("reserved"), // reserved | spent
-    reservedAt: ts("reserved_at").notNull().defaultNow(),
-    spentAt: ts("spent_at"),
-    generationId: text("generation_id"),
-  },
-  (t) => [index("blind_nullifiers_key_idx").on(t.keyId)],
-);
-
 // ---- The Lane: catalog variants, day-zero candidates, creator claims -----------------------------------
 
 // Per-model metadata for open-weights variants. A model with no row is "mainstream" (unless its id says
@@ -987,137 +795,6 @@ export const laneClaims = pgTable(
     onchainTx: text("onchain_tx"),
   },
   (t) => [index("lane_claims_model_idx").on(t.modelId, t.createdAt)],
-);
-
-// ---- Oblivious HTTP gateway keys (OHTTP_ENABLED) --------------------------------------------------------
-// One HPKE key per epoch. The public half (and its RFC 9458 key configuration) stays forever, so the published
-// key history never loses an entry; the private half is AES-GCM encrypted with APP_SECRET and destroyed when
-// the epoch's acceptance window ends, after which recorded traffic for that epoch can no longer be opened.
-export const ohttpKeys = pgTable(
-  "ohttp_keys",
-  {
-    epoch: integer("epoch").primaryKey(),
-    keyId: integer("key_id").notNull(), // the 8-bit key identifier of the key configuration: epoch mod 256
-    kemId: integer("kem_id").notNull(),
-    publicKey: text("public_key").notNull(), // base64url, raw 32 bytes
-    config: text("config").notNull(), // base64url, the encoded key configuration (RFC 9458 section 3.1)
-    configSha256: text("config_sha256").notNull(),
-    privateEnc: text("private_enc"), // raw private key, encrypted; null once destroyed
-    validFrom: ts("valid_from").notNull(),
-    acceptUntil: ts("accept_until").notNull(), // requests to this key are opened until here
-    revokedAt: ts("revoked_at"),
-    createdAt: ts("created_at").notNull().defaultNow(),
-  },
-  (t) => [index("ohttp_keys_key_id_idx").on(t.keyId)],
-);
-
-// ---- Per-host anchoring of enclave receipts (HOST_ANCHOR_ENABLED) ----------------------------------------
-// services/host-anchor.ts collects each attested host's sidecar receipt leaves from its leaf feed, keeps only those
-// whose signature verifies under the receipt key the host's router-verified attestation binds, and roots them: one
-// root per host, attestation reference and interval. A leaf row holds the leaf hash and the receipt id and time,
-// never the receipt's hashes or usage.
-export const hostAnchors = pgTable(
-  "host_anchors",
-  {
-    id: serial("id").primaryKey(),
-    providerId: text("provider_id").notNull(),
-    attestationRef: text("attestation_ref").notNull(), // 64 hex: sha256 of the boot quote the router verified
-    receiptKeyId: text("receipt_key_id").notNull(),
-    receiptPublicKey: text("receipt_public_key").notNull(), // raw Ed25519 key (hex) the quote's bindings commit to
-    root: text("root").notNull(),
-    fromTs: ts("from_ts").notNull(), // collected in [from_ts, to_ts)
-    toTs: ts("to_ts").notNull(),
-    count: integer("count").notNull(),
-    status: text("status").notNull().default("pending"), // pending | confirmed | local
-    txHash: text("tx_hash"),
-    blockNumber: bigint("block_number", { mode: "number" }),
-    chainIndex: integer("chain_index"), // index in ReceiptAnchor's attested anchors, once posted
-    createdAt: ts("created_at").notNull().defaultNow(),
-  },
-  (t) => [index("host_anchors_provider_idx").on(t.providerId, t.toTs), index("host_anchors_status_idx").on(t.status)],
-);
-
-export const hostAnchorLeaves = pgTable(
-  "host_anchor_leaves",
-  {
-    providerId: text("provider_id").notNull(),
-    leaf: text("leaf").notNull(),
-    anchorId: integer("anchor_id").notNull(),
-    leafIndex: integer("leaf_index").notNull(),
-    receiptId: text("receipt_id").notNull(),
-    receiptTs: ts("receipt_ts").notNull(), // the time the receipt itself states
-    collectedAt: ts("collected_at").notNull().defaultNow(),
-  },
-  (t) => [primaryKey({ columns: [t.providerId, t.leaf] }), index("host_anchor_leaves_leaf_idx").on(t.leaf), uniqueIndex("host_anchor_leaves_position_idx").on(t.anchorId, t.leafIndex)],
-);
-
-// ---- Transparency log of keys and configurations (TLOG_ENABLED; src/tlog) ------------------------------------------
-// An append-only RFC 6962 tree in the C2SP tlog-tiles layout. Entries are never updated or deleted: `idx` is the leaf
-// index, `entry` the exact bytes that were hashed. A checkpoint is written once per tree size; witnesses add
-// cosignatures to it.
-export const tlogEntries = pgTable(
-  "tlog_entries",
-  {
-    idx: bigint("idx", { mode: "number" }).primaryKey(),
-    kind: text("kind").notNull(), // receipt_key | ohttp_key_config | blind_issuer_key | measurement_bundle | attestation_binding
-    sha256: text("sha256").notNull(), // hex digest of the key or configuration the entry names
-    subject: text("subject").notNull(), // the key id, epoch or provider the entry is about
-    entry: text("entry").notNull(), // canonical JSON; the leaf is SHA-256(0x00 || these UTF-8 bytes)
-    leafHash: text("leaf_hash").notNull(),
-    createdAt: ts("created_at").notNull().defaultNow(),
-  },
-  (t) => [uniqueIndex("tlog_entries_kind_sha256_uq").on(t.kind, t.sha256), index("tlog_entries_subject_idx").on(t.kind, t.subject)],
-);
-
-export const tlogCheckpoints = pgTable("tlog_checkpoints", {
-  size: bigint("size", { mode: "number" }).primaryKey(),
-  rootHash: text("root_hash").notNull(), // hex
-  checkpoint: text("checkpoint").notNull(), // the checkpoint text: origin, size, base64 root hash
-  signature: text("signature").notNull(), // the log's signature line over the body
-  createdAt: ts("created_at").notNull().defaultNow(),
-});
-
-export const tlogCosignatures = pgTable(
-  "tlog_cosignatures",
-  {
-    size: bigint("size", { mode: "number" }).notNull(),
-    witness: text("witness").notNull(), // the witness's key name
-    keyId: text("key_id").notNull(), // hex of the 4-byte signed-note key id
-    timestamp: bigint("timestamp", { mode: "number" }).notNull(), // cosignature/v1 time, seconds
-    line: text("line").notNull(), // the signature line as the witness sent it
-    createdAt: ts("created_at").notNull().defaultNow(),
-    updatedAt: ts("updated_at").notNull().defaultNow(),
-  },
-  (t) => [primaryKey({ columns: [t.size, t.witness, t.keyId] })],
-);
-
-// Public-log anchoring of checkpoints (TLOG_REKOR_ENABLED; src/tlog/rekor.ts). One row per Rekor entry that commits to a
-// checkpoint: a hashedrekord over the signed checkpoint note, signed with TLOG_REKOR_SIGNING_KEY. A row is `pending` until
-// the entry's inclusion proof is in hand and verifies, then `verified`; only verified rows are served.
-export const tlogRekorAnchors = pgTable(
-  "tlog_rekor_anchors",
-  {
-    id: serial("id").primaryKey(),
-    size: bigint("size", { mode: "number" }).notNull(), // the checkpoint's tree size
-    rootHash: text("root_hash").notNull(), // hex
-    note: text("note").notNull(), // the artifact: checkpoint text, blank line, the log's own signature line
-    artifactSha256: text("artifact_sha256").notNull(), // hex; the hash the Rekor entry holds
-    keyId: text("key_id").notNull(), // sha256 of the anchoring key's SubjectPublicKeyInfo, hex
-    rekorUrl: text("rekor_url").notNull(),
-    uuid: text("uuid").notNull(),
-    status: text("status").notNull(), // pending | verified
-    logIndex: bigint("log_index", { mode: "number" }),
-    integratedTime: bigint("integrated_time", { mode: "number" }), // seconds
-    logId: text("log_id"),
-    entryBase64: text("entry_base64"), // the entry body as Rekor returned it (base64)
-    inclusionProof: jsonb("inclusion_proof").$type<{ logIndex: number; treeSize: number; rootHash: string; hashes: string[]; checkpoint: string | null }>(),
-    signedEntryTimestamp: text("signed_entry_timestamp"),
-    checkpointVerified: boolean("checkpoint_verified").notNull().default(false), // Rekor's checkpoint signature, against REKOR_PUBLIC_KEY
-    setVerified: boolean("set_verified").notNull().default(false), // the signed entry timestamp, against REKOR_PUBLIC_KEY
-    createdAt: ts("created_at").notNull().defaultNow(),
-    verifiedAt: ts("verified_at"),
-  },
-  (t) => [uniqueIndex("tlog_rekor_anchors_uuid_uq").on(t.rekorUrl, t.uuid), index("tlog_rekor_anchors_status_size_idx").on(t.status, t.size)],
 );
 
 // Batch API (src/services/batches.ts): one row per batch and one per line, with statuses, counts, costs and generation ids
@@ -1269,71 +946,5 @@ export const characterMemory = pgTable(
   (t) => [index("character_memory_account_scope_idx").on(t.accountId, t.scope)],
 );
 
-// Secured Skills Hub (src/skills/): agent skill folders (SKILL.md plus scripts and resources) imported from a repository, an
-// uploaded archive or a mirrored registry, stored as one canonical tar with its sha256 and the static scan report.
-export const skills = pgTable(
-  "skills",
-  {
-    id: text("id").primaryKey(), // sk_ + the first 24 hex characters of content_hash
-    name: text("name").notNull(),
-    slug: text("slug").notNull(),
-    version: text("version").notNull(),
-    description: text("description").notNull(),
-    author: text("author").notNull(), // as written in SKILL.md frontmatter
-    accountId: text("account_id"), // the publishing account, paid the author share of installs; null for a mirrored skill
-    createdBy: text("created_by"), // key hash that imported it; null for the mirror job
-    source: jsonb("source").notNull(), // { kind: upload | git | mirror, repo?, ref?, commit?, path?, registry? }
-    files: jsonb("files").notNull(), // [{ path, type, mode, size, sha256, target? }] in canonical order
-    contentHash: text("tar_sha256").notNull(), // content hash: sha256 of the canonical tar
-    archive: text("archive").notNull(), // base64 of the gzipped canonical tar
-    size: integer("size").notNull(),
-    fileCount: integer("file_count").notNull(),
-    level: text("level").notNull(), // trusted | caution | dangerous
-    score: integer("score").notNull(),
-    report: jsonb("report").notNull(), // the scan report (src/skills/scanner.ts)
-    priceUsdg: bigint("price_usdg", { mode: "bigint" }).notNull().default(sql`0`), // USDG base units (1e-6); 0 = free
-    revokedAt: ts("revoked_at"),
-    revokedReason: text("revoked_reason"),
-    createdAt: ts("created_at").notNull().defaultNow(),
-    updatedAt: ts("updated_at").notNull().defaultNow(),
-  },
-  (t) => [uniqueIndex("skills_tar_sha256_uq").on(t.contentHash), index("skills_slug_idx").on(t.slug), index("skills_level_idx").on(t.level)],
-);
-
-export const skillInstalls = pgTable(
-  "skill_installs",
-  {
-    id: text("id").primaryKey(),
-    skillId: text("skill_id").notNull(),
-    accountId: text("account_id").notNull(), // the installer
-    keyHash: text("key_hash"),
-    priceUsdg: bigint("price_usdg", { mode: "bigint" }).notNull(),
-    authorShare: money("author_share").notNull(), // pico-USD credited to the author
-    fee: money("fee").notNull(), // pico-USD network fee
-    receipt: jsonb("receipt").notNull(), // { payload, signature: { alg, key_id, sig } }
-    createdAt: ts("created_at").notNull().defaultNow(),
-  },
-  (t) => [uniqueIndex("skill_installs_skill_account_uq").on(t.skillId, t.accountId), index("skill_installs_account_idx").on(t.accountId)],
-);
-
-export { agentPolicies, agentPolicyEvents, playbooks, playbookChanges } from "../agents/schema.ts";
-export { agentActionDecisions } from "../agents/guard-schema.ts"; // V98
-export { agentPayments } from "../agents/pay-schema.ts"; // Pay another agent
-export { agentApprovals } from "../agents/approval-schema.ts";
-export { networkWaitlist } from "../network/schema.ts";
-export { sanctionsAddresses, sanctionsMeta } from "../network/schema.ts";
-export { hostPolicies } from "../network/schema.ts";
-
-export { networkFeeLedger, networkReceiptLinks, networkPayoutDispatch } from "../network/payout-schema.ts";
-export { agentLedgerLinks } from "../agents/ledger-schema.ts";
-
-export { agentProfiles } from "../agents/profile-schema.ts";
-export * from "../agreements/schema.ts";
-
 export { webhookDestinations, webhookDeliveries } from "../webhooks/schema.ts"; // V86: signed destinations.
 export { facilitatorSellers, facilitatorSettlements, sellerGasFloats } from "../facilitator/schema.ts"; // v6 F: hosted x402 facilitator
-export { makegoodRefunds, makegoodPayouts } from "../services/makegood-schema.ts"; // V6 R: make-good refunds.
-
-export { toolListings, toolCalls, toolCanaryRuns } from "../tools/schema.ts"; // v6 T: paid tool market.
-export { agentIdentities, agentFeedback, agentLiveness, agentTrackRecords } from "../identity/schema.ts"; // v6 I: receipt-backed identity and reputation.
-export { commerceTransfers } from "../commerce/schema.ts"; // v6 L: public USDG transfer index for the commerce ledger.

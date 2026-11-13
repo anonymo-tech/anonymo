@@ -61,8 +61,8 @@ describe("disclosure profiles and classes", () => {
     expect(resolveDisclosureRequest({ disclosure: "none" }, { disclosureMax: "any" })).toEqual({ max: "none", lane: "public" }); // never relaxed
     expect(resolveDisclosureRequest({ lane: "attested" }, {})).toEqual({ max: "none", lane: "attested" });
     expect(resolveDisclosureRequest({}, { lane: " ATTESTED " })).toEqual({ max: "none", lane: "attested" });
-    expect(() => resolveDisclosureRequest({ lane: "unlinkable" }, {})).toThrow(/not available yet/);
-    expect(() => resolveDisclosureRequest({ lane: "public" }, { lane: "unlinkable" })).toThrow(/not available yet/);
+    expect(() => resolveDisclosureRequest({ lane: "unlinkable" }, {})).toThrow(/is not available on this router/);
+    expect(() => resolveDisclosureRequest({ lane: "public" }, { lane: "unlinkable" })).toThrow(/is not available on this router/);
     expect(() => resolveDisclosureRequest({ disclosure: "sometimes" }, {})).toThrow(/must be one of/);
     expect(() => resolveDisclosureRequest({}, { lane: "fast" })).toThrow(/must be one of/);
   });
@@ -436,29 +436,6 @@ describe("disclosure in requests, headers and receipts", () => {
     expect((await r.json()).provider).toBe("Enclave");
   });
 
-  test("embeddings honour the same options, headers and receipt fields", async () => {
-    const embed = (body: Record<string, unknown> = {}, headers: Record<string, string> = {}) =>
-      h.request("/api/v1/embeddings", { method: "POST", headers: { ...auth.current, ...headers }, json: { model: EMBED, input: ["a", "bb"], ...body } });
-    const plain = await embed();
-    expect(plain.status).toBe(200);
-    expect(plain.headers.get("x-anonymo-lane")).toBe("public");
-    const strict = await embed({ provider: { disclosure: "none" } });
-    expect(strict.status).toBe(200);
-    const j = await strict.json();
-    expect(j.receipt.payload).toMatchObject({ disclosure: "attested", lane: "public" });
-    expect(strict.headers.get("x-anonymo-disclosure")).toBe("attested");
-    expect((await embed({}, { "x-anonymo-lane": "attested" })).status).toBe(200);
-    const refused = await embed({ provider: { disclosure: "none", ignore: ["enclave"] } });
-    expect(refused.status).toBe(409); // with the only compliant provider ignored, the ceiling leaves nothing (no fallback to the others)
-    await setStale();
-    const lapsed = await embed({ provider: { disclosure: "none" } });
-    expect(lapsed.status).toBe(409);
-    expect((await lapsed.json()).error.type).toBe("disclosure_unavailable");
-    await runAttestor(h.ctx);
-    const unl = await embed({ provider: { lane: "unlinkable" } });
-    expect(unl.status).toBe(501);
-  });
-
   test("a response cache never serves or stores a request that carries a ceiling", async () => {
     const cache = { cache: { mode: "exact" }, temperature: 0, messages: [{ role: "user", content: "cache me under a ceiling" }] };
     const a = await chat({ ...cache, provider: { disclosure: "none" } });
@@ -490,7 +467,7 @@ describe("unlinkable lane", () => {
       expect(r.status).toBe(501);
       const j = await r.json();
       expect(j.error.type).toBe("lane_not_available");
-      expect(j.error.message).toMatch(/not available yet/);
+      expect(j.error.message).toMatch(/is not available on this router/);
       expect(j.error.metadata.available_lanes).toEqual(["public", "attested"]);
     }
     expect(await balance()).toBe(before);

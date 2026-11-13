@@ -187,21 +187,6 @@ describe("x402 (exact scheme, USDG on Robinhood Chain)", () => {
     expect((await bad.json()).error.type).toBe("invalid_payment");
   });
 
-  test("embeddings: 402 with x402 requirements, then a paid call with a receipt", async () => {
-    const { json, req, body } = await unpaid("/api/v1/embeddings", { model: "acme/embed-small", input: ["pay per embedding"] });
-    expect(body.x402Version).toBe(1);
-    expect(req.resource).toBe(`${h.ctx.cfg.publicUrl}/api/v1/embeddings`);
-    const pay = await xPayment(req);
-    const r = await send(json, pay.header, "/api/v1/embeddings");
-    expect(r.status).toBe(200);
-    const settled = h.chain.x402Relays.at(-1)!;
-    expect(JSON.parse(Buffer.from(r.headers.get("x-payment-response")!, "base64").toString())).toMatchObject({ success: true, transaction: settled.hash, payer: pay.signer.address.toLowerCase() });
-    const j = await r.json();
-    expect(j.data.length).toBeGreaterThan(0);
-    expect(j.receipt.payload).toMatchObject({ mode: "per_call", payment_tx: settled.hash, payer: pay.signer.address.toLowerCase() });
-    // Replaying the payment on embeddings is refused too.
-    expect((await send(json, pay.header, "/api/v1/embeddings")).status).toBe(402);
-  });
 });
 
 describe("x402 v2 (PAYMENT-SIGNATURE, PAYMENT-REQUIRED, PAYMENT-RESPONSE)", () => {
@@ -296,12 +281,7 @@ describe("x402 v2 (PAYMENT-SIGNATURE, PAYMENT-REQUIRED, PAYMENT-RESPONSE)", () =
     expect(h.chain.x402Relays.some((x) => [under, elsewhere, failing].some((p) => p.authorization.nonce === x.nonce))).toBe(false);
   });
 
-  test("embeddings and a streamed chat pay with PAYMENT-SIGNATURE too", async () => {
-    const emb = await ask("/api/v1/embeddings", { model: "acme/embed-small", input: ["v2 vectors"] });
-    expect(emb.required.resource.url).toBe(`${h.ctx.cfg.publicUrl}/api/v1/embeddings`);
-    const e = await sign(emb.json, (await v2Payment(emb.required)).header, "/api/v1/embeddings");
-    expect(e.status).toBe(200);
-    expect(unb64(e.headers.get("payment-response")).success).toBe(true);
+  test("a streamed chat pays with PAYMENT-SIGNATURE too", async () => {
     const streamed = await ask(CHAT, chatBody("v2 stream", { stream: true }));
     const s = await sign(streamed.json, (await v2Payment(streamed.required)).header);
     expect(s.status).toBe(200);

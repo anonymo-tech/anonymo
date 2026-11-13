@@ -66,7 +66,7 @@ describe("private lanes publish noisy counters only", () => {
     }
     own.t += HOUR;
     const [hour] = s.document().hours;
-    expect(hour.counts!.requests).toEqual({ attested: 1, unlinkable: 0, other: 0 });
+    expect(hour.counts!.requests).toEqual({ attested: 1, other: 0 });
     expect(Object.values(hour.counts!.blocked).reduce((a, b) => a + b, 0)).toBe(0); // the first record won
     expect(privateLaneStats(ctx)).toBe(s);
   });
@@ -77,7 +77,7 @@ describe("private lanes publish noisy counters only", () => {
     expect((await r.json()).error.type).toBe("no_attested_endpoint");
     const now = (await (await h.request("/api/v1/stats")).json()).data;
     expect(now.hours).toEqual([]);
-    expect(now.lanes).toEqual(["attested", "unlinkable"]);
+    expect(now.lanes).toEqual(["attested"]);
     clock.t += HOUR;
     const res = await h.request("/api/v1/stats");
     expect(res.headers.get("cache-control")).toBe("no-store");
@@ -95,7 +95,7 @@ describe("private lanes publish noisy counters only", () => {
     const status = async () => (await (await h.request("/api/v1/status")).json()).data.launch;
     const before = await status();
     expect(before.tokens_24h).toBeGreaterThan(0);
-    expect((await (await h.request("/api/v1/status")).json()).data.private_lanes).toMatchObject({ lanes: ["attested", "unlinkable"], stats: "/api/v1/stats" });
+    expect((await (await h.request("/api/v1/status")).json()).data.private_lanes).toMatchObject({ lanes: ["attested"], stats: "/api/v1/stats" });
     const ranked = async () => (await (await h.request("/api/v1/rankings?period=day")).json()).data.models.reduce((a: number, m: { requests: number }) => a + m.requests, 0);
     const rankedBefore = await ranked();
     expect(rankedBefore).toBeGreaterThan(0);

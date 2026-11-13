@@ -21,7 +21,6 @@ import {
   type RouteConfig,
 } from "../routing/saved-routes.ts";
 import { requireKey, requireRole, type Role } from "./auth.ts";
-import { actorOf, auditAccount } from "../teams/audit.ts";
 import { readJson } from "./common.ts";
 import { servedDisclosure } from "./disclosure.ts";
 import { offerEligible } from "./lane.ts";
@@ -132,7 +131,6 @@ export function savedRoutesRoutes(app: Hono, ctx: Ctx) {
       return inserted;
     });
     // Routes are account-wide, so every team of the account records the change (slug and lane, not the description).
-    await auditAccount(ctx.db, key.accountId, await actorOf(ctx.db, key), "route.create", ROUTE_PREFIX + row.slug, { lane: (row.config as RouteConfig).provider?.lane ?? null });
     return c.json({ data: routeJson(row) }, 201);
   });
 
@@ -175,11 +173,6 @@ export function savedRoutesRoutes(app: Hono, ctx: Ctx) {
         .returning();
       return updated;
     });
-    await auditAccount(ctx.db, key.accountId, await actorOf(ctx.db, key), "route.update", ROUTE_PREFIX + row.slug, {
-      fields: Object.keys(v).sort(),
-      ...(slug !== row.slug ? { previous: ROUTE_PREFIX + slug } : {}),
-      lane: (row.config as RouteConfig).provider?.lane ?? null,
-    });
     return c.json({ data: routeJson(row) });
   });
 
@@ -192,7 +185,6 @@ export function savedRoutesRoutes(app: Hono, ctx: Ctx) {
       .where(and(eq(savedRoutes.accountId, key.accountId), eq(savedRoutes.slug, slug)))
       .returning({ slug: savedRoutes.slug });
     if (!gone.length) notFound(slug);
-    await auditAccount(ctx.db, key.accountId, await actorOf(ctx.db, key), "route.delete", ROUTE_PREFIX + slug, {});
     return c.json({ data: { slug, model: ROUTE_PREFIX + slug, deleted: true } });
   });
 }

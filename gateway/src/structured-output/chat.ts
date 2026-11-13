@@ -5,7 +5,6 @@ import { fail } from "../lib/errors.ts";
 import { picoToUsdString, usdToPico } from "../lib/money.ts";
 import { checkText, MAX_OUTPUT_BYTES, schemaIssues, type Check } from "./validator.ts";
 import type { JsonCheckMode } from "./options.ts";
-import { noteUnparseableRepair } from "../services/makegood.ts"; // V6 R
 
 const HEADER = "x-anonymo-json-check";
 type State = { mode: JsonCheckMode; body: Record<string, any>; format: Record<string, any> };
@@ -96,7 +95,6 @@ async function checkedResponse(app: Hono, ctx: Ctx, c: Context, first: Response,
   const fixed: Record<string, any> = await second.json() as Record<string, any>;
   calls.push(callOf(fixed, 2));
   const check = checkText(fixed.choices?.[0]?.message?.content, state.format);
-  if (!check.valid) await noteUnparseableRepair(ctx, fixed.id, fixed.choices?.[0]?.message?.content, json.id ?? null).catch(() => undefined); // V6 R
   return jsonResponse(second, fixed, check, report(state, check, calls, { initial_errors: initial.errors }));
 }
 

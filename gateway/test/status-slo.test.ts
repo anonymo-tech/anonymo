@@ -95,20 +95,19 @@ describe("SLO math", () => {
   test("surfaces are matched by method and path; other routes are not counted", () => {
     expect(surfaceOf("POST", "/api/v1/chat/completions")).toBe("chat");
     expect(surfaceOf("POST", "/v1/responses")).toBe("chat");
-    expect(surfaceOf("POST", "/v1/embeddings")).toBe("embeddings");
+    expect(surfaceOf("POST", "/v1/embeddings")).toBeNull(); // removed with WS01
     expect(surfaceOf("GET", "/api/v1/batches/b_1/output")).toBe("batch");
     expect(surfaceOf("POST", "/v1/messages")).toBe("messages");
     expect(surfaceOf("POST", "/v1/messages/count_tokens")).toBeNull();
-    expect(surfaceOf("POST", "/ollama/api/chat")).toBe("ollama");
-    expect(surfaceOf("GET", "/ollama/api/tags")).toBeNull();
-    expect(surfaceOf("POST", "/api/v1/rerank")).toBe("rerank");
+    expect(surfaceOf("POST", "/ollama/api/chat")).toBeNull();
+    expect(surfaceOf("POST", "/api/v1/rerank")).toBeNull();
     expect(surfaceOf("OPTIONS", "/api/v1/chat/completions")).toBeNull();
     expect(surfaceOf("GET", "/api/v1/status/slo")).toBeNull();
     expect(activeSurfaces([{ method: "POST", path: "/api/v1/chat/completions" }, { method: "GET", path: "/v1/batches/:id" }, { method: "ALL", path: "*" }])).toEqual(["chat", "batch"]);
   });
 
   test("private-lane shares come from noisy sums, need enough eligible requests, and leave the caller's refusals out", () => {
-    const hour = (attested: number, upstream: number, invalid: number) => ({ requests: { attested, unlinkable: 0, other: 0 }, blocked: { upstream_error: upstream, invalid_request: invalid }, latency: { le_1000: attested } });
+    const hour = (attested: number, upstream: number, invalid: number) => ({ requests: { attested, other: 0 }, blocked: { upstream_error: upstream, invalid_request: invalid }, latency: { le_1000: attested } });
     const s = sumDp([hour(60, 2, 10), hour(60, 0, 0)]);
     expect(s.hours).toBe(2);
     expect(s.eligible).toBe(110);
@@ -126,7 +125,7 @@ describe("SLO math", () => {
     r.record("chat", 503, 10, t);
     r.record("chat", 429, 10, t);
     r.record("chat", 200, 300, t + BUCKET_MS);
-    r.record("embeddings", 400, 10, t);
+    r.record("messages", 400, 10, t);
     expect(r.size).toBe(3);
   });
 });
@@ -160,23 +159,18 @@ describe("status page API", () => {
     expect((await chat(LLAMA)).status).toBe(200);
     expect((await chat(LLAMA, { stream: true })).status).toBe(200);
     expect((await chat(QWEN)).status).toBeGreaterThanOrEqual(500);
-    const e = await h.request("/api/v1/embeddings", { method: "POST", headers: auth, json: { model: "acme/embed-small", input: "hi" } });
-    expect(e.status).toBe(200);
     const before = await windowsTotal();
-    expect(before).toEqual({ ok: 3, failed: 1, rejected: 0 });
+    expect(before).toEqual({ ok: 2, failed: 1, rejected: 0 });
 
     // An attested-lane request (refused: nothing here attests) and one that names the lane in a header.
     const att = await chat(LLAMA, { provider: { lane: "attested" } });
     expect(att.status).toBeGreaterThanOrEqual(400);
     const hdr = await h.request("/api/v1/chat/completions", { method: "POST", headers: { ...auth, "x-anonymo-lane": "unlinkable" }, json: { model: LLAMA, messages: [{ role: "user", content: "x" }] } });
     expect(hdr.status).toBeGreaterThanOrEqual(200);
-    // Embeddings name the lane in the body; the refusal only a private-lane request can get is left out as well.
-    const emb = await h.request("/api/v1/embeddings", { method: "POST", headers: auth, json: { model: "acme/embed-small", input: "hi", provider: { lane: "attested" } } });
-    expect(emb.status).toBeGreaterThanOrEqual(400);
     expect(await windowsTotal()).toEqual(before);
 
     const rows = await h.ctx.db.select({ surface: statusWindows.surface, ok: statusWindows.ok, latency: statusWindows.latency }).from(statusWindows);
-    expect(rows.map((r) => r.surface).sort()).toEqual(["chat", "embeddings"]);
+    expect(rows.map((r) => r.surface).sort()).toEqual(["chat"]);
     const chatRow = rows.find((r) => r.surface === "chat")!;
     expect(chatRow.latency.length).toBe(LATENCY_LABELS.length);
     expect(chatRow.latency.reduce((a, b) => a + b, 0)).toBe(chatRow.ok); // latency is kept for served requests only
@@ -200,11 +194,10 @@ describe("status page API", () => {
     const d = (await res.json()).data;
     expect(d.object).toBe("status.slo");
     expect(d.windows).toEqual(["1h", "24h", "7d", "30d"]);
-    expect(d.lanes.map((l: { lane: string }) => l.lane)).toEqual(["public", "attested", "unlinkable"]);
-    const [pub, att, unl] = d.lanes;
+    expect(d.lanes.map((l: { lane: string }) => l.lane)).toEqual(["public", "attested"]);
+    const [pub, att] = d.lanes;
     expect(pub.source).toBe("request-aggregates");
     expect(att.source).toBe("dp-noised");
-    expect(unl.source).toBe("dp-noised");
     expect(att.privacy.note).toContain("/api/v1/stats");
     expect(pub.target).toBe(0.995);
     expect(att.target).toBe(0.99);
@@ -212,7 +205,7 @@ describe("status page API", () => {
     expect(pub.windows["1h"].errors.server_error).toBe(1);
     expect(pub.daily.length).toBe(90);
     expect(pub.error_budget.window).toBe("30d");
-    expect(d.surfaces.map((s: { surface: string }) => s.surface)).toEqual(["chat", "embeddings", "batch", "messages", "ollama", "rerank"]);
+    expect(d.surfaces.map((s: { surface: string }) => s.surface)).toEqual(["chat", "batch", "messages"]);
     expect(d.surfaces.every((s: { source: string; lane: string }) => s.source === "request-aggregates" && s.lane === "public")).toBe(true);
   });
 
@@ -229,12 +222,11 @@ describe("status page API", () => {
     // Public failures do not move a private lane; a released hour does.
     const now = Date.now();
     await h.ctx.db.insert(statusWindows).values({ surface: "chat", bucket: new Date(Math.floor(now / BUCKET_MS) * BUCKET_MS - 2 * BUCKET_MS), ok: 0, failed: 500, rejected: 0, rateLimited: 0, latency: LATENCY_LABELS.map(() => 0) });
-    await h.ctx.db.insert(statusDpHours).values({ instance: "test", hour: new Date(Math.floor(now / HOUR) * HOUR - HOUR), epsilon: 4, counts: { requests: { attested: 150, unlinkable: 50, other: 0 }, blocked: { upstream_error: 4, invalid_request: 0 }, latency: { le_2500: 200 } } });
+    await h.ctx.db.insert(statusDpHours).values({ instance: "test", hour: new Date(Math.floor(now / HOUR) * HOUR - HOUR), epsilon: 4, counts: { requests: { attested: 200, other: 0 }, blocked: { upstream_error: 4, invalid_request: 0 }, latency: { le_2500: 200 } } });
     d = await buildSlo(h.ctx, ["chat"], now);
     const att = d.lanes[1];
     expect(att.windows["1h"].eligible).toBe(200);
-    expect(att.windows["1h"].lane_requests).toBe(150);
-    expect(d.lanes[2].windows["1h"].lane_requests).toBe(50);
+    expect(att.windows["1h"].lane_requests).toBe(200);
     expect(att.windows["1h"].availability).toBe(0.98);
     expect(att.latency_24h.p50_ms).toBe(2500);
     expect(att.state).toBe("degraded");
@@ -279,19 +271,19 @@ describe("status page API", () => {
   test("a dip below target for five minutes is recorded as a suggestion, public only once confirmed", async () => {
     const now = Date.now();
     const bucket = new Date(Math.floor(now / BUCKET_MS) * BUCKET_MS - BUCKET_MS);
-    await h.ctx.db.insert(statusWindows).values({ surface: "embeddings", bucket, ok: 10, failed: 30, rejected: 0, rateLimited: 0, latency: LATENCY_LABELS.map(() => 0) }).onConflictDoUpdate({ target: [statusWindows.surface, statusWindows.bucket], set: { ok: 10, failed: 30 } });
+    await h.ctx.db.insert(statusWindows).values({ surface: "messages", bucket, ok: 10, failed: 30, rejected: 0, rateLimited: 0, latency: LATENCY_LABELS.map(() => 0) }).onConflictDoUpdate({ target: [statusWindows.surface, statusWindows.bucket], set: { ok: 10, failed: 30 } });
     const found = await suggestIncidents(h.ctx, now);
     // The public dip above, and the private lanes' last released hour from the earlier test (98% against 99%, dp-noised).
     expect(found.length).toBe(2);
     const made = found.filter((id) => id.startsWith("sug_public_"));
     expect(made.length).toBe(1);
     const [priv] = await h.ctx.db.select().from(statusIncidents).where(sql`${statusIncidents.id} = ${found.find((id) => id.startsWith("sug_private_"))}`);
-    expect(priv.lanes).toEqual(["attested", "unlinkable"]);
+    expect(priv.lanes).toEqual(["attested"]);
     expect(priv.evidence).toMatchObject({ window: "1h", source: "dp-noised" });
     expect(await suggestIncidents(h.ctx, now)).toEqual([]); // one open suggestion per lane
     const [row] = await h.ctx.db.select().from(statusIncidents).where(sql`${statusIncidents.id} = ${made[0]}`);
     expect(row.status).toBe("suggested");
-    expect(row.surfaces).toEqual(["embeddings"]);
+    expect(row.surfaces).toEqual(["messages"]);
     expect(row.evidence).toMatchObject({ window: "5m", source: "request-aggregates", target: 0.995 });
 
     const pub = async () => (await (await h.request("/api/v1/status/incidents")).json()).data.map((i: { id: string }) => i.id);
@@ -300,7 +292,7 @@ describe("status page API", () => {
     const all = (await (await h.request("/api/v1/status/incidents?all=true", { headers: op })).json()).data.map((i: { id: string }) => i.id);
     expect(all).toContain(made[0]);
 
-    const confirm = await h.request(`/api/v1/status/incidents/${made[0]}/updates`, { method: "POST", headers: op, json: { status: "investigating", message: "Confirmed: embeddings failing." } });
+    const confirm = await h.request(`/api/v1/status/incidents/${made[0]}/updates`, { method: "POST", headers: op, json: { status: "investigating", message: "Confirmed: messages failing." } });
     expect(confirm.status).toBe(200);
     expect(await pub()).toContain(made[0]);
   });

@@ -123,7 +123,7 @@ describe("Saved Routes API and @route/ resolution", () => {
     expect((await routes(owner.auth, "DELETE", undefined, "floor-llama")).status).toBe(200);
   });
 
-  test("roles: members and viewers read, owners and team admins write", async () => {
+  test("roles: members read, owners and management keys write", async () => {
     const member = await subKey(owner.auth);
     expect((await routes(member.auth)).status).toBe(200);
     expect((await routes(member.auth, "GET", undefined, "fast-chat")).status).toBe(200);
@@ -132,15 +132,9 @@ describe("Saved Routes API and @route/ resolution", () => {
       expect(r.status).toBe(403);
       expect((await r.json()).error.type).toBe("forbidden");
     }
-    const team = (await (await h.request("/api/v1/teams", { method: "POST", headers: owner.auth, json: { name: "routing" } })).json()).data.id;
-    const admin = await subKey(owner.auth, { team });
-    const viewer = await subKey(owner.auth, { team });
-    await h.request(`/api/v1/teams/${team}/members/${admin.hash}`, { method: "PUT", headers: owner.auth, json: { role: "admin" } });
-    await h.request(`/api/v1/teams/${team}/members/${viewer.hash}`, { method: "PUT", headers: owner.auth, json: { role: "viewer" } });
-    expect((await routes(viewer.auth)).status).toBe(200);
-    expect((await create(viewer.auth, { slug: "viewer-route", config: { models: [LLAMA] } })).status).toBe(403);
-    expect((await create(admin.auth, { slug: "team-route", config: { models: [LLAMA] } })).status).toBe(201);
-    expect((await routes(admin.auth, "DELETE", undefined, "team-route")).status).toBe(200);
+    const manager = await subKey(owner.auth, { management: true });
+    expect((await create(manager.auth, { slug: "managed-route", config: { models: [LLAMA] } })).status).toBe(201);
+    expect((await routes(manager.auth, "DELETE", undefined, "managed-route")).status).toBe(200);
     expect((await routes({})).status).toBe(401);
   });
 

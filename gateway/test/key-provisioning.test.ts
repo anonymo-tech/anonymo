@@ -95,7 +95,7 @@ describe("provisioned key compatibility and inference-only access", () => {
   test("all inference adapters and aliases reach normal validation, model listing works", async () => {
     for (const base of ["/api/v1", "/v1"]) {
       expect((await h.request(`${base}/models`, { headers: child.auth })).status).toBe(200);
-      for (const path of ["chat/completions", "completions", "embeddings", "responses", "messages"]) {
+      for (const path of ["chat/completions", "completions", "responses", "messages"]) {
         const res = await h.request(`${base}/${path}`, { method: "POST", headers: child.auth, json: {} });
         expect(res.status, path).toBe(400);
       }

@@ -22,7 +22,6 @@ export type Cost = {
   royalty: Pico;
   margin: Pico;
   cacheDiscount: Pico;
-  holderDiscount: Pico; // fee saved by an $ANMO holder tier (already taken off margin)
   total: Pico; // charged to the caller
 };
 
@@ -63,21 +62,14 @@ export function upstreamCost(c: Candidate, u: Usage): { cost: Pico; cacheDiscoun
   return { cost, cacheDiscount };
 }
 
-/** `discountBps` ($ANMO holder tier) lowers Anonymo's own fee rates, never below 0: upstream cost and
- *  royalties are never discounted, so a caller never pays less than the provider's cost. */
-export type Fees = { royaltyBps: number; perCallMarginBps: number; byokFeeBps: number; discountBps?: number };
+export type Fees = { royaltyBps: number; perCallMarginBps: number; byokFeeBps: number };
 
 export function priceUsage(c: Candidate, model: ModelRow, u: Usage, mode: Mode, fees: Fees, byok: boolean): Cost {
   const { cost: notional, cacheDiscount } = upstreamCost(c, u);
   const upstream = byok ? 0n : notional;
   const royalty = model.creator && model.royaltyBps > 0 ? mulBps(notional, model.royaltyBps) : 0n;
-  const marginAt = (off: number) =>
-    (mode === "per_call" ? mulBps(upstream + royalty, Math.max(0, fees.perCallMarginBps - off)) : 0n) + (byok ? mulBps(notional, Math.max(0, fees.byokFeeBps - off)) : 0n);
-  const off = Math.max(0, fees.discountBps ?? 0);
-  const margin = marginAt(off);
-  // What the discount saved: the margin at full rates minus the margin charged (0 when no margin applies).
-  const holderDiscount = off ? marginAt(0) - margin : 0n;
-  return { upstream, notional, royalty, margin, cacheDiscount, holderDiscount, total: upstream + royalty + margin };
+  const margin = (mode === "per_call" ? mulBps(upstream + royalty, Math.max(0, fees.perCallMarginBps)) : 0n) + (byok ? mulBps(notional, Math.max(0, fees.byokFeeBps)) : 0n);
+  return { upstream, notional, royalty, margin, cacheDiscount, total: upstream + royalty + margin };
 }
 
 export { estimatePromptTokens } from "./estimate.ts";

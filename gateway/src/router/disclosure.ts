@@ -131,19 +131,19 @@ function parseOption<T extends string>(values: readonly T[], raw: unknown, name:
   return fail(400, `${name} must be one of: ${values.join(", ")}.`, "invalid_request");
 }
 
-/** `unlinkable` needs the blind-token payment and relay path, which a router only runs with OHTTP_ENABLED. */
+/** `unlinkable` was Anonymo's Oblivious HTTP / Tor lane; Anonymo does not serve it, so asking for it is a 501. */
 export const unlinkableUnavailable = () =>
   new ApiError(
     501,
-    'Lane "unlinkable" is not available yet. It needs a blind-token payment and relay path, which this router does not run. Nothing was sent to any provider. Use lane "attested" for attested providers, or "public".',
+    'Lane "unlinkable" is not available on this router. Nothing was sent to any provider. Use lane "attested" for attested providers, or "public".',
     "lane_not_available",
     { lane: "unlinkable", available_lanes: ["public", "attested"] },
   );
 
 export type LaneOptions = {
-  /** True when this router runs the Oblivious HTTP gateway and blind tokens (OHTTP_ENABLED). Otherwise `unlinkable` is a 501. */
+  /** True only where a router serves lane `unlinkable`; Anonymo never does, so `unlinkable` is a 501. */
   unlinkable?: boolean;
-  /** The lane a request that names none is served on (ohttp/lane.ts: "unlinkable" for a relayed blind-token request). Default "public". */
+  /** The lane a request that names none is served on. Default "public". */
   defaultLane?: Lane;
 };
 
@@ -159,7 +159,7 @@ export function parseLane(raw: unknown, name: string, opts: LaneOptions = {}): L
  * headers into one request. When both a body field and a header are given, the stricter one wins: a
  * restriction is never relaxed by a second setting. Lanes "attested" and "unlinkable" imply disclosure "none".
  * Lane "unlinkable" is refused (501) unless `opts.unlinkable`; when it is served, whether the request may use it
- * (relay, token) is decided by the caller (ohttp/lane.ts), not here.
+ * is decided by the caller, not here.
  */
 export function resolveDisclosureRequest(
   prefs: { disclosure?: unknown; lane?: unknown } | undefined,

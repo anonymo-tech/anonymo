@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { startRouter, MODELS, type Harness } from "./helpers.ts";
-import { generations, keys, ledger, teamMembers, models, offers } from "../src/db/schema.ts";
+import { generations, keys, ledger, models, offers } from "../src/db/schema.ts";
 import { insightsQuery } from "../src/insights/query.ts";
 import { suggestPrices, type PriceModel } from "../src/insights/suggest.ts";
 import { loadConfig } from "../src/config.ts";
@@ -31,11 +31,11 @@ test('UTC buckets, refunds posted in range, multiple keys, exact totals and hist
   expect(JSON.stringify(report)).not.toContain(owner.hash);expect(JSON.stringify(report)).not.toContain(agent.hash);
   expect((await read(agent)).totals).toMatchObject({calls:'1',cost_usd:'2'});
 });
-test('authentication, ordinary keys, account admins and sessions use Activity scope; no cross-account data',async()=>{
+test('authentication, ordinary keys, management keys and sessions use Activity scope; no cross-account data',async()=>{
   expect((await h.request('/api/v1/insights')).status).toBe(401);
   expect((await h.request('/api/v1/insights',{headers:{authorization:'Bearer invalid'}})).status).toBe(401);
   const owner=await h.fundedKey(), admin=await child(owner), other=await h.fundedKey();
-  await h.ctx.db.update(keys).set({teamId:'insights-team'}).where(eq(keys.keyHash,admin.hash));await h.ctx.db.insert(teamMembers).values({teamId:'insights-team',keyHash:admin.hash,role:'admin'});
+  await h.ctx.db.update(keys).set({management:true}).where(eq(keys.keyHash,admin.hash));
   await call(owner,'insights-access',5n,'2026-09-28T00:00:00Z');await call(other,'insights-other',99n,'2026-09-28T00:00:00Z');
   expect((await read(admin))).toMatchObject({scope:'account',totals:{calls:'1',cost_usd:'0.000000000005'}});
   const s=(await (await h.request('/api/v1/sessions',{method:'POST',headers:owner.auth,json:{budget_usd:1}})).json()).data;const session={hash:s.key_hash,auth:{authorization:'Bearer '+s.key}};

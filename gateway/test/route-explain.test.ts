@@ -32,14 +32,14 @@ function result(target: ReturnType<typeof plan>, index = 0, attempts: Attempt[] 
 }
 const explanation = (target: ReturnType<typeof plan>) => routeReceiptFields(true, result(target)).route!;
 
-test("selection evidence: price, health, lane, parameter support and a network host", () => {
+test("selection evidence: price, health, lane and parameter support", () => {
   expect(explanation(plan(undefined, { sort: "price" }))).toMatchObject({ reason: "lowest_price", provider: "alpha", eligible: 2, skipped: {} });
   expect(explanation(plan(undefined, {}, { health: { ...health, outage: (_m, p) => p === "beta" } }))).toMatchObject({ reason: "only_eligible", skipped: { health: 1 } });
   const tee = provider("enclave", 20n, { attested: true, attestationHash: "abcdef", attestedAt: new Date(), teeKind: "tdx" });
   expect(explanation(plan([provider("alpha"), tee], { lane: "attested" }))).toMatchObject({ lane: "attested", provider: "enclave", skipped: { lane: 1 } });
   const limited = { ...provider("beta"), supportedParameters: ["temperature"] };
   expect(explanation(plan([provider("alpha"), limited], { require_parameters: true }, { params: ["tools"] }))).toMatchObject({ reason: "only_parameter_support", parameters: ["tools"], skipped: { parameters: 1 } });
-  expect(explanation(plan([provider("network-host", 10n, { networkHost: true })]))).toMatchObject({ provider: "network-host", network_host: true });
+  expect(explanation(plan([provider("solo", 10n)]))).toMatchObject({ provider: "solo", network_host: false }); // the host network is gone
 });
 
 test("weighted selection never claims cheapest or healthiest; effective ordering overrides price", () => {
@@ -188,12 +188,7 @@ test("executed fallback reports only the failure class, and embeddings reuse the
     const out = await response.json();
     expect(out.receipt.payload.route).toMatchObject({ reason: "fallback", provider: "beta", fallback: { http_5xx: 1 } });
     expect(JSON.parse(response.headers.get("x-anonymo-route")!)).toEqual(out.receipt.payload.route);
-    const embed = await h.request("/api/v1/embeddings", { method: "POST", headers: k.auth, json: { model: MODELS.embed.slug, input: "Route this" } });
-    expect(embed.status).toBe(200);
-    const embedded = await embed.json();
-    expect(embedded.receipt.payload.route).toMatchObject({ provider: "beta", reason: "only_eligible", eligible: 1 });
-    expect(JSON.parse(embed.headers.get("x-anonymo-route")!)).toEqual(embedded.receipt.payload.route);
-    expect(await h.ctx.signer.verify(embedded.receipt.payload, embedded.receipt.sig, embedded.receipt.key_id)).toBe(true);
+    expect(await h.ctx.signer.verify(out.receipt.payload, out.receipt.sig, out.receipt.key_id)).toBe(true);
   } finally { await h.close(); }
 });
 

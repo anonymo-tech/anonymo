@@ -4,7 +4,7 @@ import type { Ctx } from "../context.ts";
 import { keys } from "../db/schema.ts";
 import { fail } from "../lib/errors.ts";
 
-// A batch line is run through the normal chat and embeddings handlers, in process: the batch runner (services/batches.ts)
+// A batch line is run through the normal chat handler, in process: the batch runner (services/batches.ts)
 // calls app.request(path, init, env) with this marker in `env`. Nothing on the network can set it: a served request's env
 // is the Bun server. The marker names the key that submitted the batch (so the line is billed, budgeted and rate-limited as
 // that key) and the discount the line is priced at.

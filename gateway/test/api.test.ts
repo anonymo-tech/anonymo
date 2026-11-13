@@ -65,8 +65,6 @@ describe("API parity (OpenRouter shapes)", () => {
     expect(usage.cost).toBeGreaterThan(0);
     const models = await client.models.list();
     expect(models.data.some((m) => m.id === LLAMA)).toBe(true);
-    const emb = await client.embeddings.create({ model: "acme/embed-small", input: ["a", "bb"] });
-    expect(emb.data.length).toBe(2);
   });
 
   test("non-stream response: usage, cost_details, provider, receipt; /generation returns the row", async () => {
@@ -136,19 +134,19 @@ describe("API parity (OpenRouter shapes)", () => {
     expect((await chat(h, { authorization: "Bearer sk-ar-v1-" + "0".repeat(64) }, {})).status).toBe(401);
   });
 
-  test("privacy: only declared agreement evidence and jury reasons retain content", async () => {
+  test("privacy: no column retains request or answer content", async () => {
     const r = await h.ctx.db.execute(sql`SELECT table_name, column_name, data_type, udt_name FROM information_schema.columns WHERE table_schema = 'public'`);
     const cols = ((r as any).rows ?? r) as { table_name: string; column_name: string }[];
     // Hashes (…_sha256) and prices (price_…) are allowed; anything that could hold text is not.
     // x402_paid_results.body_ref names the Redis key of a sealed x402 answer (a fixed prefix and a hash), never the answer.
     const reference = (c: { table_name: string; column_name: string }) => c.table_name === "x402_paid_results" && c.column_name === "body_ref";
     const bad = cols.filter((c) => /(^|_)(prompt|content|messages?|completion|output|response|input|answer|text|body)($|_)/.test(c.column_name) && !/_sha256$|^price_|^max_out$|^tokens_|_tokens$/.test(c.column_name) && !reference(c));
-    expect(bad.map((c) => `${c.table_name}.${c.column_name}`).sort()).toEqual(["agreement_evidence.content"]);
+    expect(bad.map((c) => `${c.table_name}.${c.column_name}`).sort()).toEqual([]);
     // The data inventory (src/privacy) goes further, on the database as the migrations built it: every column has an entry; every column
     // whose name or type suggests request content or a network address (prompt, content, messages, body, text, ip, address, user_agent,
-    // jsonb, inet ...) carries a reviewed justification; agreement evidence and jury answer text are explicitly declared, with no caller network address column.
+    // jsonb, inet ...) carries a reviewed justification; with no caller network address column.
     expect(checkDatabaseColumns(cols as unknown as DatabaseColumn[])).toEqual([]);
-    expect(columnsHoldingRequestData()).toEqual(["agreement_evidence.content", "agreement_jury.statement"]);
+    expect(columnsHoldingRequestData()).toEqual([]);
   });
 });
 
@@ -307,15 +305,12 @@ describe("routing behaviour (fallback, empty-200, failures, budgets)", () => {
     expect((await r.json()).error.type).toBe("insufficient_credits");
   });
 
-  test("allowed_models and viewer role", async () => {
+  test("allowed_models", async () => {
     await reset();
     const k = await h.fundedKey(1n);
     const sub = await (await h.request("/api/v1/keys", { method: "POST", headers: k.auth, json: { allowed_models: ["qwen/qwen3-32b"] } })).json();
     expect((await chat(h, { authorization: `Bearer ${sub.key}` }, {})).status).toBe(403);
-    const team = await (await h.request("/api/v1/teams", { method: "POST", headers: k.auth, json: { name: "eng" } })).json();
-    const viewer = await (await h.request("/api/v1/keys", { method: "POST", headers: k.auth, json: { team: team.data.id } })).json();
-    await h.request(`/api/v1/teams/${team.data.id}/members/${viewer.data.hash}`, { method: "PUT", headers: k.auth, json: { role: "viewer" } });
-    expect((await chat(h, { authorization: `Bearer ${viewer.key}` }, {})).status).toBe(403);
+    expect((await h.request("/api/v1/teams", { method: "POST", headers: k.auth, json: { name: "eng" } })).status).toBe(404); // teams went with WS01
   });
 
   test("BYOK: provider called with the caller's key; upstream not charged", async () => {
@@ -458,11 +453,6 @@ describe("limits and log privacy", () => {
     }
   });
 
-  test("tRPC paywith.open returns the wallet's unsigned transactions", async () => {
-    const k = await h.fundedKey(1n);
-    const r = await (await h.request("/trpc/paywith.open", { method: "POST", headers: { ...k.auth, "content-type": "application/json" }, body: JSON.stringify({ token: "NVDA", capRawPerDay: "1000", wallet: "0x0000000000000000000000000000000000001111" }) })).json();
-    expect(r.result.data.transactions.length).toBe(2);
-  });
 });
 
 describe("retries", () => {

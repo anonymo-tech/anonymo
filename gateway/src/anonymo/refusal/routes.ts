@@ -4,7 +4,7 @@
 //   PUT /api/v1/keys/:hash/refusal-catch  {enabled} → the same, after the change
 //
 // `:hash` is a key hash or `self`. A key may always read and change its own setting; a management key may change any
-// key of its account, and a team owner or admin any key of its team.
+// key of its account.
 
 import { and, eq } from "drizzle-orm";
 import type { Context, Hono } from "hono";
@@ -22,7 +22,7 @@ async function target(ctx: Ctx, c: Context): Promise<KeyRow> {
   await requireRole(ctx, caller, ["owner", "admin"]);
   const [k] = await ctx.db.select().from(keys).where(and(eq(keys.keyHash, hash), eq(keys.accountId, caller.accountId)));
   if (!k) fail(404, "Key not found.", "not_found");
-  if (!caller.management && (!caller.teamId || k.teamId !== caller.teamId)) fail(403, "This key cannot manage that key.", "forbidden");
+  if (!caller.management) fail(403, "This key cannot manage that key.", "forbidden");
   return k;
 }
 

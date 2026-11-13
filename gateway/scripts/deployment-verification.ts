@@ -3,8 +3,6 @@ import {
   AnmoPaymasterAbi, CallPayAbi, CreditsAbi, PayWithStockAbi, ProviderBondAbi,
   ReceiptAnchorAbi, RoyaltyAbi, StockOracleAbi, UniswapV3AdapterAbi, UniswapV4AdapterAbi,
 } from "../src/chain/abis";
-import { verifyNetworkBurn } from "./network-burn-verification.ts";
-import { networkBurnAbi } from "../src/network/burn-chain.ts";
 import { runtimeMatches, type DeploymentBuild } from "./runtime-proof.ts";
 
 export type DeploymentManifest = {
@@ -39,11 +37,11 @@ const isUnsigned = (value: unknown) => typeof value === "bigint" || (typeof valu
 const isAddress = (value: unknown) => typeof value === "string" && /^0x[0-9a-fA-F]{40}$/.test(value);
 
 // SEAL contracts are checked when the manifest lists them (older manifests predate them).
-const owned = ["credits", "callPay", "receiptAnchor", "royalty", "providerBond", "payWithStock", "stockOracle", "paymaster", "uniswapV4Adapter", "uniswapV3Adapter", "sealMeasurementRegistry", "policyRegistry", "kmsGovernance", "hostBond", "creditMintEvents", "skillRegistry", "networkFeeBurn"] as const;
+const owned = ["credits", "callPay", "receiptAnchor", "royalty", "providerBond", "payWithStock", "stockOracle", "paymaster", "uniswapV4Adapter", "uniswapV3Adapter", "sealMeasurementRegistry", "policyRegistry", "kmsGovernance", "hostBond", "creditMintEvents", "skillRegistry"] as const;
 const requiredContracts = ["usdg", "anmoToken", "credits", "callPay", "receiptAnchor", "royalty", "providerBond", "payWithStock", "stockOracle", "uniswapV4Adapter", "uniswapV3Adapter", "paymaster", "entryPoint", "poolManager", "swapRouter02", "timelock"] as const;
 const zero = "0x0000000000000000000000000000000000000000" as Address;
 const role = (name: string) => keccak256(stringToHex(name)) as Hex;
-const appAbis = [networkBurnAbi,AnmoPaymasterAbi, CallPayAbi, CreditsAbi, PayWithStockAbi, ProviderBondAbi, ReceiptAnchorAbi, RoyaltyAbi, StockOracleAbi, UniswapV3AdapterAbi, UniswapV4AdapterAbi] as unknown as Abi[];
+const appAbis = [AnmoPaymasterAbi, CallPayAbi, CreditsAbi, PayWithStockAbi, ProviderBondAbi, ReceiptAnchorAbi, RoyaltyAbi, StockOracleAbi, UniswapV3AdapterAbi, UniswapV4AdapterAbi] as unknown as Abi[];
 export const governanceAbi = parseAbi([
   "function getOwners() view returns (address[] owners)",
   "function getThreshold() view returns (uint256 threshold)",
@@ -217,7 +215,6 @@ export async function verifyDeployment(manifest: DeploymentManifest, reader: Cha
     add("paymaster.stake", staked === true && BigInt(String(stake)) >= BigInt(String(p.paymasterStake ?? 0)) && BigInt(String(stake)) >= 10_000_000_000_000_000n, { staked, actual: String(stake), manifestMinimum: String(p.paymasterStake ?? 0), hardMinimum: "10000000000000000" });
     add("paymaster.unstake_delay", BigInt(String(unstakeDelaySec)) >= 86400n, { actual: String(unstakeDelaySec), requiredMinimum: 86400 });
   }
-  checks.push(...await verifyNetworkBurn(manifest, reader, snapshot.number));
   const stockTokens = manifest.stockTokens ?? [];
   info("stockPay.feature", stockTokens.length ? `${stockTokens.length} manifest tokens` : "disabled/not certified", stockTokens.length ? "Every manifest-listed route is checked below; tokens omitted from the manifest cannot be enumerated from the on-chain mapping." : "No stock tokens are listed, so stock-pay readiness is not certified and does not block unrelated features.");
   const requiredAdapterCallers = new Map<string, { adapter: Address; caller: Address }>();

@@ -1,5 +1,4 @@
 import { creditFailure, creditErrorText, insufficientCredits, upstreamMonitoring } from "../rush/monitor.ts"; import type { HealthTracker } from "../services/health.ts"; // ON3
-import { captureNetworkReceipt } from "../network/receipt-link.ts";
 import { openProviderHeaders } from "./headers.ts";
 import { providerFetch } from "./network.ts";
 import type { Candidate } from "../catalog/catalog.ts";
@@ -230,7 +229,7 @@ export async function callUpstream(opts: {
       if (json?.error && await creditFailure(opts.health, c, opts.apiKey, res.status, creditErrorText(json.error))) return fail("insufficient_credits", "Provider temporarily unavailable.", res.status); // ON3
       clearTimeout(firstTimer);
       cleanup();
-      return captureNetworkReceipt({ ok: true, kind: "json", status: res.status, json, latencyMs: elapsed(), ...(exchange ? { exchange } : {}) }, res, c);
+      return { ok: true, kind: "json", status: res.status, json, latencyMs: elapsed(), ...(exchange ? { exchange } : {}) };
     } catch (e) {
       clearTimeout(firstTimer);
       if (opts.signal.aborted) {
@@ -273,7 +272,7 @@ export async function callUpstream(opts: {
     }
   })();
   const exchange: AciExchange | undefined = recorded ? { receiptId: res.headers.get("x-receipt-id"), requestBody, responseBody: recorded.bytes, drain: recorded.drain } : undefined;
-  return captureNetworkReceipt({ ok: true, kind: "stream", status: res.status, events: wrapped, first: first.value, latencyMs, abort: () => ctl.abort(), ...(exchange ? { exchange } : {}) }, res, c);
+  return { ok: true, kind: "stream", status: res.status, events: wrapped, first: first.value, latencyMs, abort: () => ctl.abort(), ...(exchange ? { exchange } : {}) };
 }
 
 /** The most response bytes kept for checking a gateway receipt; beyond it the response hash goes unchecked. */

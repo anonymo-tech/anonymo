@@ -3,12 +3,12 @@ import type { Ctx } from "../context.ts";
 import { generations } from "../db/schema.ts";
 import { DpStats, type Observation } from "../lib/dpstats.ts";
 
-// Public metrics for the private lanes (`attested`, `unlinkable`) come only from differentially private hourly
+// Public metrics for the private (attested) lane come only from differentially private hourly
 // counters (lib/dpstats.ts, the same file the sidecar runs). The router still keeps its per-request rows for billing
 // and receipts, but every public aggregate built from those rows is limited to the public lane (`PUBLIC_LANE_ROWS`),
 // and private-lane traffic is published only as noisy hourly releases at GET /api/v1/stats.
 
-export const PRIVATE_LANES = ["attested", "unlinkable"] as const;
+export const PRIVATE_LANES = ["attested"] as const;
 
 /** Why a private-lane request was refused, from its HTTP status and error type. Fixed and public. */
 export const ROUTER_BLOCK_REASONS = ["unauthorized", "payment_required", "forbidden", "no_provider", "rate_limited", "invalid_request", "upstream_error"] as const;

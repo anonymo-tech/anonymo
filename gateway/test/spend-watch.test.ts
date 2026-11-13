@@ -276,12 +276,9 @@ describe("Spend Watch: alert rules API", () => {
     expect(kindChange.status).toBe(400);
   });
 
-  test("only owners/admins write; a sub-key watches only itself; other accounts see nothing", async () => {
+  test("only owners write; a sub-key watches only itself; other accounts see nothing", async () => {
     const root = await h.newKey();
     const member = await subKey(h, root);
-    const team = await (await h.request("/api/v1/teams", { method: "POST", headers: root.auth, json: { name: "ops" } })).json();
-    const admin = await subKey(h, root, { team: team.data.id });
-    expect((await h.request(`/api/v1/teams/${team.data.id}/members/${admin.hash}`, { method: "PUT", headers: root.auth, json: { role: "admin" } })).status).toBe(200);
     const stranger = await h.newKey();
 
     const accountRule = await createRule(h, root, { kind: "threshold", threshold_usd: 5 });
@@ -289,25 +286,20 @@ describe("Spend Watch: alert rules API", () => {
     const post = (k: Key, json: Record<string, unknown>) => h.request("/api/v1/spend/alerts", { method: "POST", headers: k.auth, json });
 
     expect((await post(member, { kind: "threshold", threshold_usd: 1, key_hash: member.hash })).status).toBe(403); // role member
-    expect((await post(admin, { kind: "threshold", threshold_usd: 1 })).status).toBe(403); // whole account
-    expect((await post(admin, { kind: "threshold", threshold_usd: 1, key_hash: root.hash })).status).toBe(403); // another key
-    const own = await createRule(h, admin, { kind: "anomaly", key_hash: admin.hash });
-    expect((await h.request(`/api/v1/spend/alerts/${own.id}`, { method: "PATCH", headers: admin.auth, json: { key_hash: null } })).status).toBe(403);
 
     const list = async (k: Key) => ((await (await h.request("/api/v1/spend/alerts", { headers: k.auth })).json()).data as { id: string }[]).map((r) => r.id).sort();
-    expect(await list(root)).toEqual([accountRule.id, memberRule.id, own.id].sort());
+    expect(await list(root)).toEqual([accountRule.id, memberRule.id].sort());
     expect(await list(member)).toEqual([memberRule.id]); // read-only view of rules on its own key
-    expect(await list(admin)).toEqual([own.id]);
     expect(await list(stranger)).toEqual([]);
 
-    for (const k of [stranger, admin])
+    for (const k of [stranger])
       for (const [method, json] of [["PATCH", { enabled: false }], ["DELETE", undefined]] as const)
         expect((await h.request(`/api/v1/spend/alerts/${accountRule.id}`, { method, headers: k.auth, json })).status).toBe(404);
     expect((await h.request(`/api/v1/spend/alerts/${memberRule.id}`, { method: "DELETE", headers: member.auth })).status).toBe(403);
     expect((await h.request("/api/v1/spend/alerts")).status).toBe(401);
 
     expect((await h.request(`/api/v1/spend/alerts/${accountRule.id}`, { method: "DELETE", headers: root.auth })).status).toBe(200);
-    expect(await list(root)).toEqual([memberRule.id, own.id].sort());
+    expect(await list(root)).toEqual([memberRule.id]);
   });
 
   test("an account holds at most 20 rules", async () => {

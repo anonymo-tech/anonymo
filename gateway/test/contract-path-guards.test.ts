@@ -12,7 +12,6 @@ import { recordEvents } from "../src/chain/indexer.ts";
 import { loadConfig } from "../src/config.ts";
 import { openDatabase } from "../src/db/client.ts";
 import { chainEvents, spentRoots } from "../src/db/schema.ts";
-import { clearFairCache } from "../src/pay/paywith.ts";
 import { readiness } from "../src/services/readiness.ts";
 import { reconcileSpentRoots } from "../src/services/root-completeness.ts";
 import { postSpentRoot } from "../src/services/settlement.ts";
@@ -152,55 +151,15 @@ describe("H-02: production contract mode starts only against a verified deployme
     expect(() => loadConfig(verified({ DEPLOYMENT_VERIFICATION: otherReport }))).toThrow(/royalty/);
   });
 
-  test("reserved-TLD fixtures run unverified and say so; escrow and non-production modes are unaffected", () => {
+  test("reserved-TLD fixtures run unverified and say so; contract-free and non-production modes are unaffected", () => {
     expect(loadConfig({ ...prodApi, PUBLIC_BASE_URL: "https://router.example" }).release.deployment.status).toBe("fixture");
     expect(loadConfig({ ...prodApi, PUBLIC_BASE_URL: "https://router.fixture.invalid" }).release.deployment.status).toBe("fixture");
     expect(() => loadConfig({ ...prodApi, PUBLIC_BASE_URL: "https://example.com" })).toThrow(/DEPLOYMENT_MANIFEST/);
     const { CREDITS_ADDRESS, CALLPAY_ADDRESS, PROVIDER_BOND_ADDRESS, RECEIPT_ANCHOR_ADDRESS, ROUTER_PRIVATE_KEY, ...noContracts } = prodApi;
-    const escrow = loadConfig({ ...noContracts, PAYMENTS_MODE: "escrow", ESCROW_ADDRESS: a(77), ESCROW_START_BLOCK: "1", ESCROW_TOKENS: JSON.stringify([{ symbol: "NVDA", address: a(70), decimals: 18, feed: a(71) }]) });
-    expect(escrow.release).toEqual({ commit: null, deployment: { status: "none", manifestSha256: null, manifestBlock: null, verifiedAtBlock: null, verifierRevision: null } });
+    const contractFree = loadConfig({ ...noContracts, ANONYMO_ENV: "test" });
+    expect(contractFree.release).toEqual({ commit: null, deployment: { status: "none", manifestSha256: null, manifestBlock: null, verifiedAtBlock: null, verifierRevision: null } });
     expect(loadConfig({ ANONYMO_ENV: "test", CREDITS_ADDRESS: a(31) }).release.deployment.status).toBe("unverified");
     expect(() => loadConfig({ ANONYMO_ENV: "test", RELEASE_COMMIT: "not-a-commit" })).toThrow(/RELEASE_COMMIT/);
-  });
-});
-
-describe("M-06: PayWithStock delegation is explicit and bounded", () => {
-  const paywith = { PAYWITHSTOCK_ADDRESS: manifest.contracts.payWithStock, PAYWITH_DELEGATION_ACCEPTED: "true", PAYWITH_MAX_DAILY_CAP_USD: "20" };
-
-  test("production refuses PayWithStock without an explicit acceptance or above the ceilings", () => {
-    expect(loadConfig(verified(paywith)).paywith.maxDailyCapUsd).toBe(20);
-    const cases: [Record<string, string>, RegExp][] = [
-      [{ PAYWITH_DELEGATION_ACCEPTED: "false" }, /PAYWITH_DELEGATION_ACCEPTED/],
-      [{ PAYWITH_MAX_DEBT_USD: "6" }, /PAYWITH_MAX_DEBT_USD/],
-      [{ PAYWITH_MAX_DEBT_USD: "0" }, /PAYWITH_MAX_DEBT_USD/],
-      [{ PAYWITH_MAX_DAILY_CAP_USD: "" }, /PAYWITH_MAX_DAILY_CAP_USD/],
-      [{ PAYWITH_MAX_DAILY_CAP_USD: "26" }, /PAYWITH_MAX_DAILY_CAP_USD/],
-      [{ PAYWITH_MAX_DAILY_CAP_USD: "2" }, /PAYWITH_MAX_DAILY_CAP_USD/],
-      [{ PAYWITH_MAX_DAILY_CAP_USD: "many" }, /positive/],
-      [{ PAYWITHSTOCK_ADDRESS: a(94) }, /PAYWITHSTOCK_ADDRESS/],
-    ];
-    for (const [change, reason] of cases) expect(() => loadConfig(verified({ ...paywith, ...change }))).toThrow(reason);
-    expect(loadConfig({ ANONYMO_ENV: "test" }).paywith.maxDailyCapUsd).toBeNull();
-  });
-
-  test("the API builds no session whose daily cap is worth more than PAYWITH_MAX_DAILY_CAP_USD", async () => {
-    const h = await startRouter({ env: { PAYWITH_MAX_DAILY_CAP_USD: "20" } });
-    try {
-      clearFairCache();
-      const k = await h.newKey();
-      const open = (raw: bigint) => h.request("/api/v1/paywith/open", { method: "POST", headers: k.auth, json: { token: "NVDA", cap_raw_per_day: raw.toString(), wallet: a(0x2222) } });
-      // The fake chain prices NVDA at $225.
-      const tooHigh = await open(10n ** 18n);
-      expect(tooHigh.status).toBe(400);
-      expect((await tooHigh.json()).error.type).toBe("cap_too_high");
-      expect((await open(8n * 10n ** 16n)).status).toBe(200); // 0.08 NVDA = $18 a day
-      h.chain.fair18 = null;
-      clearFairCache();
-      expect((await open(10n ** 16n)).status).toBe(503);
-    } finally {
-      clearFairCache();
-      await h.close();
-    }
   });
 });
 
@@ -292,13 +251,14 @@ describe("M-04: spent roots cover every funded key", () => {
   });
 
   test("root_completeness is checked only in contract mode, and alerts when it fails", async () => {
-    const mode = h.ctx.cfg.escrow.mode;
-    h.ctx.cfg.escrow.mode = "escrow";
+    const address = h.ctx.chain.address.bind(h.ctx.chain);
     try {
+      h.ctx.chain.address = () => undefined; // contract-free: no Anonymo contract configured
       expect((await readiness(h.ctx)).checks).not.toHaveProperty("root_completeness");
     } finally {
-      h.ctx.cfg.escrow.mode = mode;
+      h.ctx.chain.address = address;
     }
+    expect((await readiness(h.ctx)).checks).toHaveProperty("root_completeness");
     const rules = (parse(readFileSync(resolve(root, "monitoring/alerts.yml"), "utf8")) as { groups: { rules: { alert: string; expr: string; labels: Record<string, string> }[] }[] }).groups.flatMap((g) => g.rules);
     const rule = rules.find((r) => r.alert === "AnonymoSpentRootIncomplete");
     expect(rule?.expr).toBe('anonymo_readiness_check{job="anonymo",check="root_completeness"} == 0');

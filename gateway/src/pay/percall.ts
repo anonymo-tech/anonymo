@@ -82,7 +82,6 @@ export async function paymentRequired(ctx: Ctx, opts: QuoteInfo): Promise<never>
       chain: ctx.cfg.chain.id,
       method: "pay(bytes32 nonce,uint256 amount,uint256 expiry)",
       calldata,
-      paymaster: ctx.cfg.chain.paymaster ? { address: ctx.cfg.chain.paymaster, rpc: `${ctx.cfg.publicUrl}/api/v1/paymaster` } : null,
       // Gasless option: sign this EIP-712 message with the paying wallet and send it back as
       // X-Payment: base64(JSON {scheme: "eip3009", from, value, validAfter, validBefore, nonce, signature}).
       // The router relays CallPay.payWithAuthorization; the quote nonce doubles as the authorization nonce.

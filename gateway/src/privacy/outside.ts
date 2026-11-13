@@ -1,37 +1,18 @@
 import { mediaBodyReader } from "../anonymo/media/inventory.ts"; // WS06 media
-import { approveAndAllowBodyReader } from "./approve-and-allow.ts"; // B118
 import { anonymoMoneyAddressReader, anonymoMoneyBodyReaders } from "./anonymo-money.ts"; // WS05
 import { modelAlternativesReader } from "./model-alternatives.ts"; // B121
-import { lowBalanceReader } from "./low-balance.ts"; // B119
 import { abuseBodyReader } from "../anonymo/abuse/privacy.ts"; // Anonymo WS02
 import { refusalSettingReader } from "./refusal.ts"; // Anonymo WS03
 import { anonymousRateFamily, hardeningAddresses, hardeningBodies } from "./hardening.ts"; // HD1
-import { weeklySummaryReader } from "./weekly-summary.ts"; // B120
-import { fastCreditLogRecords } from "./fast-credit.ts";
-import { depositProgressReader } from "./deposit-progress.ts"; // V97B
 import { rushStores } from "./rush.ts"; // ON3
-import { toolsBodyReader, toolsRateFamilies, toolsStores } from "./tools.ts"; // v6 T: paid tool market.
-import { agentPayBodyReader, agentPayRateFamily } from "./agent-pay.ts"; // Pay another agent
-import { feedbackLimit, identityBodyReader, identityStores } from "./identity.ts"; // v6 I
 import { provisioningBodyReader, inferenceModelReader } from "./provisioning.ts"; // ZK6
 import { structuredOutputReader } from "./structured-output.ts"; // V83
 import { statementStores } from "./statements.ts"; // V87
-import { proofPackLimit, proofPackStores } from "./proof-pack.ts"; // U100
 import { laneReportLimit, laneReportStores } from "./lane-report.ts"; // Lane report
 import { insightsStores } from "./insights.ts"; // V88: read-only aggregates.
-import { dataToolStores } from "./data-tools.ts"; // B: market-data tools and decision tags.
 import { webhookBodyReader, webhookStores } from "./webhooks.ts"; // V86: event delivery.
-import { makegoodStores } from "./makegood.ts"; // V6 R: make-good refunds.
-import { inboxStores } from "./inbox.ts"; // U78: account inbox inventory.
 import { activityStores } from "./activity.ts";
-import { profileBodyReader } from "./profiles.ts";
-import { sealedBodyReaders, sealedOtherStores } from "./sealed.ts";
-import { telegramLinkRate, telegramLinkReader } from "./telegram-linking.ts";
 import type { Evidence, ExternalDoc, RedisFamily, Touchpoint } from "./types.ts";
-import { networkJoinStores } from "./network-join.ts";
-import { networkStatsStores } from "./network-stats.ts";
-import { commerceStores } from "./commerce.ts"; // v6 L
-import { juryBodyReaders, agreementContractStores } from "./agreements.ts";
 import { x402RecoveryFamily, x402RecoveryReader } from "./x402-recovery.ts";
 import { facilitatorAddressReader, facilitatorBodyReader, facilitatorRedisFamilies } from "./facilitator.ts"; // v6 F
 
@@ -62,37 +43,21 @@ function limit(o: { prefix: string; shape: string; purpose: string; holds: Redis
   };
 }
 
-const ADDRESS_NOTE = "The caller's network address is part of the key. Over Tor the address is replaced by the word onion, so no address is used.";
+const ADDRESS_NOTE = "The caller's network address is part of the key.";
 
 const redisFamilies: RedisFamily[] = [
   anonymousRateFamily, // HD1
-  ...toolsRateFamilies, // v6 T
-  agentPayRateFamily, // Pay another agent
-  limit({ prefix: "agent-certificate:", shape: "agent-certificate:<account id>", purpose: "Record-certificate and track-record issuance attempts: five per minute per account, shared across standalone, profile and track-record issuance, its keys and router replicas. Contains only the account id and a counter; no certificate pseudonym, claims or stats.", holds: "account", seconds: 60, evidence: [ev("src/api/agent-certificates.ts", "await ctx.limiter.take(`agent-certificate:${key.accountId}`"), ev("src/agents/profiles.ts", "await ctx.limiter.take(`agent-certificate:${key.accountId}`"), ev("src/identity/track-record.ts", "await ctx.limiter.take(`agent-certificate:${key.accountId}`")] }),
-  limit({ prefix: "agent-replay:", shape: "agent-replay:<caller key hash>", purpose: "Rulebook replays (POST /api/v1/agents/:key_hash/replay), ten per minute per calling key. Contains only the caller's key hash and a counter; no draft, call or result.", holds: "key-hash", seconds: 60, evidence: [ev("src/api/agents.ts", "await ctx.limiter.take(`agent-replay:${caller.keyHash}`")] }),
-  feedbackLimit, // v6 I
-  proofPackLimit, // U100
+
   laneReportLimit, // Lane report
-  telegramLinkRate,
   ...facilitatorRedisFamilies, // v6 F
-  limit({ prefix: "network-host-wallet:", shape: "network-host-wallet:<operator wallet>", purpose: "Wallet-authenticated host signup and credential updates, three per minute per wallet. Links attempts by the public operator wallet.", holds: "wallet", seconds: 60, evidence: [ev("src/api/network-hosts.ts", "await ctx.limiter.take(`network-host-wallet:${auth.wallet}`")] }),
-  limit({ prefix: "network-host-address:", shape: "network-host-address:<caller address or onion>", purpose: "Host signup and credential attempts, ten per minute per network address, with the existing scaled shared onion bucket. The raw address is temporarily part of the Redis key.", holds: "address", seconds: 60, evidence: [ev("src/api/network-hosts.ts", "await ctx.limiter.take(`network-host-address:${from.id}`")] }),
-  limit({ prefix: "network-waitlist:", shape: "network-waitlist:<minute-keyed address digest or onion>", purpose: "Waitlist POST and DELETE requests, ten per minute per address; onion requests share the existing scaled onion bucket. A secret-keyed HMAC rotates every minute; no raw IP or user agent is stored. The digest still links requests within that minute.", holds: "digest", seconds: 60, evidence: [ev("src/network/waitlist.ts", "await ctx.limiter.take(`network-waitlist:${bucket}`")] }),
+
   limit({
     prefix: "ip:",
     shape: "ip:<caller address>",
     purpose: `Requests per minute for a call that carries no API key. ${ADDRESS_NOTE}`,
     holds: "address",
     seconds: 60,
-    evidence: [ev("src/api/chat.ts", "await limitOrThrow(ctx, `ip:${from.id}`"), ev("src/api/embeddings.ts", "await ctx.limiter.take(`ip:${from.id}`"), ev("src/api/rerank.ts", "await ctx.limiter.take(`ip:${from.id}`")],
-  }),
-  limit({
-    prefix: "blind-ip:",
-    shape: "blind-ip:<caller address>",
-    purpose: `Requests per minute for a call paid with a blind token. ${ADDRESS_NOTE}`,
-    holds: "address",
-    seconds: 60,
-    evidence: [ev("src/api/chat.ts", "await limitOrThrow(ctx, `blind-ip:${from.id}`"), ev("src/api/embeddings.ts", "await ctx.limiter.take(`blind-ip:${from.id}`"), ev("src/api/rerank.ts", "await ctx.limiter.take(`blind-ip:${from.id}`")],
+    evidence: [ev("src/api/chat.ts", "await limitOrThrow(ctx, `ip:${from.id}`")],
   }),
   limit({
     prefix: "newkey:",
@@ -109,46 +74,6 @@ const redisFamilies: RedisFamily[] = [
     holds: "address",
     seconds: 60,
     evidence: [ev("src/api/keys.ts", "await ctx.limiter.take(`wallet-login:${from.id}`")],
-  }),
-  limit({
-    prefix: "team-auth:",
-    shape: "team-auth:<caller address>",
-    purpose: `Team join and sign-in attempts per minute (passkey or wallet), which need no API key. ${ADDRESS_NOTE}`,
-    holds: "address",
-    seconds: 60,
-    evidence: [ev("src/api/teams.ts", "await ctx.limiter.take(`team-auth:${from.id}`")],
-  }),
-  limit({
-    prefix: "pm:",
-    shape: "pm:<caller address>",
-    purpose: `Paymaster requests per minute. ${ADDRESS_NOTE}`,
-    holds: "address",
-    seconds: 60,
-    evidence: [ev("src/api/paymaster.ts", "await ctx.limiter.take(`pm:${from.id}`")],
-  }),
-  limit({
-    prefix: "ohttp-gw:ip:",
-    shape: "ohttp-gw:ip:<caller address>",
-    purpose: `Oblivious HTTP gateway requests per minute from a client that did not come through an authenticated relay. ${ADDRESS_NOTE}`,
-    holds: "address",
-    seconds: 60,
-    evidence: [ev("src/ohttp/gateway.ts", "`ohttp-gw:ip:${from.id}`")],
-  }),
-  limit({
-    prefix: "ohttp-gw:relay:",
-    shape: "ohttp-gw:relay:<relay key id>",
-    purpose: "Oblivious HTTP gateway requests per minute for one authenticated relay. It names the relay, not the clients behind it.",
-    holds: "nothing-personal",
-    seconds: 60,
-    evidence: [ev("src/ohttp/gateway.ts", "`ohttp-gw:relay:${relay.keyId}`")],
-  }),
-  limit({
-    prefix: "tlog-cosign:",
-    shape: "tlog-cosign:<caller address>",
-    purpose: `Transparency-log cosignature submissions per minute. ${ADDRESS_NOTE}`,
-    holds: "address",
-    seconds: 60,
-    evidence: [ev("src/tlog/routes.ts", "await ctx.limiter.take(`tlog-cosign:${from.id}`")],
   }),
   limit({
     prefix: "claim-issue-ip:",
@@ -172,7 +97,7 @@ const redisFamilies: RedisFamily[] = [
     purpose: "Requests per minute for one API key. Keyed by the SHA-256 of the key; no address is read for a call that carries a key.",
     holds: "key-hash",
     seconds: 60,
-    evidence: [ev("src/api/chat.ts", "await limitOrThrow(ctx, `k:${key.keyHash}`"), ev("src/api/embeddings.ts", "await ctx.limiter.take(`k:${key.keyHash}`"), ev("src/api/rerank.ts", "await ctx.limiter.take(`k:${key.keyHash}`")],
+    evidence: [ev("src/api/chat.ts", "await limitOrThrow(ctx, `k:${key.keyHash}`")],
   }),
   limit({
     prefix: "kc:",
@@ -189,22 +114,6 @@ const redisFamilies: RedisFamily[] = [
     holds: "key-hash",
     seconds: 60,
     evidence: [ev("src/api/chat.ts", "await limitOrThrow(ctx, `kt:${billing.key.keyHash}`"), ev("src/api/council.ts", "tk.limitOrThrow(ctx, `kt:${billing.key.keyHash}`")],
-  }),
-  limit({
-    prefix: "skills-import:",
-    shape: "skills-import:<key hash>",
-    purpose: "Skill imports per hour for one API key (each import may fetch a repository and runs the scanner).",
-    holds: "key-hash",
-    seconds: 3600,
-    evidence: [ev("src/api/skills.ts", "await ctx.limiter.take(`skills-import:${key.keyHash}`")],
-  }),
-  limit({
-    prefix: "blind:buy:",
-    shape: "blind:buy:<key hash>",
-    purpose: "Blind-token purchases per minute for one API key.",
-    holds: "key-hash",
-    seconds: 60,
-    evidence: [ev("src/blind/purchase.ts", "await ctx.limiter.take(`blind:buy:${caller.keyHash}`")],
   }),
   limit({
     prefix: "provider-applications",
@@ -239,14 +148,6 @@ const redisFamilies: RedisFamily[] = [
     evidence: [ev("src/services/creators.ts", "await ctx.limiter.take(`claim-verify:${id}`")],
   }),
   limit({
-    prefix: "telegram:",
-    shape: "telegram:<Telegram user id>",
-    purpose: "Telegram bot messages per minute for one Telegram user. The user id is a number Telegram assigns; the message text is not part of the key.",
-    holds: "telegram-user",
-    seconds: 60,
-    evidence: [ev("src/services/telegram.ts", "await this.ctx.limiter.take(`telegram:${uid}`")],
-  }),
-  limit({
     prefix: "readiness",
     shape: "readiness",
     purpose: "The readiness probe checks the limiter works by taking zero from a fixed key.",
@@ -265,7 +166,7 @@ const redisFamilies: RedisFamily[] = [
       ev("src/gateway/cache.ts", "await this.redis.set(`cache:${key}`, JSON.stringify({ payload, upstream: upstream.toString() }), \"PX\", ttlS * 1000);"),
       ev("src/gateway/cache.ts", "const payload = this.seal(scope, response);"),
       ev("src/api/chat.ts", "validateCacheTtl(body, ctx.cfg.gateway.cacheTtlS);"),
-      ev("src/api/chat.ts", "billing?.mode !== \"blind\"", "Never used for a blind-token call, a call with a disclosure ceiling, a restricted model variant or a stream."),
+      ev("src/api/chat.ts", "const cacheMode: CacheMode | null = !strict && !resolved", "Never used for a call with a disclosure ceiling, a restricted model variant or a stream."),
     ],
   },
   {
@@ -303,36 +204,20 @@ const addressReaders: Touchpoint[] = [
   anonymoMoneyAddressReader, // WS05: an Anonymo key's IP allowlist
   ...hardeningAddresses, // HD1
   facilitatorAddressReader, // v6 F
-  { file: "src/api/network-hosts.ts", reads: "The caller address bucket on host signup and credential writes.", then: "Counts attempts through the existing per-address limiter; trusted proxy and onion rules apply.", kept: "Raw address in the limiter key for 61 seconds in Redis, or until the memory limiter sweeps; never in the host row or application log.", evidence: [ev("src/api/network-hosts.ts", "const from = addressBucket(c, ctx.cfg);")] },
-  { file: "src/network/waitlist.ts", reads: "Address bucket for a waitlist POST or DELETE; onion requests use the shared onion bucket.", then: "A secret-keyed HMAC of the address and current minute is passed to the existing limiter; onion stays the word onion.", kept: "Only a minute-specific keyed digest and counter: 61 seconds in Redis, or up to six minutes without Redis until the memory limiter sweeps old windows. No raw IP or user agent, and no address-derived value in the waitlist table.", evidence: [ev("src/network/waitlist.ts", "const from = addressBucket(c, ctx.cfg);")] },
-  { file: "src/api/e2ee.ts", reads: "The address only for encrypted calls without a key outside the Oblivious HTTP gateway; over Tor the fixed onion bucket is used.", then: "Uses the existing blind-ip rate-limit family.", kept: "Only the counter key, for 61 seconds; no address in a generation, receipt or log.", evidence: [ev("src/api/e2ee.ts", "const from = addressBucket(c, ctx.cfg);")] },
+
   {
     file: "src/api/common.ts",
     reads: "The selected client address from the shared ingress helper: socket by default, the trusted hop counted from the right when TRUST_PROXY is on, or CF-Connecting-IP when the enabled origin lock secret is valid.",
-    then: "Returned to a caller as the key of a per-address rate limit. Requests that arrived over Tor get the fixed word onion instead of an address (addressBucket).",
+    then: "Returned to a caller as the key of a per-address rate limit (addressBucket).",
     kept: "Not written to Postgres and not logged. It exists in Redis only as part of the rate-limit keys listed above, for at most an hour.",
-    evidence: [ev("src/api/common.ts", "export function clientIp(c: Context, trustProxy = false)"), ev("src/api/common.ts", "return { id: \"onion\", onion: true")],
+    evidence: [ev("src/api/common.ts", "export function clientIp(c: Context, trustProxy = false)"), ev("src/api/common.ts", "return { id: clientIp(c, cfg.trustProxy), scale: (limit) => limit };")],
   },
   {
     file: "src/api/chat.ts",
-    reads: "The caller's address, only for a call that carries no API key and did not arrive through the Oblivious HTTP gateway.",
-    then: "Counted against ip:<address> (or blind-ip:<address> for a blind token).",
+    reads: "The caller's address, only for a call that carries no API key.",
+    then: "Counted against ip:<address>.",
     kept: "Only as the Redis rate-limit key.",
     evidence: [ev("src/api/chat.ts", "const from = addressBucket(c, ctx.cfg);")],
-  },
-  {
-    file: "src/api/embeddings.ts",
-    reads: "The caller's address, only for a call without an API key.",
-    then: "Counted against ip:<address> or blind-ip:<address>.",
-    kept: "Only as the Redis rate-limit key.",
-    evidence: [ev("src/api/embeddings.ts", "const from = addressBucket(c, ctx.cfg);")],
-  },
-  {
-    file: "src/api/rerank.ts",
-    reads: "The caller's address, only for a call without an API key.",
-    then: "Counted against ip:<address> or blind-ip:<address>.",
-    kept: "Only as the Redis rate-limit key.",
-    evidence: [ev("src/api/rerank.ts", "const from = addressBucket(c, ctx.cfg);")],
   },
   {
     file: "src/api/keys.ts",
@@ -340,34 +225,6 @@ const addressReaders: Touchpoint[] = [
     then: "Counted against newkey:<address> and wallet-login:<address>.",
     kept: "Only as the Redis rate-limit keys.",
     evidence: [ev("src/api/keys.ts", "await ctx.limiter.take(`newkey:${from.id}`"), ev("src/api/keys.ts", "await ctx.limiter.take(`wallet-login:${from.id}`")],
-  },
-  {
-    file: "src/api/teams.ts",
-    reads: "The caller's address when joining a team or signing in to one with a passkey or wallet (no API key yet).",
-    then: "Counted against team-auth:<address>.",
-    kept: "Only as the Redis rate-limit key.",
-    evidence: [ev("src/api/teams.ts", "await ctx.limiter.take(`team-auth:${from.id}`")],
-  },
-  {
-    file: "src/api/paymaster.ts",
-    reads: "The caller's address on a paymaster request.",
-    then: "Counted against pm:<address>.",
-    kept: "Only as the Redis rate-limit key.",
-    evidence: [ev("src/api/paymaster.ts", "const from = addressBucket(c, ctx.cfg);")],
-  },
-  {
-    file: "src/ohttp/gateway.ts",
-    reads: "The caller's address, only for a request that did not come through an authenticated relay. A request through a relay is counted by the relay's key id instead.",
-    then: "Counted against ohttp-gw:ip:<address>.",
-    kept: "Only as the Redis rate-limit key.",
-    evidence: [ev("src/ohttp/gateway.ts", "const from = addressBucket(c, ctx.cfg);")],
-  },
-  {
-    file: "src/tlog/routes.ts",
-    reads: "The submitter's address when a witness posts a cosignature.",
-    then: "Counted against tlog-cosign:<address>.",
-    kept: "Only as the Redis rate-limit key.",
-    evidence: [ev("src/tlog/routes.ts", "const from = addressBucket(c, ctx.cfg);")],
   },
   {
     file: "src/api/creator-claims.ts",
@@ -390,27 +247,7 @@ const addressReaders: Touchpoint[] = [
     kept: "Nothing beyond what src/api/chat.ts keeps.",
     evidence: [ev("src/api/responses.ts", "const from = clientIp(c, ctx.cfg.trustProxy);"), ev("src/api/responses.ts", "{ requestIP: () => ({ address: from }) }")],
   },
-  {
-    file: "src/ollama/routes.ts",
-    reads: "The caller's address, so the internal chat or embeddings call it makes on the caller's behalf is limited exactly as the caller's own call would be.",
-    then: "Passed to the chat or embeddings route as an in-process value (requestIP) and then handled as in src/api/chat.ts.",
-    kept: "Nothing beyond what src/api/chat.ts keeps.",
-    evidence: [ev("src/ollama/routes.ts", "const from = clientIp(c, ctx.cfg.trustProxy);"), ev("src/ollama/routes.ts", "{ requestIP: () => ({ address: from }) }")],
-  },
-  {
-    file: "src/onion/ingress.ts",
-    reads: "Nothing. It deletes every header that names a client address (X-Forwarded-For, X-Real-IP, CF-Connecting-IP and others) from requests that arrived over Tor, before any route runs.",
-    then: "Requests over Tor therefore carry no client address for a route, a limiter or a log line to use.",
-    kept: "Not applicable.",
-    evidence: [ev("src/onion/ingress.ts", "headers.delete(name);")],
-  },
-  {
-    file: "relay/src/relay.ts",
-    reads: "The separate Oblivious HTTP relay (run by relay operators, not by the router) forwards a request's body to a gateway without any header, address or cookie of the client.",
-    then: "The forwarded request is built from configuration and the body only. The relay's automated checks fail if its source logs a request or reads a client address.",
-    kept: "The relay keeps counters only: totals and fixed reason labels.",
-    evidence: [ev("relay/src/relay.ts", "The forwarded request is built from nothing but the configured pieces and the body")],
-  },
+
   {
     file: "sidecar/src/headers.ts",
     reads: "The model-server sidecar inside a provider's enclave forwards only allow-listed headers, so a proxy header cannot carry a client address to the model server.",
@@ -422,43 +259,18 @@ const addressReaders: Touchpoint[] = [
 
 const bodyReaders: ExternalDoc["bodyReaders"] = [
   ...anonymoMoneyBodyReaders, // WS05
-  weeklySummaryReader, // B120
   mediaBodyReader, // WS06 media
   modelAlternativesReader, // B121
-  lowBalanceReader, // B119
   abuseBodyReader, // Anonymo WS02: takedown inbox
   refusalSettingReader, // Anonymo WS03
   ...hardeningBodies, // HD1
-  { file: "src/api/guard.ts", carries: "settings", reads: "A strict bounded action name, optional target label and order digest, decimal amount and approval identifier, or a reported outcome.", then: "Authenticates the deciding key and serializes checks and reports with the account lock. Action and target are readable caller-chosen labels; targets can name a wallet or host. No full order details are accepted. When DECISION_TAGS_ENABLED is on and an order digest is given, the decision also reads the same agent's calls from the preceding 24 hours whose stored receipt carries that digest as decision_tag and returns their ids, model, provider and time as informed_by; GET /api/v1/guard/decisions reads decisions by digest or receipt id within the Activity scope. Neither stores anything new.", kept: "Decision metadata and reported outcomes in agent_action_decisions, with action decisions and outcomes on agent_policy_events and action approval projections in agent_approvals. Reported amounts are not verified execution.", evidence: [ev("src/api/guard.ts", "guardDecideInput.parse(await readJson(c))")] }, // V98
-  depositProgressReader, // V97B
-  toolsBodyReader, // v6 T
-  agentPayBodyReader, // Pay another agent
-  approveAndAllowBodyReader, // B118
+ // V98
   provisioningBodyReader, inferenceModelReader, // ZK6
   structuredOutputReader, // V83
   webhookBodyReader, // V86.
   facilitatorBodyReader, // v6 F
-  profileBodyReader,
-  x402RecoveryReader,
-  identityBodyReader, // v6 I
-  ...sealedBodyReaders,
-  telegramLinkReader,
-  ...juryBodyReaders,
-  { file: "src/agreements/routes.ts", carries: "prompt-or-answer", reads: "Bounded party evidence text or JSON, or a strict create-agreement preparation with payee wallet, milestone USDG amounts, terms hash and future deadline.", then: "Requires an authenticated wallet-linked account matching the indexed payer/payee. Caps streams without trusting Content-Length. Preparation checks inherited rulebooks and returns unsigned calldata; jury calls use the attested chat path with a configured API key, or the optional internal provider transport.", kept: "Evidence hash and APP_SECRET-encrypted content in agreement_evidence, up to 32 items per party. Jury statement stores per-model answer reasons, receipt references and a signed ruling; reasons can quote evidence. Router reads evidence in memory. Parties can read both parties evidence through the API. Resolution plus 30 days by default permits deletion; a fresh-index retention job removes evidence and jury rows. No new Redis family, log field or caller-address reader.", evidence: [ev("src/agreements/routes.ts", "const reader = c.req.raw.body?.getReader();")] },
-  { file: "src/api/agent-certificates.ts", carries: "settings", reads: "Bounded record claim identifiers for issuance; a signed certificate supplied by body or query for public verification.", then: "Checks retained generation counts and rulebook events, signs true claims with a fresh random pseudonym, or checks certificate signature and expiry. The router knows the authenticated issuing key.", kept: "No certificate, pseudonym, claims, query or body is persisted. Only an account issuance limiter counter and the reused public receipt signing key log entry are kept; no prompt fields are accepted.", evidence: [ev("src/api/agent-certificates.ts", "bodySchema.parse(await readJson(c))")] },
-  { file: "src/api/playbooks.ts", carries: "settings", reads: "A playbook name of at most 100 characters with a strict bounded rulebook and an optional team id, or a playbook id (or null) for a key to follow.", then: "Requires the same owner/admin permissions as editing a key's rulebook; account-wide playbooks change only with a management key. A rules change is copied to every following key under the account lock.", kept: "The playbook in playbooks, each change with its digest and rules in playbook_changes, the following keys' copies in agent_policies with policy_set events in agent_policy_events, and team audit entries. No prompt or answer fields are accepted.", evidence: [ev("src/api/playbooks.ts", "createBody.parse(await readJson(c))")] }, // U115
-  { file: "src/api/agents.ts", carries: "settings", reads: "A strict bounded rulebook, a kill reason, a metadata-only Intent for a dry run, or a draft rulebook and a number of days (1 to 7) to replay.", then: "Requires the same owner/admin permissions as editing the target key. Evaluates dry runs deterministically without event writes or kill changes. A replay reads that key's recorded calls (model, lane, cost, tokens and time from generations, plus the linked rulebook events) and its Agent Guard checks in a read-only transaction, and evaluates the draft against them.", kept: "Current rulebooks and optional principal-written kill reasons in agent_policies; decision metadata and changes in agent_policy_events. Dry runs and replays keep nothing. No prompt or answer fields are accepted.", evidence: [ev("src/api/agents.ts", "agentPolicySchema.parse(await readJson(c))")] },
-  { file: "src/agents/enforce.ts", carries: "settings", reads: "Declared tool and function names from the inference body already parsed by the router.", then: "Projects only identifiers into the rulebook Intent, alongside the resolved model, lane, token bound and cost reservation.", kept: "Only Intent metadata and fixed decision reasons in agent_policy_events. Never arguments, descriptions, prompt or answer text; no new Redis key family or log field.", evidence: [ev("src/agents/enforce.ts", "export function declaredTools")] },
-  { file: "src/api/network-hosts.ts", carries: "settings", reads: "Up to 8 KiB of host signup JSON or an operator-generated sidecar credential, with an existing wallet signature over the canonical JSON hash.", then: "Strictly validates signup fields, verifies the wallet and performs attestation, policy and sanctions checks. Credentials are accepted only for the recovered operator wallet.", kept: "Provider name, endpoint, operator and payout wallets, requested model IDs, optional contact, status and refusal reasons. Credential stored only in existing AES-GCM api_key_enc. The router sees it in memory. No whole-body log or signature column.", evidence: [ev("src/api/network-hosts.ts", "const reader = c.req.raw.body?.getReader();")] },
-  { file: "src/network/waitlist.ts", carries: "settings", reads: "At most 4 KiB of JSON: waitlist fields or a deletion code.", then: "Validated strictly; a filled honeypot is discarded. The deletion code is hashed for an atomic delete.", kept: "Only sign-up fields, optional contact, id, deletion digest and time in network_waitlist. No raw deletion code, body log, IP or user agent. Free text is readable by the owner; public stats return counts only.", evidence: [ev("src/network/waitlist.ts", "const reader = c.req.raw.body?.getReader();")] },
-  {
-    file: "src/admin/trpc.ts", carries: "settings",
-    reads: "For network.publishPolicy, the operator's policy document decoded by the tRPC transport and validated by hostPolicySchema. No prompt fields are accepted.",
-    then: "Checked for consecutive version and issue time, canonically encoded, signed with the log key, and committed with its transparency-log entry and checkpoint.",
-    kept: "The public canonical policy, hash, signature, public verifier key, version and timestamps in host_policies, and a host_policy hash entry in tlog_entries. No caller address, operator token or request headers are retained by this publication path.",
-    evidence: [ev("src/admin/trpc.ts", "publishPolicy: operator.input(hostPolicySchema)"), ev("src/network/publication.ts", "await log.append([hostPolicyEntry(policy.version, sha256)]);")],
-  },
-  { file: "src/api/e2ee.ts", carries: "prompt-or-answer", reads: "A bounded encrypted JSON envelope and encrypted SSE or JSON response; model, roles, lengths, public keys, timestamp, nonce and clear usage remain visible. A caller must actually encrypt content; framing checks cannot prove encryption.", then: "Validates a strict text envelope, forwards the original bytes without decryption, hashes wire bytes, observes usage and completion for billing. No tools, files, search, cache, alias or content transformations.", kept: "Only hashes, counts or reservation bounds, charge and timing in generations and the ledger. The signed receipt adds end_to_end_encrypted, e2ee version/suite/gateway_attested/complete/billing_basis/input_byte_bound/max_tokens/request_bytes/response_bytes and gateway_receipt (id, keyset digest, response-hash/request-hash/upstream check states and upstream session id and GPU claim). Existing retention and deletion apply. No envelope, response ciphertext, public key, replay nonce, timestamp or credential is persisted; no new log fields or Redis families.", evidence: [ev("src/api/e2ee.ts", "const reader = c.req.raw.body?.getReader();"), ev("src/api/e2ee.ts", "end_to_end_encrypted: true")] },
+  x402RecoveryReader, // U115
+
   {
     file: "src/api/chat.ts",
     carries: "prompt-or-answer",
@@ -476,25 +288,9 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
     evidence: [ev("src/api/batches.ts", "const body = await readJson(c);"), ev("src/services/batches.ts", "await batchStore(ctx).saveInputs(row, lines, storeTtl(ctx, row));")],
   },
   {
-    file: "src/api/embeddings.ts",
-    carries: "prompt-or-answer",
-    reads: "The JSON body of an embeddings call: the input text.",
-    then: "Sent to the provider chosen and the vectors returned.",
-    kept: "Not stored; a generation row and receipt with hashes and counts are written.",
-    evidence: [ev("src/api/embeddings.ts", "const body = await readJson(c);")],
-  },
-  {
-    file: "src/api/rerank.ts",
-    carries: "prompt-or-answer",
-    reads: "The JSON body of a rerank call: the query and the documents.",
-    then: "Sent to the provider chosen; its scores are checked and returned, with the documents' own text when asked.",
-    kept: "Not stored; a generation row and receipt with hashes and counts are written.",
-    evidence: [ev("src/api/rerank.ts", "const body = await readJson(c);")],
-  },
-  {
     file: "src/api/anthropic.ts",
     carries: "prompt-or-answer",
-    reads: "The JSON body of an Anthropic-format messages call and free onion count requests. The router reads code, prompts and tools in memory.",
+    reads: "The JSON body of an Anthropic-format messages or count_tokens call. The router reads code, prompts and tools in memory.",
     then: "Converted to a chat request and sent through the router's own chat route, so it is handled and kept exactly as a chat call is.",
     kept: "Nothing beyond what src/api/chat.ts keeps; token counts alone create no payment or request record.",
     evidence: [ev("src/api/anthropic.ts", "const raw = await readJson(c);")],
@@ -508,44 +304,12 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
     evidence: [ev("src/api/responses.ts", "chatRequestFrom(await readJson(c))")],
   },
   {
-    file: "src/ollama/routes.ts",
-    carries: "prompt-or-answer",
-    reads: "The JSON body of an Ollama-format chat, generate or embed call.",
-    then: "Converted to a chat or embeddings request and sent through the router's own route, so it is handled and kept exactly as that call is.",
-    kept: "Nothing beyond what src/api/chat.ts and src/api/embeddings.ts keep.",
-    evidence: [ev("src/ollama/routes.ts", "const raw = await readJson(c);")],
-  },
-  {
     file: "src/api/mcp.ts",
     carries: "prompt-or-answer",
     reads: "The JSON-RPC body of a tool call for the MCP endpoint, which can include a prompt.",
-    then: "Chat is forwarded to the router's own chat route. Rulebook tools forward caller authentication and prompt-free intent identifiers to the existing agents routes; token estimates use catalog prices. Reading and checking rules does not create policy events.",
-    kept: "Nothing beyond what src/api/chat.ts and its existing policy enforcement keep. Rulebook reads and dry runs add no stored data.",
+    then: "Chat is forwarded to the router's own chat route; the other tools read the model list and receipts.",
+    kept: "Nothing beyond what src/api/chat.ts keeps.",
     evidence: [ev("src/api/mcp.ts", "msg = JSON.parse(await c.req.text())")],
-  },
-  {
-    file: "src/api/rag.ts",
-    carries: "prompt-or-answer",
-    reads: "The documents and the question of a retrieval call.",
-    then: "Cut into chunks and embedded through the router's own embeddings route, ranked in memory, and the best chunks sent to the router's chat route.",
-    kept: "Nothing of the documents, question or answer is kept; the chunks and vectors are dropped when the request ends. The response cache is never used.",
-    evidence: [ev("src/api/rag.ts", "const raw = await readJson(c);"), ev("src/api/rag.ts", "What is kept: nothing of the documents, the question or the answer.")],
-  },
-  {
-    file: "src/ohttp/gateway.ts",
-    carries: "prompt-or-answer",
-    reads: "An encapsulated request (Oblivious HTTP). The gateway opens it with its own private key, in memory.",
-    then: "Dispatched to the router's own routes as an ordinary request without a client address.",
-    kept: "Nothing beyond what the route it reaches keeps. The private key for an epoch is destroyed when its window ends.",
-    evidence: [ev("src/ohttp/gateway.ts", "const body = await readCapped(raw.body, cfg.maxRequestBytes);")],
-  },
-  {
-    file: "src/services/telegram.ts",
-    carries: "prompt-or-answer",
-    reads: "A Telegram message a user sent to the bot (fetched from Telegram by long polling).",
-    then: "Sent to the router's own chat route with the user's own API key, so limits, billing and receipts apply.",
-    kept: "The message text is not stored or logged; only the user's sealed key and chosen model are (kv table).",
-    evidence: [ev("src/services/telegram.ts", "Never logged: keys, message text, the bot token")],
   },
   {
     file: "src/gateway/cache.ts",
@@ -580,15 +344,6 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
     evidence: [ev("src/api/saved-routes.ts", "routeCreateSchema.parse(await readJson(c))")],
   },
   {
-    file: "src/api/skills.ts",
-    carries: "public-data",
-    reads:
-      "A skill to publish: a repository URL, ref and folder, or an uploaded .tar.gz, .tar or .zip of a skill folder (SKILL.md, scripts and resources), and an optional price; an author's new price; an operator's revocation reason.",
-    then: "The archive is read in memory under size, file-count and path limits (nothing is extracted to disk), normalised into one canonical tar, hashed and scanned; a repository is fetched at depth 1 and its tree read without a checkout.",
-    kept: "The published skill, its hash and scan report in skills; installs in skill_installs.",
-    evidence: [ev("src/api/skills.ts", "importSchema.parse(await readJson(c))"), ev("src/api/skills.ts", "new Uint8Array(await c.req.arrayBuffer())"), ev("src/skills/archive.ts", "Nothing is extracted to disk")],
-  },
-  {
     file: "src/api/presets.ts",
     carries: "settings",
     reads: "A preset: fallback models, provider preferences, sampling controls and the owner's own system prompt, response_format and tool definitions.",
@@ -612,15 +367,6 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
     then: "Checked to be in sealed form (plaintext is refused), then stored.",
     kept: "The ciphertext and its labels in character_memory, and the vector when the client opted in.",
     evidence: [ev("src/api/memory.ts", "plaintext is refused")],
-  },
-  {
-    file: "src/api/teams.ts",
-    carries: "payment-or-signature",
-    reads:
-      "Team settings (a name, an org budget, a role), invites, and the proofs members sign in with: a passkey registration or assertion (WebAuthn clientDataJSON, authenticator data, signature) or a wallet signature over a one-time message.",
-    then: "Settings are validated and stored; passkey and wallet proofs are verified and only the passkey's public key or the wallet address is kept. Each change is appended to the team's audit log.",
-    kept: "The team, team_members, team_principals and team_audit tables; nothing of the proofs themselves.",
-    evidence: [ev("src/api/teams.ts", "verifyRegistration(v.passkey.response, passkeyPolicy(ctx, ch.challenge!))")],
   },
   {
     file: "src/api/spend.ts",
@@ -679,52 +425,12 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
     evidence: [ev("src/api/creator-claims.ts", "parse(await readJson(c))")],
   },
   {
-    file: "src/api/host-anchor.ts",
-    carries: "public-data",
-    reads: "A request for an inclusion proof: a receipt envelope from an attested host (hashes and counts, no text) or a leaf hash.",
-    then: "Looked up in host_anchor_leaves and answered.",
-    kept: "Nothing.",
-    evidence: [ev("src/api/host-anchor.ts", "const body = await readJson(c);")],
-  },
-  {
-    file: "src/api/ipx.ts",
-    carries: "settings",
-    reads: "An operator's switch that halts or resumes the index-price oracle.",
-    then: "Checked for an operator token and stored.",
-    kept: "The halt flag in the kv table.",
-    evidence: [ev("src/api/ipx.ts", "const body = await readJson(c);")],
-  },
-  {
-    file: "src/api/paymaster.ts",
-    carries: "payment-or-signature",
-    reads: "A paymaster (gas sponsorship) request.",
-    then: "Checked and answered.",
-    kept: "Nothing beyond the Redis rate-limit key.",
-    evidence: [ev("src/api/paymaster.ts", "const body = await readJson(c);")],
-  },
-  {
     file: "src/api/public.ts",
     carries: "payment-or-signature",
-    reads: "Receipt verification requests, pay-with authorisations, provider applications and creator claim challenges.",
-    then: "Verified and, for a provider application or a pay-with authorisation, stored.",
-    kept: "The provider and pay-with tables described above.",
+    reads: "Receipt verification requests, provider applications and creator claim challenges.",
+    then: "Verified and, for a provider application, stored.",
+    kept: "The provider tables described above.",
     evidence: [ev("src/api/public.ts", "const raw = await readJson(c);")],
-  },
-  {
-    file: "src/blind/routes.ts",
-    carries: "payment-or-signature",
-    reads: "A blinded token request.",
-    then: "Signed by the issuer.",
-    kept: "Nothing that links the buyer to the token.",
-    evidence: [ev("src/blind/routes.ts", "const body = await readJson(c);")],
-  },
-  {
-    file: "src/tlog/routes.ts",
-    carries: "public-data",
-    reads: "A signed checkpoint note from a witness (16 KB at most).",
-    then: "Verified and stored as a cosignature.",
-    kept: "tlog_cosignatures.",
-    evidence: [ev("src/tlog/routes.ts", "const body = c.req.raw.body;")],
   },
 ];
 
@@ -746,20 +452,19 @@ export const EXTERNAL: ExternalDoc = {
       "The router writes one JSON line per event to standard output (standard error for warnings and errors). A line is a time, a level, a fixed message and a few fields chosen at each call site. No call site writes a request or response body, a header, a client address, a query string or a prompt.",
     format: "JSON lines: { t, level, msg, ...fields }.",
     records: [
-      ...fastCreditLogRecords,
       "The time, the level and a message written in the code.",
       "Anonymous limiter failure: fixed warning that a request was allowed; no exception, address, header, key or body.",
       "Host slash dry-run intent: provider id, evidence commitment root, proposeSlash function name, whole-bond USDG amount, numeric contract reason, contract and chain id, bytes32 host id and delist flag. Logged once per evidence root; no signed bytes, key, raw quote or receipt envelope.",
       "Sanctions refresh counts (distinct EVM entries, ignored formats and digital currency entries), publication date and source hash; screening skip/refusal reasons and provider ids. Freshness exceptions for previously paid addresses and refresh failures use fixed reason codes. No payout wallet or identity fields are added to these logs.",
       "Identifiers and counts: provider ids, model ids, job names, hold and generation ids, epochs, block numbers, transaction hashes, hashed key ids and, on rare settlement and escrow events, an account id.",
-      "Wallet addresses of payers on pay-per-call and pay-with events (public on chain).",
+      "Wallet addresses of payers on pay-per-call events (public on chain).",
       "For an unhandled error: the path of the request without its query string, the error message and the first five lines of the stack.",
       "Error messages from libraries and upstream services, each cut to 200 characters where a call site truncates them. Configured private chain RPC URLs, including paths and queries on the same host, are redacted before log emission; chain transport failures are redacted before callers truncate them.",
     ],
     neverRecords: [
-      noLog("Client network addresses. No log call passes one; addresses are used for rate limits and direct private-network ingress checks.", "src/api/common.ts", "return { id: clientIp(c, cfg.trustProxy), onion: false"),
+      noLog("Client network addresses. No log call passes one; addresses are used for rate limits and direct private-network ingress checks.", "src/api/common.ts", "return { id: clientIp(c, cfg.trustProxy), scale: (limit) => limit };"),
       noLog("Request or response bodies and prompts. The unhandled-error line takes the path and the error, not the body.", "src/app.ts", "log.error(\"unhandled error\", { path: new URL(c.req.url).pathname"),
-      noLog("Request headers, cookies and API keys. The Telegram bot states the same rule for its own lines.", "src/services/telegram.ts", "Never logged: keys, message text, the bot token"),
+      noLog("Request headers, cookies and API keys. The unhandled-error line takes the path and the error only.", "src/app.ts", "log.error(\"unhandled error\", { path: new URL(c.req.url).pathname"),
       noLog("Query strings: only the pathname of a failing request is logged.", "src/app.ts", ".pathname, error: (err as Error)?.message"),
     ],
     caveats: [
@@ -771,32 +476,12 @@ export const EXTERNAL: ExternalDoc = {
   },
   otherStores: [
     ...rushStores, // ON3
-    ...toolsStores, // v6 T
     ...webhookStores, // V86.
-    ...makegoodStores, // V6 R.
-    ...identityStores, // v6 I
     ...activityStores,
     ...statementStores, // V87
-    ...proofPackStores, // U100
     ...laneReportStores, // Lane report
     ...insightsStores, // V88: spend insights.
-    ...dataToolStores, // B
-    ...inboxStores,
-    { id: "network-routing-evidence", name: "Network host routing evidence in memory", purpose: "When NETWORK_HOSTS_ENABLED is on, routing uses existing signed generation records, health probes and attestation outcomes to limit admitted hosts during probation and exclude unavailable hosts.", holds: "Provider ids, probation deadlines, aggregate attested success and recent outcome counts, fresh canonical active bond base units matched to the host id and operator wallet, probe availability and median latency, the latest attestation failure flag and refresh time. No request text or caller address. Successful network probes also record latency in the existing health table.", ttl: "Rebuilt by health refreshes, including idle flushes; evidence older than 120 seconds is refused. Failed refreshes clear the evidence. Lost when the router instance is released or exits.", requestText: "none", evidence: [ev("src/network/routing.ts", "const states = new WeakMap<HealthView, State>();"), ev("src/network/routing.ts", "state.evidence = new Map();"), ev("src/network/weight-config.ts", "evidenceMaxAgeMs: 120_000")] },
-    ...networkJoinStores,
-    ...networkStatsStores,
-    ...commerceStores, // v6 L
-    ...sealedOtherStores,
-    ...agreementContractStores,
-    {
-      id: "messages-proxy-prices",
-      name: "Messages proxy prices on the caller's computer",
-      purpose: "The local proxy estimates a Messages budget using model prices fetched over Tor. The request text, code, tool schemas and results are read in memory to count tokens, then forwarded over Tor; count_tokens is answered locally without any network request.",
-      holds: "The public unlinkable model directory in memory. The existing local tokens.json file atomically moves every selected bearer token to unconfirmed before sending; uncertainty keeps all members there, while a definite unserved refusal returns them. No request or answer text is written to that file or logged.",
-      ttl: "Model prices are refreshed after one minute and lost on process exit. Local token credentials remain until expiry filtering, successful settlement or removal by the caller; uncertain sent sets are never automatically reused.",
-      requestText: "none",
-      evidence: [ev("packages/private/src/messages.ts", "cached = { until: Date.now() + 60_000, rows: json.data }"), ev("packages/private/src/store.ts", "leaseBudget(budget: bigint"), ev("packages/private/src/proxy.ts", "countMessageTokens(JSON.parse")],
-    },
+
     {
       id: "batch-memory",
       name: "Batch requests and answers in the router's memory, without Redis",
@@ -818,11 +503,11 @@ export const EXTERNAL: ExternalDoc = {
     {
       id: "replay-memory",
       name: "Replay guards in memory",
-      purpose: "Two small in-memory sets stop replays: a used wallet signature (when Redis is not configured) and an Oblivious HTTP encapsulated request prefix.",
-      holds: "SHA-256 digests of a wallet address, timestamp and request hash, and of the first bytes of an encapsulated request. Not the request.",
-      ttl: "Ten minutes for a wallet signature (old entries are swept once the set passes 50,000); until the key's acceptance window ends for an encapsulated request, with at most 100,000 kept.",
+      purpose: "A small in-memory set stops replays of a used wallet signature when Redis is not configured.",
+      holds: "SHA-256 digests of a wallet address, timestamp and request hash. Not the request.",
+      ttl: "Ten minutes (old entries are swept once the set passes 50,000).",
       requestText: "hashes",
-      evidence: [ev("src/api/auth.ts", "const seen = new Map<string, number>();"), ev("src/ohttp/replay.ts", "This remembers recent ones in")],
+      evidence: [ev("src/api/auth.ts", "const seen = new Map<string, number>();")],
     },
     {
       id: "private-lane-counters",

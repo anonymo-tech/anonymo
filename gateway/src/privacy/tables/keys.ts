@@ -1,8 +1,7 @@
 import type { TableDoc } from "../types.ts";
 import { CREATED, KEPT, KEPT_APPEND, rv } from "./common.ts";
 
-// Keys and auth: API keys (kept only as hashes), the teams and sessions built on them, the provider keys you may bring, and the
-// issuer and gateway keys behind blind tokens and Oblivious HTTP.
+// Keys and auth: API keys (kept only as hashes), the sessions built on them and the provider keys you may bring.
 
 export const keyTables: Record<string, TableDoc> = {
   keys: {
@@ -28,9 +27,7 @@ export const keyTables: Record<string, TableDoc> = {
       spent_total: { purpose: "All-time spend of the key, in pico-USD.", request: "aggregate" },
       rpm: "Requests-per-minute limit for the key.",
       tpm: "Tokens-per-minute limit for the key.",
-      team_id: "The team the key belongs to, when it has one.",
       allowed_models: "If set, the only models the key may call.",
-      pay_with_default: "The Stock Token symbol the key pays with by default.",
       scope: "Null keeps account access; inference permits model calls and this key’s own generation and receipt reads only.", // ZK6
       include_byok_in_limit: "Stored compatibility selection. Provider-side BYOK expenditure is not tracked; usage counts router-billed charges once.", // ZK6
       management: "Whether the key may manage other keys.",
@@ -95,82 +92,9 @@ export const keyTables: Record<string, TableDoc> = {
     },
   },
 
-  teams: {
-    category: "keys",
-    purpose: "A team, also called an organisation: a named group of keys under one owning account, optionally bound to a wallet or a Safe, with an optional org budget.",
-    request: "no",
-    retention: KEPT,
-    columns: {
-      id: "Team id.",
-      name: "The team's name, chosen by its owner.",
-      owner_account: "The account that owns the team.",
-      owner_address: {
-        purpose: "The wallet or Safe that owns the team, once it signed a one-time message (checked by recovery for a wallet, by EIP-1271 isValidSignature for a contract wallet). Empty until one is bound.",
-        review: rv(["name:network"], "wallet-address", "A blockchain address the owner chose to bind, not a network address of a caller."),
-      },
-      owner_kind: "account (no wallet bound), eoa (a wallet) or contract (a Safe or another smart wallet).",
-      owner_verified_at: "When the owner's wallet signature was checked.",
-      budget: "The org budget in pico-USD: a cap on the sum of the limits of the team's keys. Empty means no cap.",
-      created_at: CREATED,
-    },
-  },
 
-  team_members: {
-    category: "keys",
-    purpose: "Which keys are in which team and their role.",
-    request: "no",
-    retention: KEPT,
-    columns: {
-      team_id: "The team.",
-      key_hash: "The member key's hash.",
-      role: "owner, admin, dev, viewer or agent (member is the older default).",
-      principal_id: "For a key issued when a member signed in with a passkey or wallet, that member (team_principals.id).",
-      created_at: CREATED,
-    },
-  },
 
-  team_principals: {
-    category: "keys",
-    purpose:
-      "Members of a team who sign in without an API key: a passkey (WebAuthn) or a wallet. There is no email, name or device information: a passkey row holds only its credential id and public key (attestation is not requested), a wallet row only its address.",
-    request: "no",
-    retention: "Kept while the team exists; revoking a member disables the row and the keys issued to it.",
-    columns: {
-      id: "Member id (tp_...).",
-      team_id: "The team.",
-      kind: "passkey or wallet.",
-      subject: "For a passkey, its credential id (random bytes the authenticator chose, base64url); for a wallet, its address.",
-      public_key: "The passkey's public key (COSE, base64url). It can check signatures, not make them.",
-      alg: "The passkey's signature algorithm: -7 ES256, -8 EdDSA or -257 RS256.",
-      sign_count: "The passkey's signature counter, so a cloned authenticator is noticed.",
-      role: "The member's role: owner (the bound owner wallet), admin, dev or viewer.",
-      disabled: "Whether the member was revoked.",
-      created_at: CREATED,
-      last_used: "When the member last signed in.",
-    },
-  },
 
-  team_audit: {
-    category: "keys",
-    purpose:
-      "A team's audit log: who changed members, keys, budgets, presets, routes and lane settings, and when. Each entry is hash-chained to the one before it, so an export can be checked offline (scripts/verify-audit.mjs). It records settings changes only, never what anyone asked a model.",
-    request: "no",
-    retention: `${KEPT_APPEND} A database trigger rejects UPDATE and DELETE.`,
-    columns: {
-      team_id: "The team.",
-      seq: "The entry's position in the team's chain: 1, 2, 3, ...",
-      at: "When the change was made.",
-      actor: "Who made it: key:<first 16 hex digits of the key hash>, passkey:<member id> or wallet:<address>.",
-      action: "What changed, such as member.join, key.create, budget.set, preset.save or route.update.",
-      target: "What it changed: a key hash, member id, invite hash prefix, preset or route name.",
-      detail: {
-        purpose: "A few fixed fields about the change: a role, a limit, a lane, a version and hash, the names of the fields that changed.",
-        review: rv(["type:json"], "config", "Fields chosen by the router for each action (src/teams/audit.ts, src/api/teams.ts): no free text from a call, and for presets only the version, hash and lane, never the system prompt."),
-      },
-      prev_hash: "The previous entry's hash (64 zeros for the first entry).",
-      hash: "sha256(prev_hash bytes || canonical JSON of the entry).",
-    },
-  },
 
   agent_sessions: {
     category: "keys",
@@ -195,60 +119,7 @@ export const keyTables: Record<string, TableDoc> = {
     },
   },
 
-  blind_keys: {
-    category: "keys",
-    purpose: "Issuer keys for blind tokens (Privacy Pass): one per epoch and denomination. Nothing here links a buyer to a token.",
-    request: "no",
-    retention: "The private half is wiped when the epoch stops issuing; the public half stays so old tokens remain verifiable.",
-    columns: {
-      key_id: "The token key id: hex SHA-256 of the RFC 9578 public key info.",
-      epoch: "The epoch the key issues in.",
-      denomination: "Token units a token from this key is worth.",
-      unit_price: "Pico-USD per token unit, fixed when the key is made.",
-      spki: "The public key, base64url.",
-      private_enc: "The private key, AES-GCM encrypted with APP_SECRET. Null once the key no longer issues.",
-      valid_from: "When the key started.",
-      issue_until: "When it stops signing new tokens.",
-      redeem_until: "When tokens from it stop being accepted.",
-      revoked_at: "When it was revoked, if it was.",
-      issued: "How many tokens were signed: a count and nothing else.",
-      created_at: CREATED,
-    },
-  },
 
-  blind_nullifiers: {
-    category: "keys",
-    purpose: "Spent blind tokens, one row per token including each member of a request set reserved atomically. A row holds the SHA-256 of a token so it cannot be spent twice; the issuer cannot connect that hash to the blinded request it signed.",
-    request: "yes",
-    retention: "A reservation is deleted if the request fails before anything is served; spent rows are kept so a token cannot be replayed.",
-    columns: {
-      nullifier: "SHA-256 of the token.",
-      key_id: "The issuer key that signed it.",
-      status: "reserved while a request runs, spent once served.",
-      reserved_at: "When the token was reserved.",
-      spent_at: "When the request it paid for was served.",
-      generation_id: "The generation the token paid for; all members of a set share it, linking those redeemed tokens to the same request but never to a purchase.",
-    },
-  },
 
-  ohttp_keys: {
-    category: "keys",
-    purpose: "Oblivious HTTP gateway keys, one per epoch. Their public halves are published; each private half is destroyed when its epoch's window ends.",
-    request: "no",
-    retention: "The private half is destroyed when the epoch's acceptance window ends, after which recorded traffic for that epoch can no longer be opened. The public half stays.",
-    columns: {
-      epoch: "The key's epoch.",
-      key_id: "The 8-bit key identifier of the key configuration (epoch mod 256).",
-      kem_id: "The HPKE KEM identifier.",
-      public_key: "The public key, base64url.",
-      config: "The encoded key configuration (RFC 9458), base64url.",
-      config_sha256: "SHA-256 of that configuration.",
-      private_enc: "The private key, AES-GCM encrypted with APP_SECRET. Null once destroyed.",
-      valid_from: "When the key starts to be used.",
-      accept_until: "Requests to this key are opened until here.",
-      revoked_at: "When it was revoked, if it was.",
-      created_at: CREATED,
-    },
-  },
 };
 

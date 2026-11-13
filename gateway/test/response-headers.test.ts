@@ -9,7 +9,7 @@ import { datacenterRegion } from "../src/api/models.ts";
 import type { Candidate } from "../src/catalog/catalog.ts";
 import { bindingsFor, sidecarDocument } from "./measurement-fixtures.ts";
 
-// Every chat, completion and embeddings response names its receipt (X-Receipt-Id, and Inference-Id for Hugging Face
+// Every chat and completion response names its receipt (X-Receipt-Id, and Inference-Id for Hugging Face
 // clients), the lane it was served under, and, only when the serving endpoint's fresh attestation bound one, the
 // classifier policy hash. GET /api/v1/models carries an attestation object and a datacenter region per model.
 
@@ -113,18 +113,14 @@ describe("receipt and lane headers on every response", () => {
     expect(got.policy).toBeNull();
   });
 
-  test("the /v1 alias, completions and embeddings carry the same headers", async () => {
+  test("the /v1 alias and completions carry the same headers; embeddings are gone", async () => {
     const alias = await chat({}, "/v1/chat/completions");
     expect(alias.status).toBe(200);
     expect(ids(alias).receipt).toBe((await alias.json()).id);
     const comp = await h.request("/api/v1/completions", { method: "POST", headers: auth, json: { model: MODELS.llama.slug, prompt: "hi", max_tokens: 10 } });
     expect(comp.status).toBe(200);
     expect(ids(comp)).toMatchObject({ receipt: (await comp.json()).id, lane: "public" });
-    const emb = await h.request("/api/v1/embeddings", { method: "POST", headers: auth, json: { model: MODELS.embed.slug, input: "hello" } });
-    expect(emb.status).toBe(200);
-    const ej = await emb.json();
-    expect(ids(emb)).toMatchObject({ generation: ej.id, receipt: ej.id, inference: ej.id, lane: "public", policy: null });
-    expect(ej.receipt.id).toBe(ej.id);
+    expect((await h.request("/api/v1/embeddings", { method: "POST", headers: auth, json: { model: MODELS.embed.slug, input: "hello" } })).status).toBe(404);
   });
 
   test("CORS lets a browser read them on /api/* and /v1/*", async () => {

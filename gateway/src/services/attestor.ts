@@ -1,7 +1,4 @@
-import { sidecarHostPolicyBindings } from "../network/sidecar-bindings.ts";
 import { and, eq, isNotNull, inArray, or } from "drizzle-orm";
-import { probationDiscovery, probationRegistryFilter } from "../network/offers.ts";
-import { renewHostAttestation } from "../network/renew-attestation.ts";
 import { boundedJson, peekProviderCertificate, providerFetch } from "../providers/network.ts";
 import { clearTlsPin, describePeerCertificate, saveTlsPin, type PeerCertificate } from "../providers/tls-pin.ts";
 import { randomBytes } from "node:crypto";
@@ -14,8 +11,6 @@ import { classifierFromReport, policyHashFromReport } from "../router/lane.ts";
 import { clearAttestedPolicy, saveAttestedPolicy } from "../providers/attested-policy.ts";
 import { pruneAttestationEvents, recordAttestorRun } from "./attestation-events.ts";
 import { checkAciReport, clearAciGateway, isAciReport, saveAciGateway } from "../providers/aci.ts";
-import { keyPublished } from "../tlog/hooks.ts";
-import { attestationBindingEntry } from "../tlog/entries.ts";
 
 // attestor: every 10 minutes, for each provider with a TEE, fetch a fresh attestation bound to our
 // nonce and verify it. Fail closed: anything unverifiable leaves the provider un-attested, and the
@@ -104,8 +99,8 @@ async function verifyNvidia(ctx: Ctx, payload: string) {
   return { ok: false, reason: "NRAS overall attestation result was not true" };
 }
 
-export async function attestProvider(ctx: Ctx, p: typeof providers.$inferSelect, networkAdmission = false) {
-  if (!["shadow", "live"].includes(p.status) && !probationDiscovery(ctx.cfg, p)) throw new Error("Provider requires operator approval before attestation.");
+export async function attestProvider(ctx: Ctx, p: typeof providers.$inferSelect) {
+  if (!["shadow", "live"].includes(p.status)) throw new Error("Provider requires operator approval before attestation.");
   const nonce = randomBytes(32).toString("hex");
   const url = new URL(p.attestationUrl!);
   url.searchParams.set("nonce", nonce);
@@ -217,7 +212,6 @@ export async function attestProvider(ctx: Ctx, p: typeof providers.$inferSelect,
   const reportHash = "0x" + sha256(canonicalJson({ report, nonce }));
   await ctx.db.insert(attestations).values({ providerId: p.id, ok: true, teeKind: p.teeKind ?? report.kind ?? null, reportHash, nonce, measurements, detail: { signing_address: report.signing_address ?? null, verifiers: verifiedBy, simulated: p.teeKind === "dev" || report.kind === "dev", classifier_enabled: classifierEnabled } });
   // Transparency log (a no-op unless TLOG_ENABLED): the keys a hardware-verified quote bound, never simulated evidence.
-  if (bindingsCommitted && verifiedBy.length && !simulated) keyPublished(ctx.db, "attestation_binding", attestationBindingEntry(p.id, report.sidecar_bindings, peer?.attestationRef ?? null));
   // A measurement is recorded only from a hardware quote a verifier accepted; never from simulated evidence.
   if (ctx.cfg.measurements.enabled && bound && quoteHex && verifiedBy.length) {
     try {
@@ -235,7 +229,7 @@ export async function attestProvider(ctx: Ctx, p: typeof providers.$inferSelect,
   await ctx.db.update(providers).set({ attested: true, attestationHash: reportHash, attestedAt: new Date(), updatedAt: new Date() }).where(eq(providers.id, p.id));
   await ctx.db.update(providers).set({ classifierEnabled }).where(eq(providers.id, p.id));
   await saveAttestedPolicy(ctx.db, p.id, policyHash, reportHash);
-  return { provider: p.id, ok: true, hash: reportHash, ...(networkAdmission && ctx.cfg.networkHosts.enabled ? { networkEvidence: { tee_kind: report.intel_quote ? "tdx" : p.teeKind ?? "unknown", hardware_verified: verifiedBy.length > 0, bindings_committed: bindingsCommitted, simulated, dev: simulated, gpu_cc_verified: !simulated && !!report.nvidia_payload, bindings: report.sidecar_bindings ?? {} } } : {}), host_policy_bindings: sidecarHostPolicyBindings(report.sidecar_bindings, { ...evidence, teeKind: p.teeKind ?? "tdx" }), ...(peer ? { tls_pin: { spki_sha256: peer.spkiSha256, attestation_ref: peer.attestationRef } } : {}) };
+  return { provider: p.id, ok: true, hash: reportHash, ...(peer ? { tls_pin: { spki_sha256: peer.spkiSha256, attestation_ref: peer.attestationRef } } : {}) };
 }
 
 /** Verify an aci/1 gateway report (see the header comment and providers/aci.ts) and record what it established. */
@@ -349,12 +343,12 @@ async function provePinnedCertificate(ctx: Ctx, p: typeof providers.$inferSelect
 }
 
 export async function runAttestor(ctx: Ctx) {
-  const rows = await ctx.db.select().from(providers).where(and(or(inArray(providers.status, ["shadow", "live"]), probationRegistryFilter(ctx.cfg)), isNotNull(providers.attestationUrl), isNotNull(providers.teeKind)));
+  const rows = await ctx.db.select().from(providers).where(and(inArray(providers.status, ["shadow", "live"]), isNotNull(providers.attestationUrl), isNotNull(providers.teeKind)));
   const results = [];
   for (const p of rows) {
     try {
       const startedAt = new Date();
-      const result = await renewHostAttestation(ctx, p, await attestProvider(ctx, p));
+      const result = await attestProvider(ctx, p);
       results.push(result);
       await recordAttestorRun(ctx, p, result, startedAt); // the public proof-time record; never throws
     } catch (e) {

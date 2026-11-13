@@ -22,48 +22,28 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import type { Config } from "../config.ts";
 import { fail } from "../lib/errors.ts";
-import { ipxFeedAbi } from "../services/ipx.ts";
 import { log } from "../lib/util.ts";
 import {
   CallPayAbi,
   CreditsAbi,
-  PayWithStockAbi,
   ProviderBondAbi,
   ReceiptAnchorAbi,
   RoyaltyAbi,
-  aggregatorV3Abi,
   erc20Abi,
 } from "./abis.ts";
 
-export type ContractName = "credits" | "callPay" | "payWithStock" | "providerBond" | "receiptAnchor" | "royalty";
+export type ContractName = "credits" | "callPay" | "providerBond" | "receiptAnchor" | "royalty";
 export const CONTRACT_ABIS: Record<ContractName, Abi> = {
   credits: CreditsAbi as unknown as Abi,
   callPay: CallPayAbi as unknown as Abi,
-  payWithStock: PayWithStockAbi as unknown as Abi,
   providerBond: ProviderBondAbi as unknown as Abi,
   receiptAnchor: ReceiptAnchorAbi as unknown as Abi,
   royalty: RoyaltyAbi as unknown as Abi,
 };
 
 export type DecodedLog = { contract: ContractName; event: string; args: Record<string, unknown>; txHash: Hex; logIndex: number; blockNumber: bigint };
-export type EscrowTransfer = { token: Hex; from: Hex; value: bigint; txHash: Hex; logIndex: number; blockNumber: bigint; blockHash: Hex };
-/** A USDG Transfer log with its block time (unix seconds); addresses and hash in lowercase. */
-export type UsdgTransfer = { from: Hex; to: Hex; value: bigint; txHash: Hex; logIndex: number; blockNumber: bigint; blockTime: number; authorized: boolean; txFrom: Hex | null };
-const authorizationUsedEvent = { type: "event", name: "AuthorizationUsed", inputs: [{ name: "authorizer", type: "address", indexed: true }, { name: "nonce", type: "bytes32", indexed: true }] } as const;
-/** A transaction's receipt as the escrow watcher needs it: where it is included and its Transfer logs to escrow. */
-export type EscrowReceipt = { success: boolean; blockNumber: bigint; blockHash: Hex; transfers: { token: Hex; from: Hex; value: bigint; logIndex: number }[] };
-/** The chain head and the finality point (the `finalized` or `safe` block) with their timestamps. */
-export type EscrowFinality = { head: bigint; headTime: number; final: bigint; finalHash: Hex; finalTime: number };
-export type FeedReading = { answer: bigint; decimals: number; updatedAt: number };
 const transferEvent = { type: "event", name: "Transfer", inputs: [{ name: "from", type: "address", indexed: true }, { name: "to", type: "address", indexed: true }, { name: "value", type: "uint256", indexed: false }] } as const;
 export type CallPayment = { nonce: Hex; payer: Hex; amount: bigint; blockNumber: bigint; confirmations: number; logIndex: number };
-/** PayWithStock session; `epoch` is named by every authorization and bumped by each revocation. */
-export type PaywithSession = { wallet: Hex; token: Hex; capRawPerDay: bigint; spentRawToday: bigint; dayStart: bigint; active: boolean; epoch: bigint };
-/** EIP-712 ChargeAuthorization: one settlement the session wallet signed. */
-export type ChargeAuthorization = { keyHash: Hex; token: Hex; usdgAmount: bigint; maxRaw: bigint; usageCommitment: Hex; nonce: bigint; epoch: bigint; deadline: bigint; router: Hex };
-/** EIP-712 AllowanceAuthorization: a bounded pre-authorization the session wallet signed. */
-export type AllowanceAuthorization = { keyHash: Hex; token: Hex; maxRawTotal: bigint; maxRawPerCharge: bigint; validUntil: bigint; nonce: bigint; epoch: bigint; router: Hex };
-export type OnchainAllowance = { maxRawTotal: bigint; maxRawPerCharge: bigint; spentRaw: bigint; nonce: bigint; validUntil: bigint; epoch: bigint; router: Hex; nextNonce: bigint };
 const erc1271Abi = [{ type: "function", name: "isValidSignature", stateMutability: "view", inputs: [{ name: "hash", type: "bytes32" }, { name: "signature", type: "bytes" }], outputs: [{ type: "bytes4" }] }] as const;
 
 // EIP-3009 surface of USDG: both signature overloads exist on Robinhood Chain (v,r,s and bytes).
@@ -73,7 +53,7 @@ const usdg3009Abi = [
   { type: "function", name: "transferWithAuthorization", stateMutability: "nonpayable", inputs: [{ name: "from", type: "address" }, { name: "to", type: "address" }, { name: "value", type: "uint256" }, { name: "validAfter", type: "uint256" }, { name: "validBefore", type: "uint256" }, { name: "nonce", type: "bytes32" }, { name: "signature", type: "bytes" }], outputs: [] },
 ] as const;
 
-export type Role = "router" | "settlement" | "anchorer" | "slasher" | "keeper" | "ipx" | "faucet" | "facilitator";
+export type Role = "router" | "settlement" | "anchorer" | "slasher" | "faucet" | "facilitator";
 
 export class ChainService {
   readonly chain: Chain;
@@ -95,8 +75,6 @@ export class ChainService {
       settlement: cfg.chain.settlementKey,
       anchorer: cfg.chain.anchorerKey,
       slasher: cfg.chain.slasherKey,
-      keeper: cfg.chain.keeperKey,
-      ipx: cfg.chain.ipxKeeperKey,
       faucet: cfg.chain.faucetKey,
       facilitator: cfg.facilitator.relayKey, // v6 F: pays relay gas and nothing else
     };
@@ -182,49 +160,6 @@ export class ChainService {
     return out;
   }
 
-  // ---- stock escrow ----------------------------------------------------------------------
-
-  /** ERC-20 Transfer logs in [from, to] emitted by exactly these token contracts and sent to `escrow`. */
-  async escrowTransfers(tokens: Hex[], escrow: Hex, from: bigint, to: bigint): Promise<EscrowTransfer[]> {
-    if (!tokens.length) return [];
-    const raw = await this.client.getLogs({ address: tokens, event: transferEvent, args: { to: escrow }, fromBlock: from, toBlock: to, strict: true });
-    const allowed = new Set(tokens.map((t) => t.toLowerCase()));
-    return raw
-      .filter((l) => allowed.has(l.address.toLowerCase()) && l.args.to.toLowerCase() === escrow.toLowerCase() && l.args.value > 0n)
-      .map((l) => ({ token: l.address, from: l.args.from, value: l.args.value, txHash: l.transactionHash!, logIndex: l.logIndex!, blockNumber: l.blockNumber!, blockHash: l.blockHash! }));
-  }
-
-  /**
-   * Every USDG Transfer log in [from, to] with its block's time, whether an EIP-3009 authorization of the sender moved it
-   * (an AuthorizationUsed log by `from` in the same transaction) and, for those, the transaction's sender (the relayer).
-   * Commerce ledger funding index; public chain data only.
-   */
-  async usdgTransfers(from: bigint, to: bigint): Promise<UsdgTransfer[]> {
-    const token = this.cfg.chain.usdg.toLowerCase();
-    const [transfers, auths] = await Promise.all([
-      this.client.getLogs({ address: this.cfg.chain.usdg, event: transferEvent, fromBlock: from, toBlock: to, strict: true }),
-      this.client.getLogs({ address: this.cfg.chain.usdg, event: authorizationUsedEvent, fromBlock: from, toBlock: to, strict: true }),
-    ]);
-    const logs = transfers.filter((l) => l.address.toLowerCase() === token);
-    const used = new Set(auths.filter((a) => a.address.toLowerCase() === token).map((a) => `${a.transactionHash!.toLowerCase()}:${a.args.authorizer.toLowerCase()}`));
-    const isAuthorized = (l: (typeof logs)[number]) => used.has(`${l.transactionHash!.toLowerCase()}:${l.args.from.toLowerCase()}`);
-    const times = new Map<bigint, number>();
-    for (const n of new Set(logs.map((l) => l.blockNumber!))) times.set(n, Number((await this.client.getBlock({ blockNumber: n })).timestamp));
-    const senders = new Map<string, Hex>();
-    for (const hash of new Set(logs.filter(isAuthorized).map((l) => l.transactionHash!))) senders.set(hash.toLowerCase(), (await this.client.getTransaction({ hash })).from.toLowerCase() as Hex);
-    return logs.map((l) => {
-      const txHash = l.transactionHash!.toLowerCase() as Hex;
-      const authorized = isAuthorized(l);
-      return { from: l.args.from.toLowerCase() as Hex, to: l.args.to.toLowerCase() as Hex, value: l.args.value, txHash, logIndex: l.logIndex!, blockNumber: l.blockNumber!, blockTime: times.get(l.blockNumber!)!, authorized, txFrom: authorized ? (senders.get(txHash) ?? null) : null };
-    });
-  }
-
-  /** The latest block and the chain's finality point. Robinhood Chain (Arbitrum Nitro) reports both tags. */
-  async escrowFinality(tag: "finalized" | "safe"): Promise<EscrowFinality> {
-    const [head, final] = await Promise.all([this.client.getBlock({ blockTag: "latest" }), this.client.getBlock({ blockTag: tag })]);
-    return { head: head.number, headTime: Number(head.timestamp), final: final.number, finalHash: final.hash, finalTime: Number(final.timestamp) };
-  }
-
   /** Hash of the canonical block at `n`, or null when the node does not have that block. */
   async blockHashAt(n: bigint): Promise<Hex | null> {
     try {
@@ -233,47 +168,6 @@ export class ChainService {
       if (err instanceof BlockNotFoundError) return null;
       throw err;
     }
-  }
-
-  /** The canonical receipt of `txHash` (null when the chain does not include it) with its ERC-20 Transfer logs to `escrow`. */
-  async escrowReceipt(txHash: Hex, escrow: Hex): Promise<EscrowReceipt | null> {
-    let r;
-    try {
-      r = await this.client.getTransactionReceipt({ hash: txHash });
-    } catch (err) {
-      if (err instanceof TransactionReceiptNotFoundError) return null;
-      throw err;
-    }
-    const transfers: EscrowReceipt["transfers"] = [];
-    for (const l of r.logs) {
-      if (l.topics.length !== 3) continue; // ERC-20 Transfer: signature, from, to (ERC-721 indexes a fourth topic)
-      try {
-        const d = decodeEventLog({ abi: [transferEvent], topics: l.topics as [Hex, ...Hex[]], data: l.data, strict: true });
-        if (d.args.to.toLowerCase() === escrow.toLowerCase()) transfers.push({ token: l.address, from: d.args.from, value: d.args.value, logIndex: l.logIndex });
-      } catch {
-        // not a Transfer event
-      }
-    }
-    return { success: r.status === "success", blockNumber: r.blockNumber, blockHash: r.blockHash, transfers };
-  }
-
-  async tokenDecimals(token: Hex): Promise<number> {
-    return Number(await this.client.readContract({ address: token, abi: erc20Abi, functionName: "decimals" }));
-  }
-
-  /** Post one IPXFeed round with the IPX keeper key (the "ipx" signing role). Simulated first; reverts are surfaced. */
-  async postIpxFeed(feed: Hex, u: { answer: bigint; receiptRoot: Hex; volumeUsdg: bigint }): Promise<{ hash: Hex }> {
-    const { hash } = await this.send("ipx", feed, ipxFeedAbi as unknown as Abi, "update", [u.answer, u.receiptRoot, u.volumeUsdg]);
-    return { hash };
-  }
-
-  /** Latest Chainlink-style (AggregatorV3) answer. */
-  async readFeed(feed: Hex): Promise<FeedReading> {
-    const [round, decimals] = await Promise.all([
-      this.client.readContract({ address: feed, abi: aggregatorV3Abi, functionName: "latestRoundData" }),
-      this.client.readContract({ address: feed, abi: aggregatorV3Abi, functionName: "decimals" }),
-    ]);
-    return { answer: round[1], decimals: Number(decimals), updatedAt: Number(round[3]) };
   }
 
   // ---- 402 per-call payments -------------------------------------------------------------
@@ -371,57 +265,6 @@ export class ChainService {
     return this.client.getGasPrice();
   }
 
-  // ---- Pay with Stock Tokens ------------------------------------------------------------
-
-  async quoteRaw(token: Hex, usdgOwed: bigint): Promise<{ rawNeeded: bigint; fairPrice18: bigint } | null> {
-    const pws = this.require("payWithStock");
-    try {
-      const [rawNeeded, fairPrice18] = (await this.client.readContract({ address: pws, abi: PayWithStockAbi, functionName: "quoteRaw", args: [token, usdgOwed] })) as [bigint, bigint];
-      return { rawNeeded, fairPrice18 };
-    } catch (e) {
-      log.warn("quoteRaw failed (oracle not ok?)", { token, error: (e as Error).message.slice(0, 200) });
-      return null;
-    }
-  }
-
-  async quoteMaxIn(token: Hex, usdgOwed: bigint, slipBps: number): Promise<{ maxIn: bigint; rawNeeded: bigint; fairPrice18: bigint } | null> {
-    const pws = this.require("payWithStock");
-    try {
-      const [maxIn, rawNeeded, fairPrice18] = (await this.client.readContract({ address: pws, abi: PayWithStockAbi, functionName: "quoteMaxIn", args: [token, usdgOwed, slipBps] })) as [bigint, bigint, bigint];
-      return { maxIn, rawNeeded, fairPrice18 };
-    } catch (e) {
-      log.warn("quoteMaxIn failed (oracle not ok?)", { token, error: (e as Error).message.slice(0, 200) });
-      return null;
-    }
-  }
-
-  async session(chainKeyHash: Hex): Promise<PaywithSession> {
-    const pws = this.require("payWithStock");
-    const r = (await this.client.readContract({ address: pws, abi: PayWithStockAbi, functionName: "sessions", args: [chainKeyHash] })) as [Hex, Hex, bigint, bigint, bigint, boolean, bigint];
-    return { wallet: r[0], token: r[1], capRawPerDay: r[2], spentRawToday: r[3], dayStart: r[4], active: r[5], epoch: BigInt(r[6]) };
-  }
-
-  /** The key's registered allowance (zeros when none) and the nonce the next AllowanceAuthorization must use. */
-  async allowance(chainKeyHash: Hex): Promise<OnchainAllowance> {
-    const pws = this.require("payWithStock");
-    const [r, nextNonce] = await Promise.all([
-      this.client.readContract({ address: pws, abi: PayWithStockAbi, functionName: "allowances", args: [chainKeyHash] }) as Promise<[bigint, bigint, bigint, bigint, bigint, bigint, Hex]>,
-      this.client.readContract({ address: pws, abi: PayWithStockAbi, functionName: "allowanceNonces", args: [chainKeyHash] }) as Promise<bigint>,
-    ]);
-    return { maxRawTotal: r[0], maxRawPerCharge: r[1], spentRaw: r[2], nonce: r[3], validUntil: BigInt(r[4]), epoch: BigInt(r[5]), router: r[6], nextNonce };
-  }
-
-  /** Whether a usage commitment was already charged for this key (a charge that landed even if its receipt was lost). */
-  async commitmentCharged(chainKeyHash: Hex, usageCommitment: Hex): Promise<boolean> {
-    const pws = this.require("payWithStock");
-    return (await this.client.readContract({ address: pws, abi: PayWithStockAbi, functionName: "commitmentCharged", args: [chainKeyHash, usageCommitment] })) as boolean;
-  }
-
-  /** PayWithStock's EIP-712 domain (every charge / allowance signature is bound to this chain and contract). */
-  payWithStockDomain() {
-    return { name: "Anonymo PayWithStock", version: "1", chainId: this.cfg.chain.id, verifyingContract: this.require("payWithStock") } as const;
-  }
-
   /** Whether `signature` over `typedData` is valid for `wallet`: ECDSA for EOAs, ERC-1271 for smart wallets.
    *  An off-chain pre-check only; the contract verifies every authorization itself. */
   async verifyWalletSignature(wallet: Hex, typedData: TypedDataDefinition, signature: Hex): Promise<boolean> {
@@ -438,33 +281,6 @@ export class ChainService {
     } catch {
       return false;
     }
-  }
-
-  /** Settle one charge the session wallet signed (PayWithStock.payCall). */
-  async payCall(auth: ChargeAuthorization, signature: Hex, maxSlipBps: number) {
-    const pws = this.require("payWithStock");
-    const { hash, receipt } = await this.send("router", pws, PayWithStockAbi as unknown as Abi, "payCall", [auth, signature, maxSlipBps]);
-    return this.paidResult(hash, receipt.logs as never);
-  }
-
-  /** Settle one charge (<= $5) within the key's registered allowance (PayWithStock.payCallWithAllowance). */
-  async payCallWithAllowance(chainKeyHash: Hex, usdgOwed: bigint, usageCommitment: Hex, maxSlipBps: number) {
-    const pws = this.require("payWithStock");
-    const { hash, receipt } = await this.send("router", pws, PayWithStockAbi as unknown as Abi, "payCallWithAllowance", [chainKeyHash, usdgOwed, usageCommitment, maxSlipBps]);
-    return this.paidResult(hash, receipt.logs as never);
-  }
-
-  /** Register a wallet-signed allowance (anyone may relay it; the router pays the gas). */
-  async setAllowance(auth: AllowanceAuthorization, signature: Hex) {
-    const pws = this.require("payWithStock");
-    const { hash } = await this.send("router", pws, PayWithStockAbi as unknown as Abi, "setAllowance", [auth, signature]);
-    return hash;
-  }
-
-  private paidResult(hash: Hex, receiptLogs: Parameters<ChainService["decodeReceipt"]>[0]) {
-    const logs = this.decodeReceipt(receiptLogs);
-    const event = logs.find((l) => l.contract === "payWithStock" && l.event === "PaidWithStock");
-    return { hash, logs, rawSpent: (event?.args.rawSpent as bigint) ?? 0n, fairPrice18: (event?.args.fairPrice18 as bigint) ?? 0n };
   }
 
   /** Decode every log in a receipt that belongs to a configured Anonymo contract. */

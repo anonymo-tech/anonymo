@@ -57,7 +57,7 @@ describe("selection weight within a lane", () => {
     expect(selectionWeight({ ...base, price: 1, minPrice: 100 })).toBeCloseTo(100, 9); // floored at a tenth of the cheapest price
     expect(DEFAULT_ATTESTED_BONUS).toEqual({ public: 1.25, attested: 1, unlinkable: 1 });
     // The router's configured defaults match.
-    expect(loadConfig({}).routing.attestedBonus).toEqual({ public: 1.25, attested: 1, unlinkable: 1 });
+    expect(loadConfig({}).routing.attestedBonus).toEqual({ public: 1.25, attested: 1 }); // lane unlinkable is never served (WS01)
     expect(loadConfig({ ATTESTED_BONUS_PUBLIC: "2" }).routing.attestedBonus.public).toBe(2);
     expect(() => loadConfig({ ATTESTED_BONUS_PUBLIC: "0.5" })).toThrow();
   });
@@ -180,7 +180,7 @@ describe("lanes over HTTP", () => {
     const s = await status();
     expect(s.public.models).toBeGreaterThan(0);
     expect(s.attested).toMatchObject({ available: true, models: 0, endpoints: 0, attested_bonus: 1 });
-    expect(s.unlinkable).toMatchObject({ available: false, models: 0 });
+    expect(s.unlinkable).toBeUndefined(); // removed with Oblivious HTTP and Tor (WS01)
     expect(s.public.attested_bonus).toBe(1.25);
     const before = calls();
     for (const [body, headers] of [[{ provider: { lane: "attested" } }, {}], [{}, { "x-anonymo-lane": "attested" }]] as const) {
@@ -258,7 +258,7 @@ describe("lanes over HTTP", () => {
     expect(bad.status).toBe(400);
   });
 
-  test("identity-bearing auth on the unlinkable lane is refused where the router serves it (see ohttp.test.ts); here it is 501", async () => {
+  test("lane unlinkable is not served: even with a downgrade it is 501", async () => {
     const r = await chat({ provider: { lane: "unlinkable", lane_downgrade: "attested" } });
     expect(r.status).toBe(501);
     expect((await r.json()).error.type).toBe("lane_not_available");

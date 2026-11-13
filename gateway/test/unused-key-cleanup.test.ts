@@ -51,22 +51,11 @@ test("disable requires auth, preserves history, and cannot disable this browser'
   expect((await h.request("/api/v1/key", { headers: key.auth })).status).toBe(401);
 });
 
-test("viewer cannot disable keys; team admin stays within existing team scope and audit", async () => {
-  const teamResponse = await h.request("/api/v1/teams", { method: "POST", headers: owner.auth, json: { name: "Cleanup team" } });
-  expect(teamResponse.status).toBe(201);
-  const team = (await teamResponse.json()).data.id;
-  const viewer = await child({ team, role: "viewer" });
-  const admin = await child({ team, role: "admin" });
-  const target = await child({ team });
-  const outside = await child();
-  expect((await h.request("/api/v1/keys", { headers: viewer.auth })).status).toBe(200);
-  expect((await h.request(`/api/v1/keys/${target.hash}`, { method: "DELETE", headers: viewer.auth })).status).toBe(403);
-  const visible = (await (await h.request("/api/v1/keys", { headers: admin.auth })).json()).data;
-  expect(visible.some((row: any) => row.hash === outside.hash)).toBe(false);
-  expect((await h.request(`/api/v1/keys/${outside.hash}`, { method: "DELETE", headers: admin.auth })).status).toBe(403);
-  expect((await h.request(`/api/v1/keys/${target.hash}`, { method: "DELETE", headers: admin.auth })).status).toBe(200);
-  const audit = (await (await h.request(`/api/v1/teams/${team}/audit`, { headers: owner.auth })).json()).data;
-  expect(audit.some((entry: any) => entry.action === "key.disable" && entry.target === target.hash)).toBe(true);
+test("an ordinary sub-key cannot disable keys; a management key can", async () => {
+  const member = await child();
+  const target = await child();
+  expect((await h.request(`/api/v1/keys/${target.hash}`, { method: "DELETE", headers: member.auth })).status).toBe(403);
+  expect((await h.request(`/api/v1/keys/${target.hash}`, { method: "DELETE", headers: owner.auth })).status).toBe(200);
   const [row] = await h.ctx.db.select().from(keys).where(eq(keys.keyHash, target.hash));
   expect(row.disabled).toBe(true);
 });

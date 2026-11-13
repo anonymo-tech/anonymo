@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { recoverMessageAddress, type Hex } from "viem";
 import type { Ctx } from "../context.ts";
-import { accounts, chainEvents, keys, teamMembers } from "../db/schema.ts";
+import { accounts, chainEvents, keys } from "../db/schema.ts";
 import { deriveKey, KEY_RE } from "../chain/keys.ts";
 import { fail } from "../lib/errors.ts";
 import { ensureAccount } from "../ledger/ledger.ts";
@@ -90,14 +90,9 @@ export async function requireKey(ctx: Ctx, authorization: string | undefined | n
   return key;
 }
 
-export async function roleOf(ctx: Ctx, key: KeyRow): Promise<Role> {
-  if (key.management) return "owner";
-  if (!key.teamId) return "member";
-  const [m] = await ctx.db
-    .select()
-    .from(teamMembers)
-    .where(and(eq(teamMembers.teamId, key.teamId), eq(teamMembers.keyHash, key.keyHash)));
-  return (m?.role as Role) ?? "member";
+/** A management key acts as owner; every other key is a member of its own account (there are no teams). */
+export async function roleOf(_ctx: Ctx, key: KeyRow): Promise<Role> {
+  return key.management ? "owner" : "member";
 }
 
 export async function requireRole(ctx: Ctx, key: KeyRow, allowed: Role[]) {

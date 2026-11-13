@@ -7,10 +7,10 @@ export type Category = (typeof CATEGORIES)[number];
 export const CATEGORY_INFO: Record<Category, { label: string; summary: string }> = {
   request: { label: "Request records", summary: "One row per call: which model and provider answered, how many tokens, what it cost and when. Never the text of the call." },
   billing: { label: "Billing", summary: "Balances, the append-only ledger, spending holds, per-call payment quotes and what providers are owed." },
-  receipts: { label: "Receipts & proofs", summary: "Signing keys, anchors and the transparency log that let anyone check a receipt without asking us." },
-  keys: { label: "Keys & auth", summary: "API keys (stored as hashes), teams with their passkey and wallet members and audit log, agent sessions, keys you bring, and the issuer and gateway keys behind blind tokens and Oblivious HTTP." },
+  receipts: { label: "Receipts & proofs", summary: "Signing keys and anchors that let anyone check a receipt without asking us." },
+  keys: { label: "Keys & auth", summary: "API keys (stored as hashes), their auto top-ups, agent sessions and the provider keys you bring." },
   providers: { label: "Providers & attestation", summary: "The provider registry and model catalogue, attestation results, measurements, disclosure profiles and the day-zero model lane." },
-  chain: { label: "Chain", summary: "Blockchain events the router has read, escrow deposits, pay-with sessions and swaps, provider payouts and slashes." },
+  chain: { label: "Chain", summary: "Blockchain events the router has read, provider payouts and slashes, and spent-balance roots." },
   operations: { label: "Operations", summary: "Settings you save (routes, presets, spend alerts) and the router's own key-value state." },
 };
 
@@ -57,7 +57,7 @@ export type RedisFamily = {
   key: string;
   purpose: string;
   /** What varies in the key: `address` means the caller's network address is part of the key. */
-  holds: "address" | "key-hash" | "account" | "wallet" | "telegram-user" | "model" | "digest" | "nothing-personal";
+  holds: "address" | "key-hash" | "account" | "wallet" | "model" | "digest" | "nothing-personal";
   /** For a rate limit: the literal prefix passed to the limiter, so tests can match it to the call sites. */
   limiterPrefix?: string;
   windowSeconds?: number;

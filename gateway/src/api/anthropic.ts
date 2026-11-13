@@ -1,4 +1,3 @@
-import { onionMessagesHeaders, onionCountAllowed } from "../anthropic/onion.ts";
 import type { Context, Hono } from "hono";
 import { randomBytes } from "node:crypto";
 import { ZodError } from "zod";
@@ -25,7 +24,7 @@ const PEEK_MS = 4_000;
 /** Response headers of a chat call that ride on the Anthropic reply. */
 const FORWARDED = ["x-generation-id", "x-receipt-id", "inference-id", "x-anonymo-lane", "x-anonymo-policy-hash", "x-anonymo-disclosure", "x-anonymo-cache", "x-payment-response", "payment-response", "retry-after", "www-authenticate"];
 /** Request headers passed to the chat call: routing options, not credentials. */
-const PASSED = ["x-anonymo-lane", "x-anonymo-disclosure-max", "x-anonymo-cache", "x-pay-with", "http-referer", "x-title", "traceparent", "x-anonymo-decision-tag"];
+const PASSED = ["x-anonymo-lane", "x-anonymo-disclosure-max", "x-anonymo-cache", "http-referer", "x-title", "traceparent"];
 /** The statuses Anthropic itself uses. Any other client error is not one an SDK should retry. */
 const ANTHROPIC_STATUSES = new Set([400, 401, 402, 403, 404, 413, 429]);
 
@@ -89,9 +88,8 @@ export function anthropicRoutes(app: Hono, ctx: Ctx) {
   const messages = async (c: Context) => {
     const requestId = newRequestId();
     try {
-      const blindHeaders = onionMessagesHeaders(c, ctx);
       const key = credential(c);
-      if (!key && !blindHeaders) return refusal(c, 401, "Provide your Anonymo key in the x-api-key header (ANTHROPIC_API_KEY) or as Authorization: Bearer (ANTHROPIC_AUTH_TOKEN).", requestId, { router: { type: "missing_key" } });
+      if (!key) return refusal(c, 401, "Provide your Anonymo key in the x-api-key header (ANTHROPIC_API_KEY) or as Authorization: Bearer (ANTHROPIC_AUTH_TOKEN).", requestId, { router: { type: "missing_key" } });
       const raw = await readJson(c);
       const conv = toChatRequest(raw);
       const requested = raw.model as string;
@@ -111,7 +109,6 @@ export function anthropicRoutes(app: Hono, ctx: Ctx) {
         const v = c.req.header(h);
         if (v) headers[h] = v;
       }
-      if (blindHeaders) Object.assign(headers, blindHeaders);
       const res = await app.request("/api/v1/chat/completions", { method: "POST", headers, body: JSON.stringify(conv.body), signal: c.req.raw.signal });
       const extra: Record<string, string> = { "request-id": requestId, ...(conv.ignored.length ? { "x-anonymo-ignored": conv.ignored.join(", ") } : {}) };
 
@@ -150,23 +147,21 @@ export function anthropicRoutes(app: Hono, ctx: Ctx) {
     }
   };
 
-  /** Token count for a prompt: the router's own estimate (about one token per three characters of text and JSON, 1,600 per image), not a tokenizer's count. Free; needs a key except on the unlinkable onion path. */
+  /** Token count for a prompt: the router's own estimate (about one token per three characters of text and JSON, 1,600 per image), not a tokenizer's count. Free; needs a key. */
   const countTokens = async (c: Context) => {
     const requestId = newRequestId();
     try {
-      if (!onionCountAllowed(c, ctx)) {
-        const secret = credential(c);
-        if (!secret) return refusal(c, 401, "Provide your Anonymo key in the x-api-key header (ANTHROPIC_API_KEY) or as Authorization: Bearer (ANTHROPIC_AUTH_TOKEN).", requestId, { router: { type: "missing_key" } });
-        const key = await resolveKey(ctx, secret);
-        if (!key) return refusal(c, 401, "Unknown API key. Create one (POST /api/v1/keys) or deposit USDG to its key hash first.", requestId, { router: { type: "invalid_key" } });
-        await requireRole(ctx, key, ["owner", "admin", "member"]);
-        const limit = key.rpm ?? ctx.cfg.limits.defaultRpm;
-        if (limit) {
-          const r = await ctx.limiter.take(`kc:${key.keyHash}`, 1, limit, 60_000);
-          if (!r.ok) {
-            const s = Math.ceil(r.retryAfterMs / 1000);
-            return refusal(c, 429, `Rate limit exceeded (${limit} requests/min). Retry in ${s}s.`, requestId, { router: { type: "rate_limited" }, headers: { "retry-after": String(s) } });
-          }
+      const secret = credential(c);
+      if (!secret) return refusal(c, 401, "Provide your Anonymo key in the x-api-key header (ANTHROPIC_API_KEY) or as Authorization: Bearer (ANTHROPIC_AUTH_TOKEN).", requestId, { router: { type: "missing_key" } });
+      const key = await resolveKey(ctx, secret);
+      if (!key) return refusal(c, 401, "Unknown API key. Create one (POST /api/v1/keys) or deposit USDG to its key hash first.", requestId, { router: { type: "invalid_key" } });
+      await requireRole(ctx, key, ["owner", "admin", "member"]);
+      const limit = key.rpm ?? ctx.cfg.limits.defaultRpm;
+      if (limit) {
+        const r = await ctx.limiter.take(`kc:${key.keyHash}`, 1, limit, 60_000);
+        if (!r.ok) {
+          const s = Math.ceil(r.retryAfterMs / 1000);
+          return refusal(c, 429, `Rate limit exceeded (${limit} requests/min). Retry in ${s}s.`, requestId, { router: { type: "rate_limited" }, headers: { "retry-after": String(s) } });
         }
       }
       const conv = toChatRequest(await readJson(c), { countOnly: true });

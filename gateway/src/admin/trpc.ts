@@ -1,6 +1,4 @@
 import { rushAdmin } from "../rush/admin.ts"; // ON3
-import { withHostStatus, recordHostStatus } from "../webhooks/hosts.ts"; // V86: recorded host transitions.
-import { exportWaitlist } from "../network/waitlist.ts";
 import type { Hono } from "hono";
 import { trpcServer } from "@hono/trpc-server";
 import { initTRPC, TRPCError } from "@trpc/server";
@@ -13,7 +11,6 @@ import { keyJson } from "../api/keys.ts";
 import { modelJson } from "../api/models.ts";
 import { verifyReceipt, anchorProof } from "../api/generation.ts";
 import { applicationReviewHash, providerApplication, submitProviderApplication, publicProvider, validateProviderUrl } from "../providers/application.ts";
-import { statement } from "../pay/paywith.ts";
 import { importLiteLLM } from "../gateway/litellm.ts";
 import { verifyInvariants } from "../ledger/ledger.ts";
 import { encrypt, safeEqual } from "../lib/util.ts";
@@ -24,8 +21,6 @@ import { picoToUsd } from "../lib/money.ts";
 import { chainKeyHashOf } from "../chain/keys.ts";
 import { parseProviderModels, slugFor, type ProviderModel } from "../services/registry.ts";
 import { clearPendingStaticModels, diffStaticModels, loadPendingStaticModels, savePendingStaticModels, staticModelsReviewHash } from "../providers/static-models.ts";
-import { hostPolicySchema } from "../network/policy.ts";
-import { publishHostPolicy } from "../network/publication.ts";
 import { submitBundle } from "../services/measurement-bundles.ts";
 
 // Admin / account API over tRPC v11 at /trpc. Operator procedures need the ADMIN_TOKEN
@@ -51,8 +46,6 @@ const reviewView = (row: typeof providers.$inferSelect) => {
 
 export const adminRouter = t.router({
   rush: operator.input(z.object({ days: z.number().int().min(1).max(90).default(30) }).default({ days: 30 })).query(({ ctx, input }) => rushAdmin(ctx.app, input.days)), // ON3
-  networkWaitlistExport: operator.input(z.strictObject({ after: z.uuid().optional(), limit: z.number().int().min(1).max(1000).default(100) })).query(async ({ ctx, input }) => ser(await exportWaitlist(ctx.app, input))),
-  network: t.router({ publishPolicy: operator.input(hostPolicySchema).mutation(({ ctx, input }) => publishHostPolicy(ctx.app, input)) }),
   providers: t.router({
     // "apply" is a reserved word in tRPC routers; REST keeps POST /api/v1/providers/apply.
     onboard: t.procedure.input(providerApplication).mutation(async ({ ctx, input }) => {
@@ -96,7 +89,6 @@ export const adminRouter = t.router({
           .set({ status, shadowUntil: input.live ? null : new Date(Date.now() + ctx.app.cfg.canaries.shadowDays * 86_400_000), ...(input.api_key ? { apiKeyEnc: encrypt(ctx.app.cfg.appSecret, input.api_key) } : {}), updatedAt: new Date() })
           .where(and(eq(providers.id, input.id), eq(providers.status, "applied")))
           .returning({ id: providers.id });
-        if (ctx.app.cfg.webhookSigningEnabled) { const [after] = await tx.select().from(providers).where(eq(providers.id, input.id)); await recordHostStatus(ctx.app, tx, provider, after); } // V86.
         if (!approved.length) throw new TRPCError({ code: "CONFLICT", message: "Only a pending application can be approved." });
       });
       await ctx.app.jobs.run("provider-registry").catch(() => undefined);
@@ -174,11 +166,11 @@ export const adminRouter = t.router({
     setStatus: operator.input(z.object({ id: z.string(), status: z.enum(["applied", "shadow", "live", "suspended", "delisted"]) })).mutation(async ({ ctx, input }) => {
       // A pending application becomes active only through `approve`, which binds it to the reviewed revision.
       const activates = input.status === "shadow" || input.status === "live";
-      const changed = await withHostStatus(ctx.app, input.id, db => db
+      const changed = await ctx.app.db
         .update(providers)
         .set({ status: input.status, updatedAt: new Date() })
         .where(activates ? and(eq(providers.id, input.id), ne(providers.status, "applied")) : eq(providers.id, input.id))
-        .returning({ id: providers.id })); // V86.
+        .returning({ id: providers.id });
       if (!changed.length && activates) {
         const [pending] = await ctx.app.db.select({ id: providers.id }).from(providers).where(eq(providers.id, input.id));
         if (pending) throw new TRPCError({ code: "CONFLICT", message: "Approve a pending application with providers.approve and its review hash." });
@@ -276,27 +268,6 @@ export const adminRouter = t.router({
       await ctx.app.db.update(keys).set({ routing: presets }).where(eq(keys.keyHash, k.keyHash));
       return presets;
     }),
-  }),
-  paywith: t.router({
-    /** Unsigned transactions for the paying wallet (approve + openSession); records the wallet intent. */
-    open: account.input(z.object({ token: z.string(), capRawPerDay: z.string().regex(/^\d+$/), wallet: z.string().regex(/^0x[0-9a-fA-F]{40}$/) })).mutation(async ({ ctx, input }) => {
-      if (!ctx.key) throw new TRPCError({ code: "BAD_REQUEST", message: "Use the key that will pay." });
-      const res = await ctx.app.appFetch("/api/v1/paywith/open", { method: "POST", headers: { authorization: `Bearer ${ctx.secret}`, "content-type": "application/json" }, body: JSON.stringify({ token: input.token, cap_raw_per_day: input.capRawPerDay, wallet: input.wallet }) });
-      const j = (await res.json()) as { data?: unknown; error?: { message: string } };
-      if (!res.ok) throw new TRPCError({ code: "BAD_REQUEST", message: j.error?.message ?? "failed" });
-      return j.data;
-    }),
-    close: account.mutation(async ({ ctx }) => {
-      if (!ctx.key) throw new TRPCError({ code: "BAD_REQUEST" });
-      const res = await ctx.app.appFetch("/api/v1/paywith/close", { method: "POST", headers: { authorization: `Bearer ${ctx.secret}` } });
-      return ((await res.json()) as { data: unknown }).data;
-    }),
-    statement: account.input(z.object({ keyHash: z.string().optional(), month: z.string().regex(/^\d{4}-\d{2}$/) })).query(async ({ ctx, input }) => {
-      const chainKeyHash = input.keyHash && ctx.admin ? input.keyHash : ctx.key?.chainKeyHash;
-      if (!chainKeyHash) throw new TRPCError({ code: "BAD_REQUEST" });
-      return ser(await statement(ctx.app, chainKeyHash, input.month));
-    }),
-    runAggregator: operator.mutation(async ({ ctx }) => ser(await ctx.app.jobs.run("paywith-aggregator"))),
   }),
   receipts: t.router({
     verify: t.procedure.input(z.object({ receiptId: z.string() })).query(async ({ ctx, input }) => {

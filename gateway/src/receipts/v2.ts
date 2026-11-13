@@ -27,7 +27,6 @@ export type ClaimsV2 = {
   disclosure: string;
   policy?: { enforced: boolean; blocked: boolean };
   credit: { mode: string; cost_units: number; keyset?: string };
-  decision_tag?: string; // B: caller-supplied sha256:<hex> digest (receipts/decision-tag.ts); omitted when absent.
 };
 
 // ---- token buckets ----------------------------------------------------------------------------------------------
@@ -154,7 +153,6 @@ export function buildClaimsV2(i: {
   mode: string;
   chargedPico: bigint;
   keyset?: string | null;
-  decisionTag?: string | null; // B
 }): ClaimsV2 {
   const node: ClaimsV2["node"] = { provider: i.providerId };
   if (i.attestation) node.quote_ref = `sha256:${i.attestation.replace(/^(sha256:|0x)/, "")}`;
@@ -179,6 +177,5 @@ export function buildClaimsV2(i: {
     // Known only when the serving endpoint's fresh attestation bound a classifier policy.
     ...(i.policyHash ? { policy: { enforced: true, blocked: i.finish === "content_filter" } } : {}),
     credit,
-    ...(i.decisionTag ? { decision_tag: i.decisionTag } : {}), // B: additive, like route.
   };
 }

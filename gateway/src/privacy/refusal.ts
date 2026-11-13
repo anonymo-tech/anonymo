@@ -32,7 +32,7 @@ export const refusalSettingReader = {
   file: "src/anonymo/refusal/routes.ts",
   carries: "settings" as const,
   reads: "One boolean `enabled` (or \"on\"/\"off\") for a key's refusal-catch default.",
-  then: "Authenticates the key; a key may change its own setting, a management key any key of its account, a team owner or admin any key of its team.",
+  then: "Authenticates the key; a key may change its own setting, and a management key any key of its account.",
   kept: "The flag in refusal_key_settings, keyed by the key hash. Nothing else.",
   evidence: [{ file: "src/anonymo/refusal/routes.ts", contains: "const body = await readJson(c);" }],
 };

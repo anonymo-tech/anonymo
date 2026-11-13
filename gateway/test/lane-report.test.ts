@@ -3,9 +3,8 @@ import { eq } from "drizzle-orm";
 import { MODELS, startRouter, type Harness } from "./helpers.ts";
 import { generations, keys } from "../src/db/schema.ts";
 import { LANE_REPORT_LIMITS, laneReportQuery, share, summarizeLanes } from "../src/lane-report/read.ts";
-import { laneReportProblems, verifyProofPack } from "../scripts/verify-proof-pack.mjs";
 
-// Lane report: GET /api/v1/lane-report and the lane report section of the proof pack.
+// Lane report: GET /api/v1/lane-report.
 
 const LLAMA = MODELS.llama.slug, QWEN = MODELS.qwen.slug;
 const DAY = "2026-05-12";
@@ -30,11 +29,6 @@ const okReport = async (auth: Record<string, string>, query?: Record<string, str
   expect(r.status, JSON.stringify(r.body)).toBe(200);
   expect(r.headers.get("cache-control")).toBe("no-store");
   return r.body.data;
-};
-const okPack = async (auth: Record<string, string>, query: Record<string, string> = { from: DAY, to: DAY }) => {
-  const r = await h.request(`/api/v1/proof-pack?${new URLSearchParams(query)}`, { headers: auth });
-  expect(r.status).toBe(200);
-  return (await r.json()).data;
 };
 const child = async (owner: Key): Promise<Key> => {
   const r = await h.request("/api/v1/keys", { method: "POST", headers: owner.auth, json: { name: "Lane agent" } });
@@ -110,58 +104,6 @@ describe("the lane report", () => {
     expect(nobody.providers).toEqual([]);
   });
 
-  test("the proof pack carries the same report for its calls, and the offline verifier checks it", async () => {
-    const pack = await okPack(owner.auth);
-    const r = await okReport(owner.auth);
-    const { covers, ...body } = pack.lane_report;
-    expect(covers).toBe("calls_in_this_file");
-    expect(body).toEqual({ currency: r.currency, totals: r.totals, lanes: r.lanes, proven: r.proven, providers: r.providers });
-    expect(pack.manifest.payload.lane_report).toEqual(pack.lane_report);
-    const result = verifyProofPack(pack);
-    expect(result.failures).toEqual([]);
-    expect(result.ok).toBe(true);
-    expect(result.summary).toMatchObject({ lane_report: "matches", proven_calls: 5, proven_share_of_calls: 0.5556 });
-    expect(result.lines.join("\n")).toContain("Lane report: adds up and matches the calls in this file · 5 call(s) on proven hardware");
-
-    const fails = (mutate: (p: any) => void, expected: RegExp) => {
-      const copy = structuredClone(pack);
-      mutate(copy);
-      const v = verifyProofPack(copy);
-      expect(v.ok).toBe(false);
-      expect(v.failures.join("\n")).toMatch(expected);
-    };
-    // A changed report fails against the calls, and against the signed manifest.
-    fails((p) => (p.lane_report.totals.calls = 8), /lane report: the totals/);
-    fails((p) => (p.lane_report.proven.calls = 6), /lane report: the proven share/);
-    fails((p) => (p.lane_report.lanes[1].spend = "0.9"), /lane report: lane attested/);
-    fails((p) => (p.lane_report.providers[0].evidence_url = "/verify/?p=beta"), /evidence links/);
-    fails((p) => p.lane_report.providers.pop(), /has calls in this file but is not listed/);
-    fails((p) => (p.lane_report.totals.calls = 8), /manifest: .*lane_report/);
-    fails((p) => delete p.lane_report, /manifest: .*lane_report/);
-    // So does a call moved to another lane.
-    fails((p) => (p.calls.find((c: any) => c.lane === "public").lane = "attested"), /lane report: lane public/);
-  });
-
-  test("on receipted calls, each listed lane, provider and model must be what the receipt signed", async () => {
-    const k = await h.fundedKey();
-    for (let i = 0; i < 2; i++) {
-      const r = await h.request("/api/v1/chat/completions", { method: "POST", headers: k.auth, json: { model: LLAMA, messages: [{ role: "user", content: "hello" }] } });
-      expect(r.status, await r.clone().text()).toBe(200);
-    }
-    const pack = await okPack(k.auth, { from: today(), to: today() });
-    expect(pack.calls).toHaveLength(2);
-    expect(pack.lane_report).toMatchObject({ totals: { calls: 2 }, proven: { calls: 0, share_of_calls: 0 }, providers: [] });
-    expect(pack.lane_report.lanes[0]).toMatchObject({ lane: "public", calls: 2, share_of_calls: 1 });
-    expect(verifyProofPack(pack).ok).toBe(true);
-    const copy = structuredClone(pack);
-    copy.calls[0].lane = "attested";
-    const v = verifyProofPack(copy);
-    expect(v.ok).toBe(false);
-    expect(v.failures.join("\n")).toMatch(/the listed lane attested is not the signed public/);
-    const moved = structuredClone(pack);
-    moved.calls[1].provider = "elsewhere";
-    expect(verifyProofPack(moved).failures.join("\n")).toMatch(/the listed provider elsewhere is not the signed (alpha|beta)/);
-  });
 });
 
 describe("limits and access", () => {
@@ -222,12 +164,6 @@ describe("the summary", () => {
     expect(s.lanes.map((l) => l.lane)).toEqual(["public", "attested", "unlinkable", "zeta", null]);
     expect(s.providers.map((p) => p.provider)).toEqual(["a", "b"]);
     expect(s.totals).toEqual({ calls: 4, spend: "0.000000000006" });
-    expect(laneReportProblems(s, [
-      { lane: null, provider: "a", model: "m", cost: "0.000000000001" },
-      { lane: "zeta", provider: "a", model: "m", cost: "0.000000000001" },
-      { lane: "attested", provider: "b", model: "m", cost: "0.000000000002" },
-      { lane: "attested", provider: "a", model: "m", cost: "0.000000000002" },
-    ])).toEqual([]);
     expect(summarizeLanes([]).providers).toEqual([]);
     // Provider ids are links: anything unusual in an id is encoded.
     expect(summarizeLanes([{ lane: "attested", provider: "a b/c", model: "m", calls: 1, pico: 0n }]).providers[0].evidence_url).toBe("/verify/?p=a%20b%2Fc");

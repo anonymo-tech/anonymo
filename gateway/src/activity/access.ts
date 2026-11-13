@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { Ctx } from "../context.ts";
 import { roleOf, type KeyRow } from "../api/auth.ts";
-/** Shared call/balance visibility; agent administration adds its own team boundary. */
+/** Shared call/balance visibility: management (owner) keys see the account, other keys themselves, sessions themselves. */
 export async function activityAccess(ctx: Ctx, key: KeyRow) {
   const role = await roleOf(ctx, key);
   const result = await ctx.db.execute(sql`select id from agent_sessions where key_hash = ${key.keyHash} limit 1`);

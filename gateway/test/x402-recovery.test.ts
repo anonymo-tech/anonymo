@@ -93,15 +93,6 @@ describe("x402 payment recovery (PAYMENT-RECOVERY)", () => {
     expect(h.chain.x402Relays.length).toBe(relays);
   });
 
-  test("embeddings recover byte for byte", async () => {
-    const { json, path, pay, header, first } = await paid({ path: "/api/v1/embeddings", json: { model: "acme/embed-small", input: ["recover me"] } });
-    expect(first.status).toBe(200);
-    const original = await bytesOf(first);
-    const again = await send(json, { ...header, "payment-recovery": await recoverySignature(pay.signer, pay.authorization.nonce) }, path);
-    expect(again.status).toBe(200);
-    expect(await bytesOf(again)).toEqual(original);
-  });
-
   test("only the payer can recover: another signer, another nonce's signature or no valid signature is refused", async () => {
     const { json, pay, header, first } = await paid();
     expect(first.status).toBe(200);

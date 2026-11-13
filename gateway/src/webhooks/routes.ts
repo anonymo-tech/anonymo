@@ -1,9 +1,9 @@
-import { configureWebhookEvents } from "./approvals.ts";
 import type { Context, Hono } from "hono";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Ctx } from "../context.ts";
-import { principal } from "../api/agents.ts";
+import { requireKey, requireRole } from "../api/auth.ts";
+import { agentSessions } from "../db/schema.ts";
 import { readJson } from "../api/common.ts";
 import { fail } from "../lib/errors.ts";
 import { encrypt, uid } from "../lib/util.ts";
@@ -14,11 +14,13 @@ import { newSigningSecret } from "./signature.ts";
 const events = z.array(z.enum(WEBHOOK_EVENTS)).min(1).max(WEBHOOK_EVENTS.length).transform(v => [...new Set(v)]);
 const create = z.strictObject({ webhook_url: z.string().max(2048), events });
 export function webhookRoutes(app: Hono, ctx: Ctx) {
-  configureWebhookEvents(ctx);
   const caller = async (c: Context) => {
     c.header("cache-control", "no-store");
     if (!ctx.cfg.webhookSigningEnabled) fail(404, "Not found.", "not_found");
-    return principal(ctx, c);
+    const key = await requireKey(ctx, c.req.header("authorization"));
+    if ((await ctx.db.select({ id: agentSessions.id }).from(agentSessions).where(eq(agentSessions.keyHash, key.keyHash)).limit(1)).length) fail(403, "Session keys cannot manage webhooks.", "forbidden");
+    await requireRole(ctx, key, ["owner", "admin"]);
+    return key;
   };
   const visible = async (c: Context) => {
     const key = await caller(c);

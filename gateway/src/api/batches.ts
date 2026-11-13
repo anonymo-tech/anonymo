@@ -4,7 +4,7 @@ import { requireKey, requireRole } from "./auth.ts";
 import { readJson } from "./common.ts";
 import { batchFor, batchJson, batchResults, cancelBatch, createBatch, listBatches } from "../services/batches.ts";
 
-// OpenAI-compatible Batch API (services/batches.ts). A prepaid key submits up to BATCH_MAX_LINES chat or embeddings requests
+// OpenAI-compatible Batch API (services/batches.ts). A prepaid key submits up to BATCH_MAX_LINES chat requests
 // inline (`requests`, or `input_jsonl` text: this router has no files endpoint); the worker runs them in spare capacity at
 // BATCH_DISCOUNT_BPS off, each with its own hold, charge and signed receipt. A batch is visible only to the key that sent it.
 //

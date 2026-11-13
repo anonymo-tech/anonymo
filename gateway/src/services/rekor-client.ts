@@ -1,7 +1,7 @@
 import type { RawRekorEntry } from "./measurements.ts";
 
-// Writing to a Sigstore Rekor v1 log and reading an entry back. Shared by scripts/publish-measurement.ts (measurement
-// bundles) and the transparency log's public-log anchoring (src/tlog/rekor.ts); the checks on what comes back are
+// Writing to a Sigstore Rekor v1 log and reading an entry back. Used by scripts/publish-measurement.ts (measurement
+// bundles); the checks on what comes back are
 // verifyBundleEntry (measurement-bundle.ts) over parseRekorEntry (measurements.ts).
 
 /** An HTTP answer from Rekor that is not what the call needed. `status` is the HTTP status (0 when the answer was not

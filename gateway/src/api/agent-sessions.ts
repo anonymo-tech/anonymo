@@ -28,10 +28,9 @@ async function manager(ctx: Ctx, c: Context) {
   return k;
 }
 
-/** Management keys end any session; team owners/admins end their team's sessions and their own. */
-function canManage(caller: KeyRow, s: SessionRow, key: KeyRow | null) {
-  if (caller.management || s.parentKeyHash === caller.keyHash) return true;
-  return !!caller.teamId && key?.teamId === caller.teamId;
+/** Management keys end any session; other keys end their own. */
+function canManage(caller: KeyRow, s: SessionRow, _key: KeyRow | null) {
+  return caller.management || s.parentKeyHash === caller.keyHash;
 }
 
 export function agentSessionsRoutes(app: Hono, ctx: Ctx) {

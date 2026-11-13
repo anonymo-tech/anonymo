@@ -7,7 +7,7 @@ import { type Pico, picoToUsd, usdToPico } from "../lib/money.ts";
 import { decrypt, encrypt, genId, log } from "../lib/util.ts";
 import { BATCH_LINE, type BatchLine } from "../router/batch-line.ts";
 
-// Batch API: an OpenAI-compatible batch of chat or embeddings requests, run by the worker in spare capacity at a discount
+// Batch API: an OpenAI-compatible batch of chat requests, run by the worker in spare capacity at a discount
 // (BATCH_DISCOUNT_BPS). Every line goes through the normal handler in process (router/batch-line.ts), so lanes, provider
 // preferences, key budgets, key rate limits, holds and signed receipts apply to it exactly as to a direct call.
 //
@@ -17,7 +17,7 @@ import { BATCH_LINE, type BatchLine } from "../router/batch-line.ts";
 // that. Then both, and the line rows, are deleted.
 
 export type BatchRow = typeof batches.$inferSelect;
-export type BatchApi = "chat" | "embeddings";
+export type BatchApi = "chat";
 export type Dispatch = (path: string, init: RequestInit, env: unknown) => Response | Promise<Response>;
 type LineInput = { custom_id: string; url: string; body: Record<string, unknown> };
 type LineResult = { custom_id: string; status_code: number | null; request_id: string | null; body: unknown; error: { code: string; message: string } | null };
@@ -26,9 +26,9 @@ export const COMPLETION_WINDOW = "24h";
 const WINDOW_MS = 24 * 3_600_000;
 const ACTIVE = ["validating", "in_progress", "cancelling"];
 const TERMINAL = new Set(["completed", "failed", "expired", "cancelled"]);
-const URLS: Record<string, BatchApi> = { "/v1/chat/completions": "chat", "/api/v1/chat/completions": "chat", "/v1/embeddings": "embeddings", "/api/v1/embeddings": "embeddings" };
-const PATH: Record<BatchApi, string> = { chat: "/api/v1/chat/completions", embeddings: "/api/v1/embeddings" };
-export const ENDPOINT: Record<BatchApi, string> = { chat: "/v1/chat/completions", embeddings: "/v1/embeddings" };
+const URLS: Record<string, BatchApi> = { "/v1/chat/completions": "chat", "/api/v1/chat/completions": "chat" };
+const PATH: Record<BatchApi, string> = { chat: "/api/v1/chat/completions" };
+export const ENDPOINT: Record<BatchApi, string> = { chat: "/v1/chat/completions" };
 const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 // ---- sealed store --------------------------------------------------------------------------------------------------
@@ -132,7 +132,7 @@ export function parseSubmission(ctx: Ctx, body: Record<string, unknown>): { api:
   if (raw.length > maxLines) fail(413, `A batch may hold at most ${maxLines} lines; this one has ${raw.length}.`, "payload_too_large");
 
   const wanted = body.endpoint == null ? null : URLS[String(body.endpoint)];
-  if (body.endpoint != null && !wanted) fail(400, "`endpoint` must be /v1/chat/completions or /v1/embeddings.", "invalid_request");
+  if (body.endpoint != null && !wanted) fail(400, "`endpoint` must be /v1/chat/completions.", "invalid_request");
   const errors: LineError[] = [];
   const seen = new Set<string>();
   const lines: LineInput[] = [];
@@ -148,7 +148,7 @@ export function parseSubmission(ctx: Ctx, body: Record<string, unknown>): { api:
     seen.add(id);
     if (v.method != null && v.method !== "POST") { bad(r.line, "invalid_method", "`method` must be POST."); continue; }
     const lineApi = URLS[String(v.url)];
-    if (!lineApi) { bad(r.line, "invalid_url", "`url` must be /v1/chat/completions or /v1/embeddings."); continue; }
+    if (!lineApi) { bad(r.line, "invalid_url", "`url` must be /v1/chat/completions."); continue; }
     if (api && lineApi !== api) { bad(r.line, "mismatched_url", `Every line in a batch must use the same url (${ENDPOINT[api]}).`); continue; }
     api = lineApi;
     const b = v.body;

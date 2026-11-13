@@ -32,15 +32,11 @@ export const facilitatorEnv = {
 };
 
 type Env = z.infer<z.ZodObject<typeof facilitatorEnv>> & {
-  SANCTIONS_SCREENING_ENABLED: boolean;
+  ANONYMO_SANCTIONS_ENABLED: boolean;
   ROUTER_PRIVATE_KEY?: string;
   SETTLEMENT_PRIVATE_KEY?: string;
   ANCHORER_PRIVATE_KEY?: string;
   SLASHER_PRIVATE_KEY?: string;
-  KEEPER_PRIVATE_KEY?: string;
-  IPX_KEEPER_PRIVATE_KEY?: string;
-  IPX_ORACLE_PRIVATE_KEY?: string;
-  PAYMASTER_SIGNER_KEY?: string;
   DEV_FAUCET_PRIVATE_KEY?: string;
 };
 
@@ -54,13 +50,13 @@ export function facilitatorSettings(e: Env, production: boolean) {
   const relayKey = e.FACILITATOR_RELAY_PRIVATE_KEY as Hex | undefined;
   if (e.FACILITATOR_ENABLED && !relayKey) throw new Error("FACILITATOR_ENABLED needs FACILITATOR_RELAY_PRIVATE_KEY, a key that only pays relay gas.");
   if (relayKey) {
-    const others = [e.ROUTER_PRIVATE_KEY, e.SETTLEMENT_PRIVATE_KEY, e.ANCHORER_PRIVATE_KEY, e.SLASHER_PRIVATE_KEY, e.KEEPER_PRIVATE_KEY, e.IPX_KEEPER_PRIVATE_KEY, e.IPX_ORACLE_PRIVATE_KEY, e.PAYMASTER_SIGNER_KEY, e.DEV_FAUCET_PRIVATE_KEY];
+    const others = [e.ROUTER_PRIVATE_KEY, e.SETTLEMENT_PRIVATE_KEY, e.ANCHORER_PRIVATE_KEY, e.SLASHER_PRIVATE_KEY, e.DEV_FAUCET_PRIVATE_KEY];
     if (others.some((k) => k && k.toLowerCase() === relayKey.toLowerCase())) throw new Error("FACILITATOR_RELAY_PRIVATE_KEY must be its own key, with no other signing role.");
   }
   if (e.FACILITATOR_FEE_BPS > 0 && (!e.FACILITATOR_TREASURY || /^0x0{40}$/.test(e.FACILITATOR_TREASURY))) throw new Error("FACILITATOR_FEE_BPS above 0 needs FACILITATOR_TREASURY.");
   if (e.FACILITATOR_ETH_USDG && (!e.FACILITATOR_TREASURY || /^0x0{40}$/.test(e.FACILITATOR_TREASURY))) throw new Error("Gas floats (FACILITATOR_ETH_USDG) need FACILITATOR_TREASURY to receive them.");
   // Listings are screened against the sanctions list; a production facilitator must have that list.
-  if (production && e.FACILITATOR_ENABLED && !e.SANCTIONS_SCREENING_ENABLED) throw new Error("FACILITATOR_ENABLED in production needs SANCTIONS_SCREENING_ENABLED (listings are screened).");
+  if (production && e.FACILITATOR_ENABLED && !e.ANONYMO_SANCTIONS_ENABLED) throw new Error("FACILITATOR_ENABLED in production needs ANONYMO_SANCTIONS_ENABLED (listings are screened against the OFAC list).");
   const minSettle = usdgUnits(e.FACILITATOR_MIN_SETTLE);
   if (minSettle <= 0n) throw new Error("FACILITATOR_MIN_SETTLE must be above 0.");
   const ethUsdg = e.FACILITATOR_ETH_USDG ? usdgUnits(e.FACILITATOR_ETH_USDG) : null;

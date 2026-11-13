@@ -3,7 +3,6 @@ import type { Ctx } from "../context.ts";
 import { anchors, spentRoots, chainCursor, kv, providers } from "../db/schema.ts";
 import type { JobSnapshot } from "./jobs.ts";
 import { attestationFresh } from "../router/select.ts";
-import { escrowFinality, escrowReviewsOpen, peekAnmoQuote } from "../pay/escrow.ts";
 import { reconcileSpentRoots } from "./root-completeness.ts";
 import { backupFresh } from "./backup.ts";
 import { verifiersConfigured } from "./attestor-verifiers.ts";
@@ -11,14 +10,8 @@ import { verifiersConfigured } from "./attestor-verifiers.ts";
 // One-day production timelock plus one day for review/execution. Submission failures retain the 2-minute bound.
 export const ROOT_REVIEW_SLA_MS = 48 * 3_600_000;
 export const CRITICAL_JOBS = ["chain-indexer", "catalog-refresh", "provider-registry", "receipts-anchor", "settlement"];
-// PAYMENTS_MODE=escrow has no Anonymo contracts: receipts stay signed locally, no settlement runs,
-// and chain health is the escrow watcher's progress.
-export const ESCROW_CRITICAL_JOBS = ["escrow-indexer", "catalog-refresh", "provider-registry", "receipts-anchor"];
-// The escrow cursor follows the chain's finality point, which advances in steps (one L1 epoch, ~3,700
-// Robinhood Chain blocks), so allow a few steps of lag; the escrow-indexer heartbeat catches a stalled
-// watcher much sooner. A finality point more than an hour behind the head means credits have stalled.
-export const ESCROW_MAX_CURSOR_LAG = 12_000n;
-export const ESCROW_MAX_FINALITY_LAG_S = 3_600;
+// A contract-free router (no Anonymo contracts configured) runs no chain indexer or settlement; receipts stay signed locally.
+export const CONTRACT_FREE_CRITICAL_JOBS = ["catalog-refresh", "provider-registry", "receipts-anchor"];
 export function jobReady(state: JobSnapshot | undefined, now = Date.now()) {
   if (!state || state.last_error || !state.last_success || !(state.every_ms > 0)) return false;
   const age = now - Date.parse(state.last_success);
@@ -37,21 +30,12 @@ async function bounded<T>(fn: () => Promise<T>): Promise<T> {
 
 export type ReadinessWarning = { code: string; reason: string; message: string };
 
-/**
- * Conditions that do not make the router unready but that an operator should see. $ANMO deposits wait while its
- * pool price is unavailable (a swinging, thin or unreadable pool); the router keeps serving and crediting
- * everything else, so this is a warning, not a failed check. It reads the last cached price and never waits for one.
- */
-export function readinessWarnings(ctx: Ctx): ReadinessWarning[] {
-  const quote = peekAnmoQuote(ctx);
-  return quote && !quote.available ? [{ code: "anmo_price_unavailable", reason: quote.code, message: quote.message }] : [];
-}
-
 /** Public readiness never exposes exception text, credentials, hostnames or RPC URLs.
  * Worker heartbeats are persisted, so API replicas can observe a separate worker. */
 export async function readiness(ctx: Ctx) {
   const checks: Record<string, boolean> = {};
-  const escrowMode = ctx.cfg.escrow.mode === "escrow";
+  // Contract mode: any Anonymo settlement contract is configured. Anonymo runs contract-free by default.
+  const contracts = (["credits", "callPay", "receiptAnchor", "providerBond"] as const).some((n) => !!ctx.chain.address(n));
   await Promise.all([
     (async () => { try { await bounded(async () => { await ctx.db.execute(sql`select 1`); }); checks.database = true; } catch { checks.database = false; } })(),
     (async () => {
@@ -77,52 +61,38 @@ export async function readiness(ctx: Ctx) {
           }
           const staleBefore = new Date(Date.now() - 120_000);
           const [anchorBacklog, rootBacklog, approvalBacklog] = await Promise.all([
-            ctx.db.select({ id: anchors.index }).from(anchors).where(and(inArray(anchors.status, escrowMode ? ["pending"] : ["pending", "local"]), lt(anchors.createdAt, staleBefore))).limit(1),
+            ctx.db.select({ id: anchors.index }).from(anchors).where(and(inArray(anchors.status, contracts ? ["pending", "local"] : ["pending"]), lt(anchors.createdAt, staleBefore))).limit(1),
             ctx.db.select({ id: spentRoots.epoch }).from(spentRoots).where(and(eq(spentRoots.status, "pending"), lt(spentRoots.createdAt, staleBefore))).limit(1),
             ctx.db.select({ id: spentRoots.epoch }).from(spentRoots).where(and(eq(spentRoots.status, "awaiting_approval"), lt(spentRoots.createdAt, new Date(Date.now() - ROOT_REVIEW_SLA_MS)))).limit(1),
           ]);
           checks.settlement_review = !approvalBacklog.length;
           checks.chain_submissions = !anchorBacklog.length && !rootBacklog.length;
-          const requiredJobs = [...(escrowMode ? ESCROW_CRITICAL_JOBS : CRITICAL_JOBS), ...(privateRoutingEnabled ? ["attestor"] : [])];
+          const requiredJobs = [...(contracts ? CRITICAL_JOBS : CONTRACT_FREE_CRITICAL_JOBS), ...(privateRoutingEnabled ? ["attestor"] : [])];
           const states = await ctx.db.select().from(kv).where(inArray(kv.key, requiredJobs.map((n) => `job-health:${n}`)));
           for (const name of requiredJobs) checks[name] = jobReady(states.find((r) => r.key === `job-health:${name}`)?.value as JobSnapshot | undefined);
         });
       } catch { checks.workers = false; checks.providers = false; }
     })(),
     (async () => {
-      if (!escrowMode && !ctx.cfg.chain.credits && !ctx.cfg.chain.callPay) { checks.chain = false; return; }
+      if (!contracts) return; // nothing on chain to follow
+      if (!ctx.cfg.chain.credits && !ctx.cfg.chain.callPay) { checks.chain = false; return; }
       try {
         await bounded(async () => {
-          if (escrowMode) {
-            // Escrow credits only final blocks, so the watcher is measured against the finality point.
-            const [fin, chainId] = await Promise.all([escrowFinality(ctx), ctx.chain.client.getChainId()]);
-            if (chainId !== ctx.cfg.chain.id) throw new Error("Chain mismatch");
-            const [cursor] = await ctx.db.select().from(chainCursor).where(eq(chainCursor.id, "escrow"));
-            checks.chain = !!cursor && fin.creditable - cursor.block <= ESCROW_MAX_CURSOR_LAG && cursor.block <= fin.head;
-            checks.escrow_finality = fin.headTime - fin.finalTime <= ESCROW_MAX_FINALITY_LAG_S;
-            return;
-          }
           const [head, chainId] = await Promise.all([ctx.chain.blockNumber(), ctx.chain.client.getChainId()]);
           if (chainId !== ctx.cfg.chain.id) throw new Error("Chain mismatch");
           const [cursor] = await ctx.db.select().from(chainCursor).where(eq(chainCursor.id, "main"));
           const maxLag = Math.max(ctx.cfg.chain.confirmations + 20, 30);
           checks.chain = !!cursor && head - cursor.block <= BigInt(maxLag) && cursor.block <= head;
         });
-      } catch { checks.chain = false; if (escrowMode) checks.escrow_finality = false; }
+      } catch { checks.chain = false; }
     })(),
     (async () => {
-      if (!escrowMode) return;
-      // A reversed credit or a final transfer that left the canonical chain stays an alert until an operator
-      // marks it reviewed (escrow_deposits.reviewed_at).
-      try { checks.escrow_reconciliation = (await bounded(() => escrowReviewsOpen(ctx.db))).length === 0; } catch { checks.escrow_reconciliation = false; }
-    })(),
-    (async () => {
-      if (escrowMode) return;
+      if (!contracts) return;
       try { checks.custody_controls = await bounded(() => ctx.chain.custodyControlsReady()); } catch { checks.custody_controls = false; }
     })(),
     (async () => {
       // Every funded key is in the latest spent root and no leaf overspends its key (Credits cannot check either).
-      if (escrowMode) return;
+      if (!contracts) return;
       try { checks.root_completeness = (await bounded(() => reconcileSpentRoots(ctx.db, { graceMs: ROOT_REVIEW_SLA_MS + 2 * ctx.cfg.workers.settlementIntervalMs }))).ok; } catch { checks.root_completeness = false; }
     })(),
     (async () => {
@@ -134,6 +104,6 @@ export async function readiness(ctx: Ctx) {
       try { checks.backup_fresh = await bounded(() => backupFresh(ctx)); } catch { checks.backup_fresh = false; }
     })(),
   ]);
-  if (!escrowMode) checks.receipt_anchor_configured = !!ctx.cfg.chain.receiptAnchor;
-  return { ok: Object.values(checks).every(Boolean), checks, warnings: readinessWarnings(ctx) };
+  if (contracts) checks.receipt_anchor_configured = !!ctx.cfg.chain.receiptAnchor;
+  return { ok: Object.values(checks).every(Boolean), checks, warnings: [] as ReadinessWarning[] };
 }

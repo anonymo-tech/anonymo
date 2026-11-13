@@ -1,5 +1,4 @@
 import type { Candidate, Modifier } from "../catalog/catalog.ts";
-import { networkSelectionInput } from "../network/routing.ts";
 import { usdToPico } from "../lib/money.ts";
 import { NOT_SERVABLE_REASON, isRestricted, restrictedExclusion, type ModelLane } from "./lane.ts";
 import { ANONYMO_SEALED, isAnonymoRoute } from "../anonymo/models.ts";
@@ -167,7 +166,6 @@ export function weightedShuffle<T>(items: T[], weight: (t: T) => number, rand: (
 }
 
 export function selectProviders(input: SelectInput): Selection {
-  input = networkSelectionInput(input);
   const { prefs, modifiers, health } = input;
   const excluded: Exclusion[] = [];
   const wantPrivate = prefs.private === true || modifiers.has("private");

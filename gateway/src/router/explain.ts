@@ -1,7 +1,6 @@
 import type { Candidate } from "../catalog/catalog.ts";
 import type { RouteFailure, RouteSuccess, RouteTarget } from "./execute.ts";
 import type { ProviderPrefs, Selection } from "./select.ts";
-import { isNetworkHost } from "../network/routing.ts";
 
 // V84: per-request selection evidence only. Never read bodies, URLs, keys or error messages here.
 export const ROUTE_REASONS = ["lowest_price", "lowest_latency", "highest_throughput", "weighted_choice", "provider_order", "preferred_performance", "byok_priority", "only_eligible", "only_parameter_support", "fallback"] as const;
@@ -17,6 +16,7 @@ export type RouteExplanation = {
   skipped: Counts;
   lane: "public" | "attested" | "unlinkable";
   parameters: string[];
+  /** Always false: Anonymo's host network was removed (WS01); kept so the signed route field keeps its shape. */
   network_host: boolean;
   fallback?: Partial<Record<(typeof ERROR_CLASSES)[number], number>>;
 };
@@ -75,7 +75,7 @@ export function rememberRouteResult<T extends ServingResult>(result: T, targets:
     const kind = ERROR_CLASSES.includes(attempt.error_kind as never) ? attempt.error_kind as keyof typeof fallback : "other";
     fallback[kind] = (fallback[kind] ?? 0) + 1;
   }
-  results.set(result, { ...plan, provider: safeProvider(result.candidate.providerId), network_host: isNetworkHost(result.candidate.provider), ...(Object.keys(fallback).length ? { reason: "fallback", fallback } : {}) });
+  results.set(result, { ...plan, provider: safeProvider(result.candidate.providerId), network_host: false, ...(Object.keys(fallback).length ? { reason: "fallback", fallback } : {}) });
   return result;
 }
 

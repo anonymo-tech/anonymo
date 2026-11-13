@@ -2,7 +2,7 @@ import type { TableDoc } from "../types.ts";
 import { CREATED, JSON_FIELDS, KEPT, UPDATED, rv } from "./common.ts";
 
 // Chain: what the router has read from, and written to, the blockchain. Blockchain data is public; these tables are a working copy
-// of it plus the router's own bookkeeping for deposits, pay-with and slashing.
+// of it plus the router's own bookkeeping for deposits and slashing.
 
 export const chainTables: Record<string, TableDoc> = {
   chain_events: {
@@ -35,103 +35,9 @@ export const chainTables: Record<string, TableDoc> = {
     columns: { id: "The cursor's name.", block: "The last block read.", updated_at: UPDATED },
   },
 
-  escrow_deposits: {
-    category: "chain",
-    purpose: "Stock Token, $ANMO and USDG transfers into the escrow wallet: one row per transfer, its price, its status and whether it was credited.",
-    request: "no",
-    retention: KEPT,
-    columns: {
-      id: "<transaction>:<log index>.",
-      tx_hash: "The transaction.",
-      log_index: "The log's position in the transaction.",
-      block_number: "The block.",
-      token: "The token contract.",
-      symbol: "The token symbol.",
-      from_address: {
-        purpose: "The wallet that sent the tokens, as recorded on chain.",
-        review: rv(["name:network"], "wallet-address", "A blockchain wallet address that is public in the transfer itself; not a network address."),
-      },
-      raw_amount: "The amount in token base units.",
-      status: "pending_finality, pending, provisional (credited while settling), credited, orphaned or reversed.",
-      block_hash: "The block hash when recorded; the credit is checked against it.",
-      account_id: "The account it was credited to.",
-      price18: "USD per whole token at 18 decimals, as read from the price feed (USDG: exactly 1, credited at par).",
-      price_updated_at: "When the feed last updated.",
-      credited: "The pico-USD credited after the haircut.",
-      error: {
-        purpose: "Why crediting failed, when it did.",
-        review: rv(["name:content"], "no-request-content", "An error string from the escrow indexer about an on-chain transfer; no request is involved."),
-      },
-      created_at: CREATED,
-      credited_at: "When it was credited.",
-      checked_at: "When the credit was last re-verified against the canonical chain.",
-      reversed_at: "When a credit was reversed.",
-      review_reason: "Set when an operator has to look: a reversal, or an orphan after finality.",
-      reviewed_at: "Set once an operator has reconciled it.",
-    },
-  },
 
-  paywith_sessions: {
-    category: "chain",
-    purpose: "Pay-with sessions: a wallet's daily cap for paying with a Stock Token through a key.",
-    request: "no",
-    retention: KEPT,
-    columns: {
-      key_hash: "The key's chain hash.",
-      wallet: "The wallet that opened the session.",
-      token: "The token contract.",
-      symbol: "The token symbol.",
-      cap_raw_day: "The daily cap in token base units.",
-      spent_raw_today: { purpose: "Spent today in token base units.", request: "aggregate" },
-      day_start: "When today's window began.",
-      active: "Whether the session is active.",
-      opened_tx: "The transaction that opened it.",
-      updated_at: UPDATED,
-    },
-  },
 
-  paywith_debts: {
-    category: "chain",
-    purpose: "What a pay-with call owes in tokens, until a swap settles it.",
-    request: "yes",
-    retention: KEPT,
-    columns: {
-      id: "Debt id.",
-      chain_key_hash: "The key's chain hash.",
-      account_id: "The account.",
-      generation_id: "The generation that created the debt.",
-      token: "The token contract.",
-      amount: "Pico-USD owed.",
-      raw_estimate: "Estimated token units.",
-      fair_price18: "The fair price used, 18 decimals.",
-      swap_id: "The swap that settled it.",
-      raw_allocated: "Token units allocated to it by the swap.",
-      created_at: CREATED,
-    },
-  },
 
-  paywith_swaps: {
-    category: "chain",
-    purpose: "Swaps that turn pay-with tokens into USDG to settle debts.",
-    request: "aggregate",
-    retention: KEPT,
-    columns: {
-      id: "Swap id.",
-      key_hash: "The key's chain hash.",
-      token: "The token contract.",
-      raw_spent: "Token units spent.",
-      fair_price: "The fair price used.",
-      usdg_out: "USDG base units received.",
-      tx: "The swap transaction.",
-      status: "pending, submitted, confirmed or failed.",
-      error: {
-        purpose: "Why the swap failed, when it did.",
-        review: rv(["name:content"], "no-request-content", "An error string from a swap transaction; no request is involved."),
-      },
-      ts: "When the swap was created.",
-      allocations: { purpose: "Which debts the swap settled and how much of it each got.", review: JSON_FIELDS("Debt ids and token amounts written by the pay-with aggregator.") },
-    },
-  },
 
   slashes: {
     category: "chain",

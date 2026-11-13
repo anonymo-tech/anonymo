@@ -1,19 +1,16 @@
-import { gatewayOrigin } from "../ohttp/origin.ts";
 import { batchTooLarge, MCP_BATCH_MAX } from "./mcp-batch.ts";
 import type { MiddlewareHandler } from "hono";
 import type { Ctx } from "../context.ts";
-import { addressBucket, viaOnion } from "../api/common.ts";
+import { addressBucket } from "../api/common.ts";
 import { bearer, resolveKey } from "../api/auth.ts";
 import { log } from "../lib/util.ts";
 import { capBody, requestCap } from "./body.ts";
 import { internalCaller, validOriginLock } from "./client.ts";
 export const originLockMiddleware = (ctx: Ctx): MiddlewareHandler => async (c, next) => {
   c.set("hardening", ctx.cfg.hardening);
-  c.set("onionIngress", viaOnion(c, ctx.cfg));
   const exempt = c.req.path === "/health" || c.req.path === "/ready";
-  // Do not read any address on authenticated onion ingress.
-  const internal = !!gatewayOrigin(c.req.raw) || (!c.get("onionIngress") && internalCaller(c));
-  if (ctx.cfg.hardening.originLockEnabled && !exempt && !c.get("onionIngress") && !internal && !validOriginLock(c, ctx.cfg.hardening))
+  const internal = internalCaller(c);
+  if (ctx.cfg.hardening.originLockEnabled && !exempt && !internal && !validOriginLock(c, ctx.cfg.hardening))
     return c.json({ error: { type: "origin_locked", message: "Use the public router address." } }, 403);
   c.set("internalCaller", internal);
   await next();
@@ -23,7 +20,7 @@ export const hardeningMiddleware = (ctx: Ctx): MiddlewareHandler => async (c, ne
   const internal = c.get("internalCaller") === true;
   const rejected = await capBody(c, requestCap(c.req.path, ctx.cfg));
   if (rejected) return rejected;
-  const publicRead = ["GET", "HEAD"].includes(c.req.method) && /^\/(api\/|v1\/|ollama\/|facilitator\/|\.well-known\/|keep\/inventory\.json$)/.test(c.req.path);
+  const publicRead = ["GET", "HEAD"].includes(c.req.method) && /^\/(api\/|v1\/|facilitator\/|\.well-known\/|keep\/inventory\.json$)/.test(c.req.path);
   const mcp = c.req.method === "POST" && c.req.path === "/mcp";
   let amount = 1;
   if (mcp) {

@@ -64,8 +64,8 @@ export const requestTables: Record<string, TableDoc> = {
     columns: {
       id: "Generation id, random. It is also the id of the signed receipt (the X-Receipt-Id response header).",
       ts: "When the call was recorded.",
-      key_hash: "SHA-256 of the API key that made the call (the key itself is never stored). Empty for wallet-paid and blind-token calls.",
-      account_id: "The account that was billed. For a blind-token call it is the shared token pool, not a person.",
+      key_hash: "SHA-256 of the API key that made the call (the key itself is never stored). Empty for wallet-paid calls.",
+      account_id: "The account that was billed. For a call Anonymo served from its removed blind-token pool it is that shared pool, not a person.",
       model_id: "The catalogue model id that answered, such as author/slug.",
       provider_id: "The provider that served the call.",
       tokens_in: "Prompt tokens billed, as a count.",
@@ -78,7 +78,7 @@ export const requestTables: Record<string, TableDoc> = {
       royalty: "The share of the cost owed to the model's creator, in pico-USD.",
       margin: "The router's fee on the call, in pico-USD.",
       cache_discount: "The discount given for cached prompt tokens, in pico-USD.",
-      mode: "How the call was paid: prepaid, per_call, paywith, byok, cache or blind.",
+      mode: "How the call was paid: prepaid, per_call, byok or cache (paywith and blind appear only on calls made before WS01 removed them).",
       latency_ms: "Milliseconds until the provider's first response.",
       generation_time_ms: "Milliseconds for the whole call.",
       finish_reason: "Why the model stopped, such as stop or length.",
@@ -109,7 +109,7 @@ export const requestTables: Record<string, TableDoc> = {
       receipt_leaf_v2: "The v2 receipt's leaf hash in the anchoring tree.",
       leaf_index_v2: "The v2 leaf's position in the anchor tree.",
       paid_with: {
-        purpose: "For a pay-with call: the token symbol and address, raw units accrued, the fair price used and the swap transaction, when there is one.",
+        purpose: "Only on calls paid with a Stock Token before pay-with was removed: the token symbol and address, raw units accrued, the fair price used and the swap transaction, when there is one.",
         review: JSON_FIELDS("Written by the pay-with code from token symbols, addresses and amounts."),
       },
       payment_tx: "For a per-call payment: the transaction hash that paid.",

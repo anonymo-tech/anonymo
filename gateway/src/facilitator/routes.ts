@@ -56,7 +56,7 @@ export function facilitatorRoutes(app: Hono, ctx: Ctx) {
   const on = () => {
     if (!f.enabled) fail(503, "The facilitator is not switched on at this router.", "facilitator_disabled");
   };
-  /** Per caller address: the facilitator's own bucket, apart from the API's. Over Tor the shared onion bucket. */
+  /** Per caller address: the facilitator's own bucket, apart from the API's. */
   const byAddress = async (c: Context) => {
     const from = addressBucket(c, ctx.cfg);
     const r = await ctx.limiter.take(`facilitator:${from.id}`, 1, from.scale(f.rpm), 60_000);

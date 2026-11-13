@@ -7,20 +7,16 @@ import { withdrawableFor } from "../services/settlement.ts";
 import { z } from "zod";
 import type { Ctx } from "../context.ts";
 import type { Db, Tx } from "../db/client.ts";
-import { agentSessions, byokKeys, generations, keys, kv, ledger, spentRoots, teamMembers, teams } from "../db/schema.ts";
+import { agentSessions, byokKeys, generations, keys, kv, ledger, spentRoots } from "../db/schema.ts";
 import { deriveKey, generateApiKey } from "../chain/keys.ts";
 import { fail } from "../lib/errors.ts";
 import { picoToUsd, usdToPico } from "../lib/money.ts";
-import { fastCreditFields } from "../pay/fast-credit-state.ts"; // V97
-import { depositTiming } from "../pay/deposit-progress.ts"; // V97B
 import { balanceOf, ensureAccount } from "../ledger/ledger.ts";
 import { encrypt, uid, randomHex } from "../lib/util.ts";
 import { SENTINEL_NEIGHBOUR, SpentTree, type SpentNeighbour } from "../receipts/merkle.ts";
 import { addressBucket, readJson } from "./common.ts";
 import { parseStoredTracing, sealTracing, tracingInput, tracingJson } from "../services/tracing.ts";
-import { bearer, registerRootKey, requireKey, requireRole, ROLE_RANK, walletAccountId, type KeyRow, type Role } from "./auth.ts";
-import { actorOf, appendAudit, type AuditDetail } from "../teams/audit.ts";
-import { assertFitsOrgBudget } from "../teams/org.ts";
+import { bearer, registerRootKey, requireKey, requireRole, walletAccountId, type KeyRow } from "./auth.ts";
 import { topupInput, topupJson, topupsThisWeek } from "../ledger/topup.ts";
 
 const keySpec = z.object({
@@ -33,8 +29,6 @@ const keySpec = z.object({
   rpm: z.number().int().positive().nullable().optional(),
   tpm: z.number().int().positive().nullable().optional(),
   allowed_models: z.array(z.string()).nullable().optional(),
-  team: z.string().nullable().optional(),
-  pay_with_default: z.string().max(16).nullable().optional(),
   disabled: z.boolean().optional(),
   expires_at: z.string().datetime().nullable().optional(),
   guardrails: z
@@ -45,7 +39,6 @@ const keySpec = z.object({
   management: z.boolean().optional(),
   // Trace export for this key's public-lane calls; null removes it. Secrets are sealed and never returned.
   tracing: tracingInput.nullable().optional(),
-  role: z.enum(["admin", "dev", "member", "viewer", "agent"]).optional(), // the key's role in its team (default member)
   // Auto top-up of the key's limit from the account's credits (src/ledger/topup.ts); null clears it. PATCH only.
   topup: topupInput.nullable().optional(),
 });
@@ -65,8 +58,6 @@ export function keyJson(k: KeyRow) {
     rpm: k.rpm,
     tpm: k.tpm,
     allowed_models: k.allowedModels,
-    team: k.teamId,
-    pay_with_default: k.payWithDefault,
     management: k.management,
     guardrails: k.guardrails,
     tracing: tracingJson(k.tracing),
@@ -97,10 +88,7 @@ async function sub(ctx: Ctx, c: Context): Promise<KeyRow> {
 async function ownedKey(ctx: Ctx, caller: KeyRow, hash: string) {
   const [k] = await ctx.db.select().from(keys).where(and(eq(keys.keyHash, hash), eq(keys.accountId, caller.accountId)));
   if (!k) fail(404, "Key not found.", "not_found");
-  if (!caller.management) {
-    // Team admins manage keys in their own team only.
-    if (!caller.teamId || k.teamId !== caller.teamId) fail(403, "This key cannot manage that key.", "forbidden");
-  }
+  if (!caller.management) fail(403, "This key cannot manage that key.", "forbidden");
   return k;
 }
 
@@ -130,7 +118,6 @@ function applySpec(v: z.infer<typeof keySpec>) {
     ...(v.rpm !== undefined ? { rpm: v.rpm } : {}),
     ...(v.tpm !== undefined ? { tpm: v.tpm } : {}),
     ...(v.allowed_models !== undefined ? { allowedModels: v.allowed_models } : {}),
-    ...(v.pay_with_default !== undefined ? { payWithDefault: v.pay_with_default } : {}),
     ...(v.disabled !== undefined ? { disabled: v.disabled } : {}),
     ...(v.expires_at !== undefined ? { expiresAt: v.expires_at ? new Date(v.expires_at) : null } : {}),
     ...(v.guardrails !== undefined ? { guardrails: v.guardrails } : {}),
@@ -138,38 +125,11 @@ function applySpec(v: z.infer<typeof keySpec>) {
   };
 }
 
-/** What an audit entry says about a key change: the fields that changed, the new limit and the lane, never guardrail
- *  phrases or other text the owner typed. */
-function keyChange(spec: z.infer<typeof keySpec>, patch: ReturnType<typeof applySpec> & { management?: boolean }): AuditDetail {
-  const out: AuditDetail = { fields: Object.keys(patch).sort() };
-  if (patch.budget !== undefined) out.limit_usd = patch.budget == null ? null : picoToUsd(patch.budget);
-  if (patch.disabled !== undefined) out.disabled = patch.disabled;
-  if (patch.management !== undefined) out.management = patch.management;
-  const provider = (spec.routing as { provider?: { lane?: unknown } } | null | undefined)?.provider;
-  if (typeof provider?.lane === "string") out.lane = provider.lane;
-  return out;
-}
-
 /** Create a virtual sub-key under `caller` (same account and balance, parent = caller). The secret is
  *  returned once; only its hash is stored. Shared by POST /api/v1/keys and Agent Sessions. */
 export async function createSubKey(ctx: Ctx, caller: KeyRow, spec: z.infer<typeof keySpec>, db: Db | Tx = ctx.db) {
   const scope = await provisionedScope(ctx, caller, spec, db); // ZK6
   if (spec.management && !caller.management) fail(403, "Only a management key can create management keys.", "forbidden");
-  const teamId = spec.team ?? (caller.management ? null : caller.teamId);
-  // A non-management key creates keys only in its own team, and never with a role above its own.
-  if (!caller.management && teamId !== caller.teamId) fail(403, "This key can create keys only in its own team.", "forbidden");
-  const role = spec.role ?? "member";
-  const limit = applySpec(spec).budget;
-  if (teamId) {
-    const [t] = await db.select().from(teams).where(and(eq(teams.id, teamId), eq(teams.ownerAccount, caller.accountId)));
-    if (!t) fail(404, "Team not found.", "not_found");
-    if (!caller.management) {
-      // Read through `db`: an agent session creates its key inside a transaction.
-      const [me] = await db.select({ role: teamMembers.role }).from(teamMembers).where(and(eq(teamMembers.teamId, teamId), eq(teamMembers.keyHash, caller.keyHash)));
-      if (ROLE_RANK[role] > ROLE_RANK[(me?.role ?? "member") as Role]) fail(403, "You cannot create a key with a role above your own.", "forbidden");
-    }
-    await assertFitsOrgBudget(db, teamId, limit ?? null);
-  } else if (spec.role) fail(400, "`role` applies to a key in a team; set `team` too.", "invalid_request");
   const secret = generateApiKey();
   const d = deriveKey(secret);
   await db.insert(keys).values({
@@ -180,17 +140,12 @@ export async function createSubKey(ctx: Ctx, caller: KeyRow, spec: z.infer<typeo
     scope, // ZK6
     parentHash: caller.keyHash,
     label: d.label,
-    teamId,
     management: !!spec.management,
     rpm: ctx.cfg.limits.defaultRpm || null,
     tpm: ctx.cfg.limits.defaultTpm || null,
     ...applySpec(spec),
     ...tracingPatch(ctx, spec, null),
   });
-  if (teamId) {
-    await db.insert(teamMembers).values({ teamId, keyHash: d.keyHash, role }).onConflictDoNothing();
-    await appendAudit(db, teamId, await actorOf(db, caller), "key.create", d.keyHash, { role, limit_usd: limit == null ? null : picoToUsd(limit) });
-  }
   const [row] = await db.select().from(keys).where(eq(keys.keyHash, d.keyHash));
   return { row, secret };
 }
@@ -220,13 +175,12 @@ export function keysRoutes(app: Hono, ctx: Ctx) {
       const r = await ctx.limiter.take(`newkey:${from.id}`, 1, from.scale(ctx.cfg.limits.newKeysPerHour), 3_600_000);
       if (!r.ok) fail(429, "Too many new keys from this address. Try again later.", "rate_limited");
       const k = await registerRootKey(ctx, secret, spec.name ?? "");
-      const patch = { ...applySpec({ ...spec, management: undefined, team: undefined }), ...tracingPatch(ctx, spec, null) };
+      const patch = { ...applySpec({ ...spec, management: undefined }), ...tracingPatch(ctx, spec, null) };
       if (Object.keys(patch).length) await ctx.db.update(keys).set(patch).where(eq(keys.keyHash, k.keyHash));
       const [row] = await ctx.db.select().from(keys).where(eq(keys.keyHash, k.keyHash));
       return c.json({ data: keyJson(row), key: secret, deposit: depositInfo(ctx, row) }, 201);
     }
     const caller = await sub(ctx, c);
-    // Devs create keys too, in their own team and within its org budget (createSubKey checks both).
     await requireRole(ctx, caller, ["owner", "admin", "dev"]);
     const created = await createSubKey(ctx, caller, spec);
     return c.json({ data: keyJson(created.row), key: created.secret, deposit: depositInfo(ctx, created.row) }, 201);
@@ -236,7 +190,8 @@ export function keysRoutes(app: Hono, ctx: Ctx) {
     const caller = await sub(ctx, c);
     await requireRole(ctx, caller, ["owner", "admin", "viewer"]);
     const { offset, limit } = keyPagination(c.req.query()); // ZK6: disabled rows remain visible
-    const rows = await ctx.db.select().from(keys).where(and(eq(keys.accountId, caller.accountId), ...(caller.management ? [] : [eq(keys.teamId, caller.teamId ?? "")]))).orderBy(desc(keys.createdAt), desc(keys.keyHash)).offset(offset).limit(limit);
+    if (!caller.management) return c.json({ data: [] }); // only a management key lists the account's keys
+    const rows = await ctx.db.select().from(keys).where(eq(keys.accountId, caller.accountId)).orderBy(desc(keys.createdAt), desc(keys.keyHash)).offset(offset).limit(limit);
     return c.json({ data: rows.map(keyJson) });
   });
   app.get("/api/v1/keys/:hash", async (c) => {
@@ -256,14 +211,9 @@ export function keysRoutes(app: Hono, ctx: Ctx) {
     if (spec.scope !== undefined) fail(400, "Scope is fixed at creation; mint a new key to change it.", "invalid_request"); // ZK6
     if (k.scope === "inference" && spec.management === true) fail(403, "An inference-only key cannot gain management rights.", "forbidden"); // ZK6
     if (spec.management !== undefined && !caller.management) fail(403, "Only a management key can change management rights.", "forbidden");
-    if (spec.role !== undefined) fail(400, "Change a key's role with PUT /api/v1/teams/:id/members/:hash.", "invalid_request");
     const patch = { ...applySpec(spec), ...(spec.management !== undefined ? { management: spec.management } : {}), ...tracingPatch(ctx, spec, k.tracing), ...(spec.topup !== undefined ? { topup: spec.topup } : {}) };
     assertTopupFits(patch.topup !== undefined ? patch.topup : k.topup, patch.budget !== undefined ? patch.budget : k.budget, patch.budgetReset !== undefined ? patch.budgetReset : k.budgetReset);
-    // In a team with an org budget, a new limit (or a key coming back) must still fit.
-    if (k.teamId && (patch.budget !== undefined || patch.disabled === false || patch.expiresAt !== undefined))
-      await assertFitsOrgBudget(ctx.db, k.teamId, patch.budget !== undefined ? patch.budget : k.budget, k.keyHash);
     if (Object.keys(patch).length) await ctx.db.update(keys).set(patch).where(eq(keys.keyHash, k.keyHash));
-    if (k.teamId && Object.keys(patch).length) await appendAudit(ctx.db, k.teamId, await actorOf(ctx.db, caller), "key.update", k.keyHash, keyChange(spec, patch));
     const [row] = await ctx.db.select().from(keys).where(eq(keys.keyHash, k.keyHash));
     return c.json({ data: await keyJsonWithTracing(ctx, row) });
   });
@@ -274,7 +224,6 @@ export function keysRoutes(app: Hono, ctx: Ctx) {
     if (k.keyHash === caller.keyHash) fail(400, "A key cannot delete itself; disable it with PATCH instead.", "invalid_request");
     // Keys are disabled rather than removed: generations and on-chain balances reference them.
     await ctx.db.update(keys).set({ disabled: true }).where(eq(keys.keyHash, k.keyHash));
-    if (k.teamId && !k.disabled) await appendAudit(ctx.db, k.teamId, await actorOf(ctx.db, caller), "key.disable", k.keyHash, {});
     return c.json({ deleted: true, data: { hash: k.keyHash, deleted: true } }); // ZK6
   });
 
@@ -313,8 +262,6 @@ export function keysRoutes(app: Hono, ctx: Ctx) {
       .where(eq(generations.accountId, k.accountId));
     return c.json({
       data: {
-        ...await fastCreditFields(ctx, k.accountId), // V97
-        ...await depositTiming(ctx), // V97D: USDG confirmation threshold and block numbers.
         total_credits: picoToUsd(BigInt(dep?.n ?? 0)),
         total_usage: picoToUsd(BigInt(use?.n ?? 0)),
         balance: picoToUsd(bal.balance),
@@ -487,7 +434,6 @@ export function keysRoutes(app: Hono, ctx: Ctx) {
     return c.json({ data: { provider: c.req.param("provider"), deleted: true } });
   });
 
-  // Teams, organisations and their audit log: src/api/teams.ts.
 
   // Server-issued, single-use wallet login challenges. Origin, action and chain are signed.
   app.post("/api/v1/auth/wallet/challenge", async (c) => {

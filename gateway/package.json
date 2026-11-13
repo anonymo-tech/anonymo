@@ -35,7 +35,6 @@
   },
   "dependencies": {
     "@account-abstraction/contracts": "0.7.0",
-    "@cloudflare/blindrsa-ts": "0.4.6",
     "@electric-sql/pglite": "0.5.8",
     "@hono/trpc-server": "0.4.2",
     "@noble/hashes": "2.4.0",
@@ -45,9 +44,7 @@
     "bullmq": "6.3.9",
     "drizzle-orm": "0.45.3",
     "hono": "4.13.9",
-    "hpke": "1.1.7",
     "ioredis": "6.0.0",
-    "ohttp-ts": "0.6.0",
     "postgres": "3.4.9",
     "viem": "2.56.9",
     "yaml": "2.9.1",

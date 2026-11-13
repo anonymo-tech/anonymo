@@ -422,16 +422,6 @@ describe("what changes the answer", () => {
     expect((await chat(ABL.slug, { provider: { only: ["vendor"] } })).status).toBe(404);
   });
 
-  test("embeddings honour the same rule", async () => {
-    const embed = (body: Record<string, unknown>) => h.request("/api/v1/embeddings", { method: "POST", headers: auth.current, json: { model: EMBED.slug, input: "hello", ...body } });
-    expect((await embed({ provider: { only: ["vendor"] } })).status).toBe(200); // mainstream today
-    expect((await putLane(EMBED.slug, restrictedLane)).status).toBe(200);
-    expect((await embed({ provider: { only: ["vendor"] } })).status).toBe(404);
-    const ok = await embed({});
-    expect(ok.status).toBe(200);
-    expect((await ok.json()).provider).toBe("Enclave");
-    await putLane(EMBED.slug, { variant: "mainstream" });
-  });
 });
 
 describe("a day-zero candidate's repository holds a model back until it is servable", () => {

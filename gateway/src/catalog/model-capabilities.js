@@ -7,8 +7,6 @@ export const MODEL_CAPABILITIES = [
   { key: "tools", label: "Tools", explanation: "Can request tool calls; the calling app must run the tools and return their results." },
   { key: "longContext", label: "Long context", explanation: "Lists a context window of at least 128,000 tokens; the chosen provider may have a lower limit." },
   { key: "attested", label: "Proven hardware", explanation: "Has an endpoint with a fresh hardware attestation checked by the router; this does not prove answer quality or encrypt ordinary chat." },
-  { key: "network", label: "Anonymo network", explanation: "Has a live offer on an Anonymo network host for a model admitted on that host; routing may choose another provider.", href: "/network/" },
-  { key: "encrypted", label: "Encrypted chat", explanation: "Available through the separate device-encryption gateway setup; ordinary Chat still sends readable requests to the router.", href: "/docs/#e2ee-phala" },
 ];
 
 export function modelModalities(model, direction = "input") {
@@ -28,9 +26,6 @@ export function deriveCapabilities(model = {}) {
     vision: inputs.includes("image"), imageOut: outputs.includes("image"), audio: inputs.includes("audio") || outputs.includes("audio"), tools: hasParam("tools"),
     longContext: Number(model.context_length ?? model.contextLength ?? model.context ?? model.top_provider?.context_length ?? 0) >= LONG_CONTEXT_TOKENS,
     attested: proven,
-    network: model.network_host_available === true,
-    // Never infer encryption from attestation, a lane, a price or a model/provider name.
-    encrypted: model.encrypted_chat_available === true,
   };
   return MODEL_CAPABILITIES.filter((tag) => flags[tag.key]).map((tag) => tag.key);
 }

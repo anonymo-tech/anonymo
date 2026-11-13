@@ -86,7 +86,7 @@ describe("Batch API over HTTP", () => {
     });
     expect(bad.status).toBe(400);
     const errors = (await bad.json()).error.metadata.errors as { line: number; code: string }[];
-    expect(errors.map((e) => [e.line, e.code])).toEqual([[2, "duplicate_custom_id"], [3, "invalid_body"], [4, "invalid_url"], [5, "invalid_method"], [6, "mismatched_url"]]);
+    expect(errors.map((e) => [e.line, e.code])).toEqual([[2, "duplicate_custom_id"], [3, "invalid_body"], [4, "invalid_url"], [5, "invalid_method"], [6, "invalid_url"]]); // embeddings went with WS01
     const badJsonl = await submit({ input_jsonl: `${JSON.stringify(chatLine("a"))}\nnot json\n` });
     expect((await badJsonl.json()).error.metadata.errors).toEqual([{ line: 2, code: "invalid_json_line", message: "This line is not valid JSON." }]);
     expect(await h.ctx.db.select().from(batches)).toEqual([]); // nothing was queued
@@ -149,18 +149,6 @@ describe("Batch API over HTTP", () => {
     const other = await h.fundedKey(1n);
     expect((await h.request(`/api/v1/batches/${b.id}`, { headers: other.auth })).status).toBe(404);
     expect((await h.request(`/api/v1/batches/${b.id}/output`, { headers: other.auth })).status).toBe(404);
-  });
-
-  test("embeddings batches get the same discount", async () => {
-    const r = await submit({ requests: [{ custom_id: "v1", method: "POST", url: "/v1/embeddings", body: { model: MODELS.embed.slug, input: "vector me" } }] });
-    const b = await r.json();
-    await drain();
-    const [line] = jsonl(await (await h.request(`/api/v1/batches/${b.id}/output`, { headers: k.auth })).text());
-    expect(line.response.status_code).toBe(200);
-    expect(line.response.body.data.length).toBeGreaterThan(0);
-    const p = line.response.body.receipt.payload;
-    expect(p.batch).toEqual({ id: b.id, line: 0 });
-    expect(usdToPico(p.cost) + usdToPico(p.cost_details.batch_discount)).toBeGreaterThan(usdToPico(p.cost));
   });
 
   test("partial failures: failed lines are not charged and land in the errors JSONL with their code", async () => {

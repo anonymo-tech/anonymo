@@ -1,12 +1,5 @@
 import { dispatchMcp } from "../hardening/mcp-batch.ts";
-import { labelDirectory } from "../hardening/profile-text.ts";
 import { internalEnv } from "../hardening/client.ts";
-import { mcpScopeMiddleware, withMcpScope } from "./mcp-scope.ts"; // V98
-import { directoryMcpArgs, directoryMcpTools, directoryMcpPath } from "./mcp-agent-directory.ts";
-import { agreementMcpTools, agreementMcpArgs, callAgreementMcp } from "../agreements/mcp.ts";
-import { guardMcpTools, guardMcpArgs, callGuardMcp, agentMcpTools, agentMcpArgs, callAgentMcp } from "./mcp-agent.ts";
-import { toolsMcpTools, toolsMcpArgs, callToolsMcp } from "../tools/mcp.ts"; // v6 T: paid tool market.
-import { enforceAgentTool } from "../agents/enforce.ts";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
 import type { Ctx } from "../context.ts";
@@ -30,7 +23,6 @@ const PROTOCOL_VERSION = "2025-06-18";
 const SERVER_VERSION = "0.1.0";
 
 // Lanes and disclosure ceilings an MCP connection can ask for (the router's own vocabulary, router/disclosure.ts).
-// "unlinkable" needs a relay and a blind token, which a tool call cannot use.
 const LANES = ["public", "attested"] as const;
 const DISCLOSURES = ["none", "policy", "any"] as const;
 type LaneName = (typeof LANES)[number];
@@ -89,8 +81,6 @@ const PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const verifyProviderArgs = z.object({ provider_id: z.string().regex(PROVIDER_ID, "must be a provider id (letters, digits and . _ : -)") });
 
 const TOOLS = [
-  ...agentMcpTools,
-  ...directoryMcpTools,
   {
     name: "list_models",
     title: "List live models",
@@ -108,7 +98,7 @@ const TOOLS = [
     name: "chat",
     title: "Chat with any model",
     description:
-      "Check anonymo_agent_check before expensive calls. Never retry a denied call unchanged. Send a prompt to any live model through Anonymo and get the reply, a signed receipt id, the cost in USD and the latency. Billed to the API key that connected this server. Give either prompt or messages. Set lane to \"attested\" to send the prompt only to a provider whose TEE attestation the router has verified and that documents no retention: if none can answer, the call fails and nothing is sent or charged. A connection whose URL ends in ?lane=attested does this for every call. The result reports the lane, the disclosure class the answer was served under and, when the receipt carries one, the gateway's upstream_attestation (attested, gpu_attested). It also carries a privacy summary in plain English (who read the prompt, who saw the address, how it was paid, what was kept, what hardware answered), computed from the signed receipt.",
+      "Send a prompt to any live model through Anonymo and get the reply, a signed receipt id, the cost in USD and the latency. Billed to the API key that connected this server. Give either prompt or messages. Set lane to \"attested\" to send the prompt only to a provider whose TEE attestation the router has verified and that documents no retention: if none can answer, the call fails and nothing is sent or charged. A connection whose URL ends in ?lane=attested does this for every call. The result reports the lane, the disclosure class the answer was served under and, when the receipt carries one, the gateway's upstream_attestation (attested, gpu_attested). It also carries a privacy summary in plain English (who read the prompt, who saw the address, how it was paid, what was kept, what hardware answered), computed from the signed receipt.",
     inputSchema: {
       type: "object",
       properties: {
@@ -171,11 +161,6 @@ const TOOLS = [
 ];
 
 const ARGS: Record<string, z.ZodType> = {
-  ...agentMcpArgs,
-  ...guardMcpArgs, // V98
-  ...directoryMcpArgs,
-  ...agreementMcpArgs,
-  ...toolsMcpArgs, // v6 T
   list_models: listModelsArgs,
   chat: chatArgs,
   get_receipt: receiptArgs,
@@ -183,13 +168,12 @@ const ARGS: Record<string, z.ZodType> = {
   list_attested_models: listAttestedArgs,
   verify_provider: verifyProviderArgs,
 };
-const NEEDS_KEY = new Set([...Object.keys(guardMcpArgs), "chat", "anonymo_agent_rules", "anonymo_agent_check", "anonymo_tools_call"]);
+const NEEDS_KEY = new Set(["chat"]);
 
 export function mcpRoutes(app: Hono, ctx: Ctx) {
-  app.use("/mcp", mcpScopeMiddleware(ctx)); // V98: every internal hop retains the original key scope.
   /** Call one of the router's own REST routes in-process, turning its error body back into an ApiError. */
   const internal = async (path: string, init?: RequestInit, c?: Context) => {
-    const res = await app.request(path, withMcpScope(init), internalEnv());
+    const res = await app.request(path, init, internalEnv());
     for (const name of ["X-Receipt-Id", "X-Anonymo-Lane", "X-Anonymo-Policy-Hash"]) { const value = res.headers.get(name); if (c && value !== null) c.header(name, value); }
     const body = (await res.json().catch(() => null)) as { id?: unknown; error?: { message?: string; type?: string; metadata?: Record<string, unknown> } } | null;
     if (!res.ok) {
@@ -209,7 +193,7 @@ export function mcpRoutes(app: Hono, ctx: Ctx) {
         const v = raw.trim().toLowerCase();
         if (!v) return strictest;
         if (!(allowed as readonly string[]).includes(v))
-          throw new ApiError(400, `${what} must be one of: ${allowed.join(", ")}.${v === "unlinkable" ? " The unlinkable lane needs a relay and a blind token, which an MCP connection cannot use." : ""} No prompt was sent.`, "invalid_request");
+          throw new ApiError(400, `${what} must be one of: ${allowed.join(", ")}. No prompt was sent.`, "invalid_request");
         return rank[v as T] > rank[strictest] ? (v as T) : strictest;
       }, base);
     return {
@@ -389,26 +373,15 @@ export function mcpRoutes(app: Hono, ctx: Ctx) {
     const p = params as { name?: unknown; arguments?: unknown } | null;
     if (!p || typeof p !== "object" || typeof p.name !== "string") throw new RpcError(INVALID_PARAMS, "tools/call needs params.name.");
     if (p.arguments !== undefined && (p.arguments === null || typeof p.arguments !== "object" || Array.isArray(p.arguments))) throw new RpcError(INVALID_PARAMS, "params.arguments must be an object.");
-    if (Object.hasOwn(agreementMcpArgs, p.name) && !ctx.cfg.agreements.enabled) throw new RpcError(INVALID_PARAMS, `Unknown tool: ${p.name}.`);
-    if (Object.hasOwn(toolsMcpArgs, p.name) && !ctx.cfg.tools.enabled) throw new RpcError(INVALID_PARAMS, `Unknown tool: ${p.name}.`); // v6 T
-    if (Object.hasOwn(guardMcpArgs, p.name) && !ctx.cfg.agentGuardEnabled) throw new RpcError(INVALID_PARAMS, `Unknown tool: ${p.name}.`); // V98
     const args = p.arguments ?? {};
     const schema = ARGS[p.name];
     if (!schema) throw new RpcError(INVALID_PARAMS, `Unknown tool: ${p.name}.`);
     const parsed = schema.safeParse(args);
     if (!parsed.success) throw new RpcError(INVALID_PARAMS, `Invalid arguments for ${p.name}: ${issues(parsed.error)}.`);
-    if (!Object.hasOwn(agentMcpArgs, p.name) && !Object.hasOwn(guardMcpArgs, p.name)) await enforceAgentTool(ctx, c.req.header("authorization") ?? (c.req.header("x-api-key") ? `Bearer ${c.req.header("x-api-key")}` : undefined), p.name);
     try {
       if (NEEDS_KEY.has(p.name) && !bearer(c.req.header("authorization")))
         throw new ApiError(401, `The ${p.name} tool needs an Anonymo API key. Send it as \`Authorization: Bearer sk-ar-v1-...\` in this MCP server's HTTP headers. list_models, get_receipt and verify_receipt work without one.`, "missing_key");
-      if (p.name === "anonymo_agent_directory") return ok(labelDirectory(await internal(directoryMcpPath(parsed.data as Json), { signal: c.req.raw.signal }, c)));
-      if (Object.hasOwn(agreementMcpArgs, p.name)) return ok(await callAgreementMcp(p.name, parsed.data, c, internal));
-      if (Object.hasOwn(toolsMcpArgs, p.name)) return await callToolsMcp(p.name, parsed.data, c, internal); // v6 T
-      if (Object.hasOwn(guardMcpArgs, p.name)) return ok(await callGuardMcp(p.name, parsed.data, c, internal)); // V98
       switch (p.name) {
-        case "anonymo_agent_rules":
-        case "anonymo_agent_check":
-          return ok(await callAgentMcp(p.name, parsed.data, c, internal));
         case "list_models":
           return await listModels(parsed.data as z.infer<typeof listModelsArgs>);
         case "chat":
@@ -423,7 +396,6 @@ export function mcpRoutes(app: Hono, ctx: Ctx) {
           return await verify(parsed.data as z.infer<typeof receiptArgs>);
       }
     } catch (e) {
-      if (e instanceof ApiError && ["agent_policy_denied", "agent_killed", "agent_approval_required"].includes(e.type)) throw e;
       if (e instanceof ApiError) return toolError(e, p.name === "chat" ? chatFailure(e) : {});
       throw e;
     }
@@ -476,7 +448,7 @@ export function mcpRoutes(app: Hono, ctx: Ctx) {
               capabilities: { tools: {} },
               serverInfo: { name: "anonymo", title: "Anonymo", version: SERVER_VERSION },
               instructions:
-                "Read anonymo_agent_rules and use anonymo_agent_check before expensive calls. Never retry a denied call unchanged. Use list_models to find a model, chat to call it (needs an API key; every call returns a signed receipt id), then get_receipt or verify_receipt to check the receipt. To keep a prompt with proven enclaves, list_attested_models shows the models that have one, chat with lane \"attested\" sends only to them (and refuses, sending nothing, when none can answer), and verify_provider shows what the router checked about a provider and what it did not." +
+                "Use list_models to find a model, chat to call it (needs an API key; every call returns a signed receipt id), then get_receipt or verify_receipt to check the receipt. To keep a prompt with proven enclaves, list_attested_models shows the models that have one, chat with lane \"attested\" sends only to them (and refuses, sending nothing, when none can answer), and verify_provider shows what the router checked about a provider and what it did not." +
                 (restricted ? " This connection is restricted by its URL or headers: chat calls carry that lane or disclosure ceiling and cannot relax it." : ""),
             }),
           );
@@ -484,7 +456,7 @@ export function mcpRoutes(app: Hono, ctx: Ctx) {
         case "ping":
           return c.json(rpcResult(id, {}));
         case "tools/list":
-          return c.json(rpcResult(id, { tools: [...(ctx.cfg.agreements.enabled ? [...TOOLS, ...agreementMcpTools] : TOOLS), ...(ctx.cfg.tools.enabled ? toolsMcpTools : []), ...(ctx.cfg.agentGuardEnabled ? guardMcpTools : [])].filter(t => ctx.cfg.agentProfilesEnabled || t.name !== "anonymo_agent_directory") }));
+          return c.json(rpcResult(id, { tools: TOOLS }));
         case "tools/call":
           return c.json(rpcResult(id, await callTool(c, m.params)));
         default:

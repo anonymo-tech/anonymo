@@ -1,8 +1,5 @@
 import { retainedMargin } from "./retained-margin.ts";
-import { accrueNetworkHours } from "../network/accrual.ts";
-import { runMakegood } from "./makegood.ts"; // V6 R
-import { addPendingNetworkPayouts, networkPayout } from "../network/payout.ts";
-import { skipSanctionedPayout } from "../network/sanctions.ts";
+import { dbSanctionsScreen } from "../anonymo/deposits/sanctions.ts";
 import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { keccak256, toBytes, type Hex } from "viem";
 import type { Ctx } from "../context.ts";
@@ -32,7 +29,6 @@ async function setKv(ctx: Ctx, k: string, v: unknown) {
 
 /** 1 + 3: close every complete hour that has unsettled generations. */
 export async function settleHours(ctx: Ctx, now = new Date()) {
-  const networkHosts = await accrueNetworkHours(ctx, now);
   const currentHour = hourKey(now);
   const rows = await ctx.db
     .select({ id: generations.id, ts: generations.ts, providerId: generations.providerId, modelId: generations.modelId, tokensIn: generations.tokensIn, tokensOut: generations.tokensOut, upstream: generations.upstreamCost, royalty: generations.royalty, margin: generations.margin, mode: generations.mode })
@@ -46,7 +42,7 @@ export async function settleHours(ctx: Ctx, now = new Date()) {
   let margin = 0n;
   for (const g of rows) {
     const period = hourKey(g.ts);
-    if (g.mode !== "cache" && g.mode !== "byok" && g.providerId !== "cache" && !networkHosts.has(g.providerId)) {
+    if (g.mode !== "cache" && g.mode !== "byok" && g.providerId !== "cache") {
       const k = `${g.providerId}|${period}`;
       const e = inv.get(k) ?? { providerId: g.providerId, period, tokens: 0n, requests: 0, upstream: 0n };
       e.tokens += BigInt(g.tokensIn + g.tokensOut);
@@ -254,6 +250,21 @@ export async function postSpentRoot(ctx: Ctx) {
   return { posted: true, epoch, root: tree.root, keys: leaves.length, total_spent_usdg: totalSpent.toString(), tx: null };
 }
 
+/** Called before any payout row or settlement claim: an on-chain payout to an OFAC-listed address is skipped and stays due. */
+async function skipSanctionedPayout(ctx: Ctx, p: typeof providers.$inferSelect, out: unknown[]): Promise<boolean> {
+  if (!ctx.cfg.sanctions.enabled || p.payoutMode !== "usdg" || !p.payoutAddress) return false;
+  let reason: string | null = null;
+  try {
+    if (await dbSanctionsScreen(ctx.db, { requireList: true }).isBlocked("rhc", p.payoutAddress)) reason = "sanctioned";
+  } catch {
+    reason = "sanctions_unavailable";
+  }
+  if (!reason) return false;
+  log.warn("sanctions payout skipped; settlement remains due", { provider: p.id, reason });
+  out.push({ provider: p.id, status: "skipped", reason });
+  return true;
+}
+
 /** 2: weekly payouts for providers paid in USDG on-chain. Invoice providers are just marked. */
 export async function runPayouts(ctx: Ctx, minAgeMs = 7 * 86_400_000) {
   const cutoff = hourKey(new Date(Date.now() - minAgeMs));
@@ -262,13 +273,11 @@ export async function runPayouts(ctx: Ctx, minAgeMs = 7 * 86_400_000) {
     .from(settlements)
     .where(and(isNull(settlements.payoutId), sql`${settlements.period} <= ${cutoff}`))
     .groupBy(settlements.providerId);
-  await addPendingNetworkPayouts(ctx, due);
   const out: unknown[] = [];
   for (const d of due) {
     const [p] = await ctx.db.select().from(providers).where(eq(providers.id, d.providerId));
     if (!p) continue;
     if (await skipSanctionedPayout(ctx, p, out)) continue;
-    if (await networkPayout(ctx, p, cutoff, out)) continue;
     const id = uid("pay_");
     const amount = BigInt(d.owed);
     const onchain = p.payoutMode === "usdg" && !!p.payoutAddress && ctx.chain.roleAddress("settlement");
@@ -313,13 +322,12 @@ export async function streamRoyalties(ctx: Ctx) {
 }
 
 export async function runSettlement(ctx: Ctx) {
-  const makegood = await runMakegood(ctx).catch((e) => ({ error: (e as Error).message })); // V6 R: before spent roots
   const hours = await settleHours(ctx);
   const roots = await postSpentRoot(ctx);
   const royaltiesResult = await streamRoyalties(ctx).catch((e) => ({ error: (e as Error).message }));
   const margin = await retainedMargin(ctx).catch((e) => ({ error: (e as Error).message }));
   const weekly = new Date().getUTCDay() === 1 && new Date().getUTCHours() === 0 ? await runPayouts(ctx) : { skipped: "weekly (Mondays 00 UTC)" };
-  return { makegood, hours, roots, royalties: royaltiesResult, margin, payouts: weekly };
+  return { hours, roots, royalties: royaltiesResult, margin, payouts: weekly };
 }
 
 export { desc };

@@ -3,15 +3,11 @@ import { keccak256 as viemKeccak, type Hex } from "viem";
 import { randomBytes } from "node:crypto";
 import { Anonymo, AttestationRefused, canonicalJson as sdkCanonicalJson, keccak256Hex, receiptLeaf as sdkLeaf, verifyMerkleProof, verifySidecarReceipt, verifyProvider, canonicalBytes as sdkCanonicalBytes } from "../packages/client/src/index.ts";
 import { nodeAttestFetcher } from "../packages/client/src/node.ts";
-import { buyTokens } from "../packages/client/src/blind.ts";
-import { tokenNullifier as sdkNullifier } from "../packages/client/src/blind.ts";
 import { canonicalJson } from "../src/lib/util.ts";
 import * as webVerify from "../web/lib/verify.js";
 import { verifyReceipt as sdkVerifyReceipt, verifyReceiptV2 as sdkVerifyReceiptV2 } from "../packages/client/src/index.ts";
 import { MerkleTree, receiptLeaf } from "../src/receipts/merkle.ts";
 import { canonicalBytes } from "../src/receipts/signer.ts";
-import { nullifierOf } from "../src/blind/privacy-token.ts";
-import { decodeBase64 } from "../src/blind/privacy-token.ts";
 import { runAttestor } from "../src/services/attestor.ts";
 import { MODELS, startRouter, type Harness } from "./helpers.ts";
 import { existsSync } from "node:fs";
@@ -35,8 +31,8 @@ const sidecar = async () => ({
 });
 
 // The SDK in packages/client is standalone (it cannot import the router). These tests hold it to the router's and the
-// sidecar's real behaviour: the same canonical bytes, the same leaves and proofs, receipts from a running router, blind
-// tokens from its issuer, and evidence produced by the sidecar's own code over real TLS.
+// sidecar's real behaviour: the same canonical bytes, the same leaves and proofs, receipts from a running router, and
+// evidence produced by the sidecar's own code over real TLS.
 
 setDefaultTimeout(60_000);
 
@@ -135,7 +131,6 @@ describe("against a running router", () => {
   let h: Harness;
   beforeAll(async () => {
     h = await startRouter({
-      env: { ANONYMO_FEATURE_BLIND: "true", BLIND_PURCHASE_RPM: "1000" },
       providers: [
         { id: "vendor", name: "Vendor", models: [MODELS.llama, MODELS.embed] },
         { id: "enclave", name: "Enclave", models: [MODELS.llamaPricey], tee: "dev" },
@@ -199,22 +194,6 @@ describe("against a running router", () => {
     expect(chain.head).toBe(chain.signedHead!);
     stream.chained.pop(); // as if the last event never arrived
     expect((await stream.verifyChain()).ok).toBe(false);
-  });
-
-  test("blind tokens: buy with the SDK, spend with the SDK, and the receipt shows the nullifier the SDK computes", async () => {
-    const k = await h.fundedKey(5n);
-    const c = new Anonymo({ baseUrl: "http://router.test", apiKey: k.secret, fetch: shim(h) });
-    const bought = await buyTokens({ baseUrl: "http://router.test", apiKey: k.secret, denomination: 1_000, count: 1, fetch: shim(h) });
-    expect(bought.tokens).toHaveLength(1);
-    const token = bought.tokens[0];
-    const res = await c.withPrivateToken(token).chat.completions.create(chat);
-    expect(res.anonymo.receiptVerification?.valid).toBe(true);
-    expect(res.anonymo.receipt?.payload.nullifier).toBe(await sdkNullifier(token));
-    expect(res.anonymo.receipt?.payload.nullifier).toBe(nullifierOf(decodeBase64(token)!));
-    expect(res.anonymo.receipt?.payload.payer).toBeNull();
-    // A token is single use.
-    const again = await c.withPrivateToken(token).chat.completions.create(chat).catch((x) => x);
-    expect(again.status).toBe(401);
   });
 
   test("the router's honest 'simulated' and 'unverified' states are refused by verify-before-send", async () => {

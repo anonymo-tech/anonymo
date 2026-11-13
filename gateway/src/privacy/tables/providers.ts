@@ -15,9 +15,6 @@ export const providerTables: Record<string, TableDoc> = {
     request: "no",
     retention: PROVIDER_ROWS,
     columns: {
-      network_host: { purpose: "Whether this provider was created by wallet-authenticated self-serve network signup; false for existing providers.", review: rv(["name:network"], "config", "A boolean indicating the admission path, despite its network-related name. It cannot contain an address or any text.") },
-      network_models: "One to eight distinct requested model IDs supplied by the wallet operator, retained for network admission and re-application; separate from priced catalogue entries.",
-      network_reasons: { purpose: "Current admission or scheduled renewal refusal reasons, returned publicly by the network status and host dashboard APIs.", review: JSON_FIELDS("Admission and scheduled renewal write policy and screening explanations and attestor failure messages about operator-supplied endpoints and model IDs. No inference body, key or contact is included; endpoint failure messages may name the host server.") },
       id: "Provider slug, such as deepinfra.",
       name: "Display name.",
       base_url: {

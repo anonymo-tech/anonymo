@@ -84,7 +84,7 @@ const family = (prefix: string, shape: string, holds: RedisFamily["holds"], seco
 });
 
 export const facilitatorRedisFamilies: RedisFamily[] = [
-  family("facilitator:", "facilitator:<caller address or onion>", "address", 60, "Facilitator requests per caller address per minute (FACILITATOR_RPM, 120 by default), a bucket apart from the API's. The raw address is part of the key; over Tor the shared onion bucket is used.", "await ctx.limiter.take(`facilitator:${from.id}`"),
+  family("facilitator:", "facilitator:<caller address>", "address", 60, "Facilitator requests per caller address per minute (FACILITATOR_RPM, 120 by default), a bucket apart from the API's. The raw address is part of the key; over Tor the shared onion bucket is used.", "await ctx.limiter.take(`facilitator:${from.id}`"),
   family("facilitator-payer:", "facilitator-payer:<payer wallet>", "wallet", 60, "Verify and settle calls per payer wallet per minute, so one payer cannot drain the relay with tiny payments. Links calls by the public payer wallet.", "await ctx.limiter.take(`facilitator-payer:${payer.toLowerCase()}`"),
   family("facilitator-seller:", "facilitator-seller:<payTo wallet>", "wallet", 60, "Verify and settle calls per seller payTo wallet per minute.", "await ctx.limiter.take(`facilitator-seller:${payTo.toLowerCase()}`"),
   family("facilitator-listing:", "facilitator-listing:<payTo wallet>", "wallet", 3600, "Signed listing writes per payTo wallet per hour (FACILITATOR_LISTINGS_PER_HOUR).", "await ctx.limiter.take(`facilitator-listing:${listing.payTo}`"),
@@ -92,8 +92,8 @@ export const facilitatorRedisFamilies: RedisFamily[] = [
 
 export const facilitatorAddressReader: Touchpoint = {
   file: ROUTES,
-  reads: "The caller address bucket on every /facilitator route; over Tor the shared onion bucket.",
-  then: "Counts requests in the facilitator's own per-address limiter; trusted proxy and onion rules apply.",
+  reads: "The caller address bucket on every /facilitator route.",
+  then: "Counts requests in the facilitator's own per-address limiter; trusted proxy rules apply.",
   kept: "Raw address in the limiter key for 61 seconds in Redis, or until the memory limiter sweeps; never in a settlement, listing, receipt or log line.",
   evidence: [{ file: ROUTES, contains: "const from = addressBucket(c, ctx.cfg);" }],
 };
