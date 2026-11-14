@@ -237,7 +237,7 @@ export function EvmWalletPay({ evm, onCredited }: { evm: EvmInstructions; onCred
   );
 }
 
-/** Pay with ANMO through CoinPay. The coins are burned; the credit is usage-only. */
+/** Pay with the coin (launched on Pons) through CoinPay. The coins go to the dead address; the credit is usage-only. */
 export function CoinWalletPay({ coin, onCredited }: { coin: CoinInstructions; onCredited: () => void }) {
   const network = useMemo(() => evmNetwork('rhc', { chain_id: coin.chain_id }), [coin.chain_id]);
   const [amount, setAmount] = useState('10');
@@ -249,13 +249,14 @@ export function CoinWalletPay({ coin, onCredited }: { coin: CoinInstructions; on
   const musd = parseUsd(amount);
   const quote = musd ? quoteCoins(musd, coin) : null;
   const unavailable = coin.price_usd === null;
+  const sym = coin.token.symbol;
 
   async function pay() {
     setError('');
     setResult(null);
     if (!quote || !quote.ok) return;
     const provider = injectedProvider();
-    if (!provider) return setError('No browser wallet found. Install one to pay with ANMO.');
+    if (!provider) return setError(`No browser wallet found. Install one to pay with ${sym}.`);
     try {
       setResult(
         await payWithCoin({ provider, network, coinPay: coin.coin_pay, token: coin.token, keyCommit: coin.key_commit, amount: quote.coins, onStep: setStep }),
@@ -270,12 +271,15 @@ export function CoinWalletPay({ coin, onCredited }: { coin: CoinInstructions; on
   return (
     <div className="panel-stack">
       <p className="notice notice-amber">
-        <strong>Paying with ANMO burns the coins.</strong> They are destroyed, not held for you. This key is credited the USD value at
-        the time of crediting, which may differ slightly from the estimate below. ANMO credit is <strong>usage only</strong>: it pays for
-        requests and can never be withdrawn.
+        <strong>Paying with {sym} burns the coins.</strong> They go to the dead address, where nobody can ever move them, not to us.
+        This key is credited the USD value at the time of crediting, which may differ slightly from the estimate below. {sym} credit is{' '}
+        <strong>usage only</strong>: it pays for requests and can never be withdrawn.
       </p>
       {unavailable ? (
-        <p className="notice">ANMO payments are unavailable right now (no current price). Try again later, or pay with a stablecoin.</p>
+        <p className="notice">
+          {sym} payments open once the coin has graduated on Pons and its pool has about 15 minutes of price history. Until then, pay
+          with a stablecoin.
+        </p>
       ) : (
         <form
           className="row"
@@ -290,7 +294,7 @@ export function CoinWalletPay({ coin, onCredited }: { coin: CoinInstructions; on
           </label>
           <button type="submit" className="btn btn-primary" style={{ alignSelf: 'flex-end' }} disabled={busy || !understood || !quote?.ok}>
             <Wallet size={16} aria-hidden="true" />
-            {busy ? 'Working…' : 'Burn ANMO and pay'}
+            {busy ? 'Working…' : `Burn ${sym} and pay`}
           </button>
         </form>
       )}
@@ -298,7 +302,7 @@ export function CoinWalletPay({ coin, onCredited }: { coin: CoinInstructions; on
         <p className="faint">
           {quote?.ok ? (
             <>
-              About <strong className="mono">{formatUnits(quote.coins, coin.token.decimals)} ANMO</strong> at ${coin.price_usd} per ANMO
+              About <strong className="mono">{formatUnits(quote.coins, coin.token.decimals)} {sym}</strong> at ${coin.price_usd} per {sym}
               (rounded up). At most {formatUsd(quote.maxMusd)} per payment.
             </>
           ) : quote && quote.reason === 'over_max' && quote.maxMusd !== null ? (

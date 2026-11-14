@@ -3,7 +3,7 @@
 import type { Ctx } from "../../context.ts";
 import { ensureDepositAddress } from "./addresses.ts";
 import type { MoneyDeps } from "./services.ts";
-import { coinPicoPerCoin } from "./coin.ts";
+import { coinPicoPerCoin, v4PoolId } from "./coin.ts";
 import { picoToUsd } from "../../lib/money.ts";
 
 export async function depositInstructions(ctx: Pick<Ctx, "db">, deps: MoneyDeps, keyHash: string) {
@@ -34,7 +34,7 @@ export async function depositInstructions(ctx: Pick<Ctx, "db">, deps: MoneyDeps,
 /** Paying with the coin: the live price (null while the pool cannot give one) and the CoinPay call. Coins are burned. */
 async function coinInstructions(ctx: Pick<Ctx, "db">, deps: MoneyDeps, keyHash: string) {
   const c = deps.config.coin!;
-  const price = await coinPicoPerCoin(c, deps.readers.coin!).catch(() => null);
+  const price = await coinPicoPerCoin(c, deps.readers.coin!, ctx.db as never).catch(() => null);
   return {
     chain: "rhc" as const,
     chain_id: c.chainId,
@@ -44,7 +44,9 @@ async function coinInstructions(ctx: Pick<Ctx, "db">, deps: MoneyDeps, keyHash: 
     max_usd_per_payment: c.maxUsdPerPayment,
     confirmations: c.confirmations,
     key_commit: await ensureDepositAddress(ctx.db, keyHash, "evm"),
-    method: "pay(uint256 amount, bytes32 keyCommit) or payWithPermit(...): burns the coins",
-    credited_at: "the lower of the pool's spot and 30-minute average price when the payment is confirmed; usage only, never withdrawn",
+    method: "approve(coin_pay, amount) on the coin, then pay(uint256 amount, bytes32 keyCommit): the coins go to the dead address",
+    credited_at: "the lower of the pool's spot and average price when the payment is confirmed; usage only, never withdrawn",
+    // Pons coins trade on their bonding curve until they graduate; payments are accepted once the pool exists.
+    pool: c.pool ? { kind: "uniswap-v3", address: c.pool } : { kind: "uniswap-v4", pool_id: v4PoolId(c.token.address, c.quote.address, c.v4.fee, c.v4.tickSpacing, c.v4.hooks) },
   };
 }

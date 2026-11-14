@@ -32,6 +32,9 @@ const keys = JSON.parse(readFileSync(arg("--keys")!, "utf8")) as { deployer: Hex
 const QUOTE = (arg("--quote") ?? cfg.usdg.address) as Hex;
 const QUOTE_HOLDER = arg("--quote-holder") as Hex | undefined; // fork: an address holding the quote token
 const V3_FACTORY = (arg("--v3-factory") ?? cfg.uniswap.v3Factory) as Hex;
+// Pons mode (fork): pay with a real Pons launch coin already trading in its Uniswap v4 USDG pool, funded from a holder.
+const PONS_COIN = arg("--pons-coin") as Hex | undefined;
+const COIN_HOLDER = arg("--coin-holder") as Hex | undefined;
 
 const say = (m: string) => console.log(`[e2e] ${m}`);
 const ok = (cond: unknown, m: string) => {
@@ -121,6 +124,7 @@ const setup = Bun.spawnSync(
       E2E_SAFE_FACTORY: cfg.safe141.proxyFactory,
       E2E_SQRT_COIN0: sp.coin0.toString(),
       E2E_SQRT_COIN1: sp.coin1.toString(),
+      ...(PONS_COIN ? { E2E_COIN: PONS_COIN } : {}),
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -135,9 +139,17 @@ const [ROUTER, ANMO, COINPAY, POOL, SEEDER, SAFE_ADDR] = [d.depositRouter, d.anm
 say(`deployed: safe ${SAFE_ADDR} router ${ROUTER} coin ${ANMO} coinPay ${COINPAY} pool ${POOL}`);
 
 // ---------------------------------------------------------------------------------------------------------------- 2
-await safeExec(SAFE_ADDR, ANMO, encodeFunctionData({ abi: ERC20, functionName: "transfer", args: [SEEDER, parseEther("1000000")] }));
-await safeExec(SAFE_ADDR, ANMO, encodeFunctionData({ abi: ERC20, functionName: "transfer", args: [user.address, parseEther("10000")] }));
-ok((await pub.readContract({ address: ANMO, abi: ERC20, functionName: "balanceOf", args: [user.address] })) === parseEther("10000"), "a 2-of-3 Safe transaction moved coins out of the treasury");
+if (!PONS_COIN) {
+  await safeExec(SAFE_ADDR, ANMO, encodeFunctionData({ abi: ERC20, functionName: "transfer", args: [SEEDER, parseEther("1000000")] }));
+  await safeExec(SAFE_ADDR, ANMO, encodeFunctionData({ abi: ERC20, functionName: "transfer", args: [user.address, parseEther("10000")] }));
+  ok((await pub.readContract({ address: ANMO, abi: ERC20, functionName: "balanceOf", args: [user.address] })) === parseEther("10000"), "a 2-of-3 Safe transaction moved coins out of the treasury");
+} else if (FORK && COIN_HOLDER) {
+  await rpc("anvil_impersonateAccount", [COIN_HOLDER]);
+  await rpc("anvil_setBalance", [COIN_HOLDER, "0x56BC75E2D63100000"]);
+  const hash = await createWalletClient({ account: COIN_HOLDER, chain, transport: http(RPC) }).sendTransaction({ to: PONS_COIN, data: encodeFunctionData({ abi: ERC20, functionName: "transfer", args: [user.address, parseEther("50000000")] }), chain });
+  await pub.waitForTransactionReceipt({ hash });
+  say("funded the test user with 50,000,000 of the Pons coin from a holder");
+}
 
 const quoteFrom = QUOTE_HOLDER ?? deployer.address;
 if (FORK && QUOTE_HOLDER) {
@@ -150,14 +162,22 @@ const fundQuote = async (to: Hex, amount: bigint) => {
     await pub.waitForTransactionReceipt({ hash });
   } else await send(keys.deployer, QUOTE, encodeFunctionData({ abi: ERC20, functionName: "transfer", args: [to, amount] }));
 };
-await fundQuote(SEEDER, 100_000n * 10n ** 6n);
+if (!PONS_COIN) await fundQuote(SEEDER, 100_000n * 10n ** 6n);
 await fundQuote(user.address, 50n * 10n ** 6n);
 if (FORK) await fundQuote(deployer.address, 100n * 10n ** 6n); // the deployer doubles as the withdrawal hot wallet
 say(`funded the pool seeder and the test user with the quote token from ${quoteFrom}`);
-const SEEDER_ABI = parseAbi(["function seed(address pool, uint128 liquidity)"]);
-await send(keys.deployer, SEEDER, encodeFunctionData({ abi: SEEDER_ABI, functionName: "seed", args: [POOL, 10n ** 15n] }));
-say("seeded the pool with full-range liquidity at $0.10 per coin");
-if (FORK) {
+if (PONS_COIN) {
+  // A 2-of-3 Safe transaction: the treasury sends 1 USDG back out.
+  await fundQuote(SAFE_ADDR, 1_000_000n);
+  const before = await pub.readContract({ address: QUOTE, abi: ERC20, functionName: "balanceOf", args: [deployer.address] });
+  await safeExec(SAFE_ADDR, QUOTE, encodeFunctionData({ abi: ERC20, functionName: "transfer", args: [deployer.address, 1_000_000n] }));
+  ok((await pub.readContract({ address: QUOTE, abi: ERC20, functionName: "balanceOf", args: [deployer.address] })) - before === 1_000_000n, "a 2-of-3 Safe transaction moved USDG out of the treasury");
+} else {
+  const SEEDER_ABI = parseAbi(["function seed(address pool, uint128 liquidity)"]);
+  await send(keys.deployer, SEEDER, encodeFunctionData({ abi: SEEDER_ABI, functionName: "seed", args: [POOL, 10n ** 15n] }));
+  say("seeded the pool with full-range liquidity at $0.10 per coin");
+}
+if (FORK && !PONS_COIN) {
   await rpc("evm_increaseTime", [TWAP + 60]);
   await rpc("evm_mine", []);
   say(`advanced the fork past the ${TWAP}s average window`);
@@ -166,7 +186,8 @@ if (FORK) {
 // ---------------------------------------------------------------------------------------------------------------- 3
 const env = {
   ANONYMO_EVM_CHAINS: JSON.stringify([{ chain: "rhc", rpcUrl: RPC, router: ROUTER, confirmations: 1, startBlock, maxRange: 500, tokens: [{ symbol: "USDG", address: QUOTE, decimals: 6 }] }]),
-  ANONYMO_COIN: JSON.stringify({ rpcUrl: RPC, chainId, coinPay: COINPAY, token: { address: ANMO }, pool: POOL, quote: { address: QUOTE }, twapSeconds: TWAP, confirmations: 1, startBlock, maxRange: 500, maxUsdPerPayment: "250" }),
+  // Pons: no pool address, so the gateway reads the Pons v4 pool (StateView) and averages its own samples.
+  ANONYMO_COIN: JSON.stringify({ rpcUrl: RPC, chainId, coinPay: COINPAY, token: { address: ANMO }, ...(PONS_COIN ? {} : { pool: POOL }), quote: { address: QUOTE }, twapSeconds: TWAP, confirmations: 1, startBlock, maxRange: 500, maxUsdPerPayment: "250" }),
   ANONYMO_WATCH_EVERY_MS: "2000",
   WORKERS: "true",
   LOG_LEVEL: process.env.LOG_LEVEL ?? "info",
@@ -190,7 +211,16 @@ try {
     const i = (await (await fetch(`${API}/deposits`, { headers: auth })).json()) as { instructions: { coin: { price_usd: string | null } } };
     return i.instructions.coin.price_usd;
   });
-  ok(Math.abs(Number(price) - 0.1) < 0.002, `the gateway reads the coin price from the pool: $${price}`);
+  const priceNum = Number(price);
+  if (PONS_COIN) {
+    const SV = parseAbi(["function getSlot0(bytes32) view returns (uint160, int24, uint24, uint24)"]);
+    const [c0, c1] = PONS_COIN.toLowerCase() < QUOTE.toLowerCase() ? [PONS_COIN, QUOTE] : [QUOTE, PONS_COIN];
+    const { keccak256, encodeAbiParameters } = await import("viem");
+    const poolId = keccak256(encodeAbiParameters([{ type: "address" }, { type: "address" }, { type: "uint24" }, { type: "int24" }, { type: "address" }], [c0.toLowerCase() as Hex, c1.toLowerCase() as Hex, 0, 200, "0xe5e702641ea86f4ae6cc3cdaed2b886f976be044"]));
+    const [, tick] = await pub.readContract({ address: "0xf3334192d15450cdd385c8b70e03f9a6bd9e673b", abi: SV, functionName: "getSlot0", args: [poolId] });
+    const onchain = Math.pow(1.0001, c0 === PONS_COIN ? tick : -tick) * 1e12;
+    ok(Math.abs(priceNum - onchain) / onchain < 0.01, `the gateway reads the Pons coin's v4 pool price: $${price} (on-chain spot $${onchain.toPrecision(6)})`);
+  } else ok(Math.abs(priceNum - 0.1) < 0.002, `the gateway reads the coin price from the pool: $${price}`);
 
   const ROUTER_ABI = parseAbi(["function deposit(address token,uint256 amount,bytes32 keyCommit)"]);
   await send(keys.user, QUOTE, encodeFunctionData({ abi: ERC20, functionName: "approve", args: [ROUTER, 5_000_000n] }));
@@ -204,16 +234,18 @@ try {
   ok(afterDeposit.available_usd === 5, `the $5 deposit was credited: $${afterDeposit.available_usd}`);
 
   const COINPAY_ABI = parseAbi(["function pay(uint256 amount, bytes32 keyCommit)"]);
-  const supplyBefore = await pub.readContract({ address: ANMO, abi: ERC20, functionName: "totalSupply" });
-  await send(keys.user, ANMO, encodeFunctionData({ abi: ERC20, functionName: "approve", args: [COINPAY, parseEther("100")] }));
-  await send(keys.user, COINPAY, encodeFunctionData({ abi: COINPAY_ABI, functionName: "pay", args: [parseEther("100"), commit] }));
-  ok(supplyBefore - (await pub.readContract({ address: ANMO, abi: ERC20, functionName: "totalSupply" })) === parseEther("100"), "paying 100 coins burned 100 coins");
+  const DEAD = "0x000000000000000000000000000000000000dEaD" as Hex;
+  const coins = BigInt(Math.ceil(10 / priceNum)) * 10n ** 18n; // about $10 of coins
+  const deadBefore = await pub.readContract({ address: ANMO, abi: ERC20, functionName: "balanceOf", args: [DEAD] });
+  await send(keys.user, ANMO, encodeFunctionData({ abi: ERC20, functionName: "approve", args: [COINPAY, coins] }));
+  await send(keys.user, COINPAY, encodeFunctionData({ abi: COINPAY_ABI, functionName: "pay", args: [coins, commit] }));
+  ok((await pub.readContract({ address: ANMO, abi: ERC20, functionName: "balanceOf", args: [DEAD] })) - deadBefore === coins, `paying ${coins / 10n ** 18n} coins sent exactly that many to the dead address`);
   await settle();
   const afterCoin = await waitFor("the coin payment credit", async () => {
     const b = await balance();
     return b.available_usd > 14 ? b : null;
   });
-  ok(Math.abs(afterCoin.available_usd - 15) < 0.1 && Math.abs(afterCoin.usage_only_usd - 10) < 0.1, `100 coins at $0.10 credited ~$10, usage only: available $${afterCoin.available_usd}, usage-only $${afterCoin.usage_only_usd}`);
+  ok(Math.abs(afterCoin.available_usd - 15) < 0.15 && Math.abs(afterCoin.usage_only_usd - 10) < 0.15, `~$10 of coins credited at the pool price, usage only: available $${afterCoin.available_usd}, usage-only $${afterCoin.usage_only_usd}`);
 
   const chat = await fetch(`${API}/v1/chat/completions`, { method: "POST", headers: { ...auth, "content-type": "application/json" }, body: JSON.stringify({ model: "anonymo-1", messages: [{ role: "user", content: "say hello" }] }) });
   const chatBody = await chat.text();

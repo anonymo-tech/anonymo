@@ -7,6 +7,7 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {DeployAnonymo} from "../../script/anonymo/DeployAnonymo.s.sol";
 import {DeployAnonymoLive} from "../../script/anonymo/DeployAnonymoLive.s.sol";
 import {LocalSafe} from "../../script/anonymo/LocalSafe.sol";
+import {ANMO} from "../../src/anonymo/ANMO.sol";
 import {AnonymoTimelock} from "../../src/anonymo/AnonymoTimelock.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {DepositRouter} from "../../src/anonymo/DepositRouter.sol";
@@ -20,6 +21,7 @@ contract DeployAnonymoLiveTest is Test {
     address deployer = makeAddr("deployer");
     address safe;
     address[] stables;
+    address coin;
 
     function setUp() public {
         vm.chainId(8453);
@@ -27,6 +29,7 @@ contract DeployAnonymoLiveTest is Test {
         safe = _safe(3, 2);
         stables.push(address(new MockStable("USD Coin", "USDC")));
         stables.push(address(new MockStableNoPermit("Tether USD", "USDT")));
+        coin = address(new ANMO(address(this))); // stands in for the Pons-launched coin
     }
 
     function _safe(uint256 owners, uint256 threshold) internal returns (address) {
@@ -43,6 +46,7 @@ contract DeployAnonymoLiveTest is Test {
         p.deployer = deployer;
         p.stables = stables;
         p.receiptSigner = makeAddr("anchorer");
+        p.coin = coin;
     }
 
     function test_routerStage() public {
@@ -80,8 +84,17 @@ contract DeployAnonymoLiveTest is Test {
         DeployAnonymoLive.Deployment memory r = script.deploy(_params(DeployAnonymoLive.Stage.Receipts));
         assertEq(ReceiptRoots(r.receiptRoots).signer(), makeAddr("anchorer"));
         assertEq(ReceiptRoots(r.receiptRoots).owner(), r.timelock);
-        DeployAnonymoLive.Deployment memory t = script.deploy(_params(DeployAnonymoLive.Stage.Token));
+        DeployAnonymoLive.Deployment memory t = script.deploy(_params(DeployAnonymoLive.Stage.Coin));
         script.checkToken(t);
+        assertEq(t.coin, coin);
+    }
+
+    function test_coinStageNeedsARealToken() public {
+        script.deploy(_params(DeployAnonymoLive.Stage.Router));
+        DeployAnonymoLive.Params memory p = _params(DeployAnonymoLive.Stage.Coin);
+        p.coin = makeAddr("not-a-token");
+        vm.expectRevert(bytes("DeployAnonymoLive: ANONYMO_COIN_TOKEN has no code on this chain"));
+        script.deploy(p);
     }
 
     function test_laterStagesNeedTheRouterStage() public {
@@ -196,6 +209,6 @@ contract DeployAnonymoLiveTest is Test {
     function test_parseStage() public view {
         assertEq(uint8(script.parseStage("router")), uint8(DeployAnonymoLive.Stage.Router));
         assertEq(uint8(script.parseStage("receipts")), uint8(DeployAnonymoLive.Stage.Receipts));
-        assertEq(uint8(script.parseStage("token")), uint8(DeployAnonymoLive.Stage.Token));
+        assertEq(uint8(script.parseStage("coin")), uint8(DeployAnonymoLive.Stage.Coin));
     }
 }

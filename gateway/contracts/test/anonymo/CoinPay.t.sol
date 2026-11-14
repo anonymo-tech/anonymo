@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {ANMO} from "../../src/anonymo/ANMO.sol";
 import {CoinPay} from "../../src/anonymo/CoinPay.sol";
 import {ICoinPay} from "../../src/anonymo/interfaces/IAnonymo.sol";
+import {MockStableNoPermit} from "../../src/anonymo/mocks/MockStable.sol";
 
 contract CoinPayTest is Test {
     bytes32 constant PAID_TOPIC = keccak256("Paid(bytes32,address,uint256)");
@@ -25,8 +26,8 @@ contract CoinPayTest is Test {
         assertEq(ICoinPay.Paid.selector, PAID_TOPIC);
     }
 
-    function test_payBurnsAndEmits() public {
-        uint256 supply = anmo.totalSupply();
+    function test_paySendsToDeadAndEmits() public {
+        uint256 dead = anmo.balanceOf(pay.DEAD());
         vm.startPrank(alice);
         anmo.approve(address(pay), 250e18);
         vm.expectEmit(true, true, false, true, address(pay));
@@ -35,19 +36,19 @@ contract CoinPayTest is Test {
         vm.stopPrank();
         assertEq(anmo.balanceOf(alice), 750e18);
         assertEq(anmo.balanceOf(address(pay)), 0);
-        assertEq(anmo.totalSupply(), supply - 250e18);
+        assertEq(anmo.balanceOf(pay.DEAD()) - dead, 250e18);
         assertEq(anmo.allowance(alice, address(pay)), 0);
     }
 
     function testFuzz_payNeverHoldsCoins(uint256 amount) public {
         amount = bound(amount, 1, 1_000e18);
-        uint256 supply = anmo.totalSupply();
+        uint256 dead = anmo.balanceOf(pay.DEAD());
         vm.startPrank(alice);
         anmo.approve(address(pay), amount);
         pay.pay(amount, commit);
         vm.stopPrank();
         assertEq(anmo.balanceOf(address(pay)), 0);
-        assertEq(anmo.totalSupply(), supply - amount);
+        assertEq(anmo.balanceOf(pay.DEAD()) - dead, amount);
     }
 
     function test_rejectsZeroEmptyAndUnapproved() public {
@@ -103,5 +104,18 @@ contract CoinPayTest is Test {
     function test_constructorRejectsZero() public {
         vm.expectRevert(CoinPay.ZeroAddress.selector);
         new CoinPay(address(0));
+    }
+
+    function test_worksForATokenWithoutBurnOrPermit() public {
+        MockStableNoPermit plain = new MockStableNoPermit("Plain", "PLN");
+        CoinPay p2 = new CoinPay(address(plain));
+        plain.mint(alice, 10e6);
+        vm.startPrank(alice);
+        plain.approve(address(p2), 4e6);
+        vm.expectEmit(true, true, false, true, address(p2));
+        emit ICoinPay.Paid(commit, alice, 4e6);
+        p2.pay(4e6, commit);
+        vm.stopPrank();
+        assertEq(plain.balanceOf(p2.DEAD()), 4e6);
     }
 }

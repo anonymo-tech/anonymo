@@ -1,14 +1,17 @@
 // Paying with the coin (ANMO) through CoinPay on Robinhood Chain. CoinPay burns the coins and emits
 // Paid(bytes32 keyCommit, address payer, uint256 amount). Usage is priced in USD, so a payment is credited at the coin's
 // USD value when the watcher sees it confirmed:
-//   price = min(spot, time-weighted average over `twapSeconds`) from the coin's Uniswap v3 pool against a USD stablecoin
+//   price = min(spot, time-weighted average over `twapSeconds`) from the coin's pool against a USD stablecoin
+// The coin launches on Pons, whose graduated pools are Uniswap v4: v4 keeps no price history, so each watcher run samples
+// the pool's tick into the database and the average is taken over those samples. A Uniswap v3 pool (testnet) averages
+// on-chain through `observe`.
 // Taking the lower of the two means a short pump of the pool can never raise the credit. If the pool cannot give a price
 // (no pool, too little liquidity, too little oracle history), the scan stops without moving its cursor and the payment
 // is credited on a later run: the coins are already burned, so a payment is never dropped. A payment worth more than
 // `maxUsdPerPayment` is recorded as held for an operator. Coin credit is usage only: withdraw.ts never pays it out.
 // The key commitment is the same per-key EVM commitment the DepositRouter uses (addresses.ts).
 
-import { createPublicClient, http, parseAbi, parseAbiItem, type Hex } from "viem";
+import { createPublicClient, encodeAbiParameters, http, keccak256, parseAbi, parseAbiItem, type Hex } from "viem";
 import { eq } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
 import { kv } from "../../db/schema.ts";
@@ -36,14 +39,35 @@ export type PaidLog = {
   removed?: boolean;
 };
 
+const STATE_VIEW_ABI = parseAbi([
+  "function getSlot0(bytes32 poolId) view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)",
+  "function getLiquidity(bytes32 poolId) view returns (uint128 liquidity)",
+]);
+
+/** A Uniswap v4 pool's spot state, or null before the pool exists (a Pons coin that has not graduated). */
+export type V4Slot = { tick: number; liquidity: bigint };
+
+/** The v4 pool id: keccak256(abi.encode(currency0, currency1, fee, tickSpacing, hooks)), currencies sorted. */
+export function v4PoolId(a: Hex, b: Hex, fee: number, tickSpacing: number, hooks: Hex): Hex {
+  const [c0, c1] = a.toLowerCase() < b.toLowerCase() ? [a, b] : [b, a];
+  return keccak256(
+    encodeAbiParameters(
+      [{ type: "address" }, { type: "address" }, { type: "uint24" }, { type: "int24" }, { type: "address" }],
+      [c0.toLowerCase() as Hex, c1.toLowerCase() as Hex, fee, tickSpacing, hooks.toLowerCase() as Hex],
+    ),
+  );
+}
+
 /** What the pool says: its two tokens, in-range liquidity, the spot tick and the average tick over the window. */
 export type PoolState = { token0: Hex; token1: Hex; liquidity: bigint; spotTick: number; twapTick: number };
 
 export type CoinReader = {
   getBlockNumber(): Promise<bigint>;
   getPaidLogs(o: { address: Hex; fromBlock: bigint; toBlock: bigint }): Promise<PaidLog[]>;
-  /** Null when the pool cannot answer (no pool, or not enough observation history for the window). */
+  /** v3: null when the pool cannot answer (no pool, or not enough observation history for the window). */
   poolState(pool: Hex, twapSeconds: number): Promise<PoolState | null>;
+  /** v4: the pool's spot tick and liquidity through StateView, null when the pool is not initialized. */
+  v4Slot(stateView: Hex, poolId: Hex): Promise<V4Slot | null>;
 };
 
 export function rpcCoinReader(rpcUrl: string): CoinReader {
@@ -67,7 +91,56 @@ export function rpcCoinReader(rpcUrl: string): CoinReader {
         return null;
       }
     },
+    v4Slot: async (stateView, poolId) => {
+      const [slot, liquidity] = await Promise.all([
+        client.readContract({ address: stateView, abi: STATE_VIEW_ABI, functionName: "getSlot0", args: [poolId] }),
+        client.readContract({ address: stateView, abi: STATE_VIEW_ABI, functionName: "getLiquidity", args: [poolId] }),
+      ]);
+      if (slot[0] === 0n) return null; // not initialized: the coin has not graduated yet
+      return { tick: slot[1], liquidity };
+    },
   };
+}
+
+// ---- v4 price samples (v4 pools keep no history) -------------------------------------------------------------------
+type Sample = { t: number; tick: number };
+const samplesKey = "anonymo:coin:samples";
+
+async function readSamples(db: Db): Promise<Sample[]> {
+  const [row] = await db.select({ value: kv.value }).from(kv).where(eq(kv.key, samplesKey));
+  return ((row?.value as { samples?: Sample[] } | undefined)?.samples ?? []).filter((s) => Number.isFinite(s.t) && Number.isInteger(s.tick));
+}
+
+/** Record the pool's current tick (one sample per run, at most every 5 s), keeping two windows of history. */
+export async function sampleCoinPrice(db: Db, cfg: CoinConfig, reader: CoinReader, now = Date.now()): Promise<V4Slot | null> {
+  if (cfg.pool) return null; // v3 averages on-chain
+  const slot = await reader.v4Slot(cfg.v4.stateView, v4PoolId(cfg.token.address, cfg.quote.address, cfg.v4.fee, cfg.v4.tickSpacing, cfg.v4.hooks));
+  if (!slot) return null;
+  const keep = now - 2 * cfg.twapSeconds * 1000;
+  const samples = (await readSamples(db)).filter((s) => s.t >= keep && s.t <= now);
+  if (!samples.length || now - samples[samples.length - 1].t >= 5_000) samples.push({ t: now, tick: slot.tick });
+  const value = { samples };
+  await db.insert(kv).values({ key: samplesKey, value }).onConflictDoUpdate({ target: kv.key, set: { value, updatedAt: new Date() } });
+  return slot;
+}
+
+/**
+ * The average tick over the window from the stored samples, time-weighted (each sample holds until the next one), or
+ * null until the samples cover at least half the window with at least 5 of them.
+ */
+export function averageTick(samples: Sample[], windowSeconds: number, now: number): number | null {
+  const from = now - windowSeconds * 1000;
+  const inWindow = samples.filter((s) => s.t >= from && s.t <= now).sort((a, b) => a.t - b.t);
+  if (inWindow.length < 5 || now - inWindow[0].t < (windowSeconds * 1000) / 2) return null;
+  let weighted = 0;
+  let total = 0;
+  for (let i = 0; i < inWindow.length; i++) {
+    const until = i + 1 < inWindow.length ? inWindow[i + 1].t : now;
+    const span = Math.max(until - inWindow[i].t, 1);
+    weighted += inWindow[i].tick * span;
+    total += span;
+  }
+  return Math.floor(weighted / total);
 }
 
 /** Uniswap's arithmetic-mean tick: the cumulative delta over the window, rounded toward negative infinity. */
@@ -91,7 +164,8 @@ export function picoPerCoinAtTick(tick: number, coinIsToken0: boolean, coinDecim
 }
 
 /** The price credits use: the lower of spot and the window average, or null when the pool cannot be trusted. */
-export async function coinPicoPerCoin(cfg: CoinConfig, reader: CoinReader): Promise<Pico | null> {
+export async function coinPicoPerCoin(cfg: CoinConfig, reader: CoinReader, db?: Db, now = Date.now()): Promise<Pico | null> {
+  if (!cfg.pool) return v4PicoPerCoin(cfg, reader, db, now);
   const s = await reader.poolState(cfg.pool, cfg.twapSeconds);
   if (!s) return null;
   const coin = cfg.token.address.toLowerCase();
@@ -106,6 +180,20 @@ export async function coinPicoPerCoin(cfg: CoinConfig, reader: CoinReader): Prom
   const isToken0 = t0 === coin;
   const spot = picoPerCoinAtTick(s.spotTick, isToken0, cfg.token.decimals, cfg.quote.decimals);
   const twap = picoPerCoinAtTick(s.twapTick, isToken0, cfg.token.decimals, cfg.quote.decimals);
+  const p = spot < twap ? spot : twap;
+  return p > 0n ? p : null;
+}
+
+async function v4PicoPerCoin(cfg: CoinConfig, reader: CoinReader, db: Db | undefined, now: number): Promise<Pico | null> {
+  if (!db) return null;
+  const poolId = v4PoolId(cfg.token.address, cfg.quote.address, cfg.v4.fee, cfg.v4.tickSpacing, cfg.v4.hooks);
+  const slot = await reader.v4Slot(cfg.v4.stateView, poolId).catch(() => null);
+  if (!slot || slot.liquidity < BigInt(cfg.minLiquidity)) return null;
+  const avg = averageTick(await readSamples(db), cfg.twapSeconds, now);
+  if (avg === null) return null; // still collecting samples
+  const isToken0 = cfg.token.address.toLowerCase() < cfg.quote.address.toLowerCase();
+  const spot = picoPerCoinAtTick(slot.tick, isToken0, cfg.token.decimals, cfg.quote.decimals);
+  const twap = picoPerCoinAtTick(avg, isToken0, cfg.token.decimals, cfg.quote.decimals);
   const p = spot < twap ? spot : twap;
   return p > 0n ? p : null;
 }
@@ -129,6 +217,7 @@ export type CoinScanResult = { from: string | null; to: string | null; credited:
 /** Scan CoinPay from its cursor to head - confirmations. Safe to re-run: credits are idempotent on the log's ref. */
 export async function scanCoinPayments(db: Db, cfg: CoinConfig, reader: CoinReader, sink: AnonymoDepositSink): Promise<CoinScanResult> {
   const out: CoinScanResult = { from: null, to: null, credited: 0, held: 0, skipped: 0, waiting: false, picoPerCoin: null };
+  await sampleCoinPrice(db, cfg, reader).catch((e) => log.warn("anonymo coin price sample failed", { error: (e as Error).message.split("\n")[0].slice(0, 160) }));
   const head = await reader.getBlockNumber();
   const safe = head - BigInt(cfg.confirmations);
   const cursor = await readCursor(db);
@@ -152,7 +241,7 @@ export async function scanCoinPayments(db: Db, cfg: CoinConfig, reader: CoinRead
         out.skipped++;
         continue;
       }
-      if (price === undefined) price = await coinPicoPerCoin(cfg, reader);
+      if (price === undefined) price = await coinPicoPerCoin(cfg, reader, db);
       if (price === null) {
         // Leave the cursor before this range: the burned coins are credited once the pool gives a price again.
         out.waiting = true;

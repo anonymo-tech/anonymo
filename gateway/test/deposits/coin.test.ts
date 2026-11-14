@@ -6,7 +6,7 @@ import type { Hex } from "viem";
 import { usdToPico } from "../../src/lib/money.ts";
 import { anonymoDeposits } from "../../src/anonymo/deposits/schema.ts";
 import { ensureDepositAddress } from "../../src/anonymo/deposits/addresses.ts";
-import { coinPicoPerCoin, coinValuePico, picoPerCoinAtTick, scanCoinPayments, twapTickOf, type CoinReader, type PaidLog, type PoolState } from "../../src/anonymo/deposits/coin.ts";
+import { averageTick, coinPicoPerCoin, coinValuePico, picoPerCoinAtTick, sampleCoinPrice, scanCoinPayments, twapTickOf, v4PoolId, type CoinReader, type PaidLog, type PoolState, type V4Slot } from "../../src/anonymo/deposits/coin.ts";
 import { loadDepositsConfig, type CoinConfig } from "../../src/anonymo/deposits/config.ts";
 import { moneyHarness, type MoneyHarness } from "./harness.ts";
 
@@ -24,6 +24,7 @@ const reader: CoinReader = {
   getBlockNumber: async () => chain.head,
   getPaidLogs: async ({ fromBlock, toBlock }) => chain.logs.filter((l) => l.blockNumber >= fromBlock && l.blockNumber <= toBlock),
   poolState: async () => chain.pool,
+  v4Slot: async () => null,
 };
 let tx = 0;
 const pay = (block: bigint, keyCommit: Hex, amount: bigint) =>
@@ -129,5 +130,44 @@ describe("coin payments", () => {
     expect(d.coin.key_commit).toMatch(/^0x[0-9a-f]{64}$/);
     chain.pool = null;
     expect((await (await m.req("/deposits", { headers: k.auth })).json()).instructions.coin.price_usd).toBeNull();
+  });
+});
+
+describe("Pons coins: Uniswap v4 pool price", () => {
+  // A real Pons V2 launch on Robinhood Chain, graduated into a USDG pool (checked on-chain).
+  const PONS_COIN = "0xa017ff2102ee0138e1c2077f4a457606726412ac" as Hex;
+  const RHC_USDG = "0x5fc5360d0400a0fd4f2af552add042d716f1d168" as Hex;
+
+  test("the pool id is Pons V2's PoolKey: sorted currencies, fee 0, tick spacing 200, the meme hook", () => {
+    expect(v4PoolId(PONS_COIN, RHC_USDG, 0, 200, "0xe5e702641ea86f4ae6cc3cdaed2b886f976be044")).toBe("0xfa875df6b399d4c6011685ef9c39b1fae4cb60744f2a405eb5ffb0570528cc7e");
+    expect(v4PoolId(RHC_USDG, PONS_COIN, 0, 200, "0xe5e702641ea86f4ae6cc3cdaed2b886f976be044")).toBe("0xfa875df6b399d4c6011685ef9c39b1fae4cb60744f2a405eb5ffb0570528cc7e");
+  });
+
+  test("the average is time-weighted and waits until the samples cover half the window", () => {
+    const now = 1_000_000_000;
+    const at = (secAgo: number, tick: number) => ({ t: now - secAgo * 1000, tick });
+    expect(averageTick([at(10, 5), at(5, 5)], 60, now)).toBeNull(); // too few, too recent
+    const s = [at(60, 100), at(45, 100), at(30, 100), at(15, 100), at(14, 1_000)]; // a 1 s spike at the end
+    expect(averageTick(s, 60, now)).toBeLessThan(400); // the spike barely moves a time-weighted average
+    expect(averageTick([at(120, 1), at(100, 1), at(80, 1), at(70, 1), at(65, 1)], 60, now)).toBeNull(); // all outside the window
+  });
+
+  test("before graduation there is no pool and no price; after it, sampled spot and average decide", async () => {
+    const cfgV4 = loadDepositsConfig({ ANONYMO_COIN: JSON.stringify({ rpcUrl: "http://127.0.0.1:9", coinPay: PAY, token: { address: COIN }, quote: { address: USDG }, twapSeconds: 60 }) }).coin as CoinConfig;
+    expect(cfgV4.pool).toBeUndefined();
+    expect(cfgV4.v4.tickSpacing).toBe(200);
+    let slot: V4Slot | null = null;
+    const v4reader: CoinReader = { ...reader, v4Slot: async () => slot };
+    const t0 = Date.now();
+    expect(await sampleCoinPrice(m.h.ctx.db, cfgV4, v4reader, t0)).toBeNull(); // not graduated
+    expect(await coinPicoPerCoin(cfgV4, v4reader, m.h.ctx.db, t0)).toBeNull();
+    slot = { tick: TICK_10C, liquidity: 10n ** 20n };
+    for (let i = 0; i <= 8; i++) await sampleCoinPrice(m.h.ctx.db, cfgV4, v4reader, t0 + i * 6_000);
+    const later = t0 + 8 * 6_000;
+    expect(Number(await coinPicoPerCoin(cfgV4, v4reader, m.h.ctx.db, later)) / 1e12).toBeCloseTo(0.1, 4);
+    slot = { tick: TICK_10C + 20_000, liquidity: 10n ** 20n }; // pumped right now: the average still rules
+    expect(Number(await coinPicoPerCoin(cfgV4, v4reader, m.h.ctx.db, later + 1_000)) / 1e12).toBeCloseTo(0.1, 2);
+    slot = { tick: TICK_10C, liquidity: 1n };
+    expect(await coinPicoPerCoin({ ...cfgV4, minLiquidity: "1000" }, v4reader, m.h.ctx.db, later)).toBeNull();
   });
 });

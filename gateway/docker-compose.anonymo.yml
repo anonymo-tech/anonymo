@@ -121,7 +121,6 @@ services:
       APP_SECRET: ${APP_SECRET:?Inject the application encryption secret}
       ADMIN_TOKEN: ${ADMIN_TOKEN:?Inject the operator token}
       RHC_RPC_URL: ${RHC_RPC_URL:?Set the verified chain RPC}
-      ANONYMO_EVM_CHAINS: ${ANONYMO_EVM_CHAINS:-}
       ANONYMO_COIN: ${ANONYMO_COIN:-}
       # The withdrawal hot wallet: only here, never on the router. Without it withdrawals wait for an operator.
       ANONYMO_PAYOUT_PRIVATE_KEY: ${ANONYMO_PAYOUT_PRIVATE_KEY:-}

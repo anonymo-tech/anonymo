@@ -74,7 +74,7 @@ export function FundsPanel() {
           </div>
           {usageOnly > 0 && (
             <div className="stat">
-              <span>Paid in ANMO · usage only, can&apos;t be withdrawn</span>
+              <span>Paid in {coinOf(data?.instructions)?.token.symbol ?? 'the coin'} · usage only, can&apos;t be withdrawn</span>
               <strong>{formatUsdAmount(usageOnly)}</strong>
             </div>
           )}
@@ -89,7 +89,12 @@ export function FundsPanel() {
 }
 
 type Rail = 'evm' | 'coin' | 'solana' | 'tron' | 'btc';
-const RAIL_LABEL: Record<Rail, string> = { evm: 'Stablecoin wallet', coin: 'Pay with ANMO', solana: 'Solana', tron: 'Tron', btc: 'Bitcoin / Lightning' };
+const RAIL_LABEL: Record<Rail, string> = { evm: 'Stablecoin wallet', coin: 'Pay with the coin', solana: 'Solana', tron: 'Tron', btc: 'Bitcoin / Lightning' };
+const coinOf = (i?: DepositInstructions) => (i && !i.paused ? (i.coin ?? null) : null);
+const railLabel = (r: Rail, i: DepositInstructions) => {
+  const coin = coinOf(i);
+  return r === 'coin' && coin ? `Pay with ${coin.token.symbol}` : RAIL_LABEL[r];
+};
 
 function Deposits({ instructions, onCredited }: { instructions: DepositInstructions; onCredited: () => void }) {
   const { demo, mock, key } = useAnonymo();
@@ -118,7 +123,7 @@ function Deposits({ instructions, onCredited }: { instructions: DepositInstructi
               <legend className="sr-only">How to pay</legend>
               {rails.map((r) => (
                 <button key={r} type="button" aria-pressed={r === active} onClick={() => setRail(r)}>
-                  {RAIL_LABEL[r]}
+                  {railLabel(r, instructions)}
                 </button>
               ))}
             </fieldset>
@@ -363,7 +368,7 @@ function Withdrawals({ balance, onDone }: { balance: Balance; onDone: () => void
         </ul>
       )}
       {usageOnly > 0 && (
-        <p className="faint">{formatUsdAmount(usageOnly)} was paid in ANMO. It is usage only and can&apos;t be withdrawn, so it is not counted above.</p>
+        <p className="faint">{formatUsdAmount(usageOnly)} was paid in the coin. It is usage only and can&apos;t be withdrawn, so it is not counted above.</p>
       )}
       {result && (
         <output className="notice notice-signal">

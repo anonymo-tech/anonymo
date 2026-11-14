@@ -68,17 +68,37 @@ const btcpaySchema = z.object({
 });
 export type BtcpayConfig = z.infer<typeof btcpaySchema>;
 
-/** Paying with the coin (CoinPay on Robinhood Chain): burned on-chain, credited in USD at its Uniswap v3 pool price. */
+/** Pons V2 on Robinhood Chain: every graduated launch pool is a Uniswap v4 pool with this fee, spacing and hook. */
+export const PONS_V4 = { stateView: "0xf3334192d15450cdd385c8b70e03f9a6bd9e673b", fee: 0, tickSpacing: 200, hooks: "0xe5e702641ea86f4ae6cc3cdaed2b886f976be044" } as const;
+
+/**
+ * Paying with the coin (CoinPay on Robinhood Chain): sent to the dead address, credited in USD at its pool price. The
+ * coin launches on Pons, so by default the price comes from its graduated Uniswap v4 pool against `quote` (PONS_V4).
+ * `pool` (a Uniswap v3 pool address) is for chains without Pons, such as testnet.
+ */
 const coinSchema = z.object({
   rpcUrl: z.string().url(),
   chainId: z.number().int().positive().default(4663),
   /** CoinPay: emits Paid(keyCommit, payer, amount) after burning the coins. */
   coinPay: evmAddress,
   token: z.object({ symbol: z.string().min(1).max(12).default("ANMO"), address: evmAddress, decimals: z.number().int().min(0).max(36).default(18) }),
-  /** The coin's Uniswap v3 pool against `quote` (a USD stablecoin, counted 1:1). */
-  pool: evmAddress,
+  /** A Uniswap v3 pool against `quote`. Leave unset for the Pons v4 pool. */
+  pool: evmAddress.optional(),
+  /** The Uniswap v4 pool key parts besides the two currencies; defaults to Pons V2's. */
+  v4: z
+    .object({
+      stateView: evmAddress.default(PONS_V4.stateView),
+      fee: z.number().int().min(0).max(1_000_000).default(PONS_V4.fee),
+      tickSpacing: z.number().int().min(1).max(32_767).default(PONS_V4.tickSpacing),
+      hooks: evmAddress.default(PONS_V4.hooks),
+    })
+    .default({ stateView: PONS_V4.stateView, fee: PONS_V4.fee, tickSpacing: PONS_V4.tickSpacing, hooks: PONS_V4.hooks }),
   quote: z.object({ symbol: z.string().min(1).max(12).default("USDG"), address: evmAddress, decimals: z.number().int().min(0).max(36).default(6) }),
-  /** The time-weighted average window; credit uses the lower of this average and the spot price. */
+  /**
+   * The averaging window; credit uses the lower of this average and the spot price. A v3 pool averages on-chain; a v4
+   * pool keeps no history, so the watcher samples its price every run and averages the samples (it waits until the
+   * samples cover half the window).
+   */
   twapSeconds: z.number().int().min(60).max(86_400).default(1_800),
   /** Below this in-range pool liquidity the price is not trusted and payments wait. "0" disables the check. */
   minLiquidity: z.string().regex(/^\d+$/).default("0"),

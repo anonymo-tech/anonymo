@@ -10,7 +10,6 @@ import {AnonymoTimelock} from "../../src/anonymo/AnonymoTimelock.sol";
 
 import {ReceiptRoots} from "../../src/anonymo/ReceiptRoots.sol";
 import {DepositRouter} from "../../src/anonymo/DepositRouter.sol";
-import {ANMO} from "../../src/anonymo/ANMO.sol";
 import {CoinPay} from "../../src/anonymo/CoinPay.sol";
 
 /// The parts of a Safe (v1.3 or v1.4.1) the checks read.
@@ -32,11 +31,12 @@ interface ISafeView {
 ///   router   (A0)  48-hour TimelockController + DepositRouter, both through the CREATE2 deployer, then the
 ///                  one-time stablecoin allowlist. Same Safe + same deployer on every chain = same addresses.
 ///   receipts (A3)  ReceiptRoots(timelock, signer).
-///   token          ANMO (whole supply to the Safe) and CoinPay, which burns every coin paid for usage. Staking
+///   coin           CoinPay for the Anonymo coin launched on Pons (ANONYMO_COIN_TOKEN): every coin paid for usage goes
+///                  to the dead address. The coin itself is minted by Pons, not here. Staking
 ///                  (CreditPass, FeeRouter) is not part of the launch and is not deployed here.
 ///
 /// Inputs (environment; nothing secret, the deployer key never enters the environment):
-///   ANONYMO_STAGE        router | receipts | token
+///   ANONYMO_STAGE        router | receipts | coin
 ///   ANONYMO_SAFE         the treasury Safe on this chain: exactly 2 of 3, no modules, no guard. Create it in the Safe
 ///                        app first, with the same owners and salt on every chain so its address matches.
 ///   ANONYMO_SAFE_OWNERS  optional: the three owner addresses, comma-separated; the Safe must have exactly these.
@@ -44,6 +44,7 @@ interface ISafeView {
 ///                        one on every chain: it is part of the DepositRouter's CREATE2 init code.
 ///   router:   ANONYMO_STABLES          comma-separated stablecoin addresses for this chain
 ///   receipts: ANONYMO_RECEIPT_SIGNER   the hot key that posts hourly roots (ANCHORER_PRIVATE_KEY's address)
+///   coin:     ANONYMO_COIN_TOKEN       the coin's address on Pons
 ///
 /// Dry run (simulates against the live chain, sends nothing):
 ///   forge script script/anonymo/DeployAnonymoLive.s.sol --rpc-url $RPC --ledger --sender $ANONYMO_DEPLOYER
@@ -52,7 +53,7 @@ interface ISafeView {
 /// purpose: on Arbitrum-family chains (Robinhood Chain, Arbitrum One) `block.number` is the L1 block, not the chain's
 /// own. Take the gateway's `startBlock` from the broadcast receipts (broadcast/DeployAnonymoLive.s.sol/<chainId>/
 /// run-latest.json, `blockNumber`) or an explorer. so a dry run never replaces the
-/// record of a real deployment. The receipts and token stages refuse to deploy a second set once a broadcast record
+/// record of a real deployment. The receipts and coin stages refuse to deploy a second set once a broadcast record
 /// exists, unless ANONYMO_ALLOW_REDEPLOY=1.
 contract DeployAnonymoLive is Script {
     uint256 internal constant LOCAL_CHAIN_ID = 31337;
@@ -70,7 +71,7 @@ contract DeployAnonymoLive is Script {
     enum Stage {
         Router,
         Receipts,
-        Token
+        Coin
     }
 
     struct Params {
@@ -80,6 +81,7 @@ contract DeployAnonymoLive is Script {
         address deployer;
         address[] stables;
         address receiptSigner;
+        address coin; // the Pons-launched coin (coin stage)
         bool write;
         bool allowRedeploy;
     }
@@ -89,7 +91,7 @@ contract DeployAnonymoLive is Script {
         address timelock;
         address depositRouter;
         address receiptRoots;
-        address anmo;
+        address coin;
         address coinPay;
     }
 
@@ -104,6 +106,7 @@ contract DeployAnonymoLive is Script {
         p.deployer = vm.envAddress("ANONYMO_DEPLOYER");
         if (p.stage == Stage.Router) p.stables = vm.envAddress("ANONYMO_STABLES", ",");
         if (p.stage == Stage.Receipts) p.receiptSigner = vm.envAddress("ANONYMO_RECEIPT_SIGNER");
+        if (p.stage == Stage.Coin) p.coin = vm.envAddress("ANONYMO_COIN_TOKEN");
         p.write = true;
         p.allowRedeploy = vm.envOr("ANONYMO_ALLOW_REDEPLOY", false);
     }
@@ -112,8 +115,8 @@ contract DeployAnonymoLive is Script {
         bytes32 h = keccak256(bytes(s));
         if (h == keccak256("router")) return Stage.Router;
         if (h == keccak256("receipts")) return Stage.Receipts;
-        if (h == keccak256("token")) return Stage.Token;
-        revert("DeployAnonymoLive: ANONYMO_STAGE must be router, receipts or token");
+        if (h == keccak256("coin")) return Stage.Coin;
+        revert("DeployAnonymoLive: ANONYMO_STAGE must be router, receipts or coin");
     }
 
     function deploy(Params memory p) public returns (Deployment memory d) {
@@ -158,8 +161,10 @@ contract DeployAnonymoLive is Script {
                 require(ReceiptRoots(d.receiptRoots).signer() == p.receiptSigner, "check: ReceiptRoots signer");
             } else {
                 vm.startBroadcast(p.deployer);
-                d.anmo = address(new ANMO(p.safe));
-                d.coinPay = address(new CoinPay(d.anmo));
+                require(p.coin.code.length != 0, "DeployAnonymoLive: ANONYMO_COIN_TOKEN has no code on this chain");
+                IERC20(p.coin).totalSupply(); // reverts on a non-token
+                d.coin = p.coin;
+                d.coinPay = address(new CoinPay(p.coin));
                 vm.stopBroadcast();
                 checkToken(d);
             }
@@ -224,8 +229,7 @@ contract DeployAnonymoLive is Script {
     }
 
     function checkToken(Deployment memory d) public view {
-        require(IERC20(d.anmo).balanceOf(d.safe) == IERC20(d.anmo).totalSupply(), "check: ANMO supply");
-        require(address(CoinPay(d.coinPay).coin()) == d.anmo, "check: CoinPay coin");
+        require(address(CoinPay(d.coinPay).coin()) == d.coin, "check: CoinPay coin");
     }
 
     // ------------------------------------------------------------ init code and addresses
@@ -270,7 +274,7 @@ contract DeployAnonymoLive is Script {
     function stageName(Stage s) public pure returns (string memory) {
         if (s == Stage.Router) return "router";
         if (s == Stage.Receipts) return "receipts";
-        return "token";
+        return "coin";
     }
 
     function _broadcasting() internal view returns (bool) {
@@ -296,8 +300,8 @@ contract DeployAnonymoLive is Script {
         vm.serializeAddress(k, "timelock", d.timelock);
         string memory json = vm.serializeAddress(k, "depositRouter", d.depositRouter);
         if (stage == Stage.Receipts) json = vm.serializeAddress(k, "receiptRoots", d.receiptRoots);
-        if (stage == Stage.Token) {
-            vm.serializeAddress(k, "anmo", d.anmo);
+        if (stage == Stage.Coin) {
+            vm.serializeAddress(k, "coin", d.coin);
             json = vm.serializeAddress(k, "coinPay", d.coinPay);
         }
         vm.writeJson(json, manifestPath(stage, _broadcasting()));
@@ -309,8 +313,8 @@ contract DeployAnonymoLive is Script {
         console2.log("Timelock (48h)    ", d.timelock);
         console2.log("DepositRouter     ", d.depositRouter);
         if (stage == Stage.Receipts) console2.log("ReceiptRoots      ", d.receiptRoots);
-        if (stage == Stage.Token) {
-            console2.log("ANMO              ", d.anmo);
+        if (stage == Stage.Coin) {
+            console2.log("Coin              ", d.coin);
             console2.log("CoinPay           ", d.coinPay);
         }
     }

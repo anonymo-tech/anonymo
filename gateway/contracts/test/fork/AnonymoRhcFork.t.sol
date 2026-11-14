@@ -38,6 +38,9 @@ contract AnonymoRhcForkTest is Test {
     address constant SAFE_SINGLETON = 0x41675C099F32341bf84BFc5382aF534df5C7461a;
     address constant SAFE_FACTORY = 0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67;
     uint256 constant RHC = 4663;
+    // A real Pons V2 launch token on Robinhood Chain, graduated into a USDG pool (no burn function, no permit).
+    address constant PONS_COIN = 0xa017ff2102Ee0138E1c2077F4a457606726412Ac;
+    address constant DEAD = 0x000000000000000000000000000000000000dEaD;
 
     DeployAnonymoLive script;
     address deployer = makeAddr("deployer");
@@ -71,6 +74,7 @@ contract AnonymoRhcForkTest is Test {
         p.deployer = deployer;
         p.stables = stables;
         p.receiptSigner = makeAddr("anchorer");
+        p.coin = PONS_COIN;
     }
 
     function test_fork_allStagesAndAUsdgDeposit() public {
@@ -96,20 +100,20 @@ contract AnonymoRhcForkTest is Test {
         ReceiptRoots(r.receiptRoots).post(uint64(block.timestamp / 3600), keccak256("root"));
         assertEq(ReceiptRoots(r.receiptRoots).rootOf(uint64(block.timestamp / 3600)), keccak256("root"));
 
-        DeployAnonymoLive.Deployment memory t = script.deploy(_params(DeployAnonymoLive.Stage.Token));
+        DeployAnonymoLive.Deployment memory t = script.deploy(_params(DeployAnonymoLive.Stage.Coin));
         script.checkToken(t);
 
-        // Paying with the coin burns it: supply and the payer's balance drop, and Paid names the key and payer.
-        vm.prank(safe);
-        IERC20(t.anmo).transfer(user, 1_000e18);
-        uint256 supply = IERC20(t.anmo).totalSupply();
+        // Paying with a real Pons coin: it goes to the dead address, and Paid names the key, the payer and the amount.
+        deal(PONS_COIN, user, 1_000e18);
+        uint256 deadBefore = IERC20(PONS_COIN).balanceOf(DEAD);
         vm.startPrank(user);
-        IERC20(t.anmo).approve(t.coinPay, 400e18);
+        IERC20(PONS_COIN).approve(t.coinPay, 400e18);
         vm.expectEmit(true, true, false, true, t.coinPay);
         emit ICoinPay.Paid(keyCommit, user, 400e18);
         ICoinPay(t.coinPay).pay(400e18, keyCommit);
         vm.stopPrank();
-        assertEq(IERC20(t.anmo).totalSupply(), supply - 400e18);
-        assertEq(IERC20(t.anmo).balanceOf(user), 600e18);
+        assertEq(IERC20(PONS_COIN).balanceOf(DEAD) - deadBefore, 400e18);
+        assertEq(IERC20(PONS_COIN).balanceOf(user), 600e18);
+        assertEq(IERC20(PONS_COIN).balanceOf(t.coinPay), 0);
     }
 }

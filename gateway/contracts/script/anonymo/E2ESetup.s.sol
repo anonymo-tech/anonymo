@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {DeployAnonymoLive} from "./DeployAnonymoLive.s.sol";
+import {ANMO} from "../../src/anonymo/ANMO.sol";
 
 interface ISafeProxyFactory {
     function createProxyWithNonce(address singleton, bytes memory initializer, uint256 saltNonce)
@@ -97,21 +98,32 @@ contract E2ESetup is Script {
         p.stables[0] = quote;
         p.stage = DeployAnonymoLive.Stage.Router;
         DeployAnonymoLive.Deployment memory r = live.deploy(p);
-        p.stage = DeployAnonymoLive.Stage.Token;
+        // The coin: a real Pons launch token (E2E_COIN, already trading in its v4 pool), or a stand-in minted to the
+        // Safe with a fresh v3 pool (chains without Pons, such as testnet).
+        address coin = vm.envOr("E2E_COIN", address(0));
+        address pool;
+        address seeder;
+        if (coin == address(0)) {
+            vm.startBroadcast(deployer);
+            coin = address(new ANMO(safe));
+            vm.stopBroadcast();
+        }
+        p.coin = coin;
+        p.stage = DeployAnonymoLive.Stage.Coin;
         DeployAnonymoLive.Deployment memory t = live.deploy(p);
-
-        // The pool: the Safe holds every coin, so a test owner pair would sign a transfer; on a fork or testnet
-        // the deployer instead receives coins from the Safe through E2E_COIN_FROM_SAFE handling outside this script.
-        vm.startBroadcast(deployer);
-        IUniswapV3Factory f = IUniswapV3Factory(vm.envAddress("E2E_V3_FACTORY"));
-        address pool = f.getPool(t.anmo, quote, 3000);
-        if (pool == address(0)) pool = f.createPool(t.anmo, quote, 3000);
-        bool coin0 = IUniswapV3Pool(pool).token0() == t.anmo;
-        IUniswapV3Pool(pool).initialize(uint160(vm.envUint(coin0 ? "E2E_SQRT_COIN0" : "E2E_SQRT_COIN1")));
-        IUniswapV3Pool(pool).increaseObservationCardinalityNext(64);
-        PoolSeeder seeder = new PoolSeeder();
-        seeder.setTokens(t.anmo, quote);
-        vm.stopBroadcast();
+        if (vm.envOr("E2E_COIN", address(0)) == address(0)) {
+            vm.startBroadcast(deployer);
+            IUniswapV3Factory f = IUniswapV3Factory(vm.envAddress("E2E_V3_FACTORY"));
+            pool = f.getPool(coin, quote, 3000);
+            if (pool == address(0)) pool = f.createPool(coin, quote, 3000);
+            bool coin0 = IUniswapV3Pool(pool).token0() == coin;
+            IUniswapV3Pool(pool).initialize(uint160(vm.envUint(coin0 ? "E2E_SQRT_COIN0" : "E2E_SQRT_COIN1")));
+            IUniswapV3Pool(pool).increaseObservationCardinalityNext(64);
+            PoolSeeder ps = new PoolSeeder();
+            ps.setTokens(coin, quote);
+            seeder = address(ps);
+            vm.stopBroadcast();
+        }
 
         string memory k = "e2e";
         vm.serializeUint(k, "chainId", block.chainid);
@@ -119,17 +131,17 @@ contract E2ESetup is Script {
         vm.serializeAddress(k, "safe", safe);
         vm.serializeAddress(k, "timelock", r.timelock);
         vm.serializeAddress(k, "depositRouter", r.depositRouter);
-        vm.serializeAddress(k, "anmo", t.anmo);
+        vm.serializeAddress(k, "anmo", coin);
         vm.serializeAddress(k, "coinPay", t.coinPay);
         vm.serializeAddress(k, "quote", quote);
-        vm.serializeAddress(k, "seeder", address(seeder));
+        vm.serializeAddress(k, "seeder", seeder);
         string memory json = vm.serializeAddress(k, "pool", pool);
         vm.writeJson(json, string.concat("deployments/", vm.toString(block.chainid), "-anonymo-e2e.json"));
         console2.log("safe", safe);
         console2.log("router", r.depositRouter);
-        console2.log("anmo", t.anmo);
+        console2.log("coin", coin);
         console2.log("coinPay", t.coinPay);
         console2.log("pool", pool);
-        console2.log("seeder", address(seeder));
+        console2.log("seeder", seeder);
     }
 }
