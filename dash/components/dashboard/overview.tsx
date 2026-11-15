@@ -4,7 +4,7 @@
 
 import { Photo } from '@/components/photo';
 import Link from 'next/link';
-import { ArrowRight, Drama, Eye, EyeOff, MessageSquare, Plug, PlusCircle, ReceiptText, ShieldCheck, Wallet } from 'lucide-react';
+import { ArrowRight, Eye, EyeOff, PlusCircle, ShieldCheck, Wallet } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
 import { CopyButton } from '../copy-button';
@@ -66,7 +66,7 @@ export function Overview() {
       <section className="card span-6" aria-labelledby="balance-title">
         <h2 id="balance-title">Available balance</h2>
         <div className="balance-line">
-          <span className="big-num">{balance ? formatUsdAmount(balance.available_usd) : error ? '—' : '…'}</span>
+          <span className="big-num">{balance ? formatUsdAmount(balance.available_usd) : error ? '—' : <span className="skeleton" style={{ width: 150, height: 40 }} aria-label="Loading" />}</span>
           {demo && <span className="chip chip-amber">demo</span>}
         </div>
         {balance && (
@@ -153,32 +153,6 @@ export function Overview() {
         </p>
       </section>
 
-      <nav className="quick span-12" aria-label="Next steps">
-        <Link href="/dashboard/chat">
-          <strong>
-            <MessageSquare size={18} aria-hidden="true" /> Chat
-          </strong>
-          <span>Talk to anonymo-1, the council or the sealed tier.</span>
-        </Link>
-        <Link href="/dashboard/characters">
-          <strong>
-            <Drama size={18} aria-hidden="true" /> Characters
-          </strong>
-          <span>Bring your character card and chat as it.</span>
-        </Link>
-        <Link href="/dashboard/presets">
-          <strong>
-            <Plug size={18} aria-hidden="true" /> Frontend presets
-          </strong>
-          <span>SillyTavern, JanitorAI, Open WebUI and more.</span>
-        </Link>
-        <Link href="/dashboard/receipts">
-          <strong>
-            <ReceiptText size={18} aria-hidden="true" /> Receipts
-          </strong>
-          <span>Check any reply against its signed receipt.</span>
-        </Link>
-      </nav>
     </div>
   );
 }

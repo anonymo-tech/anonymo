@@ -5,6 +5,7 @@ import '@fontsource/ibm-plex-mono/500.css';
 import './globals.css';
 import { AgeGate } from '@/components/age-gate';
 import { AnonymoProvider } from '@/components/anonymo-provider';
+import { RevealOnScroll } from '@/components/reveal';
 
 export const metadata: Metadata = {
   title: 'Anonymo — Ask anything. Get an answer. One key.',
@@ -23,6 +24,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <AnonymoProvider>
           <div className="app-root">{children}</div>
           <AgeGate />
+          <RevealOnScroll />
         </AnonymoProvider>
       </body>
     </html>

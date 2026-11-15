@@ -1,7 +1,8 @@
 import { Photo } from '@/components/photo';
 import Link from 'next/link';
-import { ArrowRight, Coins, Lock, ReceiptText, SendHorizontal, ShieldCheck } from 'lucide-react';
+import { ArrowRight, Coins, Lock, ReceiptText, SendHorizontal } from 'lucide-react';
 import { PublicPage } from '@/components/site-chrome';
+import { API_BASE } from '@/lib/anonymo/config';
 
 const MODELS = [
   {
@@ -82,9 +83,8 @@ export default function Home() {
             Ask anything. <span>Get an answer.</span> <span>One key.</span>
           </h1>
           <p>
-            Anonymo is one OpenAI-compatible API key, plus this workspace, that serves only uncensored and low-refusal models.
-            No refusals for legal adult use: if a model refuses, Anonymo reroutes to a different model family and refunds the
-            refused attempt.
+            One OpenAI-compatible key for uncensored and low-refusal models. If a model refuses a legal request, Anonymo
+            reroutes it and refunds the attempt.
           </p>
           <div className="hero-actions">
             <Link className="btn btn-primary btn-lg" href="/dashboard/key">
@@ -99,7 +99,7 @@ export default function Home() {
         <ChatPreview />
       </section>
 
-      <div className="grid-3">
+      <div className="grid-3" data-reveal>
         <div className="card feature">
           <span className="icon-box">
             <Lock size={20} aria-hidden="true" />
@@ -129,7 +129,7 @@ export default function Home() {
         </div>
       </div>
 
-      <section className="section">
+      <section className="section" data-reveal>
         <div className="grid-2" style={{ alignItems: 'stretch' }}>
           <div className="card">
             <h2>One request. Any client.</h2>
@@ -142,7 +142,7 @@ export default function Home() {
               </header>
               <pre className="code">
                 <code>
-                  {'curl https://api.anonymo.example/v1/chat/completions \\\n'}
+                  {`curl ${API_BASE || 'https://api.anonymo.example'}/v1/chat/completions \\\n`}
                   {'  -H '}
                   <span className="s">{'"Authorization: Bearer anm_live_YOUR_KEY"'}</span>
                   {' \\\n  -H '}
@@ -173,7 +173,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="section">
+      <section className="section" data-reveal>
         <h2>Four model IDs</h2>
         <div className="grid-2">
           {MODELS.map((m) => (
@@ -187,7 +187,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="section">
+      <section className="section" data-reveal>
         <div className="photo-band">
           <Photo src="/mascot/lamp.jpg" alt="The Anonymo mascot listening to music beside a lamp" width={1600} height={900} />
           <div>
@@ -208,27 +208,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="section">
-        <h2>No account. Crypto only.</h2>
-        <div className="band">
-          <div>
-            <strong>Fund a key</strong>
-            <span>USDC, USDT and USDG on Base, Arbitrum and Robinhood Chain. Solana, Tron, BTC and Lightning. x402 for agents.</span>
-          </div>
-          <div>
-            <strong>Your credit stays yours</strong>
-            <span>Withdraw unused stablecoin credit, only to the wallet it came from. Withdrawals are never paused.</span>
-          </div>
-          <div style={{ display: 'grid', gap: 8, justifyItems: 'start' }}>
-            <Link className="btn btn-primary" href="/dashboard/key">
-              Create a key
-            </Link>
-            <span>Start with your API key</span>
-          </div>
-        </div>
-      </section>
-
-      <section className="section">
+      <section className="section" data-reveal>
         <h2>The floor that stays on</h2>
         <p className="muted">
           Uncensored means no refusals for legal adult use, with a floor that stays on. Four lines are blocked everywhere, by checks that sit
@@ -241,7 +221,7 @@ export default function Home() {
         </ol>
       </section>
 
-      <section className="section">
+      <section className="section" data-reveal>
         <h2>A few things, answered.</h2>
         <dl className="faq">
           {FAQ.map(([q, a]) => (
@@ -251,9 +231,6 @@ export default function Home() {
             </div>
           ))}
         </dl>
-        <p className="faint row" style={{ gap: 8 }}>
-          <ShieldCheck size={16} aria-hidden="true" /> Adults only. You must be 18 or older, and of legal age where you live.
-        </p>
       </section>
     </PublicPage>
   );

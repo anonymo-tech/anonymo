@@ -252,10 +252,7 @@ export function ChatWorkspace() {
             <Photo src="/mascot/avatar.jpg" alt="" width={256} height={256} />
             <div>
               <h1>Ask anything. Get an answer.</h1>
-              <p className="muted">
-                No refusals for legal adult use. If a model refuses, Anonymo reroutes to a different model family and refunds
-                the refused attempt. Every answer comes with a signed receipt.
-              </p>
+              <p className="muted">No refusals for legal adult use. Every answer comes with a signed receipt.</p>
             </div>
           </div>
           {ready && !key ? (

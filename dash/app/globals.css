@@ -12,8 +12,8 @@
   --line: #3d2140;
   --line-strong: #5a3360;
   --text: #f6ede4;
-  --muted: #cdb8c9;
-  --faint: #9a7f99;
+  --muted: #dccbd8;
+  --faint: #a88fa6;
   /* Actions are cream on plum. Pink is a brand accent only: the logo, icon tiles and the odd chip. */
   --signal: #f3e6dc;
   --signal-hover: #fff8f1;
@@ -40,7 +40,7 @@
 html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
 body {
   min-height: 100svh;
-  font: 15px/1.6 var(--sans);
+  font: 15.5px/1.65 var(--sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   background: radial-gradient(1200px 600px at 80% -10%, #3a12401f, transparent 70%), var(--bg);
@@ -145,7 +145,7 @@ html[data-gated] .app-root { filter: blur(14px); pointer-events: none; user-sele
 .public-main-wide { width: min(1180px, calc(100% - 32px)); }
 .page-title { display: grid; gap: 10px; margin-bottom: 28px; }
 .page-title h1 { font-size: clamp(32px, 4.6vw, 48px); letter-spacing: -0.025em; }
-.page-title p { color: var(--muted); max-width: 68ch; font-size: 17px; }
+.page-title p { color: var(--muted); max-width: 64ch; font-size: 17px; }
 .site-foot { width: min(1180px, calc(100% - 32px)); margin: 0 auto; display: grid; grid-template-columns: minmax(200px, 1.2fr) repeat(3, minmax(120px, 1fr)) auto; gap: 24px; padding: 32px 0 40px; border-top: 1px solid var(--line); font-size: 14px; }
 .site-foot .foot-brand { display: grid; gap: 10px; align-content: start; color: var(--muted); }
 .site-foot .foot-col { display: grid; gap: 6px; align-content: start; }
@@ -409,6 +409,48 @@ pre.snippet { margin: 0; padding: 16px; border: 1px solid var(--line-strong); bo
 .endpoint b { padding: 4px 8px; border-radius: 6px; background: var(--signal); color: var(--signal-ink); font: 700 12px/1 var(--sans); }
 .endpoint b.get { background: var(--ok); }
 .docs-code { position: sticky; top: 88px; align-self: start; display: grid; gap: 16px; min-width: 0; }
+
+/* ---- motion: short, quiet, and off for anyone who asks for reduced motion --------------------------------------- */
+.skeleton { display: inline-block; border-radius: 8px; background: linear-gradient(90deg, var(--raised) 0%, var(--raised-2) 50%, var(--raised) 100%) 0 0 / 200% 100%; vertical-align: middle; }
+.btn, .send, .ws-nav a, .quick a, .starters button, .card, .panel, .ws-purse, .picker > button, .chip, .input, .select, .textarea {
+  transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes pop { from { opacity: 0; transform: translateY(6px) scale(0.98); } to { opacity: 1; transform: none; } }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+
+  /* page enter: each block rises in, a beat apart */
+  .ws-main > :not(.overview), .public-main > :not([data-reveal]), .docs > *, .overview > * { animation: rise 460ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .ws-main > :nth-child(2), .overview > :nth-child(2), .docs > :nth-child(2) { animation-delay: 60ms; }
+  .ws-main > :nth-child(3), .overview > :nth-child(3), .docs > :nth-child(3) { animation-delay: 120ms; }
+  .ws-main > :nth-child(n + 4), .overview > :nth-child(n + 4) { animation-delay: 180ms; }
+  .hero-copy > * { animation: rise 560ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .hero-copy > :nth-child(2) { animation-delay: 70ms; }
+  .hero-copy > :nth-child(3) { animation-delay: 140ms; }
+  .hero-copy > :nth-child(n + 4) { animation-delay: 210ms; }
+  .preview { animation: rise 700ms 200ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+
+  /* scroll reveal (components/reveal.tsx) */
+  .reveal-ready [data-reveal] { opacity: 0; transform: translateY(18px); transition: opacity 640ms ease, transform 640ms cubic-bezier(0.2, 0.7, 0.2, 1); }
+  .reveal-ready [data-reveal].is-in { opacity: 1; transform: none; }
+
+  /* chat: each turn settles in */
+  .turn { animation: rise 340ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .turn .ai-row { animation: fade 420ms 120ms both; }
+
+  /* overlays */
+  .age-gate { animation: fade 240ms ease both; }
+  .age-gate-card { animation: pop 360ms 60ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .picker-menu { animation: pop 160ms ease-out both; transform-origin: bottom left; }
+
+  /* touch feedback */
+  .btn:active:not(:disabled), .send:active:not(:disabled) { transform: scale(0.97); }
+  .quick a:hover, .starters button:hover, .card.feature:hover { transform: translateY(-2px); }
+  .skeleton { animation: shimmer 1.4s linear infinite; }
+}
 
 @media (max-width: 1100px) {
   .docs { grid-template-columns: 200px minmax(0, 1fr); }

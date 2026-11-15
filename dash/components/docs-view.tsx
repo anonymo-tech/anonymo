@@ -5,11 +5,11 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { useAnonymo } from './anonymo-provider';
 import { CopyButton } from './copy-button';
+import { API_BASE, publicApiBase } from '@/lib/anonymo/config';
 
-const BASE = 'https://api.anonymo.example';
-
-const REQUEST = {
+const samples = (BASE: string) => ({
   cURL: `curl ${BASE}/v1/chat/completions \\
   -H "Authorization: Bearer $ANONYMO_KEY" \\
   -H "Content-Type: application/json" \\
@@ -44,7 +44,9 @@ const reply = await client.chat.completions.create({
   messages: [{ role: 'user', content: 'Hello' }],
 });
 console.log(reply.choices[0].message.content);`,
-} as const;
+});
+type Lang = 'cURL' | 'Python' | 'JavaScript';
+const LANGS: Lang[] = ['cURL', 'Python', 'JavaScript'];
 
 const RESPONSE = `{
   "id": "req_demo",
@@ -82,7 +84,10 @@ const SECTIONS = [
 ];
 
 export function DocsView() {
-  const [lang, setLang] = useState<keyof typeof REQUEST>('cURL');
+  const { ready, demo } = useAnonymo();
+  const base = ready ? publicApiBase(demo) : API_BASE || 'https://api.anonymo.example';
+  const REQUEST = samples(base);
+  const [lang, setLang] = useState<Lang>('cURL');
   return (
     <div className="docs">
       <nav className="docs-nav" aria-label="Documentation">
@@ -282,7 +287,7 @@ export function DocsView() {
         <div className="code-card">
           <header>
             <div className="tabs" role="tablist" aria-label="Language">
-              {(Object.keys(REQUEST) as (keyof typeof REQUEST)[]).map((l) => (
+              {LANGS.map((l) => (
                 <button key={l} type="button" role="tab" aria-selected={lang === l} onClick={() => setLang(l)}>
                   {l}
                 </button>
