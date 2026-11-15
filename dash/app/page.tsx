@@ -1,4 +1,6 @@
+import { Photo } from '@/components/photo';
 import Link from 'next/link';
+import { ArrowRight, Coins, Lock, ReceiptText, SendHorizontal, ShieldCheck } from 'lucide-react';
 import { PublicPage } from '@/components/site-chrome';
 
 const MODELS = [
@@ -27,57 +29,52 @@ const FLOOR = [
   'Meaningful help building chemical, biological, radiological, nuclear or explosive weapons.',
 ];
 
-/** A sample receipt, drawn as a printed slip: what every call returns, and what it leaves out. */
-function ReceiptSlip() {
-  const rows: [string, string, string?][] = [
-    ['model', 'anonymo-1'],
-    ['route 1', 'venice:venice-uncensored', 'refused · billed 0'],
-    ['route 2', 'selfhost:deepseek-v4.1-flash'],
-    ['tokens', '412 in · 655 out'],
-    ['cost', '$0.00137'],
-    ['refund', '+$0.00011'],
-  ];
+const FAQ: [string, string][] = [
+  ['Do I need an account?', 'No. Your API key is your account. No email, no name, no KYC. Keep the key somewhere safe: it cannot be recovered.'],
+  ['Are my conversations stored?', 'No. Prompts and replies are never kept. Receipts hold routes, hashes and costs only.'],
+  ['What happens when a model refuses?', 'Anonymo reroutes to a different model family and refunds the refused attempt. You never pay for a refusal.'],
+  ['How do I pay?', 'Stablecoins on Base, Arbitrum, Robinhood Chain, Solana and Tron, BTC and Lightning, or the coin. Unused stablecoin credit can be withdrawn to the wallet it came from.'],
+];
+
+/** A static preview of the chat screen: what the workspace looks like, with a sample exchange. */
+function ChatPreview() {
   return (
-    <figure className="slip" aria-label="Example receipt">
-      <div className="slip-head">
-        <span>ANONYMO · RECEIPT</span>
-        <span>sample</span>
-      </div>
-      <div className="slip-row">
-        <span>prompt</span>
-        <span>
-          <span className="slip-redact" aria-hidden="true">
-            ████████████
-          </span>{' '}
-          not stored
+    <figure className="preview" aria-label="A sample chat in the Anonymo workspace" style={{ margin: 0 }}>
+      <div className="preview-top">
+        <span className="chip" style={{ color: 'var(--text)', padding: '4px 12px' }}>
+          <span className="dot" style={{ background: 'var(--amber)' }} aria-hidden="true" /> anonymo-1
         </span>
+        <span className="chip chip-signal">Zero retention</span>
       </div>
-      {rows.map(([k, v, flag]) => (
-        <div className="slip-row" key={k}>
-          <span>{k}</span>
-          <span>
-            {v}
-            {flag && <em>{flag}</em>}
+      <p className="bubble-user">Help me write the opening of a noir story. A missing pianist, a rain-soaked city, one strange clue.</p>
+      <div className="bubble-ai">
+        <Photo src="/mascot/avatar.jpg" alt="" width={40} height={40} />
+        <div style={{ display: 'grid', gap: 8 }}>
+          <p>
+            <strong>anonymo-1</strong>
+            The rain had been working the city longer than I had. By midnight it had washed everything clean except the people.
+          </p>
+          <span className="receipt-link">
+            <ReceiptText size={15} aria-hidden="true" /> Signed receipt
           </span>
         </div>
-      ))}
-      <div className="slip-rule" />
-      <div className="slip-row">
-        <span>proof</span>
-        <span>leaf → root · 5 siblings ✓</span>
       </div>
-      <div className="slip-row">
-        <span>anchor</span>
-        <span>ReceiptRoots · hourly</span>
+      <div className="preview-input">
+        <span>Where does the story go next?</span>
+        <span className="send-mini" aria-hidden="true">
+          <SendHorizontal size={17} />
+        </span>
       </div>
-      <figcaption>Every call returns one of these. The prompt and the reply are never kept.</figcaption>
+      <figcaption className="faint" style={{ fontSize: 12.5 }}>
+        Sample conversation. Nothing you type is stored.
+      </figcaption>
     </figure>
   );
 }
 
 export default function Home() {
   return (
-    <PublicPage>
+    <PublicPage wide>
       <section className="hero hero-split">
         <div className="hero-copy">
           <span className="hero-kicker">Uncensored models · one key · adults only</span>
@@ -90,82 +87,143 @@ export default function Home() {
             refused attempt.
           </p>
           <div className="hero-actions">
-            <Link className="btn btn-primary" href="/dashboard/key">
+            <Link className="btn btn-primary btn-lg" href="/dashboard/key">
               Create a key
             </Link>
-            <Link className="btn" href="/dashboard?demo=1">
+            <Link className="btn btn-outline btn-lg" href="/dashboard/chat?demo=1">
               Try the demo
             </Link>
-            <Link className="btn btn-ghost" href="/presets">
-              Frontend presets
-            </Link>
+          </div>
+          <span className="hero-note">No account. No email. No KYC.</span>
+        </div>
+        <ChatPreview />
+      </section>
+
+      <div className="grid-3">
+        <div className="card feature">
+          <span className="icon-box">
+            <Lock size={20} aria-hidden="true" />
+          </span>
+          <div>
+            <h3>Zero retention</h3>
+            <p>Prompts and replies are never kept. anonymo-sealed runs in attested enclaves and proves it on the receipt.</p>
           </div>
         </div>
-        <ReceiptSlip />
+        <div className="card feature">
+          <span className="icon-box icon-box-amber">
+            <Coins size={20} aria-hidden="true" />
+          </span>
+          <div>
+            <h3>Pay in crypto</h3>
+            <p>Stablecoins, BTC or the coin. Unused stablecoin credit goes back to the wallet it came from.</p>
+          </div>
+        </div>
+        <div className="card feature">
+          <span className="icon-box icon-box-amber">
+            <ReceiptText size={20} aria-hidden="true" />
+          </span>
+          <div>
+            <h3>Signed receipts</h3>
+            <p>Every call returns a receipt with its routes and cost, rolled into an hourly root posted on-chain.</p>
+          </div>
+        </div>
+      </div>
+
+      <section className="section">
+        <div className="grid-2" style={{ alignItems: 'stretch' }}>
+          <div className="card">
+            <h2>One request. Any client.</h2>
+            <p className="lede">It speaks the OpenAI API. Point your client at Anonymo and paste your key.</p>
+            <div className="code-card">
+              <header>
+                <div className="tabs-mini">
+                  <span>cURL</span>
+                </div>
+              </header>
+              <pre className="code">
+                <code>
+                  {'curl https://api.anonymo.example/v1/chat/completions \\\n'}
+                  {'  -H '}
+                  <span className="s">{'"Authorization: Bearer anm_live_YOUR_KEY"'}</span>
+                  {' \\\n  -H '}
+                  <span className="s">{'"Content-Type: application/json"'}</span>
+                  {' \\\n  -d '}
+                  <span className="s">{`'{"model":"anonymo-1","messages":[{"role":"user","content":"Hello"}]}'`}</span>
+                </code>
+              </pre>
+            </div>
+            <Link className="link" href="/docs">
+              Read the API docs <ArrowRight size={14} aria-hidden="true" style={{ verticalAlign: '-2px' }} />
+            </Link>
+          </div>
+          <div className="card voice-card">
+            <h2>Bring your character.</h2>
+            <div className="photo">
+              <Photo src="/mascot/pillow.jpg" alt="The Anonymo mascot napping in headphones" width={1200} height={900} />
+            </div>
+            <div className="chips">
+              <span className="chip">SillyTavern</span>
+              <span className="chip">JanitorAI</span>
+              <span className="chip">Open WebUI</span>
+              <Link className="link" href="/presets">
+                All presets <ArrowRight size={14} aria-hidden="true" style={{ verticalAlign: '-2px' }} />
+              </Link>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section className="section">
         <h2>Four model IDs</h2>
         <div className="grid-2">
           {MODELS.map((m) => (
-            <div className="tile" key={m.id}>
+            <div className="card" key={m.id}>
               <h3>
                 <code>{m.id}</code>
               </h3>
-              <p>{m.text}</p>
+              <p className="lede">{m.text}</p>
             </div>
           ))}
         </div>
       </section>
 
       <section className="section">
-        <h2>Proof, not promises</h2>
-        <div className="grid-2">
-          <div className="tile">
-            <h3>A receipt on every call</h3>
-            <p>
-              Each response carries a signed receipt listing the routes that ran, the model hashes and the cost. Receipts roll
-              into an hourly Merkle root posted on-chain, and you can check the path yourself.
-            </p>
-          </div>
-          <div className="tile">
-            <h3>Private you can prove</h3>
+        <div className="photo-band">
+          <Photo src="/mascot/lamp.jpg" alt="The Anonymo mascot listening to music beside a lamp" width={1600} height={900} />
+          <div>
+            <h2>Proof, not promises.</h2>
             <p>
               anonymo-sealed is the only fully private tier, and its receipt carries the enclave attestation to show it. Every
               other route is zero retention: a policy we keep, not a proof.
             </p>
-          </div>
-          <div className="tile">
-            <h3>
-              <Link href="/leaderboard">Refusal leaderboard</Link>
-            </h3>
-            <p>How often each route refused a legal request in the last 30 days. Counts only, no text.</p>
-          </div>
-          <div className="tile">
-            <h3>
-              <Link href="/manifest">Model manifest</Link>
-            </h3>
-            <p>Every route behind each model ID, with its family, quantization, weights hash and attestation.</p>
+            <div className="row">
+              <Link className="btn btn-outline" href="/leaderboard">
+                Refusal leaderboard
+              </Link>
+              <Link className="btn btn-ghost" href="/manifest">
+                Model manifest
+              </Link>
+            </div>
           </div>
         </div>
       </section>
 
       <section className="section">
         <h2>No account. Crypto only.</h2>
-        <div className="grid-2">
-          <div className="tile">
-            <h3>Fund a key</h3>
-            <p>
-              USDC, USDT and USDG on Base, Arbitrum and Robinhood Chain. USDC and USDT on Solana. USDT on Tron. BTC and
-              Lightning through BTCPay. Agents can pay per call with x402.
-            </p>
+        <div className="band">
+          <div>
+            <strong>Fund a key</strong>
+            <span>USDC, USDT and USDG on Base, Arbitrum and Robinhood Chain. Solana, Tron, BTC and Lightning. x402 for agents.</span>
           </div>
-          <div className="tile">
-            <h3>Your credit stays yours</h3>
-            <p>
-              Unused credit can always be withdrawn, only back to the wallet it came from. Withdrawals are never paused. No
-              email, no name, no KYC.
-            </p>
+          <div>
+            <strong>Your credit stays yours</strong>
+            <span>Withdraw unused stablecoin credit, only to the wallet it came from. Withdrawals are never paused.</span>
+          </div>
+          <div style={{ display: 'grid', gap: 8, justifyItems: 'start' }}>
+            <Link className="btn btn-primary" href="/dashboard/key">
+              Create a key
+            </Link>
+            <span>Start with your API key</span>
           </div>
         </div>
       </section>
@@ -184,13 +242,18 @@ export default function Home() {
       </section>
 
       <section className="section">
-        <h2>Two lines to start</h2>
-        <pre className="snippet">
-          <code>{`curl https://api.anonymo.example/v1/chat/completions \\
-  -H "Authorization: Bearer anm_live_YOUR_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{"model":"anonymo-1","messages":[{"role":"user","content":"Hello"}]}'`}</code>
-        </pre>
+        <h2>A few things, answered.</h2>
+        <dl className="faq">
+          {FAQ.map(([q, a]) => (
+            <div key={q}>
+              <dt>{q}</dt>
+              <dd>{a}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="faint row" style={{ gap: 8 }}>
+          <ShieldCheck size={16} aria-hidden="true" /> Adults only. You must be 18 or older, and of legal age where you live.
+        </p>
       </section>
     </PublicPage>
   );

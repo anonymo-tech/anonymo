@@ -1,45 +1,80 @@
+'use client';
+
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { AdultsOnly, VeniceBadge, Wordmark } from './brand';
 import { DemoNotice } from './demo-notice';
 
 const NAV = [
+  { href: '/docs', label: 'Docs' },
   { href: '/presets', label: 'Presets' },
   { href: '/leaderboard', label: 'Leaderboard' },
   { href: '/manifest', label: 'Manifest' },
 ];
 
-/** Header and footer for the public pages (landing, presets, manifest, leaderboard). */
-export function PublicPage({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
+/** Header and footer for the public pages (landing, docs, presets, manifest, leaderboard). */
+export function PublicPage({ children, wide = false, bare = false }: { children: ReactNode; wide?: boolean; bare?: boolean }) {
   return (
     <div className="public">
-      <header className="public-head">
-        <Wordmark />
-        <nav aria-label="Public pages">
-          {NAV.map((item) => (
-            <Link key={item.href} href={item.href}>
-              {item.label}
-            </Link>
-          ))}
-          <Link href="/dashboard" className="btn btn-primary btn-small">
-            Open workspace
-          </Link>
-        </nav>
-      </header>
+      <PublicHeader />
       <DemoNotice />
-      <main className={wide ? 'public-main public-main-wide' : 'public-main'}>{children}</main>
+      {bare ? children : <main className={wide ? 'public-main public-main-wide' : 'public-main'}>{children}</main>}
       <SiteFooter />
     </div>
+  );
+}
+
+export function PublicHeader() {
+  const pathname = usePathname();
+  return (
+    <header className="public-head">
+      <Wordmark />
+      <nav aria-label="Public pages">
+        {NAV.map((item) => (
+          <Link key={item.href} href={item.href} aria-current={pathname === item.href ? 'page' : undefined}>
+            {item.label}
+          </Link>
+        ))}
+        <Link href="/dashboard" className="btn btn-primary btn-small">
+          Open app
+        </Link>
+      </nav>
+    </header>
   );
 }
 
 export function SiteFooter() {
   return (
     <footer className="site-foot">
-      <AdultsOnly />
-      <span>No refusals for legal adult use. The floor stays on.</span>
-      <span>No account, no email, no KYC.</span>
-      <VeniceBadge />
+      <div className="foot-brand">
+        <Wordmark />
+        <span>Private by design.</span>
+      </div>
+      <div className="foot-col">
+        <strong>Product</strong>
+        <Link href="/dashboard/chat">Chat</Link>
+        <Link href="/dashboard/characters">Characters</Link>
+        <Link href="/presets">Presets</Link>
+      </div>
+      <div className="foot-col">
+        <strong>Developers</strong>
+        <Link href="/docs">API docs</Link>
+        <Link href="/manifest">Model manifest</Link>
+      </div>
+      <div className="foot-col">
+        <strong>Trust</strong>
+        <Link href="/leaderboard">Refusal leaderboard</Link>
+        <Link href="/dashboard/receipts">Receipts</Link>
+      </div>
+      <div className="foot-note">
+        <AdultsOnly />
+        <VeniceBadge />
+      </div>
+      <div className="foot-legal">
+        <span>No refusals for legal adult use. The floor stays on.</span>
+        <span>No account, no email, no KYC.</span>
+      </div>
     </footer>
   );
 }

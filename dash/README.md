@@ -4,9 +4,10 @@ The web workspace for Anonymo (Backend §2 "dash", Overview §2): create a key, 
 see every council seat, read receipts and their inclusion proofs, import character cards, copy frontend presets, and the
 public `/manifest` and `/leaderboard` pages. No email, name or identity fields anywhere, and no analytics.
 
-It keeps the Conclave workspace layout (top bar, centred thread, answer cards with a model tab bar and Compare, the
-floating dock with tools and composer, the purse, Paper Trail) under a new identity. Conclave's own features, server,
-brand, films and i18n are gone.
+The workspace is a left sidebar (sections, mascot card, key status), a top bar (breadcrumb, purse, docs, chat) and the
+page. Chat keeps the Conclave answer cards with Compare, the purse and Paper Trail, with the composer pinned to the
+bottom. The look is deep plum, cream and hot pink, Figtree and IBM Plex Mono, with the felt sleep-mask mascot as photos
+in `public/mascot/`. Conclave's own features, server, brand, films and i18n are gone.
 
 ## Run
 
@@ -109,8 +110,8 @@ with an 18+ notice on entry.
 
 | Path | What |
 | --- | --- |
-| `app/` | Landing, `/dashboard/*` (chat, key, funds, receipts, characters, presets), public `/presets`, `/manifest`, `/leaderboard` |
-| `components/dashboard/` | Workspace shell and dock, chat thread, answer card and council compare, panels |
+| `app/` | Landing, `/dashboard` (overview) and `/dashboard/*` (chat, key, funds, receipts, characters, presets), public `/docs`, `/presets`, `/manifest`, `/leaderboard` |
+| `components/dashboard/` | Workspace shell (sidebar and top bar), overview, chat thread, answer card and council compare, panels |
 | `lib/anonymo/` | Typed client, types, mock gateway, money, presets, proof check, device storage, character cards |
 | `lib/guards/`, `components/dashboard/use-content-guard.ts` | Kept from Conclave: warns before a seed phrase, private key or API key is sent in a prompt |
 | `server/solana/`, `lib/solana/` | Kept only as the reference WS05 ports the Solana USDC deposit verifier from, and because CI runs `scripts/check-solana.mjs` on it. Nothing in the app imports it; delete it with WS05's port and drop the CI step then. |

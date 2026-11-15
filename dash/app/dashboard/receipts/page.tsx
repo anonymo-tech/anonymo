@@ -5,7 +5,7 @@ export const metadata = { title: 'Receipts — Anonymo' };
 
 export default function ReceiptsPage() {
   return (
-    <WorkspaceShell section="Receipts">
+    <WorkspaceShell section="Receipts" title="Receipts" lede="Every request. Signed and verifiable.">
       <ReceiptsList />
     </WorkspaceShell>
   );

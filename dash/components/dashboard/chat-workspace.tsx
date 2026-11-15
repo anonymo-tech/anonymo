@@ -1,5 +1,6 @@
 'use client';
 
+import { Photo } from '@/components/photo';
 import Link from 'next/link';
 import { ArrowUp, Drama, ShieldCheck, Square } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
@@ -246,12 +247,17 @@ export function ChatWorkspace() {
   return (
     <WorkspaceShell section="Chat" composer={composer}>
       {turns.length === 0 ? (
-        <section className="empty">
-          <h1>Ask anything. Get an answer.</h1>
-          <p className="muted">
-            No refusals for legal adult use. If a model refuses, Anonymo reroutes to a different model family and refunds the
-            refused attempt. Every answer comes with a signed receipt.
-          </p>
+        <section className="empty chat-col">
+          <div className="empty-hero">
+            <Photo src="/mascot/avatar.jpg" alt="" width={256} height={256} />
+            <div>
+              <h1>Ask anything. Get an answer.</h1>
+              <p className="muted">
+                No refusals for legal adult use. If a model refuses, Anonymo reroutes to a different model family and refunds
+                the refused attempt. Every answer comes with a signed receipt.
+              </p>
+            </div>
+          </div>
           {ready && !key ? (
             <div className="notice row">
               <span style={{ flex: 1 }}>You need a key to chat. No account, no email.</span>
@@ -287,7 +293,7 @@ export function ChatWorkspace() {
           )}
         </section>
       ) : (
-        <div className="thread" aria-live="polite">
+        <div className="thread chat-col" aria-live="polite">
           {turns.map((turn) => (
             <article key={turn.id} className="turn">
               <p className="prompt">{turn.prompt}</p>
@@ -297,7 +303,10 @@ export function ChatWorkspace() {
                   {turn.character && <span className="chip">as {turn.character}</span>}
                 </div>
               )}
-              <AnswerCard turn={turn} />
+              <div className="ai-row">
+                <Photo src="/mascot/avatar.jpg" alt="" width={52} height={52} />
+                <AnswerCard turn={turn} />
+              </div>
             </article>
           ))}
           <div ref={end} />

@@ -1,76 +1,157 @@
 'use client';
 
-// The workspace frame, kept from Conclave's layout: a top bar (section on the left, wordmark in the middle, purse on
-// the right), a centred thread, and a floating dock with the tools on the left and the composer on the right.
+// The workspace frame: a left sidebar with the sections and the mascot card, a top bar with the breadcrumb, the purse
+// and the chat button, and the page itself. The chat page puts its composer in a sticky bar at the bottom.
 
+import { Photo } from '@/components/photo';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
-import { ChartBar, Drama, KeyRound, ListTree, MessageSquare, Plug, ReceiptText, Wallet } from 'lucide-react';
+import {
+  BookOpen,
+  Drama,
+  KeyRound,
+  LayoutGrid,
+  ListTree,
+  MessageSquare,
+  Plug,
+  ReceiptText,
+  Trophy,
+  Wallet,
+} from 'lucide-react';
 import { useAnonymo } from '../anonymo-provider';
 import { AdultsOnly, VeniceBadge, Wordmark } from '../brand';
 import { DemoNotice } from '../demo-notice';
 import { formatUsd, usdToMusd } from '@/lib/anonymo/money';
 
 const NAV = [
-  { href: '/dashboard', label: 'Chat', icon: MessageSquare },
-  { href: '/dashboard/key', label: 'Key', icon: KeyRound },
-  { href: '/dashboard/funds', label: 'Balance & deposits', icon: Wallet },
-  { href: '/dashboard/receipts', label: 'Receipts', icon: ReceiptText },
+  { href: '/dashboard', label: 'Overview', icon: LayoutGrid },
+  { href: '/dashboard/chat', label: 'Chat', icon: MessageSquare },
   { href: '/dashboard/characters', label: 'Characters', icon: Drama },
-  { href: '/dashboard/presets', label: 'Presets', icon: Plug },
-  { href: '/leaderboard', label: 'Refusal leaderboard', icon: ChartBar },
+  { href: '/dashboard/presets', label: 'Frontend presets', icon: Plug },
+  { href: '/dashboard/key', label: 'API key', icon: KeyRound },
+  { href: '/dashboard/funds', label: 'Funds', icon: Wallet },
+  { href: '/dashboard/receipts', label: 'Receipts', icon: ReceiptText },
+];
+
+const PUBLIC_NAV = [
+  { href: '/leaderboard', label: 'Leaderboard', icon: Trophy },
   { href: '/manifest', label: 'Model manifest', icon: ListTree },
+  { href: '/docs', label: 'Docs', icon: BookOpen },
 ];
 
 export function WorkspaceShell({
   section,
+  title,
+  lede,
   children,
   composer,
-  wide = false,
 }: {
   section: string;
+  title?: string;
+  lede?: string;
   children: ReactNode;
   composer?: ReactNode;
+  /** Kept for callers from the earlier layout; every page now uses the full width. */
   wide?: boolean;
 }) {
   const pathname = usePathname();
   const active = (href: string) =>
     href === '/dashboard' ? pathname === '/dashboard' : pathname === href || pathname.startsWith(`${href}/`);
+  const onChat = active('/dashboard/chat');
   return (
     <div className="ws">
-      <header className="ws-top">
-        <div className="ws-top-left">
-          <span className="ws-section">{section}</span>
-        </div>
+      <aside className="ws-side">
         <Wordmark href="/" />
-        <div className="ws-top-right">
-          <AdultsOnly compact />
-          <Purse />
-        </div>
-      </header>
-      <DemoNotice />
-      <main className={wide ? 'ws-main ws-main-wide' : 'ws-main'}>{children}</main>
-      {!composer && (
-        <footer className="ws-foot">
-          <AdultsOnly />
-          <span>No refusals for legal adult use. The floor stays on.</span>
-          <VeniceBadge />
-        </footer>
-      )}
-      <div className={composer ? 'dock' : 'dock dock-compact'}>
-        <nav className="dock-nav" aria-label="Workspace">
+        <nav className="ws-nav" aria-label="Workspace">
           {NAV.map(({ href, label, icon: Icon }) => (
-            <Link key={href} href={href} aria-current={active(href) ? 'page' : undefined} aria-label={label}>
+            <Link key={href} href={href} aria-current={active(href) ? 'page' : undefined}>
               <Icon size={19} strokeWidth={1.75} aria-hidden="true" />
-              <span className="tip" aria-hidden="true">
-                {label}
-              </span>
+              {label}
+            </Link>
+          ))}
+          <hr />
+          {PUBLIC_NAV.map(({ href, label, icon: Icon }) => (
+            <Link key={href} href={href}>
+              <Icon size={19} strokeWidth={1.75} aria-hidden="true" />
+              {label}
             </Link>
           ))}
         </nav>
-        {composer}
+        <div className="ws-side-spacer" />
+        <div className="promo">
+          <Photo src="/mascot/headphones.jpg" alt="" width={640} height={640} />
+          <strong>
+            Your key.
+            <br />
+            Your voice.
+          </strong>
+          {!onChat && (
+            <Link className="btn btn-primary btn-small" href="/dashboard/chat">
+              <MessageSquare size={16} aria-hidden="true" /> Open chat
+            </Link>
+          )}
+        </div>
+        <Status />
+      </aside>
+
+      <div className="ws-body">
+        <header className="ws-top">
+          <div className="crumbs">
+            <Link href="/dashboard" style={{ textDecoration: 'none' }}>
+              Workspace
+            </Link>
+            <span aria-hidden="true">/</span>
+            <strong>{section}</strong>
+          </div>
+          <div className="ws-top-right">
+            <AdultsOnly compact />
+            <Purse />
+            <Link className="btn btn-ghost btn-small" href="/docs">
+              <BookOpen size={16} aria-hidden="true" />
+              <span className="btn-label">Documentation</span>
+            </Link>
+            {!onChat && (
+              <Link className="btn btn-primary btn-small" href="/dashboard/chat">
+                <MessageSquare size={16} aria-hidden="true" />
+                <span className="btn-label">Open chat</span>
+              </Link>
+            )}
+          </div>
+        </header>
+        <main className={composer ? 'ws-main ws-main-chat' : 'ws-main'}>
+          <DemoNotice />
+          {title && (
+            <div className="ws-head">
+              <h1>{title}</h1>
+              {lede && <p>{lede}</p>}
+            </div>
+          )}
+          {children}
+        </main>
+        {composer ? (
+          <div className="ws-composer">{composer}</div>
+        ) : (
+          <footer className="ws-foot">
+            <AdultsOnly />
+            <span>No refusals for legal adult use. The floor stays on.</span>
+            <VeniceBadge />
+            <span className="spacer" />
+            <span>Private by design.</span>
+          </footer>
+        )}
       </div>
+    </div>
+  );
+}
+
+function Status() {
+  const { ready, key, demo } = useAnonymo();
+  if (!ready) return <div className="ws-status" aria-hidden="true" />;
+  return (
+    <div className="ws-status">
+      <span className={key ? 'dot' : 'dot dot-off'} aria-hidden="true" />
+      {key ? (demo ? 'Demo key connected' : 'API key connected') : 'No key on this device'}
     </div>
   );
 }

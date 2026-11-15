@@ -132,7 +132,7 @@ export function CharactersPanel() {
                   <strong>{c.card.data.name}</strong> <span className="faint mono">{c.hash.slice(0, 10)}</span>
                 </span>
                 <span className="row">
-                  <Link className="btn btn-small btn-primary" href={`/dashboard?character=${encodeURIComponent(c.id)}`} onClick={() => setStoredModel('anonymo-rp')}>
+                  <Link className="btn btn-small btn-primary" href={`/dashboard/chat?character=${encodeURIComponent(c.id)}`} onClick={() => setStoredModel('anonymo-rp')}>
                     Chat
                   </Link>
                   <button type="button" className="btn btn-small" disabled={!key} onClick={() => void sealToGateway(c)}>

@@ -5,7 +5,7 @@
 // judge) side by side with its route, status and cost. The gateway returns only the final reply's text.
 
 import Link from 'next/link';
-import { Columns3 } from 'lucide-react';
+import { Columns3, ReceiptText } from 'lucide-react';
 import { Fragment, useState, type ReactNode } from 'react';
 import { CopyButton } from '../copy-button';
 import { formatUsdAmount } from '@/lib/anonymo/money';
@@ -70,7 +70,12 @@ function Footer({ turn }: { turn: Turn }) {
           {r.tokens.in.toLocaleString()} in · {r.tokens.out.toLocaleString()} out
         </span>
       )}
-      {turn.receiptId && <Link href={`/dashboard/receipts/${encodeURIComponent(turn.receiptId)}`}>Receipt</Link>}
+      {turn.receiptId && (
+        <Link href={`/dashboard/receipts/${encodeURIComponent(turn.receiptId)}`}>
+          <ReceiptText size={15} aria-hidden="true" style={{ verticalAlign: '-3px', marginRight: 5 }} />
+          Signed receipt
+        </Link>
+      )}
     </div>
   );
 }

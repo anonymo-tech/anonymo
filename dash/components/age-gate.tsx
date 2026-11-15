@@ -1,7 +1,7 @@
 'use client';
 
+import { Photo } from '@/components/photo';
 import { useEffect, useRef } from 'react';
-import { Mark } from './brand';
 import { useDeviceStore } from '@/lib/anonymo/device-store';
 import { adultStore, confirmAdult } from '@/lib/anonymo/prefs';
 
@@ -20,7 +20,7 @@ export function AgeGate() {
   return (
     <dialog open className="age-gate" aria-modal="true" aria-labelledby="age-gate-title" aria-describedby="age-gate-text">
       <div className="age-gate-card">
-        <Mark size={36} />
+        <Photo src="/mascot/avatar.jpg" alt="" width={64} height={64} style={{ borderRadius: 16 }} />
         <h2 id="age-gate-title">Adults only</h2>
         <p id="age-gate-text">
           Anonymo serves uncensored models for adults: no refusals for legal adult use, with a floor that stays on. You
