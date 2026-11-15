@@ -1,8 +1,9 @@
 'use client';
 
 // The landing story, told in six steps. The mascot leans over a receipt printer. Scrolling moves you to the next step;
-// each step prints its own few lines onto the receipt, one after another, highlights them, and the copy on the left
-// says in plain words what they mean and names them. A step bar shows where you are and lets you jump. The mascot
+// each step prints its own section of the receipt, one line after another, and highlights it. On the left, the copy
+// explains every line of that section in plain words, and a guide line runs from the notes to the receipt (from one
+// note to its own line when you point at it). A step bar shows where you are and lets you jump. The mascot
 // holds one photographed pose per step and nods along while it prints. On phones, and for anyone who asks for
 // reduced motion, the whole receipt is printed and the steps read as a list.
 
@@ -18,7 +19,7 @@ type Row =
 
 /** Each stage is one beat of the story: a numbered section of the receipt and the sentence that explains it. The
  *  section heading on the paper matches the step's name in the step bar ("1 · Pay"). */
-const STAGES: { rows: Row[]; short?: string; title?: string; body?: string }[] = [
+const STAGES: { rows: Row[]; short?: string; title?: string; body?: string; notes?: [string, string][] }[] = [
   {
     rows: [
       { kind: 'logo' },
@@ -33,7 +34,12 @@ const STAGES: { rows: Row[]; short?: string; title?: string; body?: string }[] =
   {
     short: 'Pay',
     title: 'Top up a few dollars.',
-    body: 'Pay with stablecoins such as USDG, with Bitcoin or with Lightning. No card, no bank, no name. Unused stablecoin credit can go back to the wallet it came from.',
+    body: 'No card, no bank, no name. Add credit with crypto and spend it a message at a time.',
+    notes: [
+      ['Paid with', 'Stablecoins like USDG, on Base, Arbitrum, Robinhood Chain, Solana or Tron.'],
+      ['Also accepted', 'Bitcoin and Lightning. Or the Anonymo coin, as credit you can spend but not withdraw.'],
+      ['Leftover USDG', 'Unused stablecoin credit can go back to the wallet it came from.'],
+    ],
     rows: [
       { kind: 'section', text: '1 · Pay' },
       { kind: 'pair', label: 'Paid with', value: 'USDG' },
@@ -44,17 +50,28 @@ const STAGES: { rows: Row[]; short?: string; title?: string; body?: string }[] =
   {
     short: 'Privacy',
     title: 'Say what’s on your mind.',
-    body: 'Your messages and the replies are never stored. We keep the receipt, not the conversation.',
+    body: 'Nothing you type is kept. The receipt records what happened, never what was said.',
+    notes: [
+      ['Your message', 'Sent to the model, then gone. We don’t store it.'],
+      ['The reply', 'Streamed back to you, and not stored either.'],
+      ['We keep', 'Only this receipt: which model answered, what it cost, and a fingerprint of the exchange.'],
+    ],
     rows: [
       { kind: 'section', text: '2 · Privacy' },
       { kind: 'pair', label: 'Your message', value: 'not stored' },
       { kind: 'pair', label: 'The reply', value: 'not stored' },
+      { kind: 'pair', label: 'We keep', value: 'this receipt' },
     ],
   },
   {
     short: 'Refusals',
     title: 'If one model says no, we ask another.',
-    body: 'When a model refuses a legal request, Anonymo quietly tries a different one. You only pay for the answer.',
+    body: 'Some models refuse ordinary adult requests. Anonymo notices, and quietly tries again somewhere else.',
+    notes: [
+      ['Model A', 'Refused a legal request. That attempt is refunded automatically.'],
+      ['Model B', 'A model from a different family answers instead.'],
+      ['You paid for', 'Only the answer you got. Never the refusal.'],
+    ],
     rows: [
       { kind: 'section', text: '3 · Refusals' },
       { kind: 'pair', label: 'Model A', value: 'said no', stamp: 'REFUNDED' },
@@ -65,7 +82,13 @@ const STAGES: { rows: Row[]; short?: string; title?: string; body?: string }[] =
   {
     short: 'Models',
     title: 'Four ways to ask.',
-    body: 'Everyday answers. Long roleplay with your own characters. A council of AIs that check each other. And a sealed option that runs on locked hardware and proves it.',
+    body: 'Pick one by name, in the chat or in any app.',
+    notes: [
+      ['anonymo-1', 'The everyday choice. The best low-refusal model for each request.'],
+      ['anonymo-rp', 'Long stories and roleplay, with character cards and lorebooks.'],
+      ['anonymo-council', 'Two or three AIs answer and check each other, then merge one reply. Slower, costs more.'],
+      ['anonymo-sealed', 'Runs only on locked, verified hardware, and proves it on the receipt.'],
+    ],
     rows: [
       { kind: 'section', text: '4 · Models' },
       { kind: 'pair', label: 'anonymo-1', value: 'everyday chat' },
@@ -77,7 +100,11 @@ const STAGES: { rows: Row[]; short?: string; title?: string; body?: string }[] =
   {
     short: 'Apps',
     title: 'Bring the apps you already use.',
-    body: 'Paste your key into SillyTavern, JanitorAI, Open WebUI or any app that works with OpenAI. Your character cards come with you.',
+    body: 'Anonymo speaks the same language as OpenAI, so most chat apps just work.',
+    notes: [
+      ['SillyTavern, JanitorAI, Open WebUI', 'Paste the Anonymo address and your key into the app’s API settings. Ready-made settings are on the Presets page.'],
+      ['Character cards', 'Import the character cards you already have.'],
+    ],
     rows: [
       { kind: 'section', text: '5 · Apps' },
       { kind: 'pair', label: 'SillyTavern', value: 'works' },
@@ -89,7 +116,11 @@ const STAGES: { rows: Row[]; short?: string; title?: string; body?: string }[] =
   {
     short: 'Proof',
     title: 'Proof, not promises.',
-    body: 'Every receipt is signed. Each hour, the receipts are rolled into one fingerprint and posted on-chain, so anyone can check them.',
+    body: 'You don’t have to take our word for any of this.',
+    notes: [
+      ['Signature', 'Every receipt is signed, so it can’t be changed after the fact.'],
+      ['Checked on-chain', 'Each hour, all receipts are rolled into one fingerprint and posted on-chain. Anyone can check theirs is in it.'],
+    ],
     rows: [
       { kind: 'section', text: '6 · Proof' },
       { kind: 'pair', label: 'Signature', value: '7e4b9c2a…' },
@@ -138,6 +169,8 @@ export function ReceiptStory() {
   const live = useSyncExternalStore(subscribeLive, isLive, () => false);
   const [stage, setStage] = useState(0);
   const [shown, setShown] = useState(FIRST);
+  const [hot, setHot] = useState<string | null>(null);
+  const wire = useRef<SVGSVGElement>(null);
 
   // Which step the scroll is on.
   useEffect(() => {
@@ -186,6 +219,67 @@ export function ReceiptStory() {
     const bottom = shown >= ROWS.length ? pap.offsetHeight + 8 : last ? last.offsetTop + last.offsetHeight + 36 : 0;
     pap.style.transform = `translateY(${-Math.max(0, bottom - win.clientHeight)}px)`;
   }, [live, shown]);
+
+  // Pointing at a note marks its line on the receipt and moves the guide line to it.
+  useEffect(() => {
+    const el = section.current;
+    if (!live || !el) return;
+    const over = (e: PointerEvent) => {
+      const note = (e.target as Element | null)?.closest<HTMLElement>('.story-beat[data-on="true"] [data-note]');
+      setHot(note?.dataset.note ?? null);
+    };
+    const leave = () => setHot(null);
+    el.addEventListener('pointerover', over);
+    el.addEventListener('pointerleave', leave);
+    return () => {
+      el.removeEventListener('pointerover', over);
+      el.removeEventListener('pointerleave', leave);
+    };
+  }, [live]);
+
+  // The guide line: from the note you are reading (or the step's notes) to its lines on the receipt. Drawn once the
+  // paper has settled, and redrawn on resize.
+  useEffect(() => {
+    const svg = wire.current;
+    const stageEl = section.current?.querySelector<HTMLElement>('.story-stage');
+    if (!svg || !stageEl) return;
+    const hide = () => svg.setAttribute('data-on', 'false');
+    if (!live || stage === 0 || shown < target) {
+      hide();
+      return;
+    }
+    const draw = () => {
+      const box = stageEl.getBoundingClientRect();
+      const beat = stageEl.querySelector<HTMLElement>('.story-beat[data-on="true"]');
+      const hotRows = [...stageEl.querySelectorAll<HTMLElement>('.rx-hot')];
+      const note = hot && hotRows.length ? beat?.querySelector<HTMLElement>(`[data-note="${CSS.escape(hot)}"]`) : null;
+      const from = note ?? beat?.querySelector<HTMLElement>('.story-notes');
+      const to = note ? hotRows : [...stageEl.querySelectorAll<HTMLElement>('.rx-now')];
+      const win = windowRef.current?.getBoundingClientRect();
+      if (!from || !to.length || !win) return hide();
+      const a = from.getBoundingClientRect();
+      const top = Math.max(win.top, to[0].getBoundingClientRect().top);
+      const bottom = Math.min(win.bottom, to[to.length - 1].getBoundingClientRect().bottom);
+      const ax = a.right + 14 - box.left;
+      const ay = (note ? a.top + 22 : a.top + a.height / 2) - box.top;
+      const bx = win.left - 4 - box.left;
+      const by = (top + bottom) / 2 - box.top;
+      const mid = (ax + bx) / 2;
+      svg.querySelector('path')?.setAttribute('d', `M${ax} ${ay}C${mid} ${ay} ${mid} ${by} ${bx} ${by}`);
+      const [c1, c2] = svg.querySelectorAll('circle');
+      c1?.setAttribute('cx', `${ax}`);
+      c1?.setAttribute('cy', `${ay}`);
+      c2?.setAttribute('cx', `${bx}`);
+      c2?.setAttribute('cy', `${by}`);
+      svg.setAttribute('data-on', 'true');
+    };
+    const timer = window.setTimeout(draw, 560);
+    window.addEventListener('resize', draw);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('resize', draw);
+    };
+  }, [live, stage, shown, target, hot]);
 
   const printing = live && shown < target;
   // While a step prints, the mascot nods along to its headphones, one tilt per line.
@@ -240,8 +334,16 @@ export function ReceiptStory() {
               <h2>{s.title}</h2>
               <p>{s.body}</p>
               <p className="story-printed">
-                <span aria-hidden="true">→</span> On the receipt under “{i + 1} · {s.short}”
+                Line by line: “{i + 1} · {s.short}” on the receipt <span aria-hidden="true">→</span>
               </p>
+              <dl className="story-notes">
+                {s.notes?.map(([label, text]) => (
+                  <div key={label} data-note={label} data-hot={hot === label}>
+                    <dt>{label}</dt>
+                    <dd>{text}</dd>
+                  </div>
+                ))}
+              </dl>
               {i === STEPS - 1 && (
                 <div className="story-actions">
                   <Link className="btn btn-primary btn-lg btn-square" href="/dashboard/key">
@@ -265,6 +367,12 @@ export function ReceiptStory() {
             ))}
           </ol>
         </div>
+
+        <svg ref={wire} className="story-wire" aria-hidden="true" data-on="false">
+          <path d="" />
+          <circle r="4" />
+          <circle r="4" />
+        </svg>
 
         <div className="printer" aria-hidden="true">
           <div className="printer-mascot">
@@ -291,6 +399,7 @@ export function ReceiptStory() {
                   row={row}
                   on={i < shown}
                   state={rowStage === stage && stage > 0 ? 'now' : rowStage < stage ? 'old' : undefined}
+                  hot={!!hot && row.kind === 'pair' && rowStage === stage && hot.split(', ').includes(row.label)}
                 />
               ))}
             </div>
@@ -307,8 +416,8 @@ export function ReceiptStory() {
   );
 }
 
-function ReceiptRow({ row, on, state }: { row: Row; on: boolean; state?: 'now' | 'old' }) {
-  const cls = `rx-row rx-${row.kind}${on ? ' on' : ''}${state ? ` rx-${state}` : ''}`;
+function ReceiptRow({ row, on, state, hot }: { row: Row; on: boolean; state?: 'now' | 'old'; hot?: boolean }) {
+  const cls = `rx-row rx-${row.kind}${on ? ' on' : ''}${state ? ` rx-${state}` : ''}${hot ? ' rx-hot' : ''}`;
   if (row.kind === 'logo')
     return (
       <div className={cls}>
