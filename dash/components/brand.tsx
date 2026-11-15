@@ -8,7 +8,7 @@ export function MaskGlyph({ size = 40 }: { size?: number }) {
       <path
         d="M4 12C4 5.5 11 3.5 24 6.5 37 3.5 44 5.5 44 12s-7 8.5-20 5.5C11 20.5 4 18.5 4 12Z"
         fill="#3b1240"
-        stroke="var(--signal)"
+        stroke="var(--pink)"
         strokeWidth="2"
         strokeLinejoin="round"
       />
