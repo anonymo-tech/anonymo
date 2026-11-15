@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import '@fontsource-variable/figtree/index.css';
+import '@fontsource-variable/newsreader/opsz.css';
 import '@fontsource/ibm-plex-mono/400.css';
 import '@fontsource/ibm-plex-mono/500.css';
 import './globals.css';
@@ -8,7 +9,7 @@ import { AnonymoProvider } from '@/components/anonymo-provider';
 import { RevealOnScroll } from '@/components/reveal';
 
 export const metadata: Metadata = {
-  title: 'Anonymo — Ask anything. Get an answer. One key.',
+  title: 'Anonymo — Ask anything. Keep the receipt.',
   description:
     'One OpenAI-compatible key for uncensored and low-refusal models. No refusals for legal adult use, refused attempts refunded, a signed receipt on every call. Adults only.',
   icons: { icon: '/favicon.svg' },
