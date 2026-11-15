@@ -201,8 +201,7 @@ img { max-width: 100%; }
   padding: 26px 22px calc(30px + var(--z));
   color: #4a2c4d;
   font: 500 13px/1 var(--mono);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
   text-shadow: 0 0 0.5px #4a2c4d99;
   background:
     linear-gradient(90deg, #00000012, transparent 8%, transparent 92%, #00000012),
@@ -212,12 +211,16 @@ img { max-width: 100%; }
     conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% 100% / calc(2 * var(--z)) var(--z) repeat-x,
     linear-gradient(#000 0 0) top / 100% calc(100% - var(--z) + 1px) no-repeat;
 }
-.rx-row { position: relative; padding: 7px 0; }
+.rx-row { position: relative; padding: 6px 0; }
+.rx-section { margin-top: 14px; padding: 12px 0 4px; border-top: 1.5px dashed #4a2c4d55; font-size: 11.5px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: #8b5f7f; }
 .rx-pair { display: flex; align-items: baseline; gap: 8px; }
 .rx-pair > span { white-space: nowrap; }
-.rx-pair i { flex: 1; min-width: 12px; height: 0.8em; background: radial-gradient(circle, currentColor 0.9px, transparent 1.3px) 0 100% / 7px 4px repeat-x; opacity: 0.75; }
+.rx-pair > span:first-child { color: #6d4c6b; }
+.rx-pair > span:nth-child(3) { font-weight: 600; }
+.rx-pair i { flex: 1; min-width: 12px; height: 0.8em; background: radial-gradient(circle, currentColor 0.8px, transparent 1.2px) 0 100% / 6px 4px repeat-x; opacity: 0.35; }
 .rx-center { text-align: center; }
 .rx-big { padding-top: 4px; font-size: 18px; letter-spacing: 0.32em; }
+.rx-center:not(.rx-big) { color: #7a5a77; }
 .rx-rule { height: 18px; background: radial-gradient(circle, currentColor 0.9px, transparent 1.3px) 0 50% / 7px 4px repeat-x; opacity: 0.6; }
 .rx-logo { display: flex; justify-content: center; padding-top: 0; }
 .rx-amber > span:last-child { color: #a8640f; }
@@ -279,7 +282,7 @@ img { max-width: 100%; }
   /* the lines this step printed are marked; earlier ones step back */
   .rx-now { background: #f6b84b33; box-shadow: -22px 0 0 #f6b84b33, 22px 0 0 #f6b84b33; }
   .rx-now::before { content: ''; position: absolute; top: 0; bottom: 0; left: -22px; width: 4px; background: #d4851a; }
-  .rx-old { opacity: 0.45; }
+  .rx-old { opacity: 0.55; }
   @keyframes nudge { 50% { transform: translateY(5px); } }
   @keyframes print { from { clip-path: inset(-40px 100% -40px 0); } to { clip-path: inset(-40px -40px -40px 0); } }
   @keyframes stamp { from { opacity: 0; transform: rotate(-4deg) scale(1.9); } to { opacity: 0.86; transform: rotate(-9deg) scale(1); } }
