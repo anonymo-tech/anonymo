@@ -46,7 +46,7 @@ describe("policy", () => {
     expect(system.content).not.toContain("S5");
     expect(system.content).toContain("explicit sexual content between adults");
     expect(system.content.match(/"violation": 0/g)!.length).toBeGreaterThanOrEqual(2); // format at the top and again at the end
-    expect(system.content.length).toBeLessThan(4000); // about 700 tokens: the guide's optimum is 400-600 per policy
+    expect(system.content.length).toBeLessThan(4000); // about 950 tokens for four policies (the guide: 400-600 per policy)
   });
 
   test("parses well-formed gpt-oss-safeguard verdicts", () => {

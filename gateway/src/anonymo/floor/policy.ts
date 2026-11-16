@@ -116,8 +116,8 @@ export function llamaGuardChatMessages(text: string) {
 
 /** gpt-oss-safeguard (bring-your-own-policy reasoning classifier) takes the policy as the system message, laid out as
  *  its user guide recommends: instructions, definitions, what violates, what is safe, boundary examples, with the
- *  output format stated at the top and again at the end. About 700 tokens; the guide's sweet spot is 400-600 per
- *  policy, and this one holds four. "Reasoning: low" keeps the hidden reasoning short. */
+ *  output format stated at the top and again at the end. About 950 tokens for four categories (about 240 each; the
+ *  guide's sweet spot is 400-600 per policy). "Reasoning: low" keeps the hidden reasoning short. */
 export function safeguardMessages(text: string) {
   const system = [
     "# Anonymo floor policy",
