@@ -36,10 +36,10 @@ export function PublicHeader() {
             {item.label}
           </Link>
         ))}
-        <Link href="/dashboard" className="btn btn-outline btn-small btn-square">
-          Open app
-        </Link>
       </nav>
+      <Link href="/dashboard" className="btn btn-outline btn-small btn-square public-head-cta">
+        Open app
+      </Link>
     </header>
   );
 }

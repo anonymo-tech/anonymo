@@ -98,16 +98,18 @@ export function WorkspaceShell({
       <div className="ws-body">
         <header className="ws-top">
           <div className="crumbs">
-            <Link href="/dashboard" style={{ textDecoration: 'none' }}>
+            <Link href="/dashboard" className="crumbs-root">
               Workspace
             </Link>
-            <span aria-hidden="true">/</span>
+            <span className="crumbs-root" aria-hidden="true">
+              /
+            </span>
             <strong>{section}</strong>
           </div>
           <div className="ws-top-right">
             <AdultsOnly compact />
             <Purse />
-            <Link className="btn btn-ghost btn-small" href="/docs">
+            <Link className="btn btn-ghost btn-small ws-top-docs" href="/docs">
               <BookOpen size={16} aria-hidden="true" />
               <span className="btn-label">Documentation</span>
             </Link>
