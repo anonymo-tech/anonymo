@@ -166,11 +166,39 @@ export function ReceiptStory() {
   const section = useRef<HTMLElement>(null);
   const paper = useRef<HTMLDivElement>(null);
   const windowRef = useRef<HTMLDivElement>(null);
+  const printer = useRef<HTMLDivElement>(null);
   const live = useSyncExternalStore(subscribeLive, isLive, () => false);
   const [stage, setStage] = useState(0);
   const [shown, setShown] = useState(FIRST);
   const [hot, setHot] = useState<string | null>(null);
   const wire = useRef<SVGSVGElement>(null);
+
+  // The receipt feeds out of the slot on first view (CSS). When the slot starts below the fold (phones), hold the paper
+  // inside it until the slot scrolls into view, so the feed is seen rather than played off-screen.
+  useEffect(() => {
+    const el = printer.current;
+    const slot = el?.querySelector('.printer-slot');
+    if (!el || !slot || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    // The observer's first report says where the slot is now: in view, the CSS feed is already playing; out of view,
+    // the paper goes back into the slot (off-screen, so nothing visibly jumps) until the slot is scrolled to.
+    let first = true;
+    const io = new IntersectionObserver(
+      ([e]) => {
+        if (first) {
+          first = false;
+          if (e.isIntersecting) return io.disconnect();
+          el.dataset.feed = 'wait';
+          return;
+        }
+        if (!e.isIntersecting) return;
+        el.dataset.feed = 'go';
+        io.disconnect();
+      },
+      { rootMargin: '0px 0px -12% 0px' },
+    );
+    io.observe(slot);
+    return () => io.disconnect();
+  }, []);
 
   // Which step the scroll is on.
   useEffect(() => {
@@ -374,7 +402,7 @@ export function ReceiptStory() {
           <circle r="4" />
         </svg>
 
-        <div className="printer" aria-hidden="true">
+        <div className="printer" ref={printer} aria-hidden="true">
           <div className="printer-mascot">
             {[1, 2, 3, 5, 6].map((n) => (
               // eslint-disable-next-line @next/next/no-img-element
