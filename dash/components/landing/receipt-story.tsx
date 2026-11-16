@@ -1,14 +1,15 @@
 'use client';
 
 // The landing story, told in six steps. The mascot leans over a receipt printer. Scrolling moves you to the next step;
-// each step prints its own section of the receipt, one line after another, and highlights it. On the left, the copy
+// each step prints its own section of the receipt, one line after another, and highlights it; the paper is pushed
+// down out of the slot, so the newest section sits under it and older ones run off the bottom. On the left, the copy
 // explains every line of that section in plain words, and a guide line runs from the notes to the receipt (from one
 // note to its own line when you point at it). A step bar shows where you are and lets you jump. The mascot
 // holds one photographed pose per step and nods along while it prints. On phones, and for anyone who asks for
 // reduced motion, the whole receipt is printed and the steps read as a list.
 
 import Link from 'next/link';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 type Row =
   | { kind: 'pair'; label: string; value: string; stamp?: string; tone?: 'amber' }
@@ -233,19 +234,24 @@ export function ReceiptStory() {
     return () => window.clearTimeout(timer);
   }, [live, shown, target]);
 
-  // Feed the paper up behind the slot so the newest line is always in view (and the torn edge once it is finished).
-  useEffect(() => {
-    const win = windowRef.current;
+  // New lines push the paper down out of the slot, as a printer feeds it: the newest step sits right under the slot and
+  // older steps move down and run off the bottom. The layout jumps at once, so each feed is played back from where the
+  // paper was (the paper rides down while the step being printed holds still). Animations add up, so a line that
+  // prints before the last feed has finished carries on smoothly.
+  const fed = useRef({ shown: 0, height: 0 });
+  useLayoutEffect(() => {
     const pap = paper.current;
-    if (!win || !pap) return;
-    if (!live) {
-      pap.style.transform = '';
-      return;
-    }
-    const rows = pap.querySelectorAll<HTMLElement>('.rx-row');
-    const last = rows[Math.max(0, shown - 1)];
-    const bottom = shown >= ROWS.length ? pap.offsetHeight + 8 : last ? last.offsetTop + last.offsetHeight + 36 : 0;
-    pap.style.transform = `translateY(${-Math.max(0, bottom - win.clientHeight)}px)`;
+    if (!pap) return;
+    const height = pap.offsetHeight;
+    const before = fed.current;
+    fed.current = { shown, height };
+    const delta = height - before.height;
+    if (!live || shown <= before.shown || !before.height || delta <= 0) return;
+    const block = pap.querySelectorAll('.rx-row')[shown - 1]?.closest('.rx-block');
+    if (!block) return;
+    const timing = { duration: 460, easing: 'cubic-bezier(0.3, 0.7, 0.3, 1)', composite: 'add' as const };
+    pap.animate([{ transform: `translateY(${-delta}px)` }, { transform: 'translateY(0)' }], timing);
+    block.animate([{ transform: `translateY(${delta}px)` }, { transform: 'translateY(0)' }], timing);
   }, [live, shown]);
 
   // Pointing at a note marks its line on the receipt and moves the guide line to it.
@@ -421,14 +427,23 @@ export function ReceiptStory() {
           <div className="printer-slot" />
           <div className="paper-window" ref={windowRef}>
             <div className="paper" ref={paper}>
-              {ROWS.map(({ row, stage: rowStage }, i) => (
-                <ReceiptRow
-                  key={i}
-                  row={row}
-                  on={i < shown}
-                  state={rowStage === stage && stage > 0 ? 'now' : rowStage < stage ? 'old' : undefined}
-                  hot={!!hot && row.kind === 'pair' && rowStage === stage && hot.split(', ').includes(row.label)}
-                />
+              {/* One block per step. On the live story the blocks stack newest first (globals.css), so each step comes
+                  out of the slot above the ones before it; elsewhere the receipt reads top to bottom. */}
+              {STAGES.map((s, si) => (
+                <div className="rx-block" key={si}>
+                  {s.rows.map((row, j) => {
+                    const i = STAGE_END[si] - s.rows.length + j;
+                    return (
+                      <ReceiptRow
+                        key={i}
+                        row={row}
+                        on={i < shown}
+                        state={si === stage && stage > 0 ? 'now' : si < stage ? 'old' : undefined}
+                        hot={!!hot && row.kind === 'pair' && si === stage && hot.split(', ').includes(row.label)}
+                      />
+                    );
+                  })}
+                </div>
               ))}
             </div>
           </div>

@@ -286,9 +286,13 @@ img { max-width: 100%; }
   .story-steps [data-state='now'] button { color: var(--text); border-color: var(--signal); }
   .story-steps [data-state='now'] button span { border-color: transparent; background: var(--signal); color: var(--signal-ink); }
   .printer { position: relative; top: 0; height: 100%; padding-top: clamp(12px, 3svh, 32px); grid-template-rows: auto auto minmax(0, 1fr); }
-  .paper-window { overflow: hidden; height: 100%; padding-bottom: 28px; margin-bottom: 0; }
-  /* the paper slides up smoothly as each new line prints */
-  .paper { transition: transform 520ms cubic-bezier(0.3, 0.7, 0.3, 1); }
+  /* older steps run off the bottom of the stage, fading out rather than cut */
+  .paper-window { overflow: hidden; height: 100%; padding-bottom: 28px; margin-bottom: 0; mask: linear-gradient(#000 calc(100% - 96px), transparent calc(100% - 6px)); }
+  /* the paper is pushed down out of the slot: the newest step's block sits on top, each closed by a tear line below it */
+  .paper { display: flex; flex-direction: column-reverse; }
+  .rx-block:not(:has(.rx-row.on)) { display: none; }
+  .rx-block:not(:first-child) { margin-bottom: 12px; padding-bottom: 14px; border-bottom: 1.5px dashed #4a2c4d55; }
+  .rx-section { margin-top: 0; padding-top: 0; border-top: 0; }
   .rx-row { transition: opacity 400ms ease, background-color 400ms ease, box-shadow 400ms ease; }
   .rx-row:not(.on) { display: none; }
   .rx-row.on { animation: print 380ms linear both; }
