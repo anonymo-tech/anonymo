@@ -115,7 +115,7 @@ const routeSchema = z.strictObject({
   /** Quality rank 0-100 (from the leaderboard). */
   quality: z.number().min(0).max(100),
   serves: z.array(z.enum(ANONYMO_MODEL_IDS)).default([]),
-  /** A model ID of its own (for example glm-5.2-abliterated). Never for a Venice route. */
+  /** A model ID of its own (for example glm-5.3-flash-uncensored). Never for a Venice route. */
   direct_id: z.string().regex(/^[a-z0-9][a-z0-9._-]{1,80}$/).optional(),
   hf_repo: z.string().optional(),
   features: z.array(z.string()).default([]),

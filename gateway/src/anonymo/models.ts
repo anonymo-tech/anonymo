@@ -10,7 +10,7 @@
 //   anonymo-council  the proposer pool WS09's council draws three families from (this file only registers the set)
 //   anonymo-sealed   attested routes only; WS09 fails closed with 409 sealed_unavailable when none is fresh
 //
-// Direct model IDs (for example `glm-5.2-abliterated`) exist only for routes on our own or non-Venice upstreams. Venice
+// Direct model IDs (for example `glm-5.3-flash-uncensored`) exist only for routes on our own or non-Venice upstreams. Venice
 // models are never relabelled one-for-one under our key: the config loader refuses a Venice direct ID, and refuses an
 // Anonymo model ID that only Venice routes would serve.
 

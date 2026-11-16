@@ -141,10 +141,15 @@ routes:
   - { id: selfhost-qwen-27b, upstream: selfhost-qwen-27b, model: qwen3.8-27b-abliterated, family: qwen, quant: fp8, ctx: 131072, price: { in: 0.10, out: 0.30 }, quality: 78, serves: [anonymo-1, anonymo-rp, anonymo-council], direct_id: qwen3.8-27b-abliterated }
 
   # T2 attested (anonymo-sealed) and overflow.
+  # Chutes, NanoGPT and Featherless ids and prices checked against their public /models lists on 2026-11-16 (no live key).
   - { id: phala-deepseek, upstream: phala, model: deepseek/deepseek-v4.1-flash, family: deepseek, quant: fp8, ctx: 131072, price: { in: 0.40, out: 1.40 }, quality: 80, serves: [anonymo-sealed] }
   - { id: phala-qwen, upstream: phala, model: qwen/qwen3.8-27b, family: qwen, quant: fp8, ctx: 131072, price: { in: 0.20, out: 0.60 }, quality: 74, serves: [anonymo-sealed] }
-  - { id: chutes-glm-abliterated, upstream: chutes, model: glm-5.2-abliterated, family: glm, quant: fp8, ctx: 131072, price: { in: 0.30, out: 1.20 }, quality: 83, serves: [anonymo-1, anonymo-sealed, anonymo-council], direct_id: glm-5.2-abliterated }
-  - { id: nanogpt-kimi, upstream: nanogpt, model: kimi-k2.7-code-abliterated, family: kimi, quant: fp8, ctx: 131072, price: { in: 0.50, out: 2.00 }, quality: 81, serves: [anonymo-council], direct_id: kimi-k2.7-code-abliterated }
+  # Chutes lists no uncensored models, only stock ones. Stock GLM-5.2 in its TEE (confidential_compute: true) serves the
+  # sealed lane only, like the Phala routes; it stays out of anonymo-1 and the council, where it would refuse adult content.
+  - { id: chutes-glm, upstream: chutes, model: zai-org/GLM-5.2-TEE, family: glm, quant: fp4, ctx: 131072, price: { in: 1.25, out: 3.95 }, quality: 83, serves: [anonymo-sealed] }
+  # The uncensored GLM moved here from Chutes. NanoGPT lists no uncensored Kimi under $4/$15, so the Kimi route is gone.
+  # NanoGPT does not publish quantization; fp8 is a placeholder.
+  - { id: nanogpt-glm-uncensored, upstream: nanogpt, model: z-ai/glm-5.3-flash-uncensored, family: glm, quant: fp8, ctx: 131072, price: { in: 0.20, out: 0.80 }, quality: 80, serves: [anonymo-1, anonymo-council], direct_id: glm-5.3-flash-uncensored }
 
-  # T3 coverage.
-  - { id: featherless-mistral, upstream: featherless, model: cognitivecomputations/Dolphin-Mistral-24B-Venice-Edition, family: mistral, quant: fp8, ctx: 32768, price: { in: 0.10, out: 0.10 }, quality: 70, serves: [anonymo-1] }
+  # T3 coverage. Featherless's listed pay-per-token price; a flat plan makes the real cost lower.
+  - { id: featherless-mistral, upstream: featherless, model: dphn/Dolphin-Mistral-24B-Venice-Edition, family: mistral, quant: fp8, ctx: 32768, price: { in: 0.70, out: 1.16 }, quality: 70, serves: [anonymo-1] }
