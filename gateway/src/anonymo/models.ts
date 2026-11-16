@@ -36,7 +36,7 @@ export const ANONYMO_MODEL_INFO: Readonly<Record<AnonymoModelId, { name: string;
 
 export const TIERS = [0, 1, 2, 3] as const;
 export type Tier = (typeof TIERS)[number];
-export const UPSTREAM_KINDS = ["venice", "selfhost", "phala", "chutes", "nanogpt", "featherless"] as const;
+export const UPSTREAM_KINDS = ["venice", "selfhost", "phala", "chutes", "nanogpt", "featherless", "ppq"] as const;
 export type UpstreamKind = (typeof UPSTREAM_KINDS)[number];
 
 /** Which tiers each upstream kind may sit in (Backend §4 table). */
@@ -47,6 +47,7 @@ export const KIND_TIERS: Readonly<Record<UpstreamKind, readonly Tier[]>> = Objec
   chutes: [2],
   nanogpt: [2],
   featherless: [3],
+  ppq: [2],
 });
 
 type RouteFields = Pick<Candidate, "modelId" | "providerId" | "providerModelId" | "family" | "tier" | "upstream">;

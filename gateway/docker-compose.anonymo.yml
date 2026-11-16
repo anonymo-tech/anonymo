@@ -96,7 +96,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?Inject a nondefault PostgreSQL URL}
       APP_SECRET: ${APP_SECRET:?Inject the application encryption secret}
       ANONYMO_FLOOR_REQUIRED: "1"
-    env_file: ["${UPSTREAM_SECRETS_FILE:?Provide a file containing only upstream key variables (VENICE_API_KEY, ...)}"]
+    env_file: ["${UPSTREAM_SECRETS_FILE:?Provide a file containing only upstream key variables (PPQ_API_KEY, PPQ_CREDIT_ID, ...)}"]
     command: ["bun", "scripts/seed-upstreams.ts", "config/upstreams.yaml"]
     networks: [storage]
     depends_on:

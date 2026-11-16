@@ -12,7 +12,8 @@ export type BalanceEndpoint = {
   /** Absolute URL, or a path resolved against the origin of the upstream's base URL. */
   url: string;
   method: "GET" | "POST";
-  auth: "bearer" | "x-api-key" | "none";
+  /** credit_id: POST a JSON body {"credit_id": key} (PayPerQ reads the balance by account id, not by API key). */
+  auth: "bearer" | "x-api-key" | "credit_id" | "none";
   /** Dotted path to the USD balance in the JSON reply. */
   path: string;
 };
@@ -39,6 +40,9 @@ export const ADAPTERS: Readonly<Record<UpstreamKind, UpstreamAdapter>> = Object.
   phala: { balance: null },
   selfhost: { balance: null },
   featherless: { balance: null },
+  // PayPerQ: POST /credits/balance with the account's credit id in the body (its docs do not show the reply, so the
+  // path is unverified). The credit id is an account-level credential: give it through balance.key_env.
+  ppq: { balance: { url: "/credits/balance", method: "POST", auth: "credit_id", path: "balance" } },
 });
 
 export const adapterFor = (kind: string | null | undefined): UpstreamAdapter | null => (kind && kind in ADAPTERS ? ADAPTERS[kind as UpstreamKind] : null);

@@ -46,6 +46,16 @@ export function balanceEndpointFor(u: Pick<UpstreamRuntime, "kind" | "balance">,
   };
 }
 
+/** Method, headers and body of a balance request: where the credential goes depends on the endpoint's auth. */
+export function balanceRequestInit(endpoint: Pick<BalanceEndpoint, "method" | "auth">, key: string | null): RequestInit {
+  const headers: Record<string, string> = { accept: "application/json" };
+  if (key && endpoint.auth === "bearer") headers.authorization = `Bearer ${key}`;
+  if (key && endpoint.auth === "x-api-key") headers["x-api-key"] = key;
+  if (endpoint.method !== "POST") return { method: endpoint.method, headers };
+  headers["content-type"] = "application/json";
+  return { method: "POST", headers, body: key && endpoint.auth === "credit_id" ? JSON.stringify({ credit_id: key }) : "{}" };
+}
+
 export type BalanceFetch = (url: string, init: RequestInit) => Promise<Response>;
 
 /** Read and record every prepaid upstream's balance, drain or restore its routes, and refresh the catalogue. */
@@ -72,13 +82,9 @@ export async function runBalanceAlarms(ctx: Ctx, opts: { fetch?: BalanceFetch; n
     const keyEnc = u.balance.keyEnc ?? sample?.provider.apiKeyEnc ?? null;
     if (endpoint && (keyEnc || endpoint.auth === "none")) {
       const key = keyEnc ? decrypt(ctx.cfg.appSecret, keyEnc) : null;
-      const headers: Record<string, string> = { accept: "application/json" };
-      if (key && endpoint.auth === "bearer") headers.authorization = `Bearer ${key}`;
-      if (key && endpoint.auth === "x-api-key") headers["x-api-key"] = key;
-      if (endpoint.method === "POST") headers["content-type"] = "application/json";
       let usd: number | null = null;
       try {
-        const res = await doFetch(endpoint.url, { method: endpoint.method, headers, ...(endpoint.method === "POST" ? { body: "{}" } : {}), signal: AbortSignal.timeout(10_000) });
+        const res = await doFetch(endpoint.url, { ...balanceRequestInit(endpoint, key), signal: AbortSignal.timeout(10_000) });
         if (res.ok) usd = readUsd(await res.json(), endpoint.path);
         else await res.body?.cancel().catch(() => undefined);
       } catch {

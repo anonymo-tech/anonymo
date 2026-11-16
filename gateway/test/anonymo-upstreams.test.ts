@@ -82,11 +82,15 @@ describe("model IDs and the route record", () => {
     expect(rows.map((r) => [r.modelId, r.status, r.family, r.tier]).sort()).toEqual([["anonymo-1", "live", "mistral", 0], ["anonymo-council", "live", "mistral", 0]]);
   });
 
-  test("the production config file parses and keeps the product rules", () => {
+  test("the production config and the multi-provider layout parse and keep the product rules", () => {
     const doc = parseUpstreamsYaml(readFileSync(new URL("../config/upstreams.yaml", import.meta.url), "utf8"));
-    expect(doc.upstreams.map((u) => u.tier).sort()).toEqual([0, 1, 1, 1, 1, 2, 2, 2, 3]);
-    expect(doc.routes.filter((r) => r.upstream === "venice").every((r) => !r.direct_id)).toBe(true);
-    for (const u of doc.upstreams.filter((x) => x.prepaid)) expect(u.balance).toBeDefined();
+    expect(doc.upstreams.map((u) => u.tier)).toEqual([2]);
+    const multi = parseUpstreamsYaml(readFileSync(new URL("./fixtures/upstreams-multi.yaml", import.meta.url), "utf8"));
+    expect(multi.upstreams.map((u) => u.tier).sort()).toEqual([0, 1, 1, 1, 1, 2, 2, 2, 3]);
+    for (const d of [doc, multi]) {
+      expect(d.routes.filter((r) => r.upstream === "venice" || r.model.startsWith("venice/")).every((r) => !r.direct_id)).toBe(true);
+      for (const u of d.upstreams.filter((x) => x.prepaid)) expect(u.balance).toBeDefined();
+    }
   });
 });
 

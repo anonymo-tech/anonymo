@@ -1,6 +1,6 @@
 // WS04 · Upstream tiers from YAML (config/upstreams.yaml), written into the catalogue as Anonymo routes (Backend §4).
 //
-//   upstreams   one per upstream account: kind (venice, selfhost, phala, chutes, nanogpt, featherless), tier, base URL and
+//   upstreams   one per upstream account: kind (venice, selfhost, phala, chutes, nanogpt, featherless, ppq), tier, base URL and
 //               API key (both from env), data policy, TEE, and for prepaid accounts a wallet-balance alarm
 //   routes      one per upstream model we serve: family, quant, weights hash, context, our cost, quality rank, and the
 //               Anonymo model IDs it serves (plus an optional direct model ID, never for Venice)
@@ -76,7 +76,7 @@ const balanceSchema = z.strictObject({
   /** Override the adapter's balance endpoint (src/providers/balance.ts). https only in production. */
   url: z.string().url().optional(),
   method: z.enum(["GET", "POST"]).optional(),
-  auth: z.enum(["bearer", "x-api-key", "none"]).optional(),
+  auth: z.enum(["bearer", "x-api-key", "credit_id", "none"]).optional(),
   /** Dotted path to the USD balance in the JSON reply (for example "data.balances.USD"). */
   path: z.string().regex(/^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*$/).optional(),
   /** A separate account credential for the balance endpoint (for example a GPU marketplace key), by env var name. */
@@ -164,7 +164,8 @@ export function upstreamsDocIssues(d: Pick<UpstreamsDoc, "upstreams" | "routes">
       return;
     }
     if (r.direct_id) {
-      if (u.kind === "venice") issues.push({ path: ["routes", i, "direct_id"], message: "Venice models are never relabelled one-for-one under our key: no direct ID for a Venice route" });
+      // A reseller's venice/... model is still a Venice model.
+      if (u.kind === "venice" || r.model.startsWith("venice/")) issues.push({ path: ["routes", i, "direct_id"], message: "Venice models are never relabelled one-for-one under our key: no direct ID for a Venice route" });
       if (isAnonymoModelId(r.direct_id)) issues.push({ path: ["routes", i, "direct_id"], message: `${r.direct_id} is an Anonymo model ID` });
       if (directIds.has(r.direct_id) && enabled.filter((x) => x.direct_id === r.direct_id).some((x) => x.family !== r.family))
         issues.push({ path: ["routes", i, "direct_id"], message: `direct ID ${r.direct_id} is served by routes of different families` });

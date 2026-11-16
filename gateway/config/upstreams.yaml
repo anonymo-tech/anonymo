@@ -1,16 +1,22 @@
 # Anonymo upstream tiers and routes (Backend §4, Overview §2-§4). Seed with:
 #   bun scripts/seed-upstreams.ts config/upstreams.yaml
 # Base URLs and keys come from the environment (base_url_env / api_key_env); keys are stored encrypted with APP_SECRET.
+# In production every upstream listed here must have its key set, or seeding refuses to run.
+#
+# Launch setup: PayPerQ (PPQ) only, one account. The full multi-provider layout (Venice T0, self-hosted spares, Phala,
+# Chutes, NanoGPT, Featherless) lives in test/fixtures/upstreams-multi.yaml; copy upstreams and routes from it to add one.
 #
 # Product rules the loader enforces (src/providers/tiers.ts):
-#   - Venice models are never relabelled one-for-one: no direct_id on a Venice route, and no model ID served by Venice only
-#   - anonymo-1: every T0 family has a warm backup of the same family on another tier
-#   - anonymo-sealed: only routes on an upstream with a TEE (WS09 fails closed when none is freshly attested)
-#   - anonymo-rp: self-hosted routes only
+#   - Venice models are never relabelled one-for-one: no direct_id on a Venice route or a reseller's venice/... model
+#   - anonymo-1: every T0 family has a warm backup of the same family on another tier (no T0 route here, so no backup)
+#   - anonymo-sealed: only routes on an upstream with a TEE (none here: the lane answers 409 sealed_unavailable)
+#   - anonymo-rp: self-hosted routes only (none here: the lane is off)
 #   - every prepaid upstream has a wallet-balance alarm (warn_usd alarms, drain_usd drains its routes)
 #
-# VERIFY BEFORE GOING LIVE: upstream model ids, prices (our cost, USD per 1M tokens), context lengths, weights hashes,
-# attestation URLs and balance endpoints below are planning values. None was checked against a live account from here.
+# Checked against PPQ's public /v1/models list and docs on 2026-11-16, not yet with a live key. Unverified:
+#   - whether PPQ forwards venice_parameters (without include_venice_system_prompt: false, Venice may prepend its own
+#     system prompt), so the PPQ adapter sends none
+#   - the balance reply's shape (path "balance" is a guess)
 version: 1
 
 scoring:
@@ -27,129 +33,22 @@ canaries:
   concurrency: 8
 
 upstreams:
-  # ---- T0 · Venice (higher-tier business agreement key) --------------------------------------------------------------
-  - id: venice
-    name: Venice
-    kind: venice
-    tier: 0
-    base_url: https://api.venice.ai/api/v1
-    base_url_env: VENICE_BASE_URL
-    api_key_env: VENICE_API_KEY
-    data_policy: { training: false, retains_prompts: false, zdr: false }
-    prepaid: true
-    balance: { warn_usd: 200, drain_usd: 5 }   # GET /api/v1/api_keys/rate_limits -> data.balances.USD
-
-  # ---- T1 · self-hosted vLLM / SGLang on crypto-paid GPUs (hot spares of the T0 families) ----------------------------
-  - id: selfhost-dolphin-24b
-    name: Self-hosted Dolphin-Venice 24B
-    kind: selfhost
-    tier: 1
-    base_url: https://dolphin-24b.selfhost.invalid/v1
-    base_url_env: SELFHOST_DOLPHIN_24B_URL
-    api_key_env: SELFHOST_DOLPHIN_24B_KEY
-    data_policy: { training: false, retains_prompts: false, retention_days: 0, zdr: true }
-    prepaid: true
-    balance: { warn_usd: 50, drain_usd: 2, url: "https://console.vast.ai/api/v0/users/current/", auth: bearer, path: credit, key_env: GPU_MARKET_API_KEY }
-  - id: selfhost-deepseek-flash
-    name: Self-hosted DeepSeek V4.1 Flash abliterated
-    kind: selfhost
-    tier: 1
-    base_url: https://deepseek-flash.selfhost.invalid/v1
-    base_url_env: SELFHOST_DEEPSEEK_FLASH_URL
-    api_key_env: SELFHOST_DEEPSEEK_FLASH_KEY
-    data_policy: { training: false, retains_prompts: false, retention_days: 0, zdr: true }
-    prepaid: true
-    balance: { warn_usd: 50, drain_usd: 2, url: "https://console.vast.ai/api/v0/users/current/", auth: bearer, path: credit, key_env: GPU_MARKET_API_KEY }
-  - id: selfhost-gemma-26b
-    name: Self-hosted Gemma 4 26B uncensored
-    kind: selfhost
-    tier: 1
-    base_url: https://gemma-26b.selfhost.invalid/v1
-    base_url_env: SELFHOST_GEMMA_26B_URL
-    api_key_env: SELFHOST_GEMMA_26B_KEY
-    data_policy: { training: false, retains_prompts: false, retention_days: 0, zdr: true }
-    prepaid: true
-    balance: { warn_usd: 50, drain_usd: 2, url: "https://console.vast.ai/api/v0/users/current/", auth: bearer, path: credit, key_env: GPU_MARKET_API_KEY }
-  - id: selfhost-qwen-27b
-    name: Self-hosted Qwen3.8 27B abliterated
-    kind: selfhost
-    tier: 1
-    base_url: https://qwen-27b.selfhost.invalid/v1
-    base_url_env: SELFHOST_QWEN_27B_URL
-    api_key_env: SELFHOST_QWEN_27B_KEY
-    data_policy: { training: false, retains_prompts: false, retention_days: 0, zdr: true }
-    prepaid: true
-    balance: { warn_usd: 50, drain_usd: 2, url: "https://console.vast.ai/api/v0/users/current/", auth: bearer, path: credit, key_env: GPU_MARKET_API_KEY }
-
-  # ---- T2 · attested or cheap overflow -------------------------------------------------------------------------------
-  - id: phala
-    name: Phala confidential AI
-    kind: phala
+  # ---- T2 · PayPerQ: chat runs in PPQ's attested enclave router; the venice/... models below are badged zdr ----------
+  - id: ppq
+    name: PayPerQ
+    kind: ppq
     tier: 2
-    base_url: https://api.redpill.ai/v1
-    base_url_env: PHALA_BASE_URL
-    api_key_env: PHALA_API_KEY
+    base_url: https://api.ppq.ai/v1
+    base_url_env: PPQ_BASE_URL
+    api_key_env: PPQ_API_KEY
     data_policy: { training: false, retains_prompts: false, retention_days: 0, zdr: true }
-    tee: { kind: nvidia-cc, attestation_url: https://api.redpill.ai/v1/attestation/report }
     prepaid: true
-    balance: { warn_usd: 50, drain_usd: 2, url: "https://api.redpill.ai/v1/credits", auth: bearer, path: data.balance }
-  - id: chutes
-    name: Chutes TEE
-    kind: chutes
-    tier: 2
-    base_url: https://llm.chutes.ai/v1
-    base_url_env: CHUTES_BASE_URL
-    api_key_env: CHUTES_API_KEY
-    data_policy: { training: false, retains_prompts: false, retention_days: 0, zdr: true }
-    tee: { kind: tdx, attestation_url: https://api.chutes.ai/tee/attestation }
-    prepaid: true
-    balance: { warn_usd: 50, drain_usd: 2 }    # GET https://api.chutes.ai/users/me -> balance
-  - id: nanogpt
-    name: NanoGPT
-    kind: nanogpt
-    tier: 2
-    base_url: https://nano-gpt.com/api/v1
-    base_url_env: NANOGPT_BASE_URL
-    api_key_env: NANOGPT_API_KEY
-    # Retention is not confirmed per request: declared conservatively.
-    data_policy: { training: false, retains_prompts: true, zdr: false }
-    prepaid: true
-    balance: { warn_usd: 30, drain_usd: 1 }    # POST /api/check-balance -> usd_balance
-
-  # ---- T3 · coverage -------------------------------------------------------------------------------------------------
-  - id: featherless
-    name: Featherless
-    kind: featherless
-    tier: 3
-    base_url: https://api.featherless.ai/v1
-    base_url_env: FEATHERLESS_BASE_URL
-    api_key_env: FEATHERLESS_API_KEY
-    data_policy: { training: false, retains_prompts: true, zdr: false }
-    prepaid: false                             # flat Scale plan, no wallet to drain
+    # POST /credits/balance {"credit_id": ...}. The credit id is an account-level credential, kept apart from the API key.
+    balance: { warn_usd: 50, drain_usd: 2, key_env: PPQ_CREDIT_ID }
 
 routes:
-  # T0 Venice: served under anonymo-1 and the council pool only, never as a direct model ID.
-  # Model ids, quant and prices checked against Venice's public /models list on 2026-11-16 (not yet with a live key).
-  # Route ids stay the same so canaries, alerts and stored offers keep their names.
-  - { id: venice-uncensored, upstream: venice, model: venice-uncensored-1-2, family: mistral, quant: fp16, ctx: 32768, price: { in: 0.20, out: 0.90 }, quality: 82, serves: [anonymo-1, anonymo-council] }
-  - { id: venice-deepseek-flash, upstream: venice, model: deepseek-v4-1-flash-uncensored, family: deepseek, quant: fp8, ctx: 131072, price: { in: 0.33, out: 1.32 }, quality: 86, serves: [anonymo-1, anonymo-council] }
-
-  # T1 self-hosted hot spares of the same families.
-  - { id: selfhost-dolphin-24b, upstream: selfhost-dolphin-24b, model: dolphin-venice-24b, family: mistral, quant: fp8, ctx: 32768, price: { in: 0.10, out: 0.30 }, quality: 80, serves: [anonymo-1, anonymo-rp], direct_id: dolphin-venice-24b, hf_repo: cognitivecomputations/Dolphin-Mistral-24B-Venice-Edition }
-  - { id: selfhost-deepseek-flash, upstream: selfhost-deepseek-flash, model: deepseek-v4.1-flash-abliterated, family: deepseek, quant: fp8, ctx: 131072, price: { in: 0.25, out: 0.80 }, quality: 84, serves: [anonymo-1, anonymo-council], direct_id: deepseek-v4.1-flash-abliterated }
-  - { id: selfhost-gemma-26b, upstream: selfhost-gemma-26b, model: gemma-4-26b-uncensored, family: gemma, quant: bf16, ctx: 131072, price: { in: 0.10, out: 0.30 }, quality: 76, serves: [anonymo-1, anonymo-rp, anonymo-council], direct_id: gemma-4-26b-uncensored }
-  - { id: selfhost-qwen-27b, upstream: selfhost-qwen-27b, model: qwen3.8-27b-abliterated, family: qwen, quant: fp8, ctx: 131072, price: { in: 0.10, out: 0.30 }, quality: 78, serves: [anonymo-1, anonymo-rp, anonymo-council], direct_id: qwen3.8-27b-abliterated }
-
-  # T2 attested (anonymo-sealed) and overflow.
-  # Chutes, NanoGPT and Featherless ids and prices checked against their public /models lists on 2026-11-16 (no live key).
-  - { id: phala-deepseek, upstream: phala, model: deepseek/deepseek-v4.1-flash, family: deepseek, quant: fp8, ctx: 131072, price: { in: 0.40, out: 1.40 }, quality: 80, serves: [anonymo-sealed] }
-  - { id: phala-qwen, upstream: phala, model: qwen/qwen3.8-27b, family: qwen, quant: fp8, ctx: 131072, price: { in: 0.20, out: 0.60 }, quality: 74, serves: [anonymo-sealed] }
-  # Chutes lists no uncensored models, only stock ones. Stock GLM-5.2 in its TEE (confidential_compute: true) serves the
-  # sealed lane only, like the Phala routes; it stays out of anonymo-1 and the council, where it would refuse adult content.
-  - { id: chutes-glm, upstream: chutes, model: zai-org/GLM-5.2-TEE, family: glm, quant: fp4, ctx: 131072, price: { in: 1.25, out: 3.95 }, quality: 83, serves: [anonymo-sealed] }
-  # The uncensored GLM moved here from Chutes. NanoGPT lists no uncensored Kimi under $4/$15, so the Kimi route is gone.
-  # NanoGPT does not publish quantization; fp8 is a placeholder.
-  - { id: nanogpt-glm-uncensored, upstream: nanogpt, model: z-ai/glm-5.3-flash-uncensored, family: glm, quant: fp8, ctx: 131072, price: { in: 0.20, out: 0.80 }, quality: 80, serves: [anonymo-1, anonymo-council], direct_id: glm-5.3-flash-uncensored }
-
-  # T3 coverage. Featherless's listed pay-per-token price; a flat plan makes the real cost lower.
-  - { id: featherless-mistral, upstream: featherless, model: dphn/Dolphin-Mistral-24B-Venice-Edition, family: mistral, quant: fp8, ctx: 32768, price: { in: 0.70, out: 1.16 }, quality: 70, serves: [anonymo-1] }
+  # Venice-hosted models resold by PPQ (about 5% over Venice's price). Pooled under anonymo-1 and the council only, never
+  # as a direct model ID. Venice serves all three, so a Venice outage takes down every route here.
+  - { id: ppq-venice-uncensored, upstream: ppq, model: venice/venice-uncensored-1-2, family: mistral, quant: fp16, ctx: 32768, price: { in: 0.211, out: 0.9495 }, quality: 82, serves: [anonymo-1, anonymo-council] }
+  - { id: ppq-venice-deepseek-flash, upstream: ppq, model: venice/deepseek-v4-1-flash-uncensored, family: deepseek, quant: fp8, ctx: 131072, price: { in: 0.34815, out: 1.3926 }, quality: 86, serves: [anonymo-1, anonymo-council] }
+  - { id: ppq-venice-gemma, upstream: ppq, model: venice/gemma-4-uncensored, family: gemma, quant: unknown, ctx: 131072, price: { in: 0.1714375, out: 0.5275 }, quality: 76, serves: [anonymo-1, anonymo-council] }

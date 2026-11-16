@@ -6,21 +6,40 @@ import { parse } from "yaml";
 import { familyOf, nextOtherFamily, sealedRoutes, byFamily } from "../src/anonymo/models.ts";
 import { upstreamsDocSchema, staticModelsOf } from "../src/providers/tiers.ts";
 import { ADAPTERS, readUsd } from "../src/providers/adapters.ts";
-import { balanceEndpointFor, balanceLevel } from "../src/providers/balance.ts";
+import { balanceEndpointFor, balanceLevel, balanceRequestInit } from "../src/providers/balance.ts";
 import { DEFAULT_SCORING, routeScore } from "../src/routing/score.ts";
 import { StickyRoutes, stickyKeyOf } from "../src/routing/sticky.ts";
 import { anonymoOrder, selectProviders, type HealthView } from "../src/router/select.ts";
 import { HealthTracker } from "../src/services/health.ts";
 import type { Candidate } from "../src/catalog/catalog.ts";
 
-const base = () => parse(readFileSync(new URL("../config/upstreams.yaml", import.meta.url), "utf8")) as { upstreams: any[]; routes: any[] };
+// The rules are exercised on the full multi-provider layout; the shipped config (PPQ only) is checked on its own below.
+const load = (path: string) => parse(readFileSync(new URL(path, import.meta.url), "utf8")) as { upstreams: any[]; routes: any[] };
+const base = () => load("./fixtures/upstreams-multi.yaml");
+const shipped = () => load("../config/upstreams.yaml");
 const issuesOf = (doc: unknown) => {
   const r = upstreamsDocSchema.safeParse(doc);
   return r.success ? [] : r.error.issues.map((i) => i.message);
 };
 
 describe("config rules", () => {
-  test("the shipped config is valid", () => expect(issuesOf(base())).toEqual([]));
+  test("the shipped config and the multi-provider layout are valid", () => {
+    expect(issuesOf(shipped())).toEqual([]);
+    expect(issuesOf(base())).toEqual([]);
+  });
+
+  test("the shipped config uses PPQ only, with a balance alarm on its credit id and no direct IDs", () => {
+    const d = upstreamsDocSchema.parse(shipped());
+    expect(d.upstreams.map((u) => u.kind)).toEqual(["ppq"]);
+    expect(d.upstreams[0].balance).toMatchObject({ key_env: "PPQ_CREDIT_ID" });
+    expect(d.routes.every((r) => r.upstream === "ppq" && !r.direct_id)).toBe(true);
+  });
+
+  test("a reseller's venice/... model can never get a direct model ID", () => {
+    const d = shipped();
+    d.routes[0].direct_id = "venice-uncensored";
+    expect(issuesOf(d).join(" ")).toContain("never relabelled one-for-one");
+  });
 
   test("a Venice route can never get a direct model ID", () => {
     const d = base();
@@ -263,6 +282,11 @@ describe("adapters and balances", () => {
   test("balance endpoints resolve against the upstream's origin unless the config gives a full URL", () => {
     expect(balanceEndpointFor({ kind: "venice", balance: { warn_usd: 1, drain_usd: 0 } }, "https://api.venice.ai/api/v1")).toEqual({ url: "https://api.venice.ai/api/v1/api_keys/rate_limits", method: "GET", auth: "bearer", path: "data.balances.USD" });
     expect(balanceEndpointFor({ kind: "nanogpt", balance: { warn_usd: 1, drain_usd: 0 } }, "https://nano-gpt.com/api/v1")?.url).toBe("https://nano-gpt.com/api/check-balance");
+    // PPQ reads the balance by credit id in the POST body, never in a header; the others send "{}" or no body.
+    expect(balanceRequestInit({ method: "POST", auth: "credit_id" }, "cid-sample")).toEqual({ method: "POST", headers: { accept: "application/json", "content-type": "application/json" }, body: '{"credit_id":"cid-sample"}' });
+    expect(balanceRequestInit({ method: "POST", auth: "x-api-key" }, "k")).toMatchObject({ headers: { "x-api-key": "k" }, body: "{}" });
+    expect(balanceRequestInit({ method: "GET", auth: "bearer" }, "k")).toEqual({ method: "GET", headers: { accept: "application/json", authorization: "Bearer k" } });
+    expect(balanceEndpointFor({ kind: "ppq", balance: { warn_usd: 1, drain_usd: 0 } }, "https://api.ppq.ai/v1")).toEqual({ url: "https://api.ppq.ai/credits/balance", method: "POST", auth: "credit_id", path: "balance" });
     expect(balanceEndpointFor({ kind: "phala", balance: { warn_usd: 1, drain_usd: 0 } }, "https://x.example/v1")).toBeNull();
     expect(balanceEndpointFor({ kind: "selfhost", balance: { warn_usd: 1, drain_usd: 0, url: "https://gpu.example/me", path: "credit" } }, "https://x.example/v1")).toMatchObject({ url: "https://gpu.example/me", path: "credit" });
   });
