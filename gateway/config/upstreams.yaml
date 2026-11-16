@@ -129,8 +129,10 @@ upstreams:
 
 routes:
   # T0 Venice: served under anonymo-1 and the council pool only, never as a direct model ID.
-  - { id: venice-uncensored, upstream: venice, model: venice-uncensored, family: mistral, quant: fp8, ctx: 32768, price: { in: 0.20, out: 0.90 }, quality: 82, serves: [anonymo-1, anonymo-council] }
-  - { id: venice-deepseek-flash, upstream: venice, model: deepseek-v4.1-flash-abliterated, family: deepseek, quant: fp8, ctx: 131072, price: { in: 0.30, out: 1.10 }, quality: 86, serves: [anonymo-1, anonymo-council] }
+  # Model ids, quant and prices checked against Venice's public /models list on 2026-11-16 (not yet with a live key).
+  # Route ids stay the same so canaries, alerts and stored offers keep their names.
+  - { id: venice-uncensored, upstream: venice, model: venice-uncensored-1-2, family: mistral, quant: fp16, ctx: 32768, price: { in: 0.20, out: 0.90 }, quality: 82, serves: [anonymo-1, anonymo-council] }
+  - { id: venice-deepseek-flash, upstream: venice, model: deepseek-v4-1-flash-uncensored, family: deepseek, quant: fp8, ctx: 131072, price: { in: 0.33, out: 1.32 }, quality: 86, serves: [anonymo-1, anonymo-council] }
 
   # T1 self-hosted hot spares of the same families.
   - { id: selfhost-dolphin-24b, upstream: selfhost-dolphin-24b, model: dolphin-venice-24b, family: mistral, quant: fp8, ctx: 32768, price: { in: 0.10, out: 0.30 }, quality: 80, serves: [anonymo-1, anonymo-rp], direct_id: dolphin-venice-24b, hf_repo: cognitivecomputations/Dolphin-Mistral-24B-Venice-Edition }
