@@ -116,7 +116,17 @@ export function AnswerCard({ turn }: { turn: Turn }) {
   const lead = council?.aggregator ?? council?.judge ?? null;
 
   let body: ReactNode;
-  if (turn.status === 'error') body = <p className="notice notice-rose">{turn.error}</p>;
+  if (turn.status === 'error')
+    body = (
+      <div className="notice notice-rose notice-action">
+        <p>{turn.error}</p>
+        {turn.needsFunds && (
+          <Link className="btn btn-small btn-primary" href="/dashboard/funds">
+            Add funds
+          </Link>
+        )}
+      </div>
+    );
   else if (council && comparing)
     body = (
       <div className="answer answer-compare">

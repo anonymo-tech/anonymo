@@ -112,6 +112,7 @@ html[data-gated] .app-root { filter: blur(14px); pointer-events: none; user-sele
 .notice-rose { border-color: #ff6b5e55; background: var(--rose-soft); }
 .notice-amber { border-color: #f6b84b66; background: var(--amber-soft); }
 .notice-signal { border-color: #4ade8055; background: var(--ok-soft); }
+.notice-action { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
 .demo-notice { margin: 0 0 16px; padding: 8px 14px; border: 1px dashed #f6b84b88; border-radius: 10px; color: var(--amber); font-size: 13.5px; }
 .public .demo-notice { width: min(1180px, calc(100% - 32px)); margin: 0 auto 8px; }
 .demo-notice-inline { width: auto; }
@@ -143,7 +144,7 @@ html[data-gated] .app-root { filter: blur(14px); pointer-events: none; user-sele
 .public-head nav a:not(.btn) { padding: 4px 0; color: var(--muted); text-decoration: none; border-bottom: 1px solid transparent; }
 .public-head nav a:not(.btn):hover { color: var(--text); border-bottom-color: var(--faint); }
 .public-head nav a[aria-current='page']:not(.btn) { color: var(--text); border-bottom-color: var(--text); }
-.public-main { flex: 1; width: min(1060px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 72px; }
+.public-main { flex: 1; width: min(1060px, calc(100% - 32px)); margin: 0 auto; padding: clamp(40px, 7vh, 72px) 0 88px; }
 .public-main-wide { width: min(1180px, calc(100% - 32px)); }
 .page-title { display: grid; gap: 10px; margin-bottom: 28px; }
 .page-title h1 { font-size: clamp(38px, 5vw, 60px); }
@@ -395,7 +396,7 @@ table.data th.num { text-align: right; }
 
 /* ---- chat ----------------------------------------------------------------------------------------------------- */
 .chat-col { width: var(--thread); margin: 0 auto; flex: 1; }
-.thread { display: grid; gap: 32px; padding-bottom: 24px; }
+.thread { display: grid; align-content: start; gap: 32px; padding-bottom: 24px; }
 .turn { display: grid; gap: 14px; min-width: 0; }
 .prompt { justify-self: end; max-width: 80%; padding: 12px 18px; border-radius: 14px; background: #4a2050; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 16px; }
 .prompt-meta { justify-self: end; display: flex; gap: 6px; margin-top: -8px; }

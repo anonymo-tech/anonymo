@@ -67,6 +67,13 @@ export class AnonymoApiError extends Error {
   }
 }
 
+const OUT_OF_CREDIT = new Set(['insufficient_credits', 'insufficient_credit', 'insufficient_balance', 'payment_required']);
+
+/** The key has too little credit for the request (402 from the ledger), so the fix is adding funds. */
+export function isOutOfCredit(error: unknown): boolean {
+  return error instanceof AnonymoApiError && error.status === 402 && (error.code === null || OUT_OF_CREDIT.has(error.code));
+}
+
 /** Plain-language text for the errors a person can act on. Never echoes the prompt. */
 export function describeError(error: unknown): string {
   if (error instanceof AnonymoApiError) {
@@ -74,8 +81,7 @@ export function describeError(error: unknown): string {
       return 'Blocked by the floor check. This request falls under one of the four lines Anonymo never serves, so it was not sent to any model and you were not charged.';
     if (error.code === 'sealed_unavailable')
       return 'No hardware-attested route is up right now. anonymo-sealed fails instead of downgrading, so nothing was sent and you were not charged. Try again shortly or pick another model.';
-    if (error.status === 402 && (error.code === null || error.code === 'insufficient_balance' || error.code === 'insufficient_credit' || error.code === 'payment_required'))
-      return 'Not enough credit for this request. Add funds and try again.';
+    if (isOutOfCredit(error)) return 'Not enough credit for this request. Add funds and try again.';
     if (error.code === 'deposits_paused') return 'New deposits are paused right now. Withdrawals are not affected.';
     if (error.status === 401) return 'This key was not accepted. Check it, or create a new key.';
     if (error.status === 429) return 'Too many requests for this key right now. Wait a moment and try again.';

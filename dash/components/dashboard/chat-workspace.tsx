@@ -14,7 +14,7 @@ import { useContentGuard } from './use-content-guard';
 import { WorkspaceShell } from './workspace-shell';
 import { buildCharacterMessages, greetingsOf } from '@/lib/anonymo/card';
 import { charactersStore } from '@/lib/anonymo/characters-store';
-import { describeError } from '@/lib/anonymo/client';
+import { describeError, isOutOfCredit } from '@/lib/anonymo/client';
 import { useDeviceStore } from '@/lib/anonymo/device-store';
 import { modelStore, setStoredModel } from '@/lib/anonymo/prefs';
 import type { AnonymoModelId, ChatMessage } from '@/lib/anonymo/types';
@@ -114,7 +114,7 @@ export function ChatWorkspace() {
       update(id, { status: 'done', content: result.content, council: result.council, receiptId, receipt: result.receipt });
     } catch (error) {
       const stopped = abort.signal.aborted;
-      update(id, { status: stopped ? 'stopped' : 'error', error: stopped ? null : describeError(error) });
+      update(id, { status: stopped ? 'stopped' : 'error', error: stopped ? null : describeError(error), needsFunds: !stopped && isOutOfCredit(error) });
     } finally {
       controller.current = null;
       refreshBalance();
