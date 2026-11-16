@@ -82,20 +82,20 @@ const STAGES: { rows: Row[]; short?: string; title?: string; body?: string; note
   },
   {
     short: 'Models',
-    title: 'Four ways to ask.',
-    body: 'Pick one by name, in the chat or in any app.',
+    title: 'Pick a model by name.',
+    body: 'In the chat or in any app. Two are live now, two more are on the way.',
     notes: [
-      ['anonymo-1', 'The everyday choice. The best low-refusal model for each request.'],
-      ['anonymo-rp', 'Long stories and roleplay, with character cards and lorebooks.'],
+      ['anonymo-1', 'The everyday choice. The best low-refusal model for each request, roleplay included.'],
       ['anonymo-council', 'Two or three AIs answer and check each other, then merge one reply. Slower, costs more.'],
-      ['anonymo-sealed', 'Runs only on locked, verified hardware, and proves it on the receipt.'],
+      ['anonymo-rp', 'Coming soon: cheaper long stories, on hardware we run ourselves.'],
+      ['anonymo-sealed', 'Coming soon: runs only on locked, verified hardware, and proves it on the receipt.'],
     ],
     rows: [
       { kind: 'section', text: '4 · Models' },
       { kind: 'pair', label: 'anonymo-1', value: 'everyday chat' },
-      { kind: 'pair', label: 'anonymo-rp', value: 'roleplay' },
       { kind: 'pair', label: 'anonymo-council', value: 'AIs double-check' },
-      { kind: 'pair', label: 'anonymo-sealed', value: 'locked hardware' },
+      { kind: 'pair', label: 'anonymo-rp', value: 'coming soon' },
+      { kind: 'pair', label: 'anonymo-sealed', value: 'coming soon' },
     ],
   },
   {

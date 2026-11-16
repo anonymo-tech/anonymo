@@ -270,6 +270,16 @@ void test('redaction is stable with nested, repeated and adjacent findings', () 
   assert.equal(scanPrompt(value).redacted, scanPrompt(value).redacted);
 });
 
+void test('an Anonymo API key is blocked and redacted', () => {
+  const key = ['anm', 'live', 'ab'.repeat(32)].join('_');
+  const result = scanPrompt(`my key is ${key}, is that right?`);
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].code, 'anonymo.key');
+  assert.equal(result.findings[0].severity, 'block');
+  assert.ok(!result.redacted.includes(key));
+  assert.equal(scanPrompt('the anm_live_ prefix marks a key').findings.length, 0);
+});
+
 void test('findings contain metadata only, never raw matches or echoed request fields', () => {
   const secret = ['sk', 'proj', 'x'.repeat(32)].join('-');
   const result = scanPrompt(secret);

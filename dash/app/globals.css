@@ -50,6 +50,9 @@ body {
 a { color: inherit; }
 button, input, select, textarea { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; border-radius: 4px; }
+.skip-link { position: fixed; z-index: 100; top: 8px; left: 8px; padding: 10px 14px; border-radius: 10px; background: var(--text); color: var(--bg); font-weight: 600; text-decoration: none; transform: translateY(-160%); }
+.skip-link:focus { transform: none; }
+main:focus { outline: none; }
 ::selection { background: var(--signal); color: var(--signal-ink); }
 /* Headings: a display serif at regular weight; small headings stay in the sans at medium. Nothing on the page is
    heavier than 600, so the few things that are bold read as bold. */
@@ -59,7 +62,7 @@ p { margin: 0; }
 code, .mono { font-family: var(--mono); font-size: 0.92em; }
 .muted { color: var(--muted); }
 .faint { color: var(--faint); }
-.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 .link { color: var(--text); text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 3px; font-weight: 500; }
 .link:hover { text-decoration-color: var(--text); }
 
@@ -107,6 +110,7 @@ html[data-gated] .app-root { filter: blur(14px); pointer-events: none; user-sele
 .chip-rose { border-color: #ff6b5e66; color: var(--rose); background: var(--rose-soft); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
 .dot-off { background: var(--faint); }
+.dot-low { background: var(--amber); }
 .hash { font: 12.5px/1.5 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 .notice { padding: 12px 16px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); font-size: 14px; }
 .notice-rose { border-color: #ff6b5e55; background: var(--rose-soft); }
@@ -337,7 +341,7 @@ pre.code .k { color: var(--amber); }
 pre.code .c { color: var(--faint); }
 
 /* tables */
-.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
+.table-wrap { position: relative; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
 table.data { width: 100%; border-collapse: collapse; font-size: 14.5px; }
 table.data th, table.data td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
 table.data th { font: 500 13px/1.4 var(--sans); color: var(--muted); white-space: nowrap; }
@@ -409,7 +413,10 @@ table.data th.num { text-align: right; }
 .picker-menu { position: absolute; z-index: 40; bottom: calc(100% + 8px); left: 0; width: min(380px, calc(100vw - 32px)); padding: 6px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--raised); box-shadow: 0 18px 50px #000b; }
 .picker-menu button { display: grid; gap: 2px; width: 100%; padding: 10px 12px; border: 0; border-radius: 10px; background: transparent; text-align: left; cursor: pointer; }
 .picker-menu button:hover, .picker-menu button[aria-checked='true'] { background: var(--raised-2); }
-.picker-menu .name { display: flex; align-items: center; gap: 8px; font: 500 13.5px/1.4 var(--mono); color: var(--text); }
+.picker-menu button:disabled { cursor: not-allowed; opacity: 0.55; }
+.picker-menu button:disabled:hover { background: transparent; }
+.picker-menu .name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font: 500 13.5px/1.4 var(--mono); color: var(--text); }
+.picker-menu .name .id { white-space: nowrap; }
 .picker-menu .desc { font-size: 13px; color: var(--muted); line-height: 1.45; }
 
 /* ---- chat ----------------------------------------------------------------------------------------------------- */
@@ -452,7 +459,7 @@ table.data th.num { text-align: right; }
 
 /* composer */
 .dock-composer { display: grid; gap: 10px; padding: 14px 14px 12px 18px; border: 1px solid var(--line-strong); border-radius: 18px; background: #2a112ef2; box-shadow: 0 20px 50px #0007; }
-.dock-composer:focus-within { border-color: var(--faint); }
+.dock-composer:focus-within { border-color: var(--faint); box-shadow: 0 20px 50px #0007, 0 0 0 3px var(--signal-soft); }
 .dock-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; order: 2; }
 .dock-tools .tool { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 9px; background: transparent; color: var(--muted); font-weight: 500; cursor: pointer; }
 .dock-tools .tool:hover, .dock-tools .tool[aria-pressed='true'] { border-color: var(--faint); color: var(--text); background: var(--raised); }
@@ -471,7 +478,7 @@ table.data th.num { text-align: right; }
 .panel-stack { display: grid; gap: 18px; }
 .panel { display: grid; gap: 14px; padding: 22px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); min-width: 0; }
 .panel > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
-.panel h2 { font-size: 24px; }
+.panel h2, .panel h1.panel-title { font-size: 24px; }
 .panel h3 { font-size: 16px; }
 .panel .lede { color: var(--muted); font-size: 14.5px; }
 .panel a:not(.btn) { color: var(--text); text-underline-offset: 3px; }
@@ -580,10 +587,10 @@ pre.snippet { margin: 0; padding: 16px; border: 1px solid var(--line-strong); bo
 }
 
 @media (max-width: 900px) {
-  .ws { grid-template-columns: 1fr; }
+  .ws { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .ws-side { position: sticky; z-index: 25; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 16px; border-right: 0; border-bottom: 1px solid var(--line); }
-  .ws-side .wordmark { font-size: 19px; padding: 0; }
-  .ws-nav { order: 3; width: 100%; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+  .ws-side .wordmark { font-size: 19px; padding: 4px 0; }
+  .ws-nav { order: 3; width: 100%; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; mask: linear-gradient(90deg, #000 calc(100% - 32px), transparent); padding-right: 24px; }
   .ws-nav a { flex: none; padding: 7px 10px; font-size: 14px; }
   .ws-nav hr, .promo, .ws-status, .ws-side-spacer { display: none; }
   .ws-top { position: static; padding-top: 12px; }
@@ -601,7 +608,7 @@ pre.snippet { margin: 0; padding: 16px; border: 1px solid var(--line-strong); bo
   .public-head { flex-wrap: wrap; padding-top: 12px; padding-bottom: 10px; }
   /* phones: the wordmark and "Open app" share the first row, the page links scroll along the second */
   .public-head { row-gap: 8px; }
-  .public-head nav { order: 3; width: 100%; margin-left: 0; overflow-x: auto; scrollbar-width: none; gap: 18px; font-size: 14.5px; }
+  .public-head nav { order: 3; width: 100%; margin-left: 0; overflow-x: auto; scrollbar-width: none; gap: 18px; font-size: 14.5px; mask: linear-gradient(90deg, #000 calc(100% - 32px), transparent); padding-right: 24px; }
   .public-head nav a { flex: none; }
   .paper { padding-inline: 18px; font-size: 12px; }
   .story-notes > div { grid-template-columns: 1fr; padding-inline: 0; }
@@ -615,6 +622,14 @@ pre.snippet { margin: 0; padding: 16px; border: 1px solid var(--line-strong); bo
   .dock-meta { display: none; }
   .dock-input { flex-wrap: wrap; justify-content: flex-end; }
   .dock-input textarea { flex-basis: 100%; }
+  /* on phones the model menu spans the whole composer instead of hanging off the small picker button */
+  .picker { position: static; }
+  .dock-input { position: relative; }
+  .picker-menu { left: 0; right: 0; width: auto; transform-origin: bottom center; }
+  /* one scrolling row of composer options, so picking council doesn't push the composer up a line */
+  .dock-tools { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-right: -14px; padding-right: 24px; mask: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
+  .dock-tools > * { flex: none; }
+  .dock-tools .error-text { white-space: nowrap; }
   .ws-composer { padding: 0 12px 10px; }
   .kv { grid-template-columns: 1fr; }
   .kv dt { padding-bottom: 0; border-bottom: 0; }

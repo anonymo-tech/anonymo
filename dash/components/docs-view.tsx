@@ -201,7 +201,7 @@ export function DocsView() {
                 </tr>
                 <tr>
                   <td><code>anonymo-rp</code></td>
-                  <td>Long-context roleplay on self-hosted models, with character cards.</td>
+                  <td>Long-context roleplay on self-hosted models, with character cards. Not live yet.</td>
                 </tr>
                 <tr>
                   <td><code>anonymo-council</code></td>
@@ -209,13 +209,14 @@ export function DocsView() {
                 </tr>
                 <tr>
                   <td><code>anonymo-sealed</code></td>
-                  <td>Hardware-attested enclaves only. Fails instead of downgrading.</td>
+                  <td>Hardware-attested enclaves only. Fails instead of downgrading. Not live yet.</td>
                 </tr>
               </tbody>
             </table>
           </div>
           <p>
-            <code>GET /v1/models</code> lists them. The{' '}
+            <code>GET /v1/models</code> lists the ones that are live right now; a model that is not live answers 404{' '}
+            <code>model_not_found</code>. The{' '}
             <Link className="link" href="/manifest">
               manifest
             </Link>{' '}

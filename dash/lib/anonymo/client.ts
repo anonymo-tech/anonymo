@@ -81,6 +81,8 @@ export function describeError(error: unknown): string {
       return 'Blocked by the floor check. This request falls under one of the four lines Anonymo never serves, so it was not sent to any model and you were not charged.';
     if (error.code === 'sealed_unavailable')
       return 'No hardware-attested route is up right now. anonymo-sealed fails instead of downgrading, so nothing was sent and you were not charged. Try again shortly or pick another model.';
+    if (error.code === 'model_not_found')
+      return 'That model is not live yet, so nothing was sent and you were not charged. Pick anonymo-1 instead.';
     if (isOutOfCredit(error)) return 'Not enough credit for this request. Add funds and try again.';
     if (error.code === 'deposits_paused') return 'New deposits are paused right now. Withdrawals are not affected.';
     if (error.status === 401) return 'This key was not accepted. Check it, or create a new key.';

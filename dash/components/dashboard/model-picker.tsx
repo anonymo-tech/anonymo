@@ -20,7 +20,15 @@ export const MODEL_CHOICES: { id: AnonymoModelId; summary: string }[] = [
   },
 ];
 
-export function ModelPicker({ value, onChange }: { value: AnonymoModelId; onChange: (id: AnonymoModelId) => void }) {
+export function ModelPicker({
+  value,
+  onChange,
+  live,
+}: {
+  value: AnonymoModelId;
+  onChange: (id: AnonymoModelId) => void;
+  live: ReadonlySet<string> | null;
+}) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -45,25 +53,31 @@ export function ModelPicker({ value, onChange }: { value: AnonymoModelId; onChan
       </button>
       {open && (
         <div className="picker-menu" role="menu" aria-label="Model">
-          {MODEL_CHOICES.map((m) => (
+          {MODEL_CHOICES.map((m) => {
+            const off = live !== null && !live.has(m.id);
+            return (
             <button
               key={m.id}
               type="button"
               role="menuitemradio"
               aria-checked={m.id === value}
+              aria-disabled={off || undefined}
+              disabled={off}
               onClick={() => {
                 onChange(m.id);
                 setOpen(false);
               }}
             >
               <span className="name">
-                {m.id}
+                <span className="id">{m.id}</span>
                 {m.id === 'anonymo-sealed' && <span className="chip chip-signal">attested</span>}
                 {m.id === 'anonymo-council' && <span className="chip">4–5×</span>}
+                {off && <span className="chip">not live yet</span>}
               </span>
               <span className="desc">{m.summary}</span>
             </button>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

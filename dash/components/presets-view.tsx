@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useAnonymo } from './anonymo-provider';
+import { isLiveModel, useAnonymo } from './anonymo-provider';
 import { CopyButton } from './copy-button';
 import { API_BASE, publicApiBase } from '@/lib/anonymo/config';
 import { maskKey } from '@/lib/anonymo/key-store';
@@ -10,7 +10,7 @@ import { ANONYMO_MODEL_IDS } from '@/lib/anonymo/types';
 
 /** One-paste setups for JanitorAI, SillyTavern, Chub, Agnai, Open WebUI, LibreChat and TypingMind. */
 export function PresetsView() {
-  const { ready, demo, key } = useAnonymo();
+  const { ready, demo, key, liveModels } = useAnonymo();
   const [active, setActive] = useState(PRESETS[0].id);
   const [model, setModel] = useState<string | null>(null);
   const [withKey, setWithKey] = useState(false);
@@ -42,11 +42,14 @@ export function PresetsView() {
           <label className="field" style={{ minWidth: 220 }}>
             Model
             <select className="select" value={chosenModel} onChange={(e) => setModel(e.target.value)}>
-              {ANONYMO_MODEL_IDS.map((id) => (
-                <option key={id} value={id}>
-                  {id}
-                </option>
-              ))}
+              {ANONYMO_MODEL_IDS.map((id) => {
+                const off = !isLiveModel(liveModels, id);
+                return (
+                  <option key={id} value={id} disabled={off}>
+                    {off ? `${id} (not live yet)` : id}
+                  </option>
+                );
+              })}
             </select>
           </label>
           {key && (

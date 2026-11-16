@@ -33,6 +33,8 @@ type AnonymoState = {
   forgetReceipts: () => void;
   balanceVersion: number;
   refreshBalance: () => void;
+  /** Model IDs `GET /v1/models` lists right now, or null until known (then every ID is offered). */
+  liveModels: ReadonlySet<string> | null;
 };
 
 const Context = createContext<AnonymoState | null>(null);
@@ -71,6 +73,22 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
     [demo, key, mock],
   );
 
+  // Which model IDs have routes right now. A model with none (anonymo-rp before self-hosted routes exist, anonymo-sealed
+  // before an attested route) is left out of /v1/models, so the UI marks it "not live yet" instead of failing on send.
+  const [liveModels, setLiveModels] = useState<ReadonlySet<string> | null>(null);
+  useEffect(() => {
+    if (!ready) return;
+    let stale = false;
+    // A keyless client: the model list is public and the same for every key, so it is fetched once per mode.
+    createAnonymoClient({ baseUrl: demo ? DEMO_BASE : API_BASE, fetch: mock?.fetch }).models().then(
+      (list) => !stale && setLiveModels(new Set(list.data.map((m) => m.id))),
+      () => undefined, // unknown: keep offering every model and let the gateway answer
+    );
+    return () => {
+      stale = true;
+    };
+  }, [ready, demo, mock]);
+
   const setKey = useCallback(
     (value: string, remember: boolean) => {
       saveKey(demo, value, remember);
@@ -101,11 +119,15 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
       forgetReceipts,
       balanceVersion,
       refreshBalance,
+      liveModels,
     }),
-    [ready, demo, key, client, mock, setKey, clearKey, turns, setTurns, receipts, balanceVersion, refreshBalance],
+    [ready, demo, key, client, mock, setKey, clearKey, turns, setTurns, receipts, balanceVersion, refreshBalance, liveModels],
   );
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
+
+/** Whether a model ID can be picked: listed by the gateway, or the list is not known yet. */
+export const isLiveModel = (live: ReadonlySet<string> | null, id: string) => !live || live.has(id);
 
 export function useAnonymo(): AnonymoState {
   const value = useContext(Context);

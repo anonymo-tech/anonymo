@@ -12,7 +12,6 @@ import { CardError, cardHash, deriveViewingKey, greetingsOf, sealCard, type Char
 import { charactersStore, readCardFile, saveCharacters, type StoredCharacter } from '@/lib/anonymo/characters-store';
 import { describeError } from '@/lib/anonymo/client';
 import { useDeviceStore } from '@/lib/anonymo/device-store';
-import { setStoredModel } from '@/lib/anonymo/prefs';
 
 export function CharactersPanel() {
   const { ready, key, client } = useAnonymo();
@@ -39,7 +38,7 @@ export function CharactersPanel() {
     const next = [{ id: hash.slice(0, 16), hash, card, importedAt: new Date().toISOString() }, ...list.filter((c) => c.hash !== hash)];
     if (!saveCharacters(next)) setError('This browser would not store the card. It is too large, or storage is blocked.');
     setPreview(null);
-    setNote(`${card.data.name} is ready. Pick anonymo-rp in chat to talk to them.`);
+    setNote(`${card.data.name} is ready. Press Chat to talk to them.`);
   }
 
   async function sealToGateway(c: StoredCharacter) {
@@ -132,7 +131,7 @@ export function CharactersPanel() {
                   <strong>{c.card.data.name}</strong> <span className="faint mono">{c.hash.slice(0, 10)}</span>
                 </span>
                 <span className="row">
-                  <Link className="btn btn-small btn-primary" href={`/dashboard/chat?character=${encodeURIComponent(c.id)}`} onClick={() => setStoredModel('anonymo-rp')}>
+                  <Link className="btn btn-small btn-primary" href={`/dashboard/chat?character=${encodeURIComponent(c.id)}`}>
                     Chat
                   </Link>
                   <button type="button" className="btn btn-small" disabled={!key} onClick={() => void sealToGateway(c)}>

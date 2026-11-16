@@ -61,6 +61,9 @@ export function WorkspaceShell({
   const onChat = active('/dashboard/chat');
   return (
     <div className="ws">
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
       <aside className="ws-side">
         <Wordmark href="/" />
         <nav className="ws-nav" aria-label="Workspace">
@@ -121,7 +124,7 @@ export function WorkspaceShell({
             )}
           </div>
         </header>
-        <main className={composer ? 'ws-main ws-main-chat' : 'ws-main'}>
+        <main id="main" tabIndex={-1} className={composer ? 'ws-main ws-main-chat' : 'ws-main'}>
           <DemoNotice />
           {title && (
             <div className="ws-head">
@@ -179,8 +182,9 @@ function Purse() {
       </Link>
     );
   return (
-    <Link className="ws-purse" href="/dashboard/funds" aria-label="Balance">
-      <span className="dot" aria-hidden="true" />
+    <Link className="ws-purse" href="/dashboard/funds" title={available === 0 ? 'No credit left. Add funds to chat.' : undefined}>
+      <span className={available === null ? 'dot dot-off' : available === 0 ? 'dot dot-low' : 'dot'} aria-hidden="true" />
+      <span className="sr-only">Balance: </span>
       {available === null ? '—' : formatUsd(available)}
     </Link>
   );

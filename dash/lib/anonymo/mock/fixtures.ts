@@ -1,5 +1,7 @@
 // Demo fixtures that follow the spec shapes (Backend §4, §8, §11). Every value here is invented sample data: route
 // names follow the spec's examples, hashes are derived from the route name, and refusal counts are illustrative.
+// The routes show the full multi-provider layout so every model and receipt type can be tried in the demo; the launch
+// gateway runs fewer (gateway/config/upstreams.yaml), and live mode offers only the models GET /v1/models lists.
 
 import { keccakHex } from '../proof.ts';
 import type { Leaderboard, Manifest, ManifestRoute, ModelInfo } from '../types.ts';
@@ -146,7 +148,7 @@ export const DEMO_PRICES: Record<string, { in: number; out: number }> = {
 const SENTENCES: Record<string, string[]> = {
   'anonymo-1': [
     'This is a demo answer from the in-browser mock gateway, so no model ran and nothing left your device.',
-    'Against the live gateway, anonymo-1 sends the request to the best uncensored route for it, with Venice first and warm backups behind it.',
+    'Against the live gateway, anonymo-1 sends the request to the best uncensored route for it, and moves to another route when one is slow or down.',
     'If a model refuses a legal request, the router retries once on a different model family and refunds the refused attempt.',
     'Open the receipt below to see which routes ran, what it cost, and the Merkle path that ties it to an hourly on-chain root.',
   ],

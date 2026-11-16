@@ -14,13 +14,13 @@ const FAQ: [string, string][] = [
   ['Do I need an account?', 'No. You get a key, and the key is your account. No email, no name, no ID. Keep it somewhere safe: it can’t be recovered.'],
   ['What does it cost?', 'You pay for what you use, from a balance you top up. Each receipt shows exactly what that answer cost.'],
   ['Can I use it in my own app?', 'Yes. Anonymo speaks the OpenAI API, so most apps and code libraries work by changing the address and pasting your key.'],
-  ['What is “sealed”?', 'anonymo-sealed only runs on hardware-attested GPU enclaves, and its receipt carries that attestation. If no attested route is up, it stops instead of falling back.'],
+  ['What is “sealed”?', 'anonymo-sealed will run only on hardware-attested GPU enclaves, and its receipt will carry that attestation. It is not live yet. Until an attested route is up, it stops instead of falling back to anything else.'],
 ];
 
 export default function Home() {
   return (
     <PublicPage bare>
-      <main className="landing">
+      <main id="main" tabIndex={-1} className="landing">
         <ReceiptStory />
 
         <section className="land-section land-split" data-reveal>

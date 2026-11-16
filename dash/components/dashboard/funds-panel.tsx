@@ -309,6 +309,7 @@ function Withdrawals({ balance, onDone }: { balance: Balance; onDone: () => void
     try {
       const r = await client.withdraw({ chain: dest.chain, to: dest.address, amount_usd: amount }, idem);
       setResult(r.withdrawal);
+      setAmounts((m) => ({ ...m, [id]: '' }));
       setAttempts((m) => {
         const { [sig]: _done, ...rest } = m;
         return rest;
@@ -340,16 +341,13 @@ function Withdrawals({ balance, onDone }: { balance: Balance; onDone: () => void
                   <strong>{chainName(d.chain)}</strong> <span className="mono faint">→ {shortAddress(d.address)}</span>
                 </span>
                 <span className="row">
-                  <span className="mono" title="The most that can go back to this address now">
-                    {formatUsd(max)}
-                  </span>
                   <label className="sr-only" htmlFor={`wd-${id}`}>
                     Amount (USD)
                   </label>
                   <input
                     id={`wd-${id}`}
                     className="input"
-                    style={{ width: 96, minHeight: 32 }}
+                    style={{ width: 88, minHeight: 32 }}
                     inputMode="decimal"
                     placeholder="Amount"
                     value={amounts[id] ?? ''}
@@ -358,8 +356,14 @@ function Withdrawals({ balance, onDone }: { balance: Balance; onDone: () => void
                   <button type="button" className="btn btn-small" disabled={busy !== null || !(max > 0)} onClick={() => void withdraw(d, false)}>
                     Withdraw
                   </button>
-                  <button type="button" className="btn btn-small btn-ghost" disabled={busy !== null || !(max > 0)} onClick={() => void withdraw(d, true)}>
-                    All
+                  <button
+                    type="button"
+                    className="btn btn-small btn-ghost"
+                    title="The most that can go back to this address now"
+                    disabled={busy !== null || !(max > 0)}
+                    onClick={() => void withdraw(d, true)}
+                  >
+                    All <span className="mono">{formatUsd(max)}</span>
                   </button>
                 </span>
               </li>

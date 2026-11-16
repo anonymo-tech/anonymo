@@ -17,9 +17,12 @@ const NAV = [
 export function PublicPage({ children, wide = false, bare = false }: { children: ReactNode; wide?: boolean; bare?: boolean }) {
   return (
     <div className="public">
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
       <PublicHeader />
       <DemoNotice />
-      {bare ? children : <main className={wide ? 'public-main public-main-wide' : 'public-main'}>{children}</main>}
+      {bare ? children : <main id="main" tabIndex={-1} className={wide ? 'public-main public-main-wide' : 'public-main'}>{children}</main>}
       <SiteFooter />
     </div>
   );

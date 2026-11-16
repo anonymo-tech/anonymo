@@ -292,6 +292,8 @@ export function scanPrompt(text: string): GuardScanResult {
       'github.token',
       /(?<!\w)(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{30,})(?!\w)/g,
     ],
+    // Anonymo's own keys (anm_live_ + 64 hex): the secret most likely to be pasted into this chat by mistake.
+    ['anonymo.key', /(?<!\w)anm_(?:live|test)_[A-Za-z0-9]{20,}(?!\w)/g],
     ['google.api-key', /(?<!\w)AIza[A-Za-z0-9_-]{35}(?![\w-])/g],
     ['aws.access-key', /(?<!\w)(?:AKIA|ASIA)[A-Z0-9]{16}(?!\w)/g],
     ['slack.token', /(?<![\w-])xox[baprs]-[A-Za-z0-9-]{10,}(?![\w-])/g],

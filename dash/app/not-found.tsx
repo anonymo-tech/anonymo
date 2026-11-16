@@ -8,7 +8,7 @@ export default function NotFound() {
   return (
     <PublicPage>
       <div className="lost">
-        <Photo src="/mascot/pillow.jpg" alt="" width={1200} height={900} />
+        <Photo src="/mascot/pillow-sm.jpg" alt="" width={480} height={360} />
         <div>
           <p className="land-kicker">Error 404</p>
           <h1>Nothing printed here.</h1>

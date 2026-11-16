@@ -84,7 +84,7 @@ export function ReceiptsList() {
 type Loaded = { view: ReceiptView; proof: ProofView | null; proofError: string | null };
 
 export function ReceiptViewer({ id }: { id: string }) {
-  const { ready, client } = useAnonymo();
+  const { ready, client, demo } = useAnonymo();
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState('');
 
@@ -114,7 +114,7 @@ export function ReceiptViewer({ id }: { id: string }) {
   if (error)
     return (
       <section className="panel">
-        <h2>Receipt not found</h2>
+        <h1 className="panel-title">Receipt not found</h1>
         <p className="notice notice-rose">{error}</p>
         <Link href="/dashboard/receipts">All receipts</Link>
       </section>
@@ -132,7 +132,9 @@ export function ReceiptViewer({ id }: { id: string }) {
     <div className="panel-stack">
       <section className="panel" aria-labelledby="receipt-title">
         <header>
-          <h2 id="receipt-title">Receipt</h2>
+          <h1 id="receipt-title" className="panel-title">
+            Receipt
+          </h1>
           <div className="row">
             {r.sealed && r.attestation_quote_hash ? (
               <span className="chip chip-signal">Attested enclave</span>
@@ -140,7 +142,15 @@ export function ReceiptViewer({ id }: { id: string }) {
               <span className="chip">Zero retention (policy)</span>
             )}
             {refusedRoutes.length > 0 && <span className="chip chip-amber">{r.refused ? 'Refused twice' : 'Refusal rerouted'}</span>}
-            {view.signature_valid ? <span className="chip chip-signal">Signature valid</span> : <span className="chip chip-rose">Signature not valid</span>}
+            {view.signature_valid ? (
+              <span className="chip chip-signal">Signature valid</span>
+            ) : demo ? (
+              <span className="chip" title="The demo gateway does not hold a signing key, so demo receipts are unsigned.">
+                Demo · not signed
+              </span>
+            ) : (
+              <span className="chip chip-rose">Signature not valid</span>
+            )}
           </div>
         </header>
         <dl className="kv">

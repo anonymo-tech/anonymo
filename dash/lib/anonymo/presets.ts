@@ -24,7 +24,7 @@ export const PRESETS: Preset[] = [
     id: 'janitorai',
     name: 'JanitorAI',
     where: 'API Settings → Proxy',
-    defaultModel: 'anonymo-rp',
+    defaultModel: 'anonymo-1',
     fields: ({ base, key, model }) => [
       { label: 'Model', value: model },
       { label: 'Proxy URL', value: completions(base) },
@@ -36,7 +36,7 @@ export const PRESETS: Preset[] = [
     id: 'sillytavern',
     name: 'SillyTavern',
     where: 'API Connections → Chat Completion → Custom (OpenAI-compatible)',
-    defaultModel: 'anonymo-rp',
+    defaultModel: 'anonymo-1',
     fields: ({ base, key, model }) => [
       { label: 'Custom endpoint (base URL)', value: v1(base) },
       { label: 'Custom API key', value: key, secret: true },
@@ -48,7 +48,7 @@ export const PRESETS: Preset[] = [
     id: 'chub',
     name: 'Chub',
     where: 'Settings → API → OpenAI-compatible / reverse proxy',
-    defaultModel: 'anonymo-rp',
+    defaultModel: 'anonymo-1',
     fields: ({ base, key, model }) => [
       { label: 'Reverse proxy URL', value: v1(base) },
       { label: 'Proxy key', value: key, secret: true },
@@ -59,7 +59,7 @@ export const PRESETS: Preset[] = [
     id: 'agnai',
     name: 'Agnai',
     where: 'Settings → AI → Third party (format: OpenAI Chat)',
-    defaultModel: 'anonymo-rp',
+    defaultModel: 'anonymo-1',
     fields: ({ base, key, model }) => [
       { label: 'Third party URL', value: v1(base) },
       { label: 'Format', value: 'OpenAI (chat completions)' },
@@ -100,7 +100,7 @@ export const PRESETS: Preset[] = [
         '      apiKey: "${ANONYMO_API_KEY}"',
         `      baseURL: "${v1(base)}"`,
         '      models:',
-        '        default: ["anonymo-1", "anonymo-rp", "anonymo-council", "anonymo-sealed"]',
+        '        default: ["anonymo-1", "anonymo-council"]',
         '        fetch: true',
         '      titleConvo: true',
         '      titleModel: "anonymo-1"',

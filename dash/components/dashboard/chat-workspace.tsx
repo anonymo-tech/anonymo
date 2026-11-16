@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { ArrowUp, Drama, ShieldCheck, Square } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { useAnonymo } from '../anonymo-provider';
+import { isLiveModel, useAnonymo } from '../anonymo-provider';
 import { AnswerCard } from './answer-card';
 import type { Turn } from './chat-types';
 import { ModelPicker } from './model-picker';
@@ -28,8 +28,10 @@ const STARTERS: { model: AnonymoModelId; text: string }[] = [
 ];
 
 export function ChatWorkspace() {
-  const { ready, key, client, turns, setTurns, rememberReceipt, refreshBalance } = useAnonymo();
-  const model = useDeviceStore(modelStore);
+  const { ready, key, client, turns, setTurns, rememberReceipt, refreshBalance, liveModels } = useAnonymo();
+  const stored = useDeviceStore(modelStore);
+  // A saved model that has no routes right now (not in /v1/models) falls back to anonymo-1 instead of failing on send.
+  const model: AnonymoModelId = isLiveModel(liveModels, stored) ? stored : 'anonymo-1';
   const params = useSearchParams();
   const [councilMode, setCouncilMode] = useState<'merge' | 'select'>('merge');
   const [refusalCatch, setRefusalCatch] = useState(true);
@@ -43,11 +45,13 @@ export function ChatWorkspace() {
   const end = useRef<HTMLDivElement>(null);
   const scan = useContentGuard();
   const streaming = turns.some((t) => t.status === 'streaming');
-  const character = model === 'anonymo-rp' ? (characters.find((c) => c.id === characterId) ?? null) : null;
+  // A character card is only a system prompt, so it works with any model, not just anonymo-rp.
+  const character = characters.find((c) => c.id === characterId) ?? null;
 
   useEffect(() => () => controller.current?.abort(), []);
   useEffect(() => {
-    end.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    end.current?.scrollIntoView({ block: 'end', behavior: still ? 'auto' : 'smooth' });
   }, [turns.length]);
 
   const chooseModel = (id: AnonymoModelId) => setStoredModel(id);
@@ -143,48 +147,6 @@ export function ChatWorkspace() {
 
   const composer = (
     <div className="dock-composer">
-      <div className="dock-tools">
-        <PaperTrail value={paper} onChange={setPaper} />
-        {model === 'anonymo-council' && (
-          <button
-            type="button"
-            className="tool"
-            aria-pressed={councilMode === 'select'}
-            title="merge: an aggregator merges the replies. select: a judge picks the best single reply (cheaper)."
-            onClick={() => setCouncilMode((m) => (m === 'merge' ? 'select' : 'merge'))}
-          >
-            Council: {councilMode}
-          </button>
-        )}
-        {model === 'anonymo-rp' && (
-          <label className="tool">
-            <Drama size={14} aria-hidden="true" />
-            <select
-              className="select"
-              style={{ minHeight: 0, padding: 0, border: 0, background: 'transparent', width: 'auto' }}
-              value={characterId ?? ''}
-              onChange={(e) => setCharacterId(e.target.value || null)}
-              aria-label="Character"
-            >
-              <option value="">No character</option>
-              {characters.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.card.data.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <button
-          type="button"
-          className="tool"
-          aria-pressed={!refusalCatch}
-          title="The refusal catch holds back the first tokens to catch a refusal and reroute it. Turning it off streams sooner."
-          onClick={() => setRefusalCatch((r) => !r)}
-        >
-          Refusal catch: {refusalCatch ? 'on' : 'off'}
-        </button>
-      </div>
       {guardNote && (
         <div className="notice notice-amber row" role="alert">
           <span style={{ flex: 1, minWidth: 200 }}>{guardNote.message}</span>
@@ -226,7 +188,7 @@ export function ChatWorkspace() {
             }
           }}
         />
-        <ModelPicker value={model} onChange={chooseModel} />
+        <ModelPicker value={model} onChange={chooseModel} live={liveModels} />
         {streaming ? (
           <button type="button" className="send send-stop" aria-label="Stop" onClick={() => controller.current?.abort()}>
             <Square size={14} fill="currentColor" aria-hidden="true" />
@@ -237,6 +199,48 @@ export function ChatWorkspace() {
           </button>
         )}
       </form>
+      <div className="dock-tools">
+        <PaperTrail value={paper} onChange={setPaper} />
+        {model === 'anonymo-council' && (
+          <button
+            type="button"
+            className="tool"
+            aria-pressed={councilMode === 'select'}
+            title="merge: an aggregator merges the replies. select: a judge picks the best single reply (cheaper)."
+            onClick={() => setCouncilMode((m) => (m === 'merge' ? 'select' : 'merge'))}
+          >
+            Council: {councilMode}
+          </button>
+        )}
+        {characters.length > 0 && (
+          <label className="tool">
+            <Drama size={14} aria-hidden="true" />
+            <select
+              className="select"
+              style={{ minHeight: 0, padding: 0, border: 0, background: 'transparent', width: 'auto', font: 'inherit', color: 'inherit' }}
+              value={characterId ?? ''}
+              onChange={(e) => setCharacterId(e.target.value || null)}
+              aria-label="Character"
+            >
+              <option value="">No character</option>
+              {characters.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.card.data.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <button
+          type="button"
+          className="tool"
+          aria-pressed={!refusalCatch}
+          title="The refusal catch holds back the first tokens to catch a refusal and reroute it. Turning it off streams sooner."
+          onClick={() => setRefusalCatch((r) => !r)}
+        >
+          Refusal catch: {refusalCatch ? 'on' : 'off'}
+        </button>
+      </div>
       <div className="dock-meta">
         <span>Enter to send · Shift+Enter for a new line</span>
         <span>Conversations stay in this tab and are never stored.</span>
@@ -251,8 +255,12 @@ export function ChatWorkspace() {
           <div className="empty-hero">
             <Photo src="/mascot/avatar.jpg" alt="" width={256} height={256} />
             <div>
-              <h1>Ask anything. Get an answer.</h1>
-              <p className="muted">No refusals for legal adult use. Every answer comes with a signed receipt.</p>
+              <h1>{character ? character.card.data.name : 'Ask anything. Get an answer.'}</h1>
+              <p className="muted">
+                {character
+                  ? 'Character card from this device. It works with any model; switch characters below the message box.'
+                  : 'No refusals for legal adult use. Every answer comes with a signed receipt.'}
+              </p>
             </div>
           </div>
           {ready && !key ? (
@@ -262,9 +270,9 @@ export function ChatWorkspace() {
                 Create a key
               </Link>
             </div>
-          ) : (
+          ) : character ? null : (
             <div className="starters">
-              {STARTERS.map((s) => (
+              {STARTERS.filter((s) => isLiveModel(liveModels, s.model)).map((s) => (
                 <button
                   key={s.text}
                   type="button"
@@ -290,7 +298,8 @@ export function ChatWorkspace() {
           )}
         </section>
       ) : (
-        <div className="thread chat-col" aria-live="polite">
+        <div className="thread chat-col" aria-live="polite" aria-busy={streaming}>
+          <h1 className="sr-only">Chat</h1>
           {turns.map((turn) => (
             <article key={turn.id} className="turn">
               <p className="prompt">{turn.prompt}</p>
