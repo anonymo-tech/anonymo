@@ -6,8 +6,11 @@
 //   ANONYMO_FLOOR_URL          OpenAI-compatible base URL of the guard model. Selects this gate.
 //   ANONYMO_FLOOR_MODEL        model name on that server (required with the URL)
 //   ANONYMO_FLOOR_KEY          bearer key for that server (optional)
-//   ANONYMO_FLOOR_FORMAT       llama-guard (default, raw /completions) | llama-guard-chat | shieldgemma
-//   ANONYMO_FLOOR_TIMEOUT_MS   per call, default 1500
+//   ANONYMO_FLOOR_FORMAT       llama-guard (default, raw /completions) | llama-guard-chat | shieldgemma | safeguard
+//                              (gpt-oss-safeguard on a hosted API, for example https://api.ppq.ai/v1 with
+//                              openai/gpt-oss-safeguard-20b and the PPQ API key)
+//   ANONYMO_FLOOR_TIMEOUT_MS   per call, default 1500 (safeguard: 8000)
+//   ANONYMO_FLOOR_CACHE_MINUTES how long a chunk's verdict is reused, default 60; 0 turns it off
 //   ANONYMO_FLOOR_CHUNK_CHARS  default 8000; ANONYMO_FLOOR_MAX_CHUNKS default 32 (longer input fails closed)
 //   ANONYMO_FLOOR_HIT_TTL_HOURS how long an unreported hit stays in memory, default 72
 //   ANONYMO_FLOOR_REQUIRED=1   with no URL, every check fails closed (every real deployment sets this;
@@ -66,7 +69,14 @@ const int = (v: unknown, name: string): number | undefined => {
   if (!Number.isInteger(n) || n <= 0) throw new Error(`${name} must be a positive integer`);
   return n;
 };
-const FORMATS: GuardFormat[] = ["llama-guard", "llama-guard-chat", "shieldgemma"];
+const FORMATS: GuardFormat[] = ["llama-guard", "llama-guard-chat", "shieldgemma", "safeguard"];
+const minutes = (v: unknown, name: string): number | undefined => {
+  const s = str(v);
+  if (s === undefined) return undefined;
+  const n = Number(s);
+  if (!Number.isInteger(n) || n < 0) throw new Error(`${name} must be a whole number of minutes (0 turns it off)`);
+  return n * 60_000;
+};
 
 /** Build the floor gate from env. See the header of this file for the variables. */
 export function createFloorGate(env: Record<string, unknown>): FloorGate {
@@ -86,6 +96,7 @@ export function createFloorGate(env: Record<string, unknown>): FloorGate {
       timeoutMs: int(env.ANONYMO_FLOOR_TIMEOUT_MS, "ANONYMO_FLOOR_TIMEOUT_MS"),
       chunkChars: int(env.ANONYMO_FLOOR_CHUNK_CHARS, "ANONYMO_FLOOR_CHUNK_CHARS"),
       maxChunks: int(env.ANONYMO_FLOOR_MAX_CHUNKS, "ANONYMO_FLOOR_MAX_CHUNKS"),
+      cacheTtlMs: minutes(env.ANONYMO_FLOOR_CACHE_MINUTES, "ANONYMO_FLOOR_CACHE_MINUTES"),
     }),
     hits: ttlHours ? new FloorHitLog(ttlHours * 3_600_000) : undefined,
   });

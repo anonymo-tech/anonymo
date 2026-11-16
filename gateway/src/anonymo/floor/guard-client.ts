@@ -4,11 +4,22 @@
 //
 // Long inputs are checked in overlapping chunks so nothing is skipped; past `maxChunks` the client refuses to answer
 // (fails closed) rather than checking only part of the text.
+//
+// Chunks start at fixed offsets, so when a conversation grows only its last chunk changes. Verdicts are kept per chunk
+// (VerdictCache) and the earlier chunks are not sent again. The cache holds a keyed hash of each chunk, never its text,
+// in memory only, under a random key made at start-up.
 
+import { createHmac, randomBytes } from "node:crypto";
 import type { FloorCategory } from "../seams.ts";
-import { FLOOR_POLICY, FloorParseError, llamaGuardChatMessages, llamaGuardPrompt, parseLlamaGuard, parseShieldGemma, shieldGemmaPrompt } from "./policy.ts";
+import { FLOOR_POLICY, FloorParseError, llamaGuardChatMessages, llamaGuardPrompt, parseLlamaGuard, parseSafeguard, parseShieldGemma, safeguardMessages, shieldGemmaPrompt } from "./policy.ts";
 
-export type GuardFormat = "llama-guard" | "llama-guard-chat" | "shieldgemma";
+/** llama-guard (raw /completions), llama-guard-chat, shieldgemma (self-hosted small guards), or safeguard
+ *  (gpt-oss-safeguard on a hosted OpenAI-compatible API, for example PayPerQ's openai/gpt-oss-safeguard-20b). */
+export type GuardFormat = "llama-guard" | "llama-guard-chat" | "shieldgemma" | "safeguard";
+
+/** Per-call timeout when none is configured: small self-hosted guards answer in well under a second; a hosted reasoning
+ *  guard needs longer. */
+export const DEFAULT_TIMEOUT_MS: Readonly<Record<GuardFormat, number>> = { "llama-guard": 1500, "llama-guard-chat": 1500, shieldgemma: 1500, safeguard: 8000 };
 
 export type GuardClientOptions = {
   url: string; // base URL of the OpenAI-compatible server, e.g. https://guard.internal/v1
@@ -20,6 +31,9 @@ export type GuardClientOptions = {
   overlapChars?: number;
   maxChunks?: number;
   concurrency?: number;
+  /** How long a chunk's verdict is reused, in ms. 0 turns the cache off. Default one hour. */
+  cacheTtlMs?: number;
+  cacheMaxEntries?: number;
   fetch?: typeof fetch;
 };
 
@@ -34,18 +48,22 @@ export class GuardModelClient {
   private readonly maxChunks: number;
   private readonly concurrency: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly cache: VerdictCache | null;
 
   constructor(private readonly opts: GuardClientOptions) {
     if (!/^https?:\/\//.test(opts.url)) throw new Error("ANONYMO_FLOOR_URL must be an http(s) URL");
     if (!opts.model) throw new Error("ANONYMO_FLOOR_MODEL is required with ANONYMO_FLOOR_URL");
     this.base = opts.url.replace(/\/+$/, "");
     this.format = opts.format ?? "llama-guard";
-    this.timeoutMs = opts.timeoutMs ?? 1500;
+    if (!(this.format in DEFAULT_TIMEOUT_MS)) throw new Error(`unknown guard format ${this.format}`);
+    this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS[this.format];
     this.chunkChars = opts.chunkChars ?? 8000;
     this.overlapChars = Math.min(opts.overlapChars ?? 400, Math.floor(this.chunkChars / 4));
     this.maxChunks = opts.maxChunks ?? 32;
     this.concurrency = Math.max(1, opts.concurrency ?? 4);
     this.fetchImpl = opts.fetch ?? fetch;
+    const ttl = opts.cacheTtlMs ?? 3_600_000;
+    this.cache = ttl > 0 ? new VerdictCache(`${this.format}\n${opts.model}`, ttl, opts.cacheMaxEntries) : null;
   }
 
   /** The first violated category across all chunks, or null when every chunk is safe. */
@@ -57,7 +75,12 @@ export class GuardModelClient {
     const worker = async () => {
       while (next < chunks.length) {
         const i = next++;
-        found[i] = await this.classifyOne(chunks[i], signal);
+        const hit = this.cache?.get(chunks[i]);
+        if (hit !== undefined) found[i] = hit;
+        else {
+          found[i] = await this.classifyOne(chunks[i], signal);
+          this.cache?.set(chunks[i], found[i]);
+        }
       }
     };
     await Promise.all(Array.from({ length: Math.min(this.concurrency, chunks.length) }, worker));
@@ -68,6 +91,9 @@ export class GuardModelClient {
   private async classifyOne(text: string, signal?: AbortSignal): Promise<FloorCategory | null> {
     if (this.format === "llama-guard") return parseLlamaGuard(await this.complete(llamaGuardPrompt(text), signal));
     if (this.format === "llama-guard-chat") return parseLlamaGuard(await this.chat(llamaGuardChatMessages(text), signal));
+    // The guide says not to cap a reasoning guard tightly; low effort keeps it short. reasoning_effort is also stated in
+    // the policy text, for servers that drop the parameter.
+    if (this.format === "safeguard") return parseSafeguard(await this.chat(safeguardMessages(text), signal, { max_tokens: 2048, reasoning_effort: "low" }));
     const answers = await Promise.all(FLOOR_POLICY.map(async (p) => [p.category, parseShieldGemma(await this.complete(shieldGemmaPrompt(text, p), signal))] as const));
     return answers.find(([, yes]) => yes)?.[0] ?? null;
   }
@@ -77,8 +103,8 @@ export class GuardModelClient {
     return (j as { choices?: { text?: unknown }[] })?.choices?.[0]?.text;
   }
 
-  private async chat(messages: { role: string; content: string }[], signal?: AbortSignal): Promise<unknown> {
-    const j = await this.post("/chat/completions", { model: this.opts.model, messages, max_tokens: 10, temperature: 0 }, signal);
+  private async chat(messages: { role: string; content: string }[], signal?: AbortSignal, extra: Record<string, unknown> = {}): Promise<unknown> {
+    const j = await this.post("/chat/completions", { model: this.opts.model, messages, max_tokens: 10, temperature: 0, ...extra }, signal);
     return (j as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message?.content;
   }
 
@@ -115,4 +141,43 @@ export function chunk(text: string, size: number, overlap: number): string[] {
     if (start + size >= text.length) break;
   }
   return out;
+}
+
+/** Verdicts per chunk, keyed by an HMAC of the chunk under a random per-process key (never the text). Oldest first out. */
+export class VerdictCache {
+  private readonly key = randomBytes(32);
+  private readonly map = new Map<string, { verdict: FloorCategory | null; until: number }>();
+  constructor(
+    private readonly scope: string,
+    private readonly ttlMs: number,
+    private readonly maxEntries = 50_000,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  private id(text: string) {
+    return createHmac("sha256", this.key).update(this.scope).update("\0").update(text).digest("base64url");
+  }
+
+  /** The cached verdict (null is "safe"), or undefined when there is none. */
+  get(text: string): FloorCategory | null | undefined {
+    const id = this.id(text);
+    const e = this.map.get(id);
+    if (!e) return undefined;
+    if (e.until <= this.now()) {
+      this.map.delete(id);
+      return undefined;
+    }
+    return e.verdict;
+  }
+
+  set(text: string, verdict: FloorCategory | null) {
+    const id = this.id(text);
+    this.map.delete(id);
+    this.map.set(id, { verdict, until: this.now() + this.ttlMs });
+    while (this.map.size > this.maxEntries) this.map.delete(this.map.keys().next().value!);
+  }
+
+  get size() {
+    return this.map.size;
+  }
 }

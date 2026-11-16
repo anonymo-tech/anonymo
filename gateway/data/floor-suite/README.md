@@ -34,6 +34,14 @@ ANONYMO_FLOOR_URL=https://guard.internal/v1 ANONYMO_FLOOR_MODEL=llama-guard-3-1b
 FLOOR_SUITE_REQUIRED=1 bun test test/floor/suite.test.ts   # every set against the real guard model
 ```
 
+Against the PPQ guard (gpt-oss-safeguard) before launch, with no red-team sets sourced yet, the in-repo adult-legal set
+alone (it must be 0% blocked):
+
+```bash
+FLOOR_SUITE_DIR=$(mktemp -d) ANONYMO_FLOOR_URL=https://api.ppq.ai/v1 ANONYMO_FLOOR_MODEL=openai/gpt-oss-safeguard-20b \
+ANONYMO_FLOOR_FORMAT=safeguard ANONYMO_FLOOR_KEY=... bun test test/floor/suite.test.ts
+```
+
 Without `FLOOR_SUITE_DIR` the external sets are skipped; with `FLOOR_SUITE_REQUIRED=1` a missing set fails the run.
 With `FLOOR_SUITE_DIR` set, `ANONYMO_FLOOR_URL` is required: red-team sets mean nothing against the test double.
 Results and failures list item ids and counts only, never prompt text, so CI logs stay clean.

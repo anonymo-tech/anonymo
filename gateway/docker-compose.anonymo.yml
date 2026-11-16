@@ -18,11 +18,13 @@
 x-anonymo-runtime: &anonymo-runtime
   # Fail closed: without a reachable guard model every chat call returns 503 floor_unavailable (WS00/WS02).
   ANONYMO_FLOOR_REQUIRED: "1"
-  ANONYMO_FLOOR_URL: ${ANONYMO_FLOOR_URL:?Set the guard model URL (infra/gpu/docker-compose.guard.yml)}
+  ANONYMO_FLOOR_URL: ${ANONYMO_FLOOR_URL:?Set the guard model URL (https://api.ppq.ai/v1 with ANONYMO_FLOOR_FORMAT=safeguard, or infra/gpu/docker-compose.guard.yml)}
   ANONYMO_FLOOR_MODEL: ${ANONYMO_FLOOR_MODEL:?Set the served guard model name}
-  ANONYMO_FLOOR_FORMAT: ${ANONYMO_FLOOR_FORMAT:-llama-guard}
+  ANONYMO_FLOOR_FORMAT: ${ANONYMO_FLOOR_FORMAT:-safeguard}
   ANONYMO_FLOOR_KEY: ${ANONYMO_FLOOR_KEY:?Inject the guard server API key}
-  ANONYMO_FLOOR_TIMEOUT_MS: ${ANONYMO_FLOOR_TIMEOUT_MS:-1500}
+  # Empty: the format's default (safeguard 8000 ms, the self-hosted formats 1500 ms).
+  ANONYMO_FLOOR_TIMEOUT_MS: ${ANONYMO_FLOOR_TIMEOUT_MS:-}
+  ANONYMO_FLOOR_CACHE_MINUTES: ${ANONYMO_FLOOR_CACHE_MINUTES:-}
   ANONYMO_REFUSAL_URL: ${ANONYMO_REFUSAL_URL:-}
   ANONYMO_REFUSAL_MODEL: ${ANONYMO_REFUSAL_MODEL:-refusal-classifier}
   ANONYMO_REFUSAL_KEY: ${ANONYMO_REFUSAL_KEY:-}

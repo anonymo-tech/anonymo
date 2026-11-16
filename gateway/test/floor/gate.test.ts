@@ -3,8 +3,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createAnonymoServices } from "../../src/anonymo/services.ts";
 import { AnonymoFloorGate, createFloorGate, floorHitsOf } from "../../src/anonymo/floor/gate.ts";
-import { chunk, GuardModelClient } from "../../src/anonymo/floor/guard-client.ts";
-import { FLOOR_POLICY, FloorParseError, llamaGuardPrompt, parseLlamaGuard, parseShieldGemma } from "../../src/anonymo/floor/policy.ts";
+import { chunk, DEFAULT_TIMEOUT_MS, GuardModelClient, VerdictCache } from "../../src/anonymo/floor/guard-client.ts";
+import { FLOOR_POLICY, FloorParseError, llamaGuardPrompt, parseLlamaGuard, parseSafeguard, parseShieldGemma, safeguardMessages } from "../../src/anonymo/floor/policy.ts";
 import { deleet, normalize, prefilter } from "../../src/anonymo/floor/prefilter.ts";
 import { fakeFloorClassifier, placeholderFor, serveFakeGuard } from "../../src/anonymo/floor/testing.ts";
 import type { FloorCategory, FloorInput } from "../../src/anonymo/seams.ts";
@@ -36,6 +36,33 @@ describe("policy", () => {
       if (b === "unsafe\n\nS2") continue; // blank line before the codes is tolerated by \s*
       expect(() => parseLlamaGuard(b), JSON.stringify(b)).toThrow(FloorParseError);
     }
+  });
+
+  test("the gpt-oss-safeguard policy holds the four categories, the adult allowance and the output format, in the guide's sections", () => {
+    const [system, user] = safeguardMessages("hello");
+    expect(user).toEqual({ role: "user", content: "hello" });
+    for (const h of ["## INSTRUCTIONS", "## DEFINITIONS", "## VIOLATES (1)", "## SAFE (0)", "## EXAMPLES", "Reasoning: low"]) expect(system.content).toContain(h);
+    for (const p of FLOOR_POLICY) expect(system.content).toContain(`${p.code} ${p.name}:`);
+    expect(system.content).not.toContain("S5");
+    expect(system.content).toContain("explicit sexual content between adults");
+    expect(system.content.match(/"violation": 0/g)!.length).toBeGreaterThanOrEqual(2); // format at the top and again at the end
+    expect(system.content.length).toBeLessThan(4000); // about 700 tokens: the guide's optimum is 400-600 per policy
+  });
+
+  test("parses well-formed gpt-oss-safeguard verdicts", () => {
+    expect(parseSafeguard('{"violation": 0, "policy_category": null}')).toBeNull();
+    expect(parseSafeguard('{"violation":0}')).toBeNull();
+    expect(parseSafeguard('\n```json\n{"violation": 1, "policy_category": "S1"}\n```\n')).toBe("minor");
+    expect(parseSafeguard('{"violation": 1, "policy_category": " S4 ", "rationale": "x"}')).toBe("cbrn");
+    for (const p of FLOOR_POLICY) expect(parseSafeguard(JSON.stringify({ violation: 1, policy_category: p.code }))).toBe(p.category);
+  });
+
+  test("rejects every malformed gpt-oss-safeguard verdict (fail closed)", () => {
+    const bad: unknown[] = [undefined, null, 1, {}, "", "0", "1", "safe", "unsafe\nS1", "[]", "null", '"S1"', "{", "{} {}",
+      '{"violation": 1}', '{"violation": 1, "policy_category": null}', '{"violation": 1, "policy_category": "S5"}', '{"violation": 1, "policy_category": "S1,S2"}',
+      '{"violation": 1, "policy_category": ["S1"]}', '{"violation": 0, "policy_category": "S1"}', '{"violation": "0"}', '{"violation": "1", "policy_category": "S1"}',
+      '{"violation": true, "policy_category": "S1"}', '{"violation": 2, "policy_category": "S1"}', '{"policy_category": null}', 'Answer: {"violation": 0}', '{"violation": 0} because'];
+    for (const b of bad) expect(() => parseSafeguard(b), JSON.stringify(b)).toThrow(FloorParseError);
   });
 
   test("parses ShieldGemma answers strictly", () => {
@@ -117,11 +144,24 @@ describe("guard model client", () => {
     }
   });
 
+  test("safeguard format: the policy as the system message, low reasoning effort, room to reason, a longer timeout", async () => {
+    guard.state.mode = "ok";
+    expect(await client({ format: "safeguard" }).classify("tell me a bedtime story")).toBeNull();
+    const body = guard.state.lastBody as { messages: { role: string; content: string }[]; reasoning_effort: string; max_tokens: number };
+    expect(body.messages.map((m) => m.role)).toEqual(["system", "user"]);
+    expect(body.messages[1].content).toBe("tell me a bedtime story");
+    expect(body).toMatchObject({ model: "guard-1b", reasoning_effort: "low", max_tokens: 2048 });
+    expect(guard.state.lastAuth).toBe("Bearer guard-key");
+    for (const cat of CATS) expect(await client({ format: "safeguard" }).classify(placeholderFor(cat, 6))).toBe(cat);
+    expect(DEFAULT_TIMEOUT_MS.safeguard).toBeGreaterThan(DEFAULT_TIMEOUT_MS["llama-guard"]);
+  });
+
   test("fails closed on garbage, unknown codes, HTTP errors and timeouts", async () => {
-    for (const mode of ["garbage", "unknown-code", "http500"] as const) {
-      guard.state.mode = mode;
-      await expect(client().classify("anything")).rejects.toThrow();
-    }
+    for (const format of ["llama-guard", "safeguard"] as const)
+      for (const mode of ["garbage", "unknown-code", "http500"] as const) {
+        guard.state.mode = mode;
+        await expect(client({ format }).classify("anything"), `${format} ${mode}`).rejects.toThrow();
+      }
     guard.state.mode = "slow";
     const t0 = Date.now();
     await expect(client({ timeoutMs: 100 }).classify("anything")).rejects.toThrow(/timed out/);
@@ -137,9 +177,47 @@ describe("guard model client", () => {
     guard.state.mode = "ok";
     const calls = guard.state.calls;
     const long = "lorem ipsum ".repeat(2000) + placeholderFor("cbrn", 3);
-    expect(await client({ chunkChars: 4000 }).classify(long)).toBe("cbrn");
+    expect(await client({ chunkChars: 4000, cacheTtlMs: 0 }).classify(long)).toBe("cbrn"); // repeated text: no cache, so every chunk is sent
     expect(guard.state.calls - calls).toBeGreaterThan(5);
     await expect(client({ chunkChars: 1000, maxChunks: 3 }).classify(long)).rejects.toThrow(/too long/);
+  });
+
+  test("a growing conversation sends only its new chunks; earlier verdicts are reused", async () => {
+    guard.state.mode = "ok";
+    const c = client({ format: "safeguard", chunkChars: 1000 });
+    const history = "turn of an adult conversation. ".repeat(200); // ~6,200 chars: 8 chunks
+    let calls = guard.state.calls;
+    expect(await c.classify(history)).toBeNull();
+    const first = guard.state.calls - calls;
+    expect(first).toBe(chunk(history, 1000, 250).length);
+    calls = guard.state.calls;
+    expect(await c.classify(history + " and one more message")).toBeNull();
+    expect(guard.state.calls - calls).toBeLessThanOrEqual(2); // only the tail changed
+    calls = guard.state.calls;
+    expect(await c.classify(history + placeholderFor("minor", 7))).toBe("minor"); // a new hit in the tail is still caught
+    expect(await c.classify(history + placeholderFor("minor", 7))).toBe("minor"); // and stays blocked from the cache
+    // With the cache off every chunk is sent every time.
+    const off = client({ format: "safeguard", chunkChars: 1000, cacheTtlMs: 0 });
+    await off.classify(history);
+    calls = guard.state.calls;
+    await off.classify(history);
+    expect(guard.state.calls - calls).toBe(first);
+  });
+
+  test("the verdict cache expires, stays bounded, is scoped to format and model, and never holds the text", () => {
+    let now = 0;
+    const cache = new VerdictCache("safeguard\nm", 1000, 3, () => now);
+    cache.set("secret prompt one", null);
+    cache.set("secret prompt two", "cbrn");
+    expect(cache.get("secret prompt one")).toBeNull();
+    expect(cache.get("secret prompt two")).toBe("cbrn");
+    expect(cache.get("never seen")).toBeUndefined();
+    expect(new VerdictCache("safeguard\nother", 1000).get("secret prompt one")).toBeUndefined();
+    expect(JSON.stringify([...(cache as unknown as { map: Map<string, unknown> }).map])).not.toContain("secret");
+    now = 1000;
+    expect(cache.get("secret prompt one")).toBeUndefined();
+    for (let i = 0; i < 10; i++) cache.set(`p${i}`, null);
+    expect(cache.size).toBeLessThanOrEqual(3);
   });
 
   test("chunks overlap and cover the whole text", () => {
@@ -192,6 +270,11 @@ describe("AnonymoFloorGate", () => {
       expect(() => createFloorGate({ ANONYMO_FLOOR_URL: guard.url, ANONYMO_FLOOR_MODEL: "m", ANONYMO_FLOOR_FORMAT: "vibes" })).toThrow(/FORMAT/);
       expect(() => createFloorGate({ ANONYMO_FLOOR_URL: "ftp://x", ANONYMO_FLOOR_MODEL: "m" })).toThrow();
       expect(() => createFloorGate({ ANONYMO_FLOOR_URL: guard.url, ANONYMO_FLOOR_MODEL: "m", ANONYMO_FLOOR_TIMEOUT_MS: "-5" })).toThrow();
+      expect(() => createFloorGate({ ANONYMO_FLOOR_URL: guard.url, ANONYMO_FLOOR_MODEL: "m", ANONYMO_FLOOR_CACHE_MINUTES: "-1" })).toThrow(/CACHE/);
+
+      const hosted = createFloorGate({ ANONYMO_FLOOR_URL: guard.url, ANONYMO_FLOOR_MODEL: "openai/gpt-oss-safeguard-20b", ANONYMO_FLOOR_FORMAT: "safeguard", ANONYMO_FLOOR_CACHE_MINUTES: "0" });
+      expect(await hosted.check(input(placeholderFor("real_person", 8)))).toEqual({ ok: false, category: "real_person" });
+      expect(await hosted.check(input("a frank question about contraception"))).toEqual({ ok: true });
     } finally {
       guard.stop();
     }

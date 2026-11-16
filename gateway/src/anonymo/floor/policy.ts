@@ -114,6 +114,49 @@ export function llamaGuardChatMessages(text: string) {
   ];
 }
 
+/** gpt-oss-safeguard (bring-your-own-policy reasoning classifier) takes the policy as the system message, laid out as
+ *  its user guide recommends: instructions, definitions, what violates, what is safe, boundary examples, with the
+ *  output format stated at the top and again at the end. About 700 tokens; the guide's sweet spot is 400-600 per
+ *  policy, and this one holds four. "Reasoning: low" keeps the hidden reasoning short. */
+export function safeguardMessages(text: string) {
+  const system = [
+    "# Anonymo floor policy",
+    "",
+    "Reasoning: low",
+    "",
+    "## INSTRUCTIONS",
+    "Classify the content in the user message against the four categories S1-S4 below. Everything outside them is allowed.",
+    'Return only a JSON object and nothing else: {"violation": 1, "policy_category": "S<n>"} if the content violates a category, or {"violation": 0, "policy_category": null} if it does not.',
+    "If several categories apply, return the first in this order: S1, S2, S3, S4.",
+    "",
+    "## DEFINITIONS",
+    "- Minor: a person or character under 18, or one described, drawn or implied to be under 18 (by age, school year, body or behaviour), even if the text also calls them an adult.",
+    "- Real, identifiable person: a real individual, public or private, who is named or recognisable. Fictional characters are not real people.",
+    "- Actionable: specific enough to help someone carry it out, such as steps, quantities, sources or routes.",
+    "",
+    "## VIOLATES (1)",
+    ...FLOOR_POLICY.map((p) => `${p.code} ${p.name}: ${p.shouldNot.join(" ")}`),
+    "",
+    "## SAFE (0)",
+    POLICY_PREAMBLE,
+    ...FLOOR_POLICY.flatMap((p) => p.can.map((s) => `- ${s}`)),
+    "",
+    "## EXAMPLES",
+    '- An explicit sex scene between two adult characters: {"violation": 0, "policy_category": null}',
+    '- Sexual roleplay where one character is in middle school: {"violation": 1, "policy_category": "S1"}',
+    '- An erotic story about a named, real actress: {"violation": 1, "policy_category": "S2"}',
+    '- A request to make a voice model of a named singer: {"violation": 1, "policy_category": "S3"}',
+    '- How voice-cloning scams work and how to spot them: {"violation": 0, "policy_category": null}',
+    '- Step-by-step synthesis of a nerve agent: {"violation": 1, "policy_category": "S4"}',
+    "",
+    'Answer with only the JSON object: {"violation": 0 or 1, "policy_category": "S1", "S2", "S3", "S4" or null}.',
+  ].join("\n");
+  return [
+    { role: "system", content: system },
+    { role: "user", content: text },
+  ];
+}
+
 /** ShieldGemma asks one yes/no question per policy, so one prompt per category. */
 export function shieldGemmaPrompt(text: string, p: PolicyCategory): string {
   const principle = `"No ${p.name}": ${p.shouldNot.join(" ")} Allowed: ${p.can.join(" ")} ${POLICY_PREAMBLE}`;
@@ -157,6 +200,32 @@ export function parseLlamaGuard(output: unknown): FloorCategory | null {
   if (cats.some((c) => !c)) throw new FloorParseError("unknown category");
   for (const p of FLOOR_POLICY) if (cats.includes(p.category)) return p.category;
   throw new FloorParseError("unreachable");
+}
+
+/** Strict gpt-oss-safeguard verdict parse: one JSON object (a ```json fence around it is tolerated) whose violation is
+ *  the number 0 with a null category, or the number 1 with a known code. Anything else throws (fails closed). Extra
+ *  fields, such as a rationale, are ignored. */
+export function parseSafeguard(output: unknown): FloorCategory | null {
+  if (typeof output !== "string") throw new FloorParseError("not a string");
+  const s = output.trim();
+  const body = /^```(?:json)?\s*([\s\S]*?)\s*```$/.exec(s)?.[1] ?? s;
+  let v: unknown;
+  try {
+    v = JSON.parse(body);
+  } catch {
+    throw new FloorParseError("not JSON");
+  }
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw new FloorParseError("shape");
+  const { violation, policy_category: code } = v as { violation?: unknown; policy_category?: unknown };
+  if (violation === 0) {
+    if (code != null) throw new FloorParseError("safe with category");
+    return null;
+  }
+  if (violation !== 1) throw new FloorParseError("shape");
+  if (typeof code !== "string") throw new FloorParseError("unsafe without category");
+  const cat = byCode.get(code.trim());
+  if (!cat) throw new FloorParseError("unknown category");
+  return cat;
 }
 
 /** Strict ShieldGemma answer parse: the answer must start with the word Yes or No. */

@@ -50,6 +50,12 @@ export function serveFakeGuard(opts: { mode?: FakeGuardMode; slowMs?: number } =
       const path = new URL(req.url).pathname;
       if (path.endsWith("/chat/completions")) {
         const user = body.messages?.findLast((m) => m.role === "user")?.content ?? "";
+        if (body.messages?.[0]?.content.startsWith("# Anonymo floor policy")) {
+          // gpt-oss-safeguard: a JSON verdict, as a hosted API returns it (reasoning kept out of content).
+          const cat = markedCategory(user);
+          const code = state.mode === "unknown-code" ? "S9" : cat ? FLOOR_POLICY.find((p) => p.category === cat)!.code : null;
+          return Response.json({ choices: [{ message: { role: "assistant", content: JSON.stringify(code ? { violation: 1, policy_category: code } : { violation: 0, policy_category: null }) } }] });
+        }
         return Response.json({ choices: [{ message: { role: "assistant", content: verdict(user) } }] });
       }
       const prompt = body.prompt ?? "";
