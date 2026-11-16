@@ -28,7 +28,7 @@ export const isAnonymoModelId = (id: unknown): id is AnonymoModelId => typeof id
 
 /** Catalogue name and description of each model ID (GET /v1/models shows them). */
 export const ANONYMO_MODEL_INFO: Readonly<Record<AnonymoModelId, { name: string; description: string }>> = Object.freeze({
-  [ANONYMO_1]: { name: "Anonymo 1", description: "Best uncensored route for the request. Venice first, warm backups of the same model families behind it." },
+  [ANONYMO_1]: { name: "Anonymo 1", description: "Best uncensored route for the request. Refusals reroute to another model family and are refunded." },
   [ANONYMO_RP]: { name: "Anonymo RP", description: "Long-context roleplay on self-hosted 24-27B uncensored models." },
   [ANONYMO_COUNCIL]: { name: "Anonymo Council", description: "Two or three model families answer and check each other; a strong model merges them." },
   [ANONYMO_SEALED]: { name: "Anonymo Sealed", description: "Runs only on hardware-attested GPU enclaves. Fails instead of downgrading when none is up." },
