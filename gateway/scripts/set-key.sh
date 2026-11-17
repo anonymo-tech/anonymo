@@ -48,20 +48,31 @@ if ! command -v osascript >/dev/null; then
   exit 1
 fi
 
-ask() { # ask <prompt> <button>: prints what was typed, fails on Cancel
-  osascript - "$TITLE" "$1" "$2" <<'APPLESCRIPT' 2>/dev/null
+ask() { # ask <prompt> <button>: prints what was typed; exit 1 on Cancel, 2 when no pop-up could open
+  local err out
+  err=$(mktemp "${TMPDIR:-/tmp}/anonymo-ask.XXXXXX")
+  if out=$(osascript - "$TITLE" "$1" "$2" 2>"$err" <<'APPLESCRIPT'
 on run argv
   set r to display dialog (item 2 of argv) default answer "" with hidden answer with title (item 1 of argv) ¬
     buttons {"Cancel", item 3 of argv} default button 2 cancel button 1
   return text returned of r
 end run
 APPLESCRIPT
+  ); then rm -f "$err"; printf '%s' "$out"; return 0; fi
+  if grep -q -- "-128" "$err"; then rm -f "$err"; return 1; fi
+  rm -f "$err"; return 2
 }
 
 clean() { printf '%s' "$1" | tr -d '[:space:]'; }
-cancelled() { echo "Cancelled. Nothing was saved."; exit 0; }
+cancelled() {
+  if [ "$1" = 2 ]; then
+    echo "The pop-up could not open from this shell. Run this command in Terminal (or the app's Terminal panel) instead. Nothing was saved." >&2
+    exit 1
+  fi
+  echo "Cancelled. Nothing was saved."; exit 0
+}
 
-key=$(ask "$KEY_PROMPT" "$([ -n "$EXTRA_VAR" ] && echo Next || echo Save)") || cancelled
+key=$(ask "$KEY_PROMPT" "$([ -n "$EXTRA_VAR" ] && echo Next || echo Save)") || cancelled $?
 key=$(clean "$key")
 if [ -z "$key" ]; then
   echo "No key entered. Nothing was saved." >&2
@@ -72,7 +83,7 @@ if [ "$KEY_VAR" = GROQ_API_KEY ] && [ "${key#gsk_}" = "$key" ]; then
 fi
 extra=""
 if [ -n "$EXTRA_VAR" ]; then
-  extra=$(ask "$EXTRA_PROMPT" "Save") || cancelled
+  extra=$(ask "$EXTRA_PROMPT" "Save") || cancelled $?
   extra=$(clean "$extra")
 fi
 
