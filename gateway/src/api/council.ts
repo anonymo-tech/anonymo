@@ -529,7 +529,7 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
   const planCache = new Map<string, PlannedSeat | null>();
   const planSeat = (s: Seat, seatBody: Record<string, unknown>, tokens: number): PlannedSeat | null => {
     try {
-      const planned = tk.selectTargets(ctx, { resolved: [s], prefs, params: tk.requestParams(seatBody), promptTokens: tokens, byok, disc });
+      const planned = tk.selectTargets(ctx, { resolved: [s], prefs, params: tk.requestParams(seatBody), promptTokens: tokens, byok, disc, maxOut: tk.outputBudgetOf(seatBody) });
       let targets = planned.targets;
       if (sealed) targets = targets.map((t) => ({ ...t, ordered: sealedFilter(t.ordered, candidateState, clock) })).filter((t) => t.ordered.length > 0);
       return targets.length ? { ...s, targets, excluded: planned.excluded } : null;

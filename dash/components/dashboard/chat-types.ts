@@ -15,4 +15,6 @@ export type Turn = {
   receipt: Receipt | null;
   council: CouncilResult | null;
   councilMode: 'merge' | 'select' | null;
+  aiReminder?: boolean; // show the 3-hourly “you’re talking to an AI” reminder above this turn
+  crisis?: boolean; // the prompt mentioned suicide or self-harm: show crisis lines with the answer
 };

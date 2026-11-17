@@ -19,6 +19,7 @@ import { useDeviceStore } from '@/lib/anonymo/device-store';
 import { modelStore, setStoredModel } from '@/lib/anonymo/prefs';
 import type { AnonymoModelId, ChatMessage } from '@/lib/anonymo/types';
 import { paperPrompt, type PaperSource } from '@/lib/paper-trail';
+import { AI_NOTICE, AI_REMINDER, CRISIS_LINES, mentionsSelfHarm, reminderDue } from '@/lib/anonymo/safety';
 
 const STARTERS: { model: AnonymoModelId; text: string }[] = [
   { model: 'anonymo-1', text: 'What actually happens in the body during a long fast, hour by hour? Be frank.' },
@@ -43,6 +44,8 @@ export function ChatWorkspace() {
   const controller = useRef<AbortController | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const end = useRef<HTMLDivElement>(null);
+  // The AI notice below the message box is always on screen; this marks when the thread last repeated it.
+  const noticedAt = useRef(Date.now());
   const scan = useContentGuard();
   const streaming = turns.some((t) => t.status === 'streaming');
   // A character card is only a system prompt, so it works with any model, not just anonymo-rp.
@@ -80,6 +83,8 @@ export function ChatWorkspace() {
       messages = built.messages.map((m) => ({ role: m.role as ChatMessage['role'], content: typeof m.content === 'string' ? m.content : '' }));
     }
     const id = crypto.randomUUID();
+    const aiReminder = reminderDue(noticedAt.current);
+    if (aiReminder) noticedAt.current = Date.now();
     const turn: Turn = {
       id,
       model,
@@ -93,6 +98,8 @@ export function ChatWorkspace() {
       receipt: null,
       council: null,
       councilMode: model === 'anonymo-council' ? councilMode : null,
+      aiReminder,
+      crisis: mentionsSelfHarm(prompt),
     };
     setTurns((list) => [...list, turn]);
     setText('');
@@ -241,6 +248,7 @@ export function ChatWorkspace() {
           Refusal catch: {refusalCatch ? 'on' : 'off'}
         </button>
       </div>
+      <p className="ai-notice">{AI_NOTICE}</p>
       <div className="dock-meta">
         <span>Enter to send · Shift+Enter for a new line</span>
         <span>Conversations stay in this tab and are never stored.</span>
@@ -302,6 +310,11 @@ export function ChatWorkspace() {
           <h1 className="sr-only">Chat</h1>
           {turns.map((turn) => (
             <article key={turn.id} className="turn">
+              {turn.aiReminder && (
+                <p className="ai-reminder" role="note">
+                  {AI_REMINDER}
+                </p>
+              )}
               <p className="prompt">{turn.prompt}</p>
               {(turn.attachment || turn.character) && (
                 <div className="prompt-meta">
@@ -309,6 +322,7 @@ export function ChatWorkspace() {
                   {turn.character && <span className="chip">as {turn.character}</span>}
                 </div>
               )}
+              {turn.crisis && <CrisisNotice />}
               <div className="ai-row">
                 <Photo src="/mascot/avatar.jpg" alt="" width={52} height={52} />
                 <AnswerCard turn={turn} />
@@ -319,5 +333,25 @@ export function ChatWorkspace() {
         </div>
       )}
     </WorkspaceShell>
+  );
+}
+
+/** Shown with any message that mentions suicide or self-harm. It never blocks the chat. */
+function CrisisNotice() {
+  return (
+    <aside className="notice crisis-notice" aria-label="Crisis support">
+      <strong>If you’re thinking about suicide or hurting yourself, you can talk to a person right now.</strong>
+      <p className="muted">Free and confidential. If you’re in immediate danger, call your local emergency number.</p>
+      <ul>
+        {CRISIS_LINES.map((l) => (
+          <li key={l.href}>
+            <span className="crisis-where">{l.where} ·</span> {l.what}:{' '}
+            <a href={l.href} {...(l.href.startsWith('http') ? { target: '_blank', rel: 'noreferrer noopener' } : {})}>
+              {l.action}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </aside>
   );
 }

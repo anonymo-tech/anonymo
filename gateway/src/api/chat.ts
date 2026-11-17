@@ -16,6 +16,7 @@ import { type Pico, maxPico, picoToUsd, picoToUsdString, usdToPico } from "../li
 import { canonical, canonicalJson, decrypt, genId, log, sha256 } from "../lib/util.ts";
 import { reserve, release, settle } from "../ledger/ledger.ts";
 import { selectProviders, type ProviderPrefs } from "../router/select.ts";
+import { isAnonymoRoute } from "../anonymo/models.ts";
 import { isRestricted } from "../router/lane.ts";
 import { disclosureClass, disclosureRefusal, profileOf, type DisclosureClass, type DisclosureRequest } from "../router/disclosure.ts";
 import { servedDisclosure, servedPolicyHash } from "./disclosure.ts";
@@ -124,9 +125,24 @@ async function resolveBilling(_ctx: Ctx, _c: Context, key: KeyRow | null, wallet
  * disclosure ceiling or lane the same way: a request whose ceiling leaves no provider is refused (409, or 503
  * while compliant providers are down) and is never routed to one that does not meet it.
  */
+/** Below this output budget a route that reasons before answering can spend all of it thinking and return nothing, so
+ *  Anonymo routes marked `reasoning` in config/upstreams.yaml move behind the others (they stay as the last fallback). */
+export const REASONING_MIN_OUTPUT = 1024;
+export const outputBudgetOf = (body: Record<string, unknown>): number | null => {
+  const v = body.max_tokens ?? body.max_completion_tokens;
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+};
+
+/** Anonymo routes that reason before answering, moved behind the others when the output budget is small. */
+export function reasoningLast<T extends Pick<Candidate, "tier" | "supportedParameters">>(ordered: T[], maxOut: number | null): T[] {
+  if (maxOut == null || maxOut >= REASONING_MIN_OUTPUT) return ordered;
+  const thinks = (x: T) => isAnonymoRoute(x) && (x.supportedParameters ?? []).includes("reasoning");
+  return [...ordered.filter((x) => !thinks(x)), ...ordered.filter(thinks)];
+}
+
 function selectTargets(
   ctx: Ctx,
-  o: { resolved: { model: ModelRow; modifiers: Set<Modifier> }[]; prefs: ProviderPrefs; params: string[]; promptTokens: number; byok: Map<string, string>; disc: DisclosureRequest },
+  o: { resolved: { model: ModelRow; modifiers: Set<Modifier> }[]; prefs: ProviderPrefs; params: string[]; promptTokens: number; byok: Map<string, string>; disc: DisclosureRequest; maxOut?: number | null },
 ) {
   const { resolved, prefs, params, promptTokens, byok, disc } = o;
   const strict = disc.max !== "any";
@@ -158,6 +174,8 @@ function selectTargets(
       if (!ok) notes.push({ model: r.model.id, provider: cand.providerId, reason: `does not support ${must.join("/")}` });
       return ok;
     });
+    // A small output budget: reasoning routes go last, unless the caller pinned an order.
+    if (!p.order?.length) ordered = reasoningLast(ordered, o.maxOut ?? null);
     // BYOK providers go first unless the caller pinned an order.
     if (!p.order?.length && byok.size) ordered = [...ordered.filter((x) => byok.has(x.providerId)), ...ordered.filter((x) => !byok.has(x.providerId))];
     for (const e of sel.excluded) notes.push({ model: r.model.id, ...e });
@@ -360,8 +378,8 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   const alternatives = { resolved, prefs, params, promptTokens, byok, body, allowed }; // B121
   // Sealed: only attested, fresh routes; otherwise 409 sealed_unavailable before any hold or provider call (WS09).
   const { targets, excluded } = sealed
-    ? sealedSelection(ctx, true, () => selectTargets(ctx, { resolved, prefs, params, promptTokens, byok, disc }))
-    : selectWithSuggestions(() => selectTargets(ctx, { resolved, prefs, params, promptTokens, byok, disc }), ctx, alternatives); // B121
+    ? sealedSelection(ctx, true, () => selectTargets(ctx, { resolved, prefs, params, promptTokens, byok, disc, maxOut: outputBudgetOf(body) }))
+    : selectWithSuggestions(() => selectTargets(ctx, { resolved, prefs, params, promptTokens, byok, disc, maxOut: outputBudgetOf(body) }), ctx, alternatives); // B121
   if (!targets.length)
     throw addSuggestions(new ApiError(404, "No providers match this request's model and routing preferences.", "no_providers", { excluded: excluded.slice(0, 50) }), ctx, alternatives); // B121
 
@@ -1049,7 +1067,7 @@ async function cachedResponse(ctx: Ctx, c: Context, p: { body: Record<string, un
 }
 
 /** What the multi-call modes (council, dual verification) reuse from the single-call path. */
-export const toolkit = { finalize, selectTargets, resolveBilling, allFailed, byokFor, limitOrThrow, requestHash, requestParams, paymentHeaders, upstreamAttestationOf, servedWith };
+export const toolkit = { finalize, selectTargets, outputBudgetOf, resolveBilling, allFailed, byokFor, limitOrThrow, requestHash, requestParams, paymentHeaders, upstreamAttestationOf, servedWith };
 
 export { canonical };
 

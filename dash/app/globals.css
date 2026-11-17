@@ -473,6 +473,13 @@ table.data th.num { text-align: right; }
 .send-stop { background: var(--text); }
 .dock-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 12.5px; color: var(--faint); order: 3; }
 .dock-composer > .notice { order: 0; }
+.ai-notice { order: 2; margin: 0; font-size: 12.5px; color: var(--muted); }
+.ai-reminder { justify-self: center; margin: 0; padding: 3px 12px; border: 1px solid var(--line-strong); border-radius: 999px; font-size: 12.5px; color: var(--muted); }
+.crisis-notice { display: grid; gap: 6px; border-color: #4ade8055; background: var(--ok-soft); }
+.crisis-notice p { margin: 0; }
+.crisis-notice ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.crisis-notice a { color: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.crisis-where { color: var(--muted); }
 
 /* ---- panels (key, funds, receipts, characters) --------------------------------------------------------------- */
 .panel-stack { display: grid; gap: 18px; }

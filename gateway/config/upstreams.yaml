@@ -50,5 +50,5 @@ routes:
   # Venice-hosted models resold by PPQ (about 5% over Venice's price). Pooled under anonymo-1 and the council only, never
   # as a direct model ID. Venice serves all three, so a Venice outage takes down every route here.
   - { id: ppq-venice-uncensored, upstream: ppq, model: venice/venice-uncensored-1-2, family: mistral, quant: fp16, ctx: 32768, price: { in: 0.211, out: 0.9495 }, quality: 82, serves: [anonymo-1, anonymo-council] }
-  - { id: ppq-venice-deepseek-flash, upstream: ppq, model: venice/deepseek-v4-1-flash-uncensored, family: deepseek, quant: fp8, ctx: 131072, price: { in: 0.34815, out: 1.3926 }, quality: 86, serves: [anonymo-1, anonymo-council] }
+  - { id: ppq-venice-deepseek-flash, upstream: ppq, model: venice/deepseek-v4-1-flash-uncensored, family: deepseek, quant: fp8, ctx: 131072, price: { in: 0.34815, out: 1.3926 }, quality: 86, serves: [anonymo-1, anonymo-council], features: [reasoning] }
   - { id: ppq-venice-gemma, upstream: ppq, model: venice/gemma-4-uncensored, family: gemma, quant: unknown, ctx: 131072, price: { in: 0.1714375, out: 0.5275 }, quality: 76, serves: [anonymo-1, anonymo-council] }
