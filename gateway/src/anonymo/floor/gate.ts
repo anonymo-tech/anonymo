@@ -13,7 +13,9 @@
 //   ANONYMO_FLOOR_CACHE_MINUTES how long a chunk's verdict is reused, default 60; 0 turns it off
 //   ANONYMO_FLOOR_CHUNK_CHARS  default 8000; ANONYMO_FLOOR_MAX_CHUNKS default 32 (longer input fails closed)
 //   ANONYMO_FLOOR_HIT_TTL_HOURS how long an unreported hit stays in memory, default 72
-//   ANONYMO_FLOOR_FALLBACK_URL, _MODEL, _KEY, _FORMAT (format defaults to the primary's)
+//   ANONYMO_FLOOR_EXTRA_BODY   optional JSON object added to every guard request, e.g. a provider pin on a router:
+//                              {"provider":{"only":["groq"],"allow_fallbacks":false}} on NanoGPT
+//   ANONYMO_FLOOR_FALLBACK_URL, _MODEL, _KEY, _FORMAT, _EXTRA_BODY (format defaults to the primary's)
 //                              a second guard asked only when the first one errors (rate limit, outage, bad verdict).
 //                              A verdict from the first guard is final: a fallback can never turn a block into a pass.
 //                              With a fallback the first guard does not retry; the fallback retries once.
@@ -80,6 +82,22 @@ const int = (v: unknown, name: string): number | undefined => {
   if (!Number.isInteger(n) || n <= 0) throw new Error(`${name} must be a positive integer`);
   return n;
 };
+/** An optional JSON object setting. It may not set what the guard request itself decides. */
+const RESERVED_BODY_KEYS = ["model", "messages", "prompt", "max_tokens", "temperature", "reasoning_effort", "stream"];
+const jsonObject = (v: unknown, name: string): Record<string, unknown> | undefined => {
+  const s = str(v);
+  if (s === undefined) return undefined;
+  let o: unknown;
+  try {
+    o = JSON.parse(s);
+  } catch {
+    throw new Error(`${name} must be a JSON object`);
+  }
+  if (!o || typeof o !== "object" || Array.isArray(o)) throw new Error(`${name} must be a JSON object`);
+  const bad = Object.keys(o).filter((k) => RESERVED_BODY_KEYS.includes(k));
+  if (bad.length) throw new Error(`${name} may not set ${bad.join(", ")}`);
+  return o as Record<string, unknown>;
+};
 const FORMATS: GuardFormat[] = ["llama-guard", "llama-guard-chat", "shieldgemma", "safeguard"];
 const minutes = (v: unknown, name: string): number | undefined => {
   const s = str(v);
@@ -102,7 +120,7 @@ export function createFloorGate(env: Record<string, unknown>): FloorGate {
   if (fallbackUrl && !str(env.ANONYMO_FLOOR_FALLBACK_MODEL)) throw new Error("ANONYMO_FLOOR_FALLBACK_MODEL is required with ANONYMO_FLOOR_FALLBACK_URL");
   const fallbackFormat = str(env.ANONYMO_FLOOR_FALLBACK_FORMAT) ?? format;
   if (!FORMATS.includes(fallbackFormat as GuardFormat)) throw new Error(`ANONYMO_FLOOR_FALLBACK_FORMAT must be one of ${FORMATS.join(", ")}`);
-  const client = (o: { url: string; model: string; apiKey?: string; format: string; retry: boolean }) =>
+  const client = (o: { url: string; model: string; apiKey?: string; format: string; retry: boolean; extraBody?: Record<string, unknown> }) =>
     new GuardModelClient({
       ...o,
       format: o.format as GuardFormat,
@@ -111,9 +129,9 @@ export function createFloorGate(env: Record<string, unknown>): FloorGate {
       maxChunks: int(env.ANONYMO_FLOOR_MAX_CHUNKS, "ANONYMO_FLOOR_MAX_CHUNKS"),
       cacheTtlMs: minutes(env.ANONYMO_FLOOR_CACHE_MINUTES, "ANONYMO_FLOOR_CACHE_MINUTES"),
     });
-  const primary = client({ url, model: str(env.ANONYMO_FLOOR_MODEL) ?? "", apiKey: str(env.ANONYMO_FLOOR_KEY), format, retry: !fallbackUrl });
+  const primary = client({ url, model: str(env.ANONYMO_FLOOR_MODEL) ?? "", apiKey: str(env.ANONYMO_FLOOR_KEY), format, retry: !fallbackUrl, extraBody: jsonObject(env.ANONYMO_FLOOR_EXTRA_BODY, "ANONYMO_FLOOR_EXTRA_BODY") });
   const classifier = fallbackUrl
-    ? new FallbackClassifier(primary, client({ url: fallbackUrl, model: str(env.ANONYMO_FLOOR_FALLBACK_MODEL) ?? "", apiKey: str(env.ANONYMO_FLOOR_FALLBACK_KEY), format: fallbackFormat, retry: true }))
+    ? new FallbackClassifier(primary, client({ url: fallbackUrl, model: str(env.ANONYMO_FLOOR_FALLBACK_MODEL) ?? "", apiKey: str(env.ANONYMO_FLOOR_FALLBACK_KEY), format: fallbackFormat, retry: true, extraBody: jsonObject(env.ANONYMO_FLOOR_FALLBACK_EXTRA_BODY, "ANONYMO_FLOOR_FALLBACK_EXTRA_BODY") }))
     : primary;
   return new AnonymoFloorGate({ classifier, hits: ttlHours ? new FloorHitLog(ttlHours * 3_600_000) : undefined });
 }

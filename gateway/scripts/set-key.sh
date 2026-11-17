@@ -4,6 +4,7 @@
 #
 #   bash scripts/set-key.sh ppq    # PPQ_API_KEY, and optionally PPQ_CREDIT_ID (the balance check)
 #   bash scripts/set-key.sh groq   # GROQ_API_KEY, for the floor guard (gpt-oss-safeguard-20b on Groq)
+#   bash scripts/set-key.sh nanogpt  # NANOGPT_API_KEY, for the floor guard on NanoGPT (pinned to its Groq route)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -23,8 +24,14 @@ case "${1:-}" in
     KEY_PROMPT="Paste your Groq API key (it starts with gsk_). It is saved to gateway/.env on this Mac only."
     EXTRA_VAR=""
     ;;
+  nanogpt)
+    TITLE="Anonymo · NanoGPT"
+    KEY_VAR=NANOGPT_API_KEY
+    KEY_PROMPT="Paste your NanoGPT API key. It is saved to gateway/.env on this Mac only."
+    EXTRA_VAR=""
+    ;;
   *)
-    echo "Usage: bash scripts/set-key.sh ppq|groq" >&2
+    echo "Usage: bash scripts/set-key.sh ppq|groq|nanogpt" >&2
     exit 2
     ;;
 esac

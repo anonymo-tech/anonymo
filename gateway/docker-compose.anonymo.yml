@@ -18,15 +18,17 @@
 x-anonymo-runtime: &anonymo-runtime
   # Fail closed: without a reachable guard model every chat call returns 503 floor_unavailable (WS00/WS02).
   ANONYMO_FLOOR_REQUIRED: "1"
-  ANONYMO_FLOOR_URL: ${ANONYMO_FLOOR_URL:?Set the guard model URL (https://api.groq.com/openai/v1 with ANONYMO_FLOOR_FORMAT=safeguard, or infra/gpu/docker-compose.guard.yml)}
+  ANONYMO_FLOOR_URL: ${ANONYMO_FLOOR_URL:?Set the guard model URL (https://api.nano-gpt.com/api/v1 with ANONYMO_FLOOR_FORMAT=safeguard; see deploy/anonymo/.env.example)}
   ANONYMO_FLOOR_MODEL: ${ANONYMO_FLOOR_MODEL:?Set the served guard model name}
   ANONYMO_FLOOR_FORMAT: ${ANONYMO_FLOOR_FORMAT:-safeguard}
   ANONYMO_FLOOR_KEY: ${ANONYMO_FLOOR_KEY:?Inject the guard server API key}
-  # Optional second guard, asked only when the first errors (deploy/anonymo/.env.example: PPQ behind Groq).
+  ANONYMO_FLOOR_EXTRA_BODY: ${ANONYMO_FLOOR_EXTRA_BODY:-}
+  # Optional second guard, asked only when the first errors (deploy/anonymo/.env.example: PPQ behind NanoGPT).
   ANONYMO_FLOOR_FALLBACK_URL: ${ANONYMO_FLOOR_FALLBACK_URL:-}
   ANONYMO_FLOOR_FALLBACK_MODEL: ${ANONYMO_FLOOR_FALLBACK_MODEL:-}
   ANONYMO_FLOOR_FALLBACK_FORMAT: ${ANONYMO_FLOOR_FALLBACK_FORMAT:-}
   ANONYMO_FLOOR_FALLBACK_KEY: ${ANONYMO_FLOOR_FALLBACK_KEY:-}
+  ANONYMO_FLOOR_FALLBACK_EXTRA_BODY: ${ANONYMO_FLOOR_FALLBACK_EXTRA_BODY:-}
   # Empty: the format's default (safeguard 8000 ms, the self-hosted formats 1500 ms).
   ANONYMO_FLOOR_TIMEOUT_MS: ${ANONYMO_FLOOR_TIMEOUT_MS:-}
   ANONYMO_FLOOR_CACHE_MINUTES: ${ANONYMO_FLOOR_CACHE_MINUTES:-}

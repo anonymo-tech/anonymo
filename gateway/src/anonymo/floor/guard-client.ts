@@ -42,6 +42,9 @@ export type GuardClientOptions = {
   cacheMaxEntries?: number;
   /** Retry a passing failure once (default). Off for a primary guard that has a fallback: failing over is faster. */
   retry?: boolean;
+  /** Extra JSON fields for every request, such as a provider pin on a router (NanoGPT: {"provider":{"only":["groq"],
+   *  "allow_fallbacks":false}}). They never replace the model, the input or the sampling settings. */
+  extraBody?: Record<string, unknown>;
   fetch?: typeof fetch;
 };
 
@@ -153,12 +156,12 @@ export class GuardModelClient {
   }
 
   private async complete(prompt: string, signal?: AbortSignal): Promise<unknown> {
-    const j = await this.post("/completions", { model: this.opts.model, prompt, max_tokens: 10, temperature: 0 }, signal);
+    const j = await this.post("/completions", { ...this.opts.extraBody, model: this.opts.model, prompt, max_tokens: 10, temperature: 0 }, signal);
     return (j as { choices?: { text?: unknown }[] })?.choices?.[0]?.text;
   }
 
   private async chat(messages: { role: string; content: string }[], signal?: AbortSignal, extra: Record<string, unknown> = {}): Promise<unknown> {
-    const j = await this.post("/chat/completions", { model: this.opts.model, messages, max_tokens: 10, temperature: 0, ...extra }, signal);
+    const j = await this.post("/chat/completions", { ...this.opts.extraBody, model: this.opts.model, messages, max_tokens: 10, temperature: 0, ...extra }, signal);
     return (j as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message?.content;
   }
 
