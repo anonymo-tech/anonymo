@@ -6,8 +6,8 @@
 // - APP_SECRET, ADMIN_TOKEN and RUNTIME_DB_PASSWORD: generated here as shared variables, only when missing (never
 //   rotated by a re-run: APP_SECRET encrypts stored upstream keys, so rotating it is a maintenance step).
 // - ANONYMO_FLOOR_KEY (shared): NANOGPT_API_KEY from gateway/.env.
-// - ANONYMO_FLOOR_FALLBACK_KEY and ANONYMO_FLOOR_LLAMAGUARD_KEY (shared): a second PPQ API key, asked in a hidden
-//   dialog. It must not be PPQ_API_KEY, which stays on the one-shot seeding services only.
+// - The PPQ-backed floor checks (fallback guard, Llama Guard) read the same PPQ key: their variables on api, worker and
+//   anonymo-worker are references to ${{upstreams-init.PPQ_API_KEY}}, so this script never copies it a second time.
 // - upstreams-init gets PPQ_API_KEY and PPQ_CREDIT_ID, provider-init gets UPSTREAM_API_KEY, both from gateway/.env.
 // Values travel to `railway api` in a mode-600 temporary file that is deleted straight after. Nothing is deployed.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -52,15 +52,6 @@ function readEnv(file: string) {
   return out;
 }
 
-function ask(prompt: string): string | null {
-  const script = `on run argv
-  set r to display dialog (item 1 of argv) default answer "" with hidden answer with title "Anonymo · Railway" buttons {"Skip", "Save"} default button 2 cancel button 1
-  return text returned of r
-end run`;
-  const r = Bun.spawnSync(["osascript", "-", prompt], { stdin: new TextEncoder().encode(script), stderr: "pipe" });
-  return r.exitCode === 0 ? r.stdout.toString().replace(/\s+/g, "") || null : null;
-}
-
 const { projectId, environmentId, services } = linked();
 const env = readEnv(join(import.meta.dir, "..", ".env"));
 const upsert = `mutation($input: VariableCollectionUpsertInput!) { variableCollectionUpsert(input: $input) }`;
@@ -79,10 +70,6 @@ for (const [name, bytes] of [["APP_SECRET", 32], ["ADMIN_TOKEN", 24], ["RUNTIME_
 if (env.NANOGPT_API_KEY) { shared.ANONYMO_FLOOR_KEY = env.NANOGPT_API_KEY; done.push("ANONYMO_FLOOR_KEY (NanoGPT)"); }
 else if (!existing.ANONYMO_FLOOR_KEY) skipped.push("ANONYMO_FLOOR_KEY: no NANOGPT_API_KEY in gateway/.env (bash scripts/set-key.sh nanogpt)");
 
-const second = ask("Paste a SECOND PayPerQ API key (make a new one in your PPQ account; not the one in gateway/.env). It is used for the fallback guard and Llama Guard. Skip keeps what Railway has.");
-if (second && second === env.PPQ_API_KEY) skipped.push("second PPQ key: it is the same as PPQ_API_KEY, make a separate one");
-else if (second) { shared.ANONYMO_FLOOR_FALLBACK_KEY = second; shared.ANONYMO_FLOOR_LLAMAGUARD_KEY = second; done.push("ANONYMO_FLOOR_FALLBACK_KEY and ANONYMO_FLOOR_LLAMAGUARD_KEY"); }
-else if (!existing.ANONYMO_FLOOR_LLAMAGUARD_KEY) skipped.push("second PPQ key: without it the floor fails closed (Llama Guard checks every message)");
 if (Object.keys(shared).length) set(shared);
 
 if (env.PPQ_API_KEY && services["upstreams-init"] && services["provider-init"]) {
