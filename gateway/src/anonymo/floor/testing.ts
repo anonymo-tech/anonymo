@@ -3,7 +3,8 @@
 //
 //   fakeFloorClassifier  in-process classifier for unit tests
 //   serveFakeGuard       an OpenAI-compatible guard server on 127.0.0.1, so tests exercise the real HTTP client,
-//                        the prompt format and the strict parser; it can also misbehave (garbage, 500, slow)
+//                        the prompt format and the strict parser; it can also misbehave (garbage, 500, slow), or
+//                        fail only its next `failNext` calls with `failStatus` (a passing outage)
 
 import type { FloorCategory } from "../seams.ts";
 import { FLOOR_POLICY } from "./policy.ts";
@@ -29,7 +30,7 @@ export const fakeFloorClassifier = (): FloorClassifier & { calls: number } => {
 export type FakeGuardMode = "ok" | "garbage" | "http500" | "slow" | "unknown-code";
 
 export function serveFakeGuard(opts: { mode?: FakeGuardMode; slowMs?: number } = {}) {
-  const state = { mode: opts.mode ?? ("ok" as FakeGuardMode), calls: 0, lastAuth: null as string | null, lastBody: null as unknown };
+  const state = { mode: opts.mode ?? ("ok" as FakeGuardMode), calls: 0, failNext: 0, failStatus: 503, retryAfterSeconds: null as number | null, lastAuth: null as string | null, lastBody: null as unknown };
   const verdict = (text: string) => {
     const cat = markedCategory(text);
     if (state.mode === "unknown-code") return "unsafe\nS9";
@@ -44,6 +45,13 @@ export function serveFakeGuard(opts: { mode?: FakeGuardMode; slowMs?: number } =
       state.lastAuth = req.headers.get("authorization");
       const body = (await req.json()) as { prompt?: string; messages?: { role: string; content: string }[] };
       state.lastBody = body;
+      if (state.failNext > 0) {
+        state.failNext--;
+        if (state.failStatus === 429 && state.retryAfterSeconds !== null)
+          // PayPerQ's shape: no Retry-After header, the wait in the OpenRouter-style error body.
+          return Response.json({ error: { message: "Provider returned error", code: 429, metadata: { retry_after_seconds: state.retryAfterSeconds } } }, { status: 429 });
+        return new Response("busy", { status: state.failStatus });
+      }
       if (state.mode === "http500") return new Response("down", { status: 500 });
       if (state.mode === "slow") await Bun.sleep(opts.slowMs ?? 3000);
       if (state.mode === "garbage") return Response.json({ choices: [{ text: "I think this is probably fine!", message: { content: "I think this is probably fine!" } }] });

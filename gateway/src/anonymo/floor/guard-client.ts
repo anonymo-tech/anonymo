@@ -8,9 +8,15 @@
 // Chunks start at fixed offsets, so when a conversation grows only its last chunk changes. Verdicts are kept per chunk
 // (VerdictCache) and the earlier chunks are not sent again. The cache holds a keyed hash of each chunk, never its text,
 // in memory only, under a random key made at start-up.
+//
+// A failure that may be passing (network error, timeout, HTTP 408/429/5xx, an unparseable verdict) is retried once
+// after a short pause (on a 429, after the wait the server asks for, up to GUARD_RETRY_MAX_WAIT_MS: PayPerQ's hosted
+// gpt-oss-safeguard is rate-limited upstream and asks for about a second); if the retry fails too, the error propagates and the gate fails closed as before. Auth and other
+// 4xx errors are not retried.
 
 import { createHmac, randomBytes } from "node:crypto";
 import type { FloorCategory } from "../seams.ts";
+import { log } from "../../lib/util.ts";
 import { FLOOR_POLICY, FloorParseError, llamaGuardChatMessages, llamaGuardPrompt, parseLlamaGuard, parseSafeguard, parseShieldGemma, safeguardMessages, shieldGemmaPrompt } from "./policy.ts";
 
 /** llama-guard (raw /completions), llama-guard-chat, shieldgemma (self-hosted small guards), or safeguard
@@ -37,7 +43,39 @@ export type GuardClientOptions = {
   fetch?: typeof fetch;
 };
 
-export class FloorUnavailableError extends Error {}
+/** Pause before the one retry of a failed guard call, and the most a 429's requested wait is honoured. */
+export const GUARD_RETRY_DELAY_MS = 200;
+export const GUARD_RETRY_MAX_WAIT_MS = 2000;
+
+export class FloorUnavailableError extends Error {
+  /** retryable: the same call may well succeed if sent again (network, timeout, 408/429/5xx). retryAfterMs: the wait a
+   *  429 asked for, when it said. */
+  constructor(
+    message: string,
+    readonly retryable = false,
+    readonly retryAfterMs?: number,
+  ) {
+    super(message);
+  }
+}
+
+/** The wait a 429 asks for: the Retry-After header (seconds), or retry_after_seconds in an OpenRouter-style error body
+ *  (PayPerQ sends only the body). Only that number is read from the body. */
+async function retryAfterMsOf(res: Response): Promise<number | undefined> {
+  const raw = res.headers.get("retry-after")?.trim();
+  const header = raw ? Number(raw) : NaN;
+  if (Number.isFinite(header) && header >= 0) return header * 1000;
+  const j = (await res.json().catch(() => null)) as { error?: { metadata?: { retry_after_seconds?: unknown } } } | null;
+  const s = j?.error?.metadata?.retry_after_seconds;
+  return typeof s === "number" && Number.isFinite(s) && s >= 0 ? s * 1000 : undefined;
+}
+
+const retryable = (e: unknown) => (e instanceof FloorUnavailableError && e.retryable) || e instanceof FloorParseError;
+
+/** A loggable reason for a floor failure. Guard errors carry fixed messages (never prompt or model text); for anything
+ *  else only the error's class name is given. */
+export const floorErrorReason = (e: unknown) =>
+  e instanceof FloorUnavailableError || e instanceof FloorParseError ? e.message : e instanceof Error ? e.name : "unknown";
 
 export class GuardModelClient {
   readonly format: GuardFormat;
@@ -88,7 +126,21 @@ export class GuardModelClient {
     return null;
   }
 
+  /** One chunk's verdict, retried once on a failure that may be passing. */
   private async classifyOne(text: string, signal?: AbortSignal): Promise<FloorCategory | null> {
+    try {
+      return await this.ask(text, signal);
+    } catch (e) {
+      if (!retryable(e) || signal?.aborted) throw e;
+      log.warn("floor guard call failed, retrying once", { reason: floorErrorReason(e) });
+      const wait = e instanceof FloorUnavailableError && e.retryAfterMs !== undefined ? Math.min(Math.max(e.retryAfterMs, GUARD_RETRY_DELAY_MS), GUARD_RETRY_MAX_WAIT_MS) : GUARD_RETRY_DELAY_MS;
+      await new Promise((r) => setTimeout(r, wait));
+      if (signal?.aborted) throw e;
+      return await this.ask(text, signal);
+    }
+  }
+
+  private async ask(text: string, signal?: AbortSignal): Promise<FloorCategory | null> {
     if (this.format === "llama-guard") return parseLlamaGuard(await this.complete(llamaGuardPrompt(text), signal));
     if (this.format === "llama-guard-chat") return parseLlamaGuard(await this.chat(llamaGuardChatMessages(text), signal));
     // The guide says not to cap a reasoning guard tightly; low effort keeps it short. reasoning_effort is also stated in
@@ -117,11 +169,12 @@ export class GuardModelClient {
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     }).catch((e: unknown) => {
       // Never forward the underlying message: some runtimes include the request body in network errors.
-      throw new FloorUnavailableError(e instanceof Error && e.name === "TimeoutError" ? "floor guard timed out" : "floor guard unreachable");
+      throw new FloorUnavailableError(e instanceof Error && e.name === "TimeoutError" ? "floor guard timed out" : "floor guard unreachable", !signal?.aborted);
     });
+    if (res.status === 429) throw new FloorUnavailableError("floor guard answered HTTP 429", true, await retryAfterMsOf(res));
     if (!res.ok) {
       await res.body?.cancel().catch(() => undefined);
-      throw new FloorUnavailableError(`floor guard answered HTTP ${res.status}`);
+      throw new FloorUnavailableError(`floor guard answered HTTP ${res.status}`, res.status === 408 || res.status === 429 || res.status >= 500);
     }
     try {
       return await res.json();

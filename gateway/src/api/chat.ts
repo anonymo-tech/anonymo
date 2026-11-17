@@ -10,6 +10,7 @@ import { apps, byokKeys, generations, savedRoutes } from "../db/schema.ts";
 import type { Candidate, ModelRow, Modifier } from "../catalog/catalog.ts";
 import { ApiError, fail, isApiError } from "../lib/errors.ts";
 import { floorInputOf } from "../anonymo/services.ts";
+import { floorErrorReason } from "../anonymo/floor/guard-client.ts";
 import { type Pico, maxPico, picoToUsd, picoToUsdString, usdToPico } from "../lib/money.ts";
 import { canonical, canonicalJson, decrypt, genId, log, sha256 } from "../lib/util.ts";
 import { reserve, release, settle } from "../ledger/ledger.ts";
@@ -1026,7 +1027,8 @@ async function floorCheck(ctx: Ctx, body: Record<string, unknown>) {
   let verdict;
   try {
     verdict = await ctx.anonymo.floor.check(floorInputOf(body));
-  } catch {
+  } catch (e) {
+    log.warn("floor check unavailable", { reason: floorErrorReason(e) });
     throw new ApiError(503, "The safety check is unavailable. Nothing was sent or charged; try again shortly.", "floor_unavailable");
   }
   if (!verdict.ok) throw new ApiError(451, "This request crosses a line Anonymo blocks for everyone. Nothing was sent or charged.", "floor_blocked", { category: verdict.category });

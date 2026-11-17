@@ -5,7 +5,7 @@ import type { Ctx } from "../context.ts";
 import type { Candidate, ModelRow, Modifier } from "../catalog/catalog.ts";
 import { fail, isApiError, ApiError } from "../lib/errors.ts";
 import { type Pico, maxPico, picoToUsd, picoToUsdString, usdToPico } from "../lib/money.ts";
-import { genId, sha256 } from "../lib/util.ts";
+import { genId, log, sha256 } from "../lib/util.ts";
 import { release, reserve, settle } from "../ledger/ledger.ts";
 import { estimatePromptTokens, maxOutputTokens, readUsage, worstCase, type Mode, type Usage } from "../router/pricing.ts";
 import { route, type Attempt, type RouteSuccess, type RouteTarget } from "../router/execute.ts";
@@ -47,6 +47,7 @@ import { familyOf } from "../anonymo/trust/families.ts";
 import { weightsHashFor } from "../anonymo/trust/stats.ts";
 import { SEALED_HEADER, assertSealedSeats, candidateState, sealedFilter, sealedRequired, sealedUnavailable, type SealedClock } from "../anonymo/trust/sealed.ts";
 import { floorInputOf } from "../anonymo/services.ts";
+import { floorErrorReason } from "../anonymo/floor/guard-client.ts";
 import { RECEIPT_HEADER, buildAnonymoReceipt, issueAnonymoReceipt, receiptRoute, type ReceiptRoute } from "../receipts/anonymo.ts";
 import type { KeyRow } from "./auth.ts";
 import { generationHeaders, sharedPolicyHash } from "./common.ts";
@@ -435,7 +436,8 @@ async function councilFloorCheck(ctx: Ctx, body: Record<string, unknown>) {
   let verdict;
   try {
     verdict = await ctx.anonymo.floor.check(floorInputOf(body));
-  } catch {
+  } catch (e) {
+    log.warn("floor check unavailable", { reason: floorErrorReason(e) });
     throw new ApiError(503, "The safety check is unavailable. Nothing was sent or charged; try again shortly.", "floor_unavailable");
   }
   if (!verdict.ok) throw new ApiError(451, "This request crosses a line Anonymo blocks for everyone. Nothing was sent or charged.", "floor_blocked", { category: verdict.category });

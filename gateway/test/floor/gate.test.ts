@@ -3,7 +3,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createAnonymoServices } from "../../src/anonymo/services.ts";
 import { AnonymoFloorGate, createFloorGate, floorHitsOf } from "../../src/anonymo/floor/gate.ts";
-import { chunk, DEFAULT_TIMEOUT_MS, GuardModelClient, VerdictCache } from "../../src/anonymo/floor/guard-client.ts";
+import { chunk, DEFAULT_TIMEOUT_MS, floorErrorReason, GUARD_RETRY_MAX_WAIT_MS, FloorUnavailableError, GuardModelClient, VerdictCache } from "../../src/anonymo/floor/guard-client.ts";
 import { FLOOR_POLICY, FloorParseError, llamaGuardPrompt, parseLlamaGuard, parseSafeguard, parseShieldGemma, safeguardMessages } from "../../src/anonymo/floor/policy.ts";
 import { deleet, normalize, prefilter } from "../../src/anonymo/floor/prefilter.ts";
 import { fakeFloorClassifier, placeholderFor, serveFakeGuard } from "../../src/anonymo/floor/testing.ts";
@@ -167,6 +167,62 @@ describe("guard model client", () => {
     await expect(client({ timeoutMs: 100 }).classify("anything")).rejects.toThrow(/timed out/);
     expect(Date.now() - t0).toBeLessThan(2000);
     guard.state.mode = "ok";
+  });
+
+  test("a passing failure is retried once: one 503, 429 or garbage reply still gets a verdict; two fail closed", async () => {
+    for (const format of ["llama-guard", "safeguard"] as const) {
+      for (const status of [503, 429, 500, 408]) {
+        guard.state.mode = "ok";
+        guard.state.failStatus = status;
+        guard.state.failNext = 1;
+        const before = guard.state.calls;
+        expect(await client({ format, cacheTtlMs: 0 }).classify(placeholderFor("cbrn", 7)), `${format} ${status}`).toBe("cbrn");
+        expect(guard.state.calls - before).toBe(2);
+        guard.state.failNext = 2;
+        await expect(client({ format, cacheTtlMs: 0 }).classify("anything"), `${format} ${status} twice`).rejects.toThrow(/HTTP/);
+      }
+    }
+    guard.state.failNext = 0;
+    guard.state.mode = "garbage";
+    const before = guard.state.calls;
+    await expect(client({ format: "safeguard", cacheTtlMs: 0 }).classify("anything")).rejects.toThrow(/unparseable/);
+    expect(guard.state.calls - before).toBe(2);
+    guard.state.mode = "ok";
+  });
+
+  test("a 429 retry waits as long as the server asks, capped", async () => {
+    guard.state.mode = "ok";
+    guard.state.failStatus = 429;
+    for (const [asked, min, max] of [[0.6, 550, 1500], [30, GUARD_RETRY_MAX_WAIT_MS - 50, GUARD_RETRY_MAX_WAIT_MS + 1000]] as const) {
+      guard.state.retryAfterSeconds = asked;
+      guard.state.failNext = 1;
+      const t0 = Date.now();
+      expect(await client({ format: "safeguard", cacheTtlMs: 0 }).classify("anything")).toBeNull();
+      const took = Date.now() - t0;
+      expect(took, `asked ${asked}s`).toBeGreaterThanOrEqual(min);
+      expect(took, `asked ${asked}s`).toBeLessThan(max);
+    }
+    guard.state.retryAfterSeconds = null;
+    guard.state.failStatus = 503;
+  });
+
+  test("auth and other client errors are not retried", async () => {
+    guard.state.mode = "ok";
+    for (const status of [400, 401, 403, 404]) {
+      guard.state.failStatus = status;
+      guard.state.failNext = 1;
+      const before = guard.state.calls;
+      await expect(client({ format: "safeguard", cacheTtlMs: 0 }).classify("anything"), String(status)).rejects.toThrow(`HTTP ${status}`);
+      expect(guard.state.calls - before).toBe(1);
+    }
+    guard.state.failNext = 0;
+    guard.state.failStatus = 503;
+  });
+
+  test("failure reasons for the log never carry text", () => {
+    expect(floorErrorReason(new FloorUnavailableError("floor guard timed out", true))).toBe("floor guard timed out");
+    expect(floorErrorReason(new TypeError("secret prompt text"))).toBe("TypeError");
+    expect(floorErrorReason("secret prompt text")).toBe("unknown");
   });
 
   test("an unreachable guard fails closed", async () => {
