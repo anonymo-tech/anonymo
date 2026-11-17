@@ -26,8 +26,8 @@ Each is also served under `/api/v1`. Errors use the gateway's OpenAI-shaped enve
 3. **Floor gate** (`ctx.anonymo.floor`) with the right `modality` and `hasUpload` (true only for edits). A block is
    `451 floor_blocked` and is never rerouted, and a gate that cannot answer is `503 floor_unavailable`. Nothing is sent
    or held.
-4. **Region rules.** An OFAC region gets `451 region_blocked`. Where explicit media is off, the upstream is asked for
-   safe output and any explicit output is blocked (`451 explicit_media_unavailable`).
+4. **Region rules.** A blocked region gets `451 region_blocked`. Every upstream is asked for safe output, in every
+   region.
 5. For edits, the **upload itself** goes through the media gate. An explicit upload is refused before any model sees it.
 6. **Hold** (`reserve`) at the quoted price: per image, per 1k characters, or per video second.
 7. **Upstream** (Venice, the ComfyUI worker pool, or the TTS worker pool).
@@ -41,8 +41,11 @@ Any failure after step 6 releases the hold, so nothing is charged.
 
 ## Safety rules enforced here
 
-- **No NSFW edits of uploaded photos.** The upload is scored first, edits run in safe mode, and an explicit result of an
-  edit is blocked even where explicit media is allowed.
+- **Safe for work only, everywhere.** Anonymo's adult content is text only. Every image and video upstream runs in safe
+  mode, and the media gate blocks any frame it scores as sexually explicit (`451 explicit_media_unavailable`), for
+  every key and in every region. Nothing is charged.
+- **No NSFW edits of uploaded photos.** The upload is scored first and an explicit upload is refused before any model
+  sees it.
 - **Stock voices only.** `voice` must be one of the model's listed voices. Clone fields (`reference_audio`,
   `speaker_wav`, `voice_url` and the like) and multipart bodies are refused before anything is sent.
 - **No uploads to video.** `image_url`, `input_reference` and similar fields are refused.
@@ -50,8 +53,8 @@ Any failure after step 6 releases the hold, so nothing is charged.
   under any spelling (`catalog.ts` `assertLicensed`, run on every catalog). Venice models appear only when configured,
   and only as `venice/<id>`.
 - **The gate fails closed.** A classifier error, timeout, missing frame, invalid number, or an explicit frame whose age
-  can't be read is a block. Apparent age must be at least 25 on an explicit frame. That is a deliberate margin over 18,
-  because age estimation on synthetic images is weak (Overview §11).
+  can't be read is a block. An explicit frame that also looks under 25 or like a real person is reported as
+  `nsfw_minor` or `nsfw_real_person`, so those attempts stay visible in the floor's counts.
 
 ## What is never stored
 

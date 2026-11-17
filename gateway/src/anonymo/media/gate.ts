@@ -34,10 +34,10 @@ export type GateThresholds = {
 export const DEFAULT_THRESHOLDS: GateThresholds = { nsfw: 0.5, minAdultAge: 25, realPerson: 0.5, videoFrames: 8, timeoutMs: 20_000 };
 
 /** Why a gate stopped an output. The first three are the seam's MediaVerdict reasons. */
-export type GateReason = "nsfw_minor" | "nsfw_real_person" | "unscored" | "explicit_region" | "explicit_from_upload";
+export type GateReason = "nsfw_minor" | "nsfw_real_person" | "unscored" | "explicit" | "explicit_from_upload";
 export type GateResult = { ok: true; explicit: boolean } | { ok: false; reason: GateReason };
 export type AssessOptions = {
-  /** False where region rules switch explicit media off: any explicit frame blocks. */
+  /** False: any explicit frame blocks. The media routes always pass false (Anonymo's images and video are SFW only). */
   explicitAllowed: boolean;
   /** True for edits of an uploaded photo: any explicit frame blocks (no NSFW edits of uploads). */
   fromUpload?: boolean;
@@ -66,7 +66,7 @@ export function judgeFrames(frames: unknown, expected: number, opts: Pick<Assess
   // An explicit frame whose age the estimator could not read cannot be shown to be of an adult: fail closed.
   if ((frames as FrameScore[]).some((f) => f.nsfw >= t.nsfw && f.apparentAge === null)) return { ok: false, reason: "unscored" };
   if (explicit && opts.fromUpload) return { ok: false, reason: "explicit_from_upload" };
-  if (explicit && !opts.explicitAllowed) return { ok: false, reason: "explicit_region" };
+  if (explicit && !opts.explicitAllowed) return { ok: false, reason: "explicit" };
   return { ok: true, explicit };
 }
 

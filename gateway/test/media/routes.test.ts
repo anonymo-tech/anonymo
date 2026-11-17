@@ -172,7 +172,7 @@ describe("POST /v1/images/generations", () => {
     }
     // The floor saw the prompt as an image request without an upload, and the upstream got a seed and the size.
     expect(floorSeen.at(-1)).toEqual({ text: `a green square ${PROMPT_MARK}`, modality: "image", hasUpload: false });
-    expect(calls.image.at(-1)).toMatchObject({ model: "flux.1-schnell", n: 2, width: 1024, height: 1024, safe: false });
+    expect(calls.image.at(-1)).toMatchObject({ model: "flux.1-schnell", n: 2, width: 1024, height: 1024, safe: true }); // SFW only: always safe mode
   });
 
   test("b64_json returns the stamped image inline and stores nothing", async () => {
@@ -224,15 +224,14 @@ describe("POST /v1/images/generations", () => {
     expect((await errorOf(res)).type).toBe("media_gate_unavailable");
   });
 
-  test("explicit adult output is served where allowed, and off where region rules switch it off", async () => {
-    expect((await post("/v1/images/generations", { model: "flux.1-schnell", prompt: "a red square" })).status).toBe(200);
-    for (const headers of [{ ...auth, "x-anonymo-country": "GB" }, { authorization: auth.authorization }]) {
+  test("explicit adult output is never served, in any region", async () => {
+    for (const headers of [auth, { ...auth, "x-anonymo-country": "US" }, { ...auth, "x-anonymo-country": "GB" }, { authorization: auth.authorization }]) {
       const res = await nothingCharged(() => post("/v1/images/generations", { model: "flux.1-schnell", prompt: "a red square" }, headers));
       expect(res.status).toBe(451);
       expect((await errorOf(res)).type).toBe("explicit_media_unavailable");
       expect(calls.image.at(-1)?.safe).toBe(true); // the upstream was asked for safe output too
     }
-    // Non-explicit output still works there.
+    // Non-explicit output works everywhere.
     expect((await post("/v1/images/generations", { model: "flux.1-schnell", prompt: "a green square" }, { ...auth, "x-anonymo-country": "GB" })).status).toBe(200);
   });
 
@@ -448,14 +447,14 @@ describe("/v1/video/generations", () => {
     expect(await openHolds()).toBe(0);
   });
 
-  test("an unscored video, explicit video in an explicit-off region, and an upstream failure all charge nothing", async () => {
+  test("an unscored video, explicit video, and an upstream failure all charge nothing", async () => {
     const before = await balance();
     const a = (await (await submit()).json()) as Job;
     videoFrames = "down";
     videoPolls = [{ state: "done", media: { bytes: tinyMp4(5), mime: "video/mp4" } }];
     expect(((await (await poll(a.id)).json()) as Job).error?.type).toBe("media_gate_unavailable");
 
-    const b = (await (await submit({}, { ...auth, "x-anonymo-country": "GB" })).json()) as Job;
+    const b = (await (await submit({}, { ...auth, "x-anonymo-country": "US" })).json()) as Job;
     videoFrames = [{ nsfw: 0.9, apparentAge: 35 }];
     videoPolls = [{ state: "done", media: { bytes: tinyMp4(6), mime: "video/mp4" } }];
     expect(((await (await poll(b.id)).json()) as Job).error?.type).toBe("explicit_media_unavailable");

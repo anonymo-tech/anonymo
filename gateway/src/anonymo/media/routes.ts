@@ -10,6 +10,9 @@
 // hold (reserve) → upstream → media gate on every visual output → provenance (watermark + signed C2PA manifest,
 // self-verified) → delivery → settle. Any failure after the hold releases it, so a blocked, failed or unmarked
 // output is never charged, stored or returned. Prompt text is never written anywhere (not even logs).
+//
+// Safe for work only, everywhere: every upstream is asked for safe output, and the media gate blocks any frame it
+// scores as sexually explicit, in every region and for every key. Anonymo's adult content is text only.
 
 import { randomBytes, randomInt } from "node:crypto";
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
@@ -115,9 +118,10 @@ const stripped = (m: Media) => {
 };
 
 /** Gate, then stamp: the only way an upstream's bytes become something we return. */
-async function finishOutput(s: MediaServices, out: Media, o: { requestId: string; model: string; explicitAllowed: boolean; fromUpload?: boolean; prompt?: string; visual: boolean; signal?: AbortSignal }): Promise<Media> {
+async function finishOutput(s: MediaServices, out: Media, o: { requestId: string; model: string; fromUpload?: boolean; prompt?: string; visual: boolean; signal?: AbortSignal }): Promise<Media> {
   if (o.visual) {
-    const verdict = await s.gate.assess(out.bytes, out.mime, { explicitAllowed: o.explicitAllowed, fromUpload: o.fromUpload, signal: o.signal });
+    // explicitAllowed is always false: no explicit image or video frame is ever returned (see the header).
+    const verdict = await s.gate.assess(out.bytes, out.mime, { explicitAllowed: false, fromUpload: o.fromUpload, signal: o.signal });
     if (!verdict.ok) throw new MediaBlocked(verdict.reason);
   }
   // Checked after the known metadata chunks are stripped and before the watermark touches any bit.
@@ -130,7 +134,7 @@ async function finishOutput(s: MediaServices, out: Media, o: { requestId: string
 function mediaError(e: unknown, what: string): unknown {
   if (e instanceof MediaBlocked) {
     if (e.reason === "unscored") return new ApiError(503, `The ${what} could not be safety-checked, so it was not returned. Nothing was charged; try again shortly.`, "media_gate_unavailable");
-    if (e.reason === "explicit_region") return new ApiError(451, `Explicit ${what}s are switched off in this region. Nothing was returned or charged.`, "explicit_media_unavailable");
+    if (e.reason === "explicit") return new ApiError(451, `Anonymo makes no explicit images or video. Nothing was returned or charged.`, "explicit_media_unavailable");
     return new ApiError(451, `The ${what} crossed a line Anonymo blocks for everyone. Nothing was returned, stored or charged.`, "media_blocked", { reason: e.reason });
   }
   if (e instanceof ProvenanceError) return new ApiError(502, `The ${what} could not be labelled with provenance, so it was not returned. Nothing was charged.`, "provenance_failed");
@@ -220,7 +224,7 @@ async function readEditRequest(s: MediaServices, c: Context): Promise<ImageInput
 async function runImages(ctx: Ctx, c: Context, key: KeyRow, s: MediaServices, input: ImageInput): Promise<Response> {
   const edit = !!input.upload;
   await floorCheck(ctx, { text: input.prompt, modality: "image", hasUpload: edit });
-  const policy = regionPolicy(ctx, c, s);
+  regionPolicy(ctx, c, s);
   // No NSFW edits of uploaded photos: an explicit (or unscorable) upload is refused before any model sees it.
   if (input.upload) {
     const v = await s.gate.assess(input.upload.bytes, input.upload.mime, { explicitAllowed: true, fromUpload: true });
@@ -234,11 +238,11 @@ async function runImages(ctx: Ctx, c: Context, key: KeyRow, s: MediaServices, in
     const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(IMAGE_DEADLINE_MS)]);
     const upstream = s.images[input.model.upstream];
     if (!upstream) throw new UpstreamError("no image upstream", 503);
-    const raw = await upstream.generate({ model: input.model.upstreamModel, prompt: input.prompt, n: input.n, width: input.width, height: input.height, seed: input.seed, safe: edit || !policy.explicitMediaAllowed, image: input.upload }, signal);
+    const raw = await upstream.generate({ model: input.model.upstreamModel, prompt: input.prompt, n: input.n, width: input.width, height: input.height, seed: input.seed, safe: true, image: input.upload }, signal);
     if (raw.length !== input.n) throw new UpstreamError("wrong number of images", 502);
     // Every image passes the gate and gets provenance before any of them is delivered: one block stops the batch.
     const outputs: Media[] = [];
-    for (const out of raw) outputs.push(await finishOutput(s, out, { requestId: id, model: input.model.id, explicitAllowed: policy.explicitMediaAllowed && !edit, fromUpload: edit, prompt: input.prompt, visual: true, signal }));
+    for (const out of raw) outputs.push(await finishOutput(s, out, { requestId: id, model: input.model.id, fromUpload: edit, prompt: input.prompt, visual: true, signal }));
     const data = outputs.map((o) => {
       if (input.format === "b64_json") return { b64_json: Buffer.from(o.bytes).toString("base64") };
       const put = s.store.put({ bytes: o.bytes, mime: o.mime, accountId: key.accountId }, s.ttlMs);
@@ -281,7 +285,7 @@ async function runSpeech(ctx: Ctx, c: Context): Promise<Response> {
   try {
     const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(120_000)]);
     const raw = await s.speech.speak({ model: model.upstreamModel, input, voice, speed }, signal);
-    const out = await finishOutput(s, raw, { requestId: id, model: model.id, explicitAllowed: true, prompt: input, visual: false });
+    const out = await finishOutput(s, raw, { requestId: id, model: model.id, prompt: input, visual: false });
     const charged = await charge(ctx, id, price, "media_speech", `Speech: ${model.name}`);
     const r = receipt(ctx, { requestId: id, model, units: input.length, unit: "character", charged, outputs: [out] });
     return new Response(out.bytes as unknown as ConstructorParameters<typeof Response>[0], {
@@ -311,15 +315,15 @@ async function submitVideo(ctx: Ctx, c: Context): Promise<Response> {
   const { width, height, size } = parseSize(model, body.size);
   const seed = parseSeed(body.seed);
   await floorCheck(ctx, { text: prompt, modality: "video", hasUpload: false });
-  const policy = regionPolicy(ctx, c, s);
+  regionPolicy(ctx, c, s);
   const id = requestId().replace("med_", "vid_");
   const price = priceOf(model.usdPerSecond, secs);
   await reserve(ctx.db, { id, accountId: key.accountId, keyHash: key.keyHash, amount: price, kind: "media_video", ttlMs: VIDEO_HOLD_MS });
-  await ctx.db.insert(mediaJobs).values({ id, accountId: key.accountId, keyHash: key.keyHash, holdId: id, model: model.id, upstream: model.upstream, status: "queued", seconds: secs, width, height, explicitAllowed: policy.explicitMediaAllowed, pricePico: price });
+  await ctx.db.insert(mediaJobs).values({ id, accountId: key.accountId, keyHash: key.keyHash, holdId: id, model: model.id, upstream: model.upstream, status: "queued", seconds: secs, width, height, explicitAllowed: false, pricePico: price });
   try {
     const upstream = s.video[model.upstream];
     if (!upstream) throw new UpstreamError("no video upstream", 503);
-    const ref = await upstream.submit({ model: model.upstreamModel, prompt, seconds: secs, width, height, seed, safe: !policy.explicitMediaAllowed }, AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(60_000)]));
+    const ref = await upstream.submit({ model: model.upstreamModel, prompt, seconds: secs, width, height, seed, safe: true }, AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(60_000)]));
     await ctx.db.update(mediaJobs).set({ upstreamRef: ref, status: "running", updatedAt: new Date() }).where(eq(mediaJobs.id, id));
   } catch (e) {
     await release(ctx.db, id).catch(() => undefined);
@@ -359,7 +363,7 @@ async function advance(ctx: Ctx, s: MediaServices, job: JobRow): Promise<void> {
   if (!finishing.length) return;
   let mediaId: string | null = null;
   try {
-    const out = await finishOutput(s, polled.media, { requestId: job.id, model: model.id, explicitAllowed: job.explicitAllowed, visual: true });
+    const out = await finishOutput(s, polled.media, { requestId: job.id, model: model.id, visual: true });
     const put = s.store.put({ bytes: out.bytes, mime: out.mime, accountId: job.accountId }, s.ttlMs);
     mediaId = put.id;
     const charged = await charge(ctx, job.holdId, job.pricePico, "media_video", `Video: ${model.name}`);
@@ -368,7 +372,7 @@ async function advance(ctx: Ctx, s: MediaServices, job: JobRow): Promise<void> {
     if (mediaId) s.store.delete(mediaId);
     if (e instanceof MediaBlocked) {
       log.warn("media output blocked", { kind: "video", reason: e.reason, model: model.id });
-      return end(e.reason === "unscored" ? "failed" : "blocked", e.reason === "unscored" ? "media_gate_unavailable" : e.reason === "explicit_region" ? "explicit_media_unavailable" : `media_blocked:${e.reason}`);
+      return end(e.reason === "unscored" ? "failed" : "blocked", e.reason === "unscored" ? "media_gate_unavailable" : e.reason === "explicit" ? "explicit_media_unavailable" : `media_blocked:${e.reason}`);
     }
     return end("failed", e instanceof ProvenanceError ? "provenance_failed" : e instanceof StoreFullError ? "media_store_full" : "internal");
   }
@@ -379,7 +383,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   upstream_failed: "The video provider failed. Nothing was charged.",
   model_unavailable: "This video model is no longer available. Nothing was charged.",
   media_gate_unavailable: "The video could not be safety-checked, so it was not returned. Nothing was charged.",
-  explicit_media_unavailable: "Explicit video is switched off in this region. Nothing was returned or charged.",
+  explicit_media_unavailable: "Anonymo makes no explicit video. Nothing was returned or charged.",
   provenance_failed: "The video could not be labelled with provenance, so it was not returned. Nothing was charged.",
   media_store_full: "Media storage was full. Nothing was charged.",
   internal: "The job failed. Nothing was charged.",

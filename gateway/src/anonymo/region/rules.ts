@@ -12,6 +12,7 @@
 //   ANONYMO_REGION_BLOCKED             comma list replacing DEFAULT_BLOCKED_REGIONS ("none" for an empty list)
 //   ANONYMO_AGE_VERIFICATION_REGIONS   comma list replacing DEFAULT_AGE_VERIFICATION_REGIONS
 //   ANONYMO_REGION_UNKNOWN             restrict (default) | allow: explicit media when the region is unknown
+// explicitMediaAllowed is not used today: the media routes serve safe-for-work images and video only, in every region.
 //   ANONYMO_REGION_UNKNOWN_TEXT        block | allow: everything when the region is unknown (no header, Tor). Default
 //                                      block in production, allow elsewhere
 

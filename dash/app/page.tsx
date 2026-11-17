@@ -5,7 +5,8 @@ import { PublicPage } from '@/components/site-chrome';
 
 const FLOOR = [
   'Any sexual content involving minors, including fully synthetic.',
-  'Sexual images or “undressing” of real, identifiable people, and NSFW edits of uploaded photos.',
+  'Nude or sexual images and video of anyone. Images and video are safe for work only; adult content is text only.',
+  '“Undressing” or sexual edits of real, identifiable people and uploaded photos.',
   'Cloning real people’s voices. Stock voices only.',
   'Real help building chemical, biological, radiological, nuclear or explosive weapons.',
 ];
