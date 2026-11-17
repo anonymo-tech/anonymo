@@ -18,7 +18,7 @@
 // EXPORTER_KV_RELATION=kv reads the table directly (for a role that may read all of kv).
 
 export type Query = (text: string) => Promise<Record<string, unknown>[]>;
-export type Probe = { name: "floor" | "refusal"; url?: string; key?: string };
+export type Probe = { name: "floor" | "floor_fallback" | "refusal"; url?: string; key?: string };
 export type Sample = { name: string; labels?: Record<string, string>; value: number };
 
 const LABEL = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -179,6 +179,7 @@ if (import.meta.main) {
   const q: Query = async (text) => [...(await sql.unsafe(text))] as Record<string, unknown>[];
   const probes: Probe[] = [
     { name: "floor", url: process.env.ANONYMO_FLOOR_URL, key: process.env.ANONYMO_FLOOR_KEY },
+    { name: "floor_fallback", url: process.env.ANONYMO_FLOOR_FALLBACK_URL, key: process.env.ANONYMO_FLOOR_FALLBACK_KEY },
     { name: "refusal", url: process.env.ANONYMO_REFUSAL_URL, key: process.env.ANONYMO_REFUSAL_KEY },
   ];
   const port = Number(process.env.EXPORTER_PORT ?? 9798);

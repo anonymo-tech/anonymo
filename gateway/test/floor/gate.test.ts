@@ -335,4 +335,46 @@ describe("AnonymoFloorGate", () => {
       guard.stop();
     }
   });
+
+  test("a fallback guard answers only when the first one errors; the first guard's verdict, block or pass, is final", async () => {
+    const first = serveFakeGuard();
+    const second = serveFakeGuard();
+    const env = { ANONYMO_FLOOR_URL: first.url, ANONYMO_FLOOR_MODEL: "groq-guard", ANONYMO_FLOOR_KEY: "first-key", ANONYMO_FLOOR_FORMAT: "safeguard", ANONYMO_FLOOR_CACHE_MINUTES: "0", ANONYMO_FLOOR_FALLBACK_URL: second.url, ANONYMO_FLOOR_FALLBACK_MODEL: "ppq-guard", ANONYMO_FLOOR_FALLBACK_KEY: "second-key" };
+    const calls = () => [first.state.calls, second.state.calls];
+    try {
+      const gate = createFloorGate(env);
+      // Healthy first guard: it decides, the fallback is never asked.
+      let [a, b] = calls();
+      expect(await gate.check(input(placeholderFor("cbrn", 11)))).toEqual({ ok: false, category: "cbrn" });
+      expect(await gate.check(input("a frank question about contraception"))).toEqual({ ok: true });
+      expect(calls()).toEqual([a + 2, b]);
+      expect(first.state.lastAuth).toBe("Bearer first-key");
+
+      // First guard rate-limited: no retry on it, straight to the fallback, which uses its own key and model.
+      first.state.failStatus = 429;
+      first.state.failNext = 1;
+      [a, b] = calls();
+      expect(await gate.check(input(placeholderFor("minor", 11)))).toEqual({ ok: false, category: "minor" });
+      expect(calls()).toEqual([a + 1, b + 1]);
+      expect(second.state.lastAuth).toBe("Bearer second-key");
+      expect((second.state.lastBody as { model: string }).model).toBe("ppq-guard");
+
+      // A garbled verdict or an outage on the first guard fails over too.
+      first.state.mode = "garbage";
+      expect(await gate.check(input("hello"))).toEqual({ ok: true });
+      first.state.mode = "http500";
+      expect(await gate.check(input(placeholderFor("voice_clone", 11)))).toEqual({ ok: false, category: "voice_clone" });
+
+      // Both down: fails closed (chat answers 503).
+      second.state.mode = "http500";
+      await expect(gate.check(input("hello"))).rejects.toThrow(/HTTP 500/);
+
+      // Settings: a fallback URL needs a model; its format defaults to the first guard's and is validated.
+      expect(() => createFloorGate({ ...env, ANONYMO_FLOOR_FALLBACK_MODEL: "" })).toThrow(/FALLBACK_MODEL/);
+      expect(() => createFloorGate({ ...env, ANONYMO_FLOOR_FALLBACK_FORMAT: "vibes" })).toThrow(/FALLBACK_FORMAT/);
+    } finally {
+      first.stop();
+      second.stop();
+    }
+  });
 });

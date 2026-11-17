@@ -40,6 +40,8 @@ export type GuardClientOptions = {
   /** How long a chunk's verdict is reused, in ms. 0 turns the cache off. Default one hour. */
   cacheTtlMs?: number;
   cacheMaxEntries?: number;
+  /** Retry a passing failure once (default). Off for a primary guard that has a fallback: failing over is faster. */
+  retry?: boolean;
   fetch?: typeof fetch;
 };
 
@@ -131,7 +133,7 @@ export class GuardModelClient {
     try {
       return await this.ask(text, signal);
     } catch (e) {
-      if (!retryable(e) || signal?.aborted) throw e;
+      if (this.opts.retry === false || !retryable(e) || signal?.aborted) throw e;
       log.warn("floor guard call failed, retrying once", { reason: floorErrorReason(e) });
       const wait = e instanceof FloorUnavailableError && e.retryAfterMs !== undefined ? Math.min(Math.max(e.retryAfterMs, GUARD_RETRY_DELAY_MS), GUARD_RETRY_MAX_WAIT_MS) : GUARD_RETRY_DELAY_MS;
       await new Promise((r) => setTimeout(r, wait));

@@ -13,12 +13,17 @@
 //   ANONYMO_FLOOR_CACHE_MINUTES how long a chunk's verdict is reused, default 60; 0 turns it off
 //   ANONYMO_FLOOR_CHUNK_CHARS  default 8000; ANONYMO_FLOOR_MAX_CHUNKS default 32 (longer input fails closed)
 //   ANONYMO_FLOOR_HIT_TTL_HOURS how long an unreported hit stays in memory, default 72
+//   ANONYMO_FLOOR_FALLBACK_URL, _MODEL, _KEY, _FORMAT (format defaults to the primary's)
+//                              a second guard asked only when the first one errors (rate limit, outage, bad verdict).
+//                              A verdict from the first guard is final: a fallback can never turn a block into a pass.
+//                              With a fallback the first guard does not retry; the fallback retries once.
 //   ANONYMO_FLOOR_REQUIRED=1   with no URL, every check fails closed (every real deployment sets this;
 //                              ANONYMO_ENV=production implies it)
 // With neither URL nor REQUIRED (local development), only the pre-filter runs.
 
 import { floorGateStub, type FloorCategory, type FloorGate, type FloorInput, type FloorVerdict } from "../seams.ts";
-import { GuardModelClient, type GuardFormat } from "./guard-client.ts";
+import { floorErrorReason, GuardModelClient, type GuardFormat } from "./guard-client.ts";
+import { log } from "../../lib/util.ts";
 import { FloorHitLog, type FloorLayer } from "./hits.ts";
 import { prefilter } from "./prefilter.ts";
 
@@ -93,17 +98,40 @@ export function createFloorGate(env: Record<string, unknown>): FloorGate {
   const format = str(env.ANONYMO_FLOOR_FORMAT) ?? "llama-guard";
   if (!FORMATS.includes(format as GuardFormat)) throw new Error(`ANONYMO_FLOOR_FORMAT must be one of ${FORMATS.join(", ")}`);
   const ttlHours = int(env.ANONYMO_FLOOR_HIT_TTL_HOURS, "ANONYMO_FLOOR_HIT_TTL_HOURS");
-  return new AnonymoFloorGate({
-    classifier: new GuardModelClient({
-      url,
-      model: str(env.ANONYMO_FLOOR_MODEL) ?? "",
-      apiKey: str(env.ANONYMO_FLOOR_KEY),
-      format: format as GuardFormat,
+  const fallbackUrl = str(env.ANONYMO_FLOOR_FALLBACK_URL);
+  if (fallbackUrl && !str(env.ANONYMO_FLOOR_FALLBACK_MODEL)) throw new Error("ANONYMO_FLOOR_FALLBACK_MODEL is required with ANONYMO_FLOOR_FALLBACK_URL");
+  const fallbackFormat = str(env.ANONYMO_FLOOR_FALLBACK_FORMAT) ?? format;
+  if (!FORMATS.includes(fallbackFormat as GuardFormat)) throw new Error(`ANONYMO_FLOOR_FALLBACK_FORMAT must be one of ${FORMATS.join(", ")}`);
+  const client = (o: { url: string; model: string; apiKey?: string; format: string; retry: boolean }) =>
+    new GuardModelClient({
+      ...o,
+      format: o.format as GuardFormat,
       timeoutMs: int(env.ANONYMO_FLOOR_TIMEOUT_MS, "ANONYMO_FLOOR_TIMEOUT_MS"),
       chunkChars: int(env.ANONYMO_FLOOR_CHUNK_CHARS, "ANONYMO_FLOOR_CHUNK_CHARS"),
       maxChunks: int(env.ANONYMO_FLOOR_MAX_CHUNKS, "ANONYMO_FLOOR_MAX_CHUNKS"),
       cacheTtlMs: minutes(env.ANONYMO_FLOOR_CACHE_MINUTES, "ANONYMO_FLOOR_CACHE_MINUTES"),
-    }),
-    hits: ttlHours ? new FloorHitLog(ttlHours * 3_600_000) : undefined,
-  });
+    });
+  const primary = client({ url, model: str(env.ANONYMO_FLOOR_MODEL) ?? "", apiKey: str(env.ANONYMO_FLOOR_KEY), format, retry: !fallbackUrl });
+  const classifier = fallbackUrl
+    ? new FallbackClassifier(primary, client({ url: fallbackUrl, model: str(env.ANONYMO_FLOOR_FALLBACK_MODEL) ?? "", apiKey: str(env.ANONYMO_FLOOR_FALLBACK_KEY), format: fallbackFormat, retry: true }))
+    : primary;
+  return new AnonymoFloorGate({ classifier, hits: ttlHours ? new FloorHitLog(ttlHours * 3_600_000) : undefined });
+}
+
+/** Asks `fallback` only when `primary` errors. Whatever verdict `primary` gives (block or pass) is final. */
+export class FallbackClassifier implements FloorClassifier {
+  constructor(
+    private readonly primary: FloorClassifier,
+    private readonly fallback: FloorClassifier,
+  ) {}
+
+  async classify(text: string, signal?: AbortSignal): Promise<FloorCategory | null> {
+    try {
+      return await this.primary.classify(text, signal);
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      log.warn("floor guard failed, asking the fallback guard", { reason: floorErrorReason(e) });
+      return await this.fallback.classify(text, signal);
+    }
+  }
 }
