@@ -40,9 +40,15 @@ export class AnonymoFloorGate implements FloorGate {
     this.hits = opts.hits ?? new FloorHitLog();
   }
 
+  /** Without a guard model only the pre-filter runs, and it reads requests, not replies (floor/reply.ts). */
+  get checksReplies() {
+    return this.opts.classifier !== null;
+  }
+
   async check(input: FloorInput, signal?: AbortSignal): Promise<FloorVerdict> {
     if (!input.text.trim()) return { ok: true }; // nothing to judge; uploads go through the upload rule
-    if (!this.opts.skipPrefilter) {
+    // The pre-filter matches requests ("write ...", "how to ..."), so a reply goes to the guard model alone.
+    if (!this.opts.skipPrefilter && input.stage !== "reply") {
       const hit = prefilter(input.text);
       if (hit) return this.block(input, hit.category, "prefilter");
     }

@@ -48,6 +48,7 @@ import { weightsHashFor } from "../anonymo/trust/stats.ts";
 import { SEALED_HEADER, assertSealedSeats, candidateState, sealedFilter, sealedRequired, sealedUnavailable, type SealedClock } from "../anonymo/trust/sealed.ts";
 import { floorInputOf } from "../anonymo/services.ts";
 import { floorErrorReason } from "../anonymo/floor/guard-client.ts";
+import { floorReplyCheck, replyTextOf } from "../anonymo/floor/reply.ts";
 import { RECEIPT_HEADER, buildAnonymoReceipt, issueAnonymoReceipt, receiptRoute, type ReceiptRoute } from "../receipts/anonymo.ts";
 import type { KeyRow } from "./auth.ts";
 import { generationHeaders, sharedPolicyHash } from "./common.ts";
@@ -697,6 +698,10 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
       outcome = "aggregator_refused";
       aggStatus = "refused";
     }
+
+    // ---- The floor's reply check on what the caller would receive; a block or an unreachable guard throws, and the
+    // finally below releases every hold, so nothing is charged (anonymo/floor/reply.ts).
+    await floorReplyCheck(ctx.anonymo.floor, replyTextOf(source.json), abort.signal);
 
     // ---- Settle: proposers that answered, the aggregator (unless it refused), then the premium -----------------------
     const fins: Fin[] = [];

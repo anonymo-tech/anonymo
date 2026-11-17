@@ -18,7 +18,7 @@ describe("the end-to-end-encrypted lane is unreachable", () => {
     // Even with the switch the removed lane used to read, no route exists.
     h = await startRouter({ env: { E2EE_PASSTHROUGH_ENABLED: "true", E2EE_GATEWAY_BASE_URL: "https://gateway.example/v1" } });
     const floor = h.ctx.anonymo.floor;
-    h.ctx.anonymo.floor = { ...floor, check: async (input) => { floorCalls++; return floor.check(input); } };
+    h.ctx.anonymo.floor = { ...floor, check: async (input) => { if (input.stage !== "reply") floorCalls++; return floor.check(input); } };
   });
   afterAll(async () => h?.close());
 

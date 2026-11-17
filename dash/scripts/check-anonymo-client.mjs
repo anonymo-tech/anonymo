@@ -204,6 +204,28 @@ void test('errors: the gateway shape ({code: status, type}) maps to codes, and t
   assert.match(describeError(floor), /not charged/);
 });
 
+void test('a reply the floor withholds mid-stream fails the chat with 451 stage reply, after the passed text', async () => {
+  const sse = [
+    { id: 'gen-1', object: 'chat.completion.chunk', model: 'anonymo-1', choices: [{ index: 0, delta: { content: 'checked text' } }] },
+    { error: { code: 451, message: 'withheld', type: 'floor_blocked', metadata: { category: 'cbrn', stage: 'reply' } }, id: 'gen-1' },
+  ]
+    .map((e) => `data: ${JSON.stringify(e)}\n\n`)
+    .join('') + 'data: [DONE]\n\n';
+  const client = createAnonymoClient({ baseUrl: BASE, key: 'anm_live_' + 'a'.repeat(32), fetch: async () => new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } }) });
+  let streamed = '';
+  const err = await client.chat({ model: 'anonymo-1', messages: [{ role: 'user', content: 'hi' }] }, { onDelta: (d) => (streamed += d) }).catch((e) => e);
+  assert.equal(streamed, 'checked text');
+  assert.ok(err instanceof AnonymoApiError);
+  assert.equal(err.status, 451);
+  assert.equal(err.code, 'floor_blocked');
+  assert.equal(err.metadata.stage, 'reply');
+  assert.match(describeError(err), /reply crossed/);
+  assert.match(describeError(err), /withheld/);
+  assert.match(describeError(err), /not charged/);
+  const down = new AnonymoApiError(503, 'floor_unavailable', 'x', null, { stage: 'reply' });
+  assert.match(describeError(down), /safety check could not run/);
+});
+
 void test('aborting a stream stops it and charges only what was delivered', async () => {
   const { mock, client, created } = await funded({ delayMs: 5 });
   await mock.simulateDeposit(created.key, 'base', 'USDC', 5_000_000);

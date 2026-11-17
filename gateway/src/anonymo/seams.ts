@@ -7,14 +7,18 @@ import type { Pico } from "../lib/money.ts";
 // ---- WS2 · Floor gate ----------------------------------------------------------------------------------------------
 // Runs before routing on every prompt and every upload. A block returns HTTP 451 and is NEVER rerouted.
 export type FloorCategory = "minor" | "real_person" | "voice_clone" | "cbrn";
-export type FloorInput = { text: string; modality: "text" | "image" | "video" | "audio"; hasUpload: boolean };
+/** stage: what is being checked, the caller's prompt (the default) or the model's reply (floor/reply.ts). */
+export type FloorInput = { text: string; modality: "text" | "image" | "video" | "audio"; hasUpload: boolean; stage?: "prompt" | "reply" };
 export type FloorVerdict = { ok: true } | { ok: false; category: FloorCategory };
 export interface FloorGate {
   check(input: FloorInput, signal?: AbortSignal): Promise<FloorVerdict>;
+  /** False when the gate cannot judge a reply (no guard model), so replies are not held back for nothing. */
+  readonly checksReplies?: boolean;
 }
 /** Placeholder that passes everything. With `required` (ANONYMO_FLOOR_REQUIRED=1, which every real deployment sets)
  *  it fails CLOSED instead, so nothing can serve traffic without WS02's real gate. */
 export const floorGateStub = (required: boolean): FloorGate => ({
+  checksReplies: required, // a required stub fails replies closed too; the pass-everything stub has nothing to check
   async check() {
     if (required) throw new Error("floor gate not configured");
     return { ok: true };

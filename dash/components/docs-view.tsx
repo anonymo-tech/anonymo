@@ -244,7 +244,16 @@ export function DocsView() {
                 <tr>
                   <td className="mono">451</td>
                   <td><code>floor_blocked</code></td>
-                  <td>Falls under one of the four blocked lines. Never sent to a model, never rerouted, never charged.</td>
+                  <td>
+                    Falls under one of the four blocked lines. A blocked prompt is never sent to a model. A reply that crosses a line is withheld
+                    (<code>metadata.stage</code> is <code>reply</code>; on a stream it arrives as an error event after the text already checked).
+                    Never rerouted, never charged.
+                  </td>
+                </tr>
+                <tr>
+                  <td className="mono">503</td>
+                  <td><code>floor_unavailable</code></td>
+                  <td>The safety check could not run, so nothing was served. Nothing was charged; try again shortly.</td>
                 </tr>
                 <tr>
                   <td className="mono">409</td>

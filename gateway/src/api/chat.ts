@@ -11,6 +11,7 @@ import type { Candidate, ModelRow, Modifier } from "../catalog/catalog.ts";
 import { ApiError, fail, isApiError } from "../lib/errors.ts";
 import { floorInputOf } from "../anonymo/services.ts";
 import { floorErrorReason } from "../anonymo/floor/guard-client.ts";
+import { checksReplies, floorReplyCheck, replyFloorError, replyTextOf, StreamReplyGate } from "../anonymo/floor/reply.ts";
 import { type Pico, maxPico, picoToUsd, picoToUsdString, usdToPico } from "../lib/money.ts";
 import { canonical, canonicalJson, decrypt, genId, log, sha256 } from "../lib/util.ts";
 import { reserve, release, settle } from "../ledger/ledger.ts";
@@ -426,6 +427,13 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   }
   const r = result as Extract<RouteSuccess, { kind: "json" }>;
   if (r.refusal?.served === "refused") capRefusedJson(r.json);
+  // The floor's reply check: what the model wrote is read before it is billed or returned (anonymo/floor/reply.ts).
+  try {
+    await floorReplyCheck(ctx.anonymo.floor, replyTextOf(r.json), abort.signal);
+  } catch (e) {
+    await giveBack(ctx, billing, holdId);
+    throw e;
+  }
   const json = r.json;
   const usage = readUsage(json.usage, { prompt: promptTokens, completion: Math.ceil(JSON.stringify(json.choices ?? []).length / 4) });
   const redactions = guardCfg?.redact_output ? redactOutput(json) : 0;
@@ -868,11 +876,15 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
       // receipt shows an attested upstream (providers/aci.ts); every other stream is relayed as it arrives.
       const hold = !!r.candidate.provider.aci && requiresAttestedUpstream(p.body, p.disc);
       const held: unknown[] = [];
-      const relay = (obj: unknown) => (hold ? held.push(obj) : chained(obj));
-      const holdKeepalive = hold ? setInterval(() => send(": ANONYMO PROCESSING\n\n"), 5_000) : undefined;
+      const sink = (obj: unknown) => (hold ? held.push(obj) : chained(obj));
       let text = "";
       let reasoningText = ""; // billed when usage never arrives (e.g. the client cancels mid-stream)
       let toolText = "";
+      // The floor's reply check: events are released only once the guard has passed the text they carry
+      // (anonymo/floor/reply.ts). Without a guard model (local development) they go straight out.
+      const replyGate = checksReplies(ctx.anonymo.floor) ? new StreamReplyGate(ctx.anonymo.floor, sink, () => `${reasoningText}\n${text}\n${toolText}`, { signal: p.abort.signal }) : null;
+      const relay = (obj: unknown) => (replyGate ? replyGate.push(obj) : sink(obj));
+      const holdKeepalive = hold || replyGate ? setInterval(() => send(": ANONYMO PROCESSING\n\n"), 5_000) : undefined;
       let finish: string | null = null;
       let nativeFinish: string | null = null;
       let providerUsage: any = null;
@@ -912,6 +924,10 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
             break;
           }
           emit(ev);
+          if (replyGate?.outcome) {
+            r.abort(); // the reply crossed the floor (or could not be checked): stop the model, send nothing more
+            break;
+          }
         }
       } catch (e) {
         if (p.abort.signal.aborted) cancelled = true;
@@ -919,6 +935,21 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
           midError = (e as Error).message;
           relay({ ...base, error: { code: 502, message: "Provider stream was interrupted.", type: "provider_interrupted" }, choices: [{ index: 0, delta: { content: "" }, finish_reason: "error" }] });
         }
+      }
+      const stopped = replyGate && !cancelled ? await replyGate.finish() : replyGate?.outcome;
+      if (stopped) {
+        // Withheld: nothing past the last checked piece went out, the hold is released and nothing is charged.
+        clearInterval(holdKeepalive);
+        await giveBack(ctx, p.billing, p.holdId);
+        event({ ...replyFloorError(stopped).toJSON(), id: p.holdId });
+        send("data: [DONE]\n\n");
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          /* client gone */
+        }
+        return;
       }
       try {
         const reasoningEst = Math.ceil(reasoningText.length / 4);

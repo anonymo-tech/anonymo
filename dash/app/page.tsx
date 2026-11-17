@@ -28,8 +28,8 @@ export default function Home() {
             <p className="land-kicker">The floor</p>
             <h2>What stays blocked, for everyone.</h2>
             <p className="land-lede">
-              No refusals for legal adult use. Four lines stay closed, checked outside the model. A blocked request is
-              never rerouted and never charged.
+              No refusals for legal adult use. Four lines stay closed, checked outside the model on every prompt and every
+              reply. Anything blocked is never rerouted and never charged.
             </p>
           </div>
           <ol className="land-list">

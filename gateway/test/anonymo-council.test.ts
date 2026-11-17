@@ -225,6 +225,30 @@ describe("anonymo-council", () => {
       h.ctx.anonymo.floor = floor;
     }
   });
+
+  test("the floor reads the merged answer too: one over the line is withheld with 451 stage reply and nothing is charged", async () => {
+    const floor = h.ctx.anonymo.floor;
+    const replies: string[] = [];
+    h.ctx.anonymo.floor = {
+      checksReplies: true,
+      check: async (input) => {
+        if (input.stage !== "reply") return { ok: true };
+        replies.push(input.text);
+        return input.text.includes("MERGED ANSWER") ? { ok: false, category: "cbrn" } : { ok: true };
+      },
+    };
+    try {
+      const before = await balance();
+      const { r, body } = await ask({ models: POOL });
+      expect(r.status).toBe(451);
+      expect(body.error).toMatchObject({ type: "floor_blocked", metadata: { category: "cbrn", stage: "reply" } });
+      expect(JSON.stringify(body)).not.toContain("MERGED ANSWER");
+      expect(replies).toEqual(["MERGED ANSWER"]); // the answer the caller would get, read once
+      expect(await balance()).toBe(before);
+    } finally {
+      h.ctx.anonymo.floor = floor;
+    }
+  });
 });
 
 describe("sealed council", () => {

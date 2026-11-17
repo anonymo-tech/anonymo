@@ -2,7 +2,8 @@
 // operator reports it (Backend §10: "A floor hit stores an encrypted minimal record, kept only if it is reported").
 // Reporting moves the record into the `preservation` table (src/anonymo/abuse/), which keeps it for one year.
 //
-// The record never holds the prompt: only a SHA-256 of it, its length, the category and which layer blocked it. The
+// The record never holds the prompt or reply: only a SHA-256 of the text, its length, the category, which layer blocked
+// it and whether it was the prompt or the model's reply. The
 // in-memory copy is sealed with a key generated at process start and never written anywhere.
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
@@ -15,13 +16,14 @@ export type FloorHitRecord = {
   at: string; // ISO time of the block
   category: FloorCategory;
   layer: FloorLayer;
+  stage: "prompt" | "reply";
   modality: FloorInput["modality"];
   hasUpload: boolean;
   textSha256: string;
   textLength: number;
 };
 
-export type FloorHitSummary = Pick<FloorHitRecord, "id" | "at" | "category" | "layer" | "modality" | "hasUpload">;
+export type FloorHitSummary = Pick<FloorHitRecord, "id" | "at" | "category" | "layer" | "stage" | "modality" | "hasUpload">;
 
 type Sealed = { summary: FloorHitSummary; expiresAt: number; blob: Buffer };
 
@@ -42,6 +44,7 @@ export class FloorHitLog {
       at: new Date(this.now()).toISOString(),
       category,
       layer,
+      stage: input.stage ?? "prompt",
       modality: input.modality,
       hasUpload: input.hasUpload,
       textSha256: createHash("sha256").update(input.text).digest("hex"),

@@ -235,6 +235,8 @@ export type ChatChunk = {
   model: string;
   choices: { index: number; delta: { role?: ChatRole; content?: string }; finish_reason?: string | null }[];
   anonymo_receipt?: SignedAnonymoReceipt;
+  /** A failure after the stream started: a reply the floor withheld (451, stage "reply"), or a provider error. */
+  error?: ApiErrorBody['error'];
 };
 
 /** A non-streamed reply (the council answers this way). */

@@ -78,7 +78,10 @@ export function isOutOfCredit(error: unknown): boolean {
 export function describeError(error: unknown): string {
   if (error instanceof AnonymoApiError) {
     if (error.status === 451 || error.code === 'floor_blocked')
-      return 'Blocked by the floor check. This request falls under one of the four lines Anonymo never serves, so it was not sent to any model and you were not charged.';
+      return error.metadata?.stage === 'reply'
+        ? "Blocked by the floor check. The model's reply crossed one of the four lines Anonymo never serves, so it was withheld and you were not charged."
+        : 'Blocked by the floor check. This request falls under one of the four lines Anonymo never serves, so it was not sent to any model and you were not charged.';
+    if (error.code === 'floor_unavailable') return 'The safety check could not run, so nothing was served and you were not charged. Try again in a moment.';
     if (error.code === 'sealed_unavailable')
       return 'No hardware-attested route is up right now. anonymo-sealed fails instead of downgrading, so nothing was sent and you were not charged. Try again shortly or pick another model.';
     if (error.code === 'model_not_found')
@@ -203,6 +206,9 @@ export function createAnonymoClient(options: ClientOptions) {
       let streamId: string | null = null;
       if (!response.body) return result;
       for await (const chunk of readChatStream(response.body, opts.signal)) {
+        // Headers went out before the reply existed, so a failure after that (a reply the floor withheld, a provider
+        // that fell over) arrives as an error event inside the stream.
+        if (chunk.error) throw errorFromBody(typeof chunk.error.code === 'number' ? chunk.error.code : 502, { error: chunk.error });
         streamId ??= chunk.id ?? null;
         const choice = chunk.choices?.[0];
         const text = choice?.delta?.content;
