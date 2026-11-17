@@ -88,7 +88,7 @@ let s: MediaServices;
 const US = { "x-anonymo-country": "US" };
 
 beforeAll(async () => {
-  h = await startRouter();
+  h = await startRouter({ env: { ANONYMO_FEATURE_MEDIA: "true" } });
   const k = await h.fundedKey(50n);
   auth = { ...k.auth, ...US };
   accountId = (await h.ctx.db.select().from(keys).where(eq(keys.keyHash, k.hash)))[0].accountId;

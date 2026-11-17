@@ -9,7 +9,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import type { FloorCategory, FloorInput } from "../seams.ts";
 
-export type FloorLayer = "prefilter" | "model";
+export type FloorLayer = "prefilter" | "model" | "moderation";
 
 export type FloorHitRecord = {
   id: string;

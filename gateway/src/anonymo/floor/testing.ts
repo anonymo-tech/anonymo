@@ -79,3 +79,40 @@ export function serveFakeGuard(opts: { mode?: FakeGuardMode; slowMs?: number } =
   });
   return { url: `http://127.0.0.1:${server.port}/v1`, state, stop: () => server.stop(true) };
 }
+
+export type FakeModerationMode = "ok" | "http500" | "garbage" | "no-category" | "slow";
+
+/** An OpenAI-compatible /moderations server on 127.0.0.1 that flags sexual/minors when an input carries the
+ *  `minor` placeholder. It can misbehave like serveFakeGuard, or fail only its next `failNext` calls. */
+export function serveFakeModeration(opts: { slowMs?: number } = {}) {
+  const state = { mode: "ok" as FakeModerationMode, calls: 0, failNext: 0, failStatus: 429, lastAuth: null as string | null, lastInputs: [] as string[] };
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(req) {
+      state.calls++;
+      state.lastAuth = req.headers.get("authorization");
+      const body = (await req.json()) as { input: string | string[] };
+      const inputs = Array.isArray(body.input) ? body.input : [body.input];
+      state.lastInputs = inputs;
+      if (state.failNext > 0) {
+        state.failNext--;
+        return new Response("busy", { status: state.failStatus });
+      }
+      if (state.mode === "http500") return new Response("down", { status: 500 });
+      if (state.mode === "slow") await Bun.sleep(opts.slowMs ?? 3000);
+      if (state.mode === "garbage") return new Response("not json", { status: 200 });
+      return Response.json({
+        id: "modr-test",
+        model: "omni-moderation-latest",
+        results: inputs.map((t) => {
+          const minor = markedCategory(t) === "minor";
+          return state.mode === "no-category"
+            ? { flagged: false, categories: { sexual: false }, category_scores: {} }
+            : { flagged: minor, categories: { sexual: minor, "sexual/minors": minor }, category_scores: { "sexual/minors": minor ? 0.9 : 0.001 } };
+        }),
+      });
+    },
+  });
+  return { url: `http://127.0.0.1:${server.port}/v1`, state, stop: () => server.stop(true) };
+}

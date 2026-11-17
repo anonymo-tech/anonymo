@@ -19,6 +19,9 @@
 //                              a second guard asked only when the first one errors (rate limit, outage, bad verdict).
 //                              A verdict from the first guard is final: a fallback can never turn a block into a pass.
 //                              With a fallback the first guard does not retry; the fallback retries once.
+//   ANONYMO_FLOOR_OPENAI_KEY   a second, independent check for the worst category: OpenAI's moderation endpoint,
+//                              sexual/minors only (openai-moderation.ts). It runs beside the guard; a block from
+//                              either blocks. _OPENAI_URL and _OPENAI_MODEL override its defaults.
 //   ANONYMO_FLOOR_REQUIRED=1   with no URL, every check fails closed (every real deployment sets this;
 //                              ANONYMO_ENV=production implies it)
 // With neither URL nor REQUIRED (local development), only the pre-filter runs.
@@ -28,6 +31,8 @@ import { floorErrorReason, GuardModelClient, type GuardFormat } from "./guard-cl
 import { log } from "../../lib/util.ts";
 import { FloorHitLog, type FloorLayer } from "./hits.ts";
 import { prefilter } from "./prefilter.ts";
+import { FLOOR_POLICY } from "./policy.ts";
+import { OpenAIModerationClassifier } from "./openai-moderation.ts";
 
 export interface FloorClassifier {
   classify(text: string, signal?: AbortSignal): Promise<FloorCategory | null>;
@@ -36,6 +41,9 @@ export interface FloorClassifier {
 export type FloorGateOptions = {
   /** The guard model. Null runs the pre-filter only. */
   classifier: FloorClassifier | null;
+  /** Independent checks run beside the guard (OpenAI moderation). A block from any one blocks, even if another
+   *  errored; an error with no block fails closed. */
+  also?: FloorClassifier[];
   /** Skip the deterministic layer (only for measuring the model alone in the suite harness). */
   skipPrefilter?: boolean;
   hits?: FloorHitLog;
@@ -49,7 +57,7 @@ export class AnonymoFloorGate implements FloorGate {
 
   /** Without a guard model only the pre-filter runs, and it reads requests, not replies (floor/reply.ts). */
   get checksReplies() {
-    return this.opts.classifier !== null;
+    return this.opts.classifier !== null || (this.opts.also?.length ?? 0) > 0;
   }
 
   async check(input: FloorInput, signal?: AbortSignal): Promise<FloorVerdict> {
@@ -59,9 +67,14 @@ export class AnonymoFloorGate implements FloorGate {
       const hit = prefilter(input.text);
       if (hit) return this.block(input, hit.category, "prefilter");
     }
-    if (!this.opts.classifier) return { ok: true };
-    const category = await this.opts.classifier.classify(input.text, signal);
-    return category ? this.block(input, category, "model") : { ok: true };
+    const runs: [FloorClassifier, FloorLayer][] = [...(this.opts.classifier ? [[this.opts.classifier, "model"] as [FloorClassifier, FloorLayer]] : []), ...(this.opts.also ?? []).map((c) => [c, "moderation"] as [FloorClassifier, FloorLayer])];
+    if (!runs.length) return { ok: true };
+    const settled = await Promise.allSettled(runs.map(([c]) => c.classify(input.text, signal)));
+    for (const p of FLOOR_POLICY)
+      for (const [i, s] of settled.entries()) if (s.status === "fulfilled" && s.value === p.category) return this.block(input, p.category, runs[i][1]);
+    const failed = settled.find((s): s is PromiseRejectedResult => s.status === "rejected");
+    if (failed) throw failed.reason;
+    return { ok: true };
   }
 
   private block(input: FloorInput, category: FloorCategory, layer: FloorLayer): FloorVerdict {
@@ -112,7 +125,9 @@ export function createFloorGate(env: Record<string, unknown>): FloorGate {
   const url = str(env.ANONYMO_FLOOR_URL);
   // Production never runs on the pre-filter alone: without a guard model URL every check fails closed (503).
   const required = truthy(env.ANONYMO_FLOOR_REQUIRED) || str(env.ANONYMO_ENV) === "production";
-  if (!url) return required ? floorGateStub(true) : new AnonymoFloorGate({ classifier: null });
+  const openaiKey = str(env.ANONYMO_FLOOR_OPENAI_KEY);
+  const also = openaiKey ? [new OpenAIModerationClassifier({ apiKey: openaiKey, url: str(env.ANONYMO_FLOOR_OPENAI_URL), model: str(env.ANONYMO_FLOOR_OPENAI_MODEL), cacheTtlMs: minutes(env.ANONYMO_FLOOR_CACHE_MINUTES, "ANONYMO_FLOOR_CACHE_MINUTES") })] : [];
+  if (!url) return required ? floorGateStub(true) : new AnonymoFloorGate({ classifier: null, also });
   const format = str(env.ANONYMO_FLOOR_FORMAT) ?? "llama-guard";
   if (!FORMATS.includes(format as GuardFormat)) throw new Error(`ANONYMO_FLOOR_FORMAT must be one of ${FORMATS.join(", ")}`);
   const ttlHours = int(env.ANONYMO_FLOOR_HIT_TTL_HOURS, "ANONYMO_FLOOR_HIT_TTL_HOURS");
@@ -133,7 +148,7 @@ export function createFloorGate(env: Record<string, unknown>): FloorGate {
   const classifier = fallbackUrl
     ? new FallbackClassifier(primary, client({ url: fallbackUrl, model: str(env.ANONYMO_FLOOR_FALLBACK_MODEL) ?? "", apiKey: str(env.ANONYMO_FLOOR_FALLBACK_KEY), format: fallbackFormat, retry: true, extraBody: jsonObject(env.ANONYMO_FLOOR_FALLBACK_EXTRA_BODY, "ANONYMO_FLOOR_FALLBACK_EXTRA_BODY") }))
     : primary;
-  return new AnonymoFloorGate({ classifier, hits: ttlHours ? new FloorHitLog(ttlHours * 3_600_000) : undefined });
+  return new AnonymoFloorGate({ classifier, also, hits: ttlHours ? new FloorHitLog(ttlHours * 3_600_000) : undefined });
 }
 
 /** Asks `fallback` only when `primary` errors. Whatever verdict `primary` gives (block or pass) is final. */

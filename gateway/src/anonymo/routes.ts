@@ -15,6 +15,6 @@ export function anonymoRoutes(app: Hono, ctx: Ctx) {
   refusalRoutes(app, ctx); // WS03 · per-key refusal-catch setting
   registerUpstreamJobs(ctx); // WS04 · upstream canaries and wallet-balance alarms (jobs, no routes)
   anonymoMoneyRoutes(app, ctx); // WS05 · keys, deposits, withdrawals, x402 on Base and Solana
-  mediaRoutes(app, ctx); // WS06 · media endpoints (src/anonymo/media/routes.ts)
+  if (ctx.cfg.features.media) mediaRoutes(app, ctx); // WS06 · media endpoints (src/anonymo/media/routes.ts), off unless ANONYMO_FEATURE_MEDIA
   trustRoutes(app, ctx); // WS09 · receipts and proofs, manifest, leaderboard
 }

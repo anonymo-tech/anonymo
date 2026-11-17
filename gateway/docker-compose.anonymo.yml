@@ -29,6 +29,8 @@ x-anonymo-runtime: &anonymo-runtime
   ANONYMO_FLOOR_FALLBACK_FORMAT: ${ANONYMO_FLOOR_FALLBACK_FORMAT:-}
   ANONYMO_FLOOR_FALLBACK_KEY: ${ANONYMO_FLOOR_FALLBACK_KEY:-}
   ANONYMO_FLOOR_FALLBACK_EXTRA_BODY: ${ANONYMO_FLOOR_FALLBACK_EXTRA_BODY:-}
+  # Second, independent check for minors on every prompt and reply (OpenAI moderation, sexual/minors only).
+  ANONYMO_FLOOR_OPENAI_KEY: ${ANONYMO_FLOOR_OPENAI_KEY:-}
   # Empty: the format's default (safeguard 8000 ms, the self-hosted formats 1500 ms).
   ANONYMO_FLOOR_TIMEOUT_MS: ${ANONYMO_FLOOR_TIMEOUT_MS:-}
   ANONYMO_FLOOR_CACHE_MINUTES: ${ANONYMO_FLOOR_CACHE_MINUTES:-}
@@ -46,6 +48,8 @@ x-anonymo-runtime: &anonymo-runtime
   ANONYMO_PROVENANCE_KEY: ${ANONYMO_PROVENANCE_KEY:-}
   ANONYMO_WATERMARK_KEY: ${ANONYMO_WATERMARK_KEY:-}
   ANONYMO_FEATURE_COUNCIL: ${ANONYMO_FEATURE_COUNCIL:-true}
+  # Images, voice and video: off unless set, and never in production without ANONYMO_MEDIA_CLASSIFIER_URL.
+  ANONYMO_FEATURE_MEDIA: ${ANONYMO_FEATURE_MEDIA:-false}
   LOG_LEVEL: ${LOG_LEVEL:-info}
 
 services:
