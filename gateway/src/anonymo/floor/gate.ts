@@ -19,7 +19,11 @@
 //                              a second guard asked only when the first one errors (rate limit, outage, bad verdict).
 //                              A verdict from the first guard is final: a fallback can never turn a block into a pass.
 //                              With a fallback the first guard does not retry; the fallback retries once.
-//   ANONYMO_FLOOR_OPENAI_KEY   a second, independent check for the worst category: OpenAI's moderation endpoint,
+//   ANONYMO_FLOOR_LLAMAGUARD_URL, _KEY, _MODEL
+//                              a second, independent check for the worst category: Meta's Llama Guard 4 with its own
+//                              taxonomy, S4 (Child Sexual Exploitation) only (llama-guard-s4.ts). It runs beside the
+//                              guard; a block from either blocks. PPQ serves it (https://api.ppq.ai/v1).
+//   ANONYMO_FLOOR_OPENAI_KEY   optional, the same kind of check on OpenAI's moderation endpoint,
 //                              sexual/minors only (openai-moderation.ts). It runs beside the guard; a block from
 //                              either blocks. _OPENAI_URL and _OPENAI_MODEL override its defaults.
 //   ANONYMO_FLOOR_REQUIRED=1   with no URL, every check fails closed (every real deployment sets this;
@@ -33,6 +37,7 @@ import { FloorHitLog, type FloorLayer } from "./hits.ts";
 import { prefilter } from "./prefilter.ts";
 import { FLOOR_POLICY } from "./policy.ts";
 import { OpenAIModerationClassifier } from "./openai-moderation.ts";
+import { LlamaGuardS4Classifier } from "./llama-guard-s4.ts";
 
 export interface FloorClassifier {
   classify(text: string, signal?: AbortSignal): Promise<FloorCategory | null>;
@@ -125,8 +130,12 @@ export function createFloorGate(env: Record<string, unknown>): FloorGate {
   const url = str(env.ANONYMO_FLOOR_URL);
   // Production never runs on the pre-filter alone: without a guard model URL every check fails closed (503).
   const required = truthy(env.ANONYMO_FLOOR_REQUIRED) || str(env.ANONYMO_ENV) === "production";
+  const cacheTtlMs = minutes(env.ANONYMO_FLOOR_CACHE_MINUTES, "ANONYMO_FLOOR_CACHE_MINUTES");
+  const also: FloorClassifier[] = [];
+  const lgUrl = str(env.ANONYMO_FLOOR_LLAMAGUARD_URL);
+  if (lgUrl) also.push(new LlamaGuardS4Classifier({ url: lgUrl, apiKey: str(env.ANONYMO_FLOOR_LLAMAGUARD_KEY), model: str(env.ANONYMO_FLOOR_LLAMAGUARD_MODEL), cacheTtlMs }));
   const openaiKey = str(env.ANONYMO_FLOOR_OPENAI_KEY);
-  const also = openaiKey ? [new OpenAIModerationClassifier({ apiKey: openaiKey, url: str(env.ANONYMO_FLOOR_OPENAI_URL), model: str(env.ANONYMO_FLOOR_OPENAI_MODEL), cacheTtlMs: minutes(env.ANONYMO_FLOOR_CACHE_MINUTES, "ANONYMO_FLOOR_CACHE_MINUTES") })] : [];
+  if (openaiKey) also.push(new OpenAIModerationClassifier({ apiKey: openaiKey, url: str(env.ANONYMO_FLOOR_OPENAI_URL), model: str(env.ANONYMO_FLOOR_OPENAI_MODEL), cacheTtlMs }));
   if (!url) return required ? floorGateStub(true) : new AnonymoFloorGate({ classifier: null, also });
   const format = str(env.ANONYMO_FLOOR_FORMAT) ?? "llama-guard";
   if (!FORMATS.includes(format as GuardFormat)) throw new Error(`ANONYMO_FLOOR_FORMAT must be one of ${FORMATS.join(", ")}`);

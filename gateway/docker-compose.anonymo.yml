@@ -29,7 +29,10 @@ x-anonymo-runtime: &anonymo-runtime
   ANONYMO_FLOOR_FALLBACK_FORMAT: ${ANONYMO_FLOOR_FALLBACK_FORMAT:-}
   ANONYMO_FLOOR_FALLBACK_KEY: ${ANONYMO_FLOOR_FALLBACK_KEY:-}
   ANONYMO_FLOOR_FALLBACK_EXTRA_BODY: ${ANONYMO_FLOOR_FALLBACK_EXTRA_BODY:-}
-  # Second, independent check for minors on every prompt and reply (OpenAI moderation, sexual/minors only).
+  # Second, independent check for minors on every prompt and reply: Llama Guard 4, S4 only (and, optionally, OpenAI).
+  ANONYMO_FLOOR_LLAMAGUARD_URL: ${ANONYMO_FLOOR_LLAMAGUARD_URL:-}
+  ANONYMO_FLOOR_LLAMAGUARD_KEY: ${ANONYMO_FLOOR_LLAMAGUARD_KEY:-}
+  ANONYMO_FLOOR_LLAMAGUARD_MODEL: ${ANONYMO_FLOOR_LLAMAGUARD_MODEL:-}
   ANONYMO_FLOOR_OPENAI_KEY: ${ANONYMO_FLOOR_OPENAI_KEY:-}
   # Empty: the format's default (safeguard 8000 ms, the self-hosted formats 1500 ms).
   ANONYMO_FLOOR_TIMEOUT_MS: ${ANONYMO_FLOOR_TIMEOUT_MS:-}

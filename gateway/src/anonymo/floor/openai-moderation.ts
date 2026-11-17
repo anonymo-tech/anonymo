@@ -6,6 +6,9 @@
 // Measured before it was added: none of the 101 in-repo adult-legal prompts flagged (highest score 0.10, a puberty
 // question), while short requests involving a 13- and 14-year-old and a seventh-grader were flagged (0.77 to 0.91).
 //
+// Optional: the default second check is Llama Guard 4 (llama-guard-s4.ts). OpenAI's free tier allows 10,000 tokens a
+// minute for this model, which ten parallel streamed chats exhausted in a live test (the floor then fails closed).
+//
 // Like the guard it fails closed: a timeout, an HTTP error or a reply without the category throws, and chat answers 503.
 // A passing failure (network, timeout, 408/429/5xx) is retried once. Long text is sent in overlapping chunks, and
 // verdicts are kept per chunk (VerdictCache, keyed by an HMAC, never the text), so a growing reply resends only its
