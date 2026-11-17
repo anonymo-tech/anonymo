@@ -235,6 +235,16 @@ describe("POST /v1/images/generations", () => {
     expect((await post("/v1/images/generations", { model: "flux.1-schnell", prompt: "a green square" }, { ...auth, "x-anonymo-country": "GB" })).status).toBe(200);
   });
 
+  test("a prompt asking for nudity is refused before anything is sent, held or charged", async () => {
+    for (const prompt of ["a naked woman on a beach", "nsfw portrait"]) {
+      const res = await untouched(() => post("/v1/images/generations", { model: "flux.1-schnell", prompt }));
+      expect(res.status).toBe(451);
+      expect(await errorOf(res)).toMatchObject({ type: "explicit_media_unavailable", metadata: { stage: "prompt" } });
+    }
+    // Suggestive and violent prompts are not refused here; the output gate still judges what comes back.
+    expect((await post("/v1/images/generations", { model: "flux.1-schnell", prompt: "a green square, bikini, blood splatter" })).status).toBe(200);
+  });
+
   test("an OFAC region is refused before anything is sent", async () => {
     const res = await untouched(() => post("/v1/images/generations", { model: "flux.1-schnell", prompt: "a green square" }, { ...auth, "x-anonymo-country": "IR" }));
     expect(res.status).toBe(451);
@@ -482,6 +492,12 @@ describe("/v1/video/generations", () => {
     expect(await sweepVideoJobs(h.ctx)).toBeGreaterThanOrEqual(1);
     const [row] = await h.ctx.db.select().from(mediaJobs).where(eq(mediaJobs.id, job.id));
     expect(row.status).toBe("completed");
+  });
+
+  test("a video prompt asking for sex is refused before the job is submitted", async () => {
+    const res = await untouched(() => submit({ prompt: "two people having sex" }));
+    expect(res.status).toBe(451);
+    expect((await errorOf(res)).type).toBe("explicit_media_unavailable");
   });
 
   test("uploads, bad durations, floor blocks and OFAC regions never reach the upstream", async () => {

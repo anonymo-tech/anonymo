@@ -6,7 +6,8 @@
 //   GET  /v1/media/models   GET /v1/media/provenance/keys   POST /v1/media/provenance/verify
 // Each is also served under /api/v1.
 //
-// Every request runs, in order: key → validation → floor gate (ctx.anonymo.floor, never rerouted) → region rules →
+// Every request runs, in order: key → validation → floor gate (ctx.anonymo.floor, never rerouted) → nudity prompt
+// check (images and video, prompt-check.ts) → region rules →
 // hold (reserve) → upstream → media gate on every visual output → provenance (watermark + signed C2PA manifest,
 // self-verified) → delivery → settle. Any failure after the hold releases it, so a blocked, failed or unmarked
 // output is never charged, stored or returned. Prompt text is never written anywhere (not even logs).
@@ -91,6 +92,12 @@ async function floorCheck(ctx: Ctx, input: FloorInput) {
     throw new ApiError(503, "The safety check is unavailable. Nothing was sent or charged; try again shortly.", "floor_unavailable");
   }
   if (!verdict.ok) throw new ApiError(451, "This request crosses a line Anonymo blocks for everyone. Nothing was sent or charged.", "floor_blocked", { category: verdict.category });
+}
+
+/** Images and video are safe for work only: a prompt asking for nudity or sex is refused before anything is sent. */
+async function nudityCheck(s: MediaServices, prompt: string, signal: AbortSignal) {
+  const v = await s.promptCheck.check(prompt, signal);
+  if (!v.ok) throw new ApiError(451, "Anonymo makes no nude or sexual images or video. Nothing was sent or charged.", "explicit_media_unavailable", { stage: "prompt" });
 }
 
 function regionPolicy(ctx: Ctx, c: Context, s: MediaServices) {
@@ -224,6 +231,7 @@ async function readEditRequest(s: MediaServices, c: Context): Promise<ImageInput
 async function runImages(ctx: Ctx, c: Context, key: KeyRow, s: MediaServices, input: ImageInput): Promise<Response> {
   const edit = !!input.upload;
   await floorCheck(ctx, { text: input.prompt, modality: "image", hasUpload: edit });
+  await nudityCheck(s, input.prompt, c.req.raw.signal);
   regionPolicy(ctx, c, s);
   // No NSFW edits of uploaded photos: an explicit (or unscorable) upload is refused before any model sees it.
   if (input.upload) {
@@ -315,6 +323,7 @@ async function submitVideo(ctx: Ctx, c: Context): Promise<Response> {
   const { width, height, size } = parseSize(model, body.size);
   const seed = parseSeed(body.seed);
   await floorCheck(ctx, { text: prompt, modality: "video", hasUpload: false });
+  await nudityCheck(s, prompt, c.req.raw.signal);
   regionPolicy(ctx, c, s);
   const id = requestId().replace("med_", "vid_");
   const price = priceOf(model.usdPerSecond, secs);

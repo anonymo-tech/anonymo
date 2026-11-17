@@ -16,6 +16,7 @@
 //   ANONYMO_TTS_URL / _TOKEN
 //   ANONYMO_MEDIA_TTL_S (default 3600, at most 86400), ANONYMO_MEDIA_STORE_MB (default 512)
 //   ANONYMO_REGION_BLOCKED, ANONYMO_EXPLICIT_MEDIA_OFF (region.ts, placeholder until WS02)
+//   ANONYMO_FLOOR_* (read, not owned): the nudity prompt check asks the floor's guard when it runs safeguard (prompt-check.ts)
 
 import { hkdfSync } from "node:crypto";
 import type { Ctx } from "../../context.ts";
@@ -24,6 +25,7 @@ import { MediaCatalog, type Upstream } from "./catalog.ts";
 import { provenanceKeyFromSeed } from "./c2pa.ts";
 import { createMediaGate, httpClassifier, unconfiguredClassifier, type MediaOutputGate } from "./gate.ts";
 import { createProvenance, type MediaProvenance } from "./provenance.ts";
+import { promptCheckFromEnv, type MediaPromptCheck } from "./prompt-check.ts";
 import { placeholderRegionRules } from "./region.ts";
 import { MemoryMediaStore, type MediaStore } from "./store.ts";
 import { comfyAdapter, ttsAdapter, unconfigured, veniceAdapter, type ImageUpstream, type SpeechUpstream, type VideoUpstream } from "./upstreams.ts";
@@ -33,6 +35,8 @@ import { workflowSet } from "./workflows.ts";
 export type MediaServices = {
   catalog: MediaCatalog;
   gate: MediaOutputGate;
+  /** Refuses image and video prompts that ask for nudity or sex, before anything is generated. */
+  promptCheck: MediaPromptCheck;
   provenance: MediaProvenance;
   /** Used only while ctx.anonymo carries no `region` of its own (WS02). */
   region: RegionRules;
@@ -76,6 +80,7 @@ export function buildMediaServices(ctx: Pick<Ctx, "cfg">, env: Env = process.env
       minAdultAge: Math.max(18, num(env.ANONYMO_MEDIA_MIN_ADULT_AGE, 25)),
       videoFrames: Math.max(1, Math.floor(num(env.ANONYMO_MEDIA_VIDEO_FRAMES, 8))),
     }),
+    promptCheck: promptCheckFromEnv(env),
     provenance: createProvenance({ key, watermarker, previousKeys }),
     region: placeholderRegionRules(env),
     store: new MemoryMediaStore(Math.max(16, num(env.ANONYMO_MEDIA_STORE_MB, 512)) * 1024 * 1024),

@@ -26,6 +26,10 @@ Each is also served under `/api/v1`. Errors use the gateway's OpenAI-shaped enve
 3. **Floor gate** (`ctx.anonymo.floor`) with the right `modality` and `hasUpload` (true only for edits). A block is
    `451 floor_blocked` and is never rerouted, and a gate that cannot answer is `503 floor_unavailable`. Nothing is sent
    or held.
+   Then, for images and video, the **nudity prompt check** (`prompt-check.ts`): word rules, then the floor's guard
+   model asked one yes/no question (when it runs gpt-oss-safeguard). A prompt asking for nudity or sex gets
+   `451 explicit_media_unavailable` with `stage: "prompt"`, and nothing is sent or charged. A guard error does not
+   block: the media gate below still checks the output.
 4. **Region rules.** A blocked region gets `451 region_blocked`. Every upstream is asked for safe output, in every
    region.
 5. For edits, the **upload itself** goes through the media gate. An explicit upload is refused before any model sees it.
