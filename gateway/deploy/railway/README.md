@@ -99,3 +99,24 @@ Variables (names only): `api` and `anonymo-worker` also take `ANONYMO_FLOOR_URL`
 Railway's Postgres template has no Timescale. Attach a Timescale-enabled Postgres (a TimescaleDB template or an external managed Timescale) and run `deploy/timescale/requests-hypertable.sql` against it as the schema owner. Without it the request log has no 30-day retention, which Backend §7 requires: do not launch on plain Postgres. Never point the app at a database the backup service does not cover.
 
 Railway passes a client address to the app in `X-Forwarded-For` and `X-Real-IP`. The app must not log or store either; put a CDN in front that sets the country header and keep Railway's HTTP logs off for the `api` and `dash` services, or self-host the edge (`deploy/anonymo/Caddyfile`), which strips both.
+
+### Setting it up (what exists and what is left)
+
+- **Project:** `anonymo`, environment `production`.
+- **Databases:**
+  - `Timescale` is pinned to `timescale/timescaledb:2.32.0-pg17` by digest. Its start command preloads Timescale and turns off statement, connection and parameter logging, as in the Compose overlay.
+  - Its public TCP proxy is removed.
+  - Because the database is PostgreSQL 17, `backup` sets `POSTGRES_CLIENT_IMAGE` to the reviewed `postgres:17.11` image.
+  - `Redis` is pinned to `redis:8.0.4` by digest.
+- **App services:** every service in the tables above, except the Anonymo settlement and anchoring workers.
+  - Build and deploy settings were entered from the `*.railway.json` files.
+  - Non-secret variables are set on each service. Database and Redis addresses are references (`${{Timescale.DATABASE_URL}}` for the owner, `anonymo_runtime` at `${{Timescale.RAILWAY_PRIVATE_DOMAIN}}` for the runtime).
+  - Secrets are shared variables the services refer to (`${{shared.APP_SECRET}}` and so on).
+- **Secrets:** run `bun scripts/railway-secrets.ts` from `gateway/` yourself.
+  - It generates `APP_SECRET`, `ADMIN_TOKEN` and `RUNTIME_DB_PASSWORD` when missing.
+  - It copies the NanoGPT and PPQ keys from `gateway/.env`.
+  - It asks for a second PPQ key in a hidden dialog.
+  - It prints no value.
+- **Deploying:** from a clean export of the reviewed commit, `git archive HEAD gateway | tar -x -C <dir>`, then `railway up gateway --path-as-root -s <service> --ci` in that directory. `dash` deploys the same way from `dash/`, built with `NEXT_PUBLIC_ANONYMO_API`.
+- **No public domains yet.** Give `api` and `dash` their custom domains only behind Cloudflare.
+- **Origin lock (open):** the region rules read `cf-ipcountry`, `cf-region-code` and `x-anonymo-region`, which only Cloudflare should set. A Railway service is still reachable without going through Cloudflare, so a client could send those headers itself. Until the API checks a secret header that only Cloudflare adds, the region blocks can be bypassed by anyone who finds the origin.
