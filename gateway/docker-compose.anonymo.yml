@@ -110,8 +110,16 @@ services:
     image: ${ANONYMO_IMAGE:?Set the reviewed application image pinned by sha256 digest}
     environment:
       ANONYMO_ENV: production
+      # loadConfig's production checks apply to this one-shot too: it runs as the api role and never serves.
+      RUNTIME_ROLE: api
+      WORKERS: "false"
+      AUTO_MIGRATE: "false"
+      HOST: 0.0.0.0
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set the HTTPS public origin}
       DATABASE_URL: ${DATABASE_URL:?Inject a nondefault PostgreSQL URL}
+      REDIS_URL: ${REDIS_URL:?Inject an authenticated Redis URL}
       APP_SECRET: ${APP_SECRET:?Inject the application encryption secret}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?Inject the operator token}
       ANONYMO_FLOOR_REQUIRED: "1"
     env_file: ["${UPSTREAM_SECRETS_FILE:?Provide a file containing only upstream key variables (PPQ_API_KEY, PPQ_CREDIT_ID, ...)}"]
     command: ["bun", "scripts/seed-upstreams.ts", "config/upstreams.yaml"]
