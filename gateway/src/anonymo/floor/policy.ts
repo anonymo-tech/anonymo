@@ -15,6 +15,7 @@ export const FLOOR_POLICY: readonly PolicyCategory[] = [
     shouldNot: [
       "Sexual or sexualised content of any kind involving a person under 18, or a character described, drawn or implied to be under 18, including fully fictional or synthetic content.",
       "Requests to sexualise a child's body, clothing or behaviour, or to treat a child as a sexual partner.",
+      "Help to groom, recruit, traffic, buy or sell a child, or to gain sexual access to one, including how to avoid being caught.",
     ],
     can: [
       "Sexual content between adults, including adult roleplay in which every participant is clearly an adult.",
@@ -28,6 +29,7 @@ export const FLOOR_POLICY: readonly PolicyCategory[] = [
     shouldNot: [
       "Sexual or nude text or imagery about a real, identifiable person, whether a public figure or a private individual.",
       "Requests to 'undress', nudify or sexually edit a photo of a real person.",
+      "Help to secretly film, photograph or watch people undressing or having sex, or to get or share intimate images of a real person without consent.",
     ],
     can: [
       "Sexual content about fictional adults.",

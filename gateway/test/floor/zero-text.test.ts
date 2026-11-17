@@ -27,7 +27,7 @@ const clientHeaders = () => ({
   "cf-connecting-ipv6": IP6,
   "true-client-ip": IP,
   forwarded: `for=${IP}`,
-  "cf-ipcountry": "DE",
+  "cf-ipcountry": "NL",
 });
 
 async function scanAllTables() {

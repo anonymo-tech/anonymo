@@ -67,9 +67,9 @@ export class AnonymoFloorGate implements FloorGate {
 
   async check(input: FloorInput, signal?: AbortSignal): Promise<FloorVerdict> {
     if (!input.text.trim()) return { ok: true }; // nothing to judge; uploads go through the upload rule
-    // The pre-filter matches requests ("write ...", "how to ..."), so a reply goes to the guard model alone.
-    if (!this.opts.skipPrefilter && input.stage !== "reply") {
-      const hit = prefilter(input.text);
+    // A reply is read with the pre-filter's content rules only: its request rules match requests, not what a model wrote.
+    if (!this.opts.skipPrefilter) {
+      const hit = prefilter(input.text, { reply: input.stage === "reply" });
       if (hit) return this.block(input, hit.category, "prefilter");
     }
     const runs: [FloorClassifier, FloorLayer][] = [...(this.opts.classifier ? [[this.opts.classifier, "model"] as [FloorClassifier, FloorLayer]] : []), ...(this.opts.also ?? []).map((c) => [c, "moderation"] as [FloorClassifier, FloorLayer])];

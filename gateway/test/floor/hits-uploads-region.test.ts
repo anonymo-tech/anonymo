@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { FloorHitLog } from "../../src/anonymo/floor/hits.ts";
 import { createUploadRule, sha256Hex, stubCsamHashClient, type HashBlocklist, type Upload } from "../../src/anonymo/floor/uploads.ts";
-import { createRegionRules, DEFAULT_AGE_VERIFICATION_REGIONS, DEFAULT_OFAC_REGIONS, parseRegion, regionConfigFromEnv, regionRulesFromEnv } from "../../src/anonymo/region/rules.ts";
+import { createRegionRules, DEFAULT_AGE_VERIFICATION_REGIONS, DEFAULT_BLOCKED_REGIONS, DEFAULT_OFAC_REGIONS, parseRegion, regionConfigFromEnv, regionRulesFromEnv } from "../../src/anonymo/region/rules.ts";
 import { regionCodeOf, regionMiddleware } from "../../src/anonymo/region/middleware.ts";
 import type { FloorCategory } from "../../src/anonymo/seams.ts";
 
@@ -83,23 +83,37 @@ describe("region rules", () => {
     for (const c of DEFAULT_OFAC_REGIONS) expect(rules.forCountry(c).blocked).toBe(true);
   });
 
-  test("explicit media is off where age verification is required; text stays available", () => {
-    expect(rules.forCountry("GB")).toEqual({ blocked: false, explicitMediaAllowed: false });
-    expect(rules.forCountry("US-TX")).toEqual({ blocked: false, explicitMediaAllowed: false });
-    expect(rules.forCountry("US-CA")).toEqual({ blocked: false, explicitMediaAllowed: true });
-    expect(rules.forCountry("US")).toEqual({ blocked: false, explicitMediaAllowed: false }); // state unknown: fail closed
-    expect(rules.forCountry("DE")).toEqual({ blocked: false, explicitMediaAllowed: true });
-    for (const c of DEFAULT_AGE_VERIFICATION_REGIONS) expect(rules.forCountry(c).explicitMediaAllowed, c).toBe(false);
+  test("by default, with no age verification, every region whose rules plausibly reach adult text is blocked outright", () => {
+    for (const c of ["GB", "FR", "DE", "AU", "BR", "RU", "SA", "IN", "CN", "US-TX", "US-IA", "US-WV", "US-CA", "US-CO"]) expect(rules.forCountry(c), c).toEqual({ blocked: true, explicitMediaAllowed: false });
+    expect(rules.forCountry("US")).toEqual({ blocked: true, explicitMediaAllowed: false }); // state unknown: fail closed
+    for (const c of ["US-NY", "US-WA", "NL", "ES", "CA", "JP", "MX", "IT"]) expect(rules.forCountry(c).blocked, c).toBe(false);
+    for (const c of DEFAULT_BLOCKED_REGIONS) expect(rules.forCountry(c).blocked, c).toBe(true);
+    // Every age-verification region is also blocked: switching images off does nothing for text.
+    for (const c of DEFAULT_AGE_VERIFICATION_REGIONS) expect(rules.forCountry(c), c).toEqual({ blocked: true, explicitMediaAllowed: false });
+  });
+
+  test("with the legal list turned off, age-verification regions keep text and lose explicit media", () => {
+    const av = regionRulesFromEnv({ ANONYMO_REGION_BLOCKED: "none" });
+    expect(av.forCountry("GB")).toEqual({ blocked: false, explicitMediaAllowed: false });
+    expect(av.forCountry("US-TX")).toEqual({ blocked: false, explicitMediaAllowed: false });
+    expect(av.forCountry("US-CA")).toEqual({ blocked: false, explicitMediaAllowed: true });
+    expect(av.forCountry("US")).toEqual({ blocked: false, explicitMediaAllowed: false });
+    expect(av.forCountry("IR").blocked).toBe(true); // sanctions stay
   });
 
   test("an unknown region restricts explicit media by default, and garbage never parses as a region", () => {
     for (const c of [null, "", "XX", "T1", "1.2.3.4", "USA", "u", "US-TEXAS"]) expect(rules.forCountry(c), String(c)).toEqual({ blocked: false, explicitMediaAllowed: false });
     expect(regionRulesFromEnv({ ANONYMO_REGION_UNKNOWN: "allow" }).forCountry(null).explicitMediaAllowed).toBe(true);
+    // Production blocks an unknown region (no header, Tor) unless told otherwise.
+    const prod = regionRulesFromEnv({ ANONYMO_ENV: "production" });
+    for (const c of [null, "XX", "T1"]) expect(prod.forCountry(c), String(c)).toEqual({ blocked: true, explicitMediaAllowed: false });
+    expect(regionRulesFromEnv({ ANONYMO_ENV: "production", ANONYMO_REGION_UNKNOWN_TEXT: "allow" }).forCountry("T1").blocked).toBe(false);
+    expect(() => regionConfigFromEnv({ ANONYMO_REGION_UNKNOWN_TEXT: "maybe" })).toThrow();
     expect(parseRegion("203.0.113.9")).toBeNull();
   });
 
   test("lists are configurable and validated", () => {
-    const custom = regionRulesFromEnv({ ANONYMO_OFAC_REGIONS: "ru", ANONYMO_AGE_VERIFICATION_REGIONS: "FR, US-CA" });
+    const custom = regionRulesFromEnv({ ANONYMO_OFAC_REGIONS: "ru", ANONYMO_REGION_BLOCKED: "none", ANONYMO_AGE_VERIFICATION_REGIONS: "FR, US-CA" });
     expect(custom.forCountry("RU").blocked).toBe(true);
     expect(custom.forCountry("IR").blocked).toBe(false);
     expect(custom.forCountry("FR").explicitMediaAllowed).toBe(false);
@@ -119,7 +133,8 @@ describe("region rules", () => {
     expect(((await blockedRes.json()) as { error: { type: string } }).error.type).toBe("region_blocked");
     expect((await get({ "cf-ipcountry": "UA", "cf-region-code": "43" })).status).toBe(451);
     expect((await get({ "x-anonymo-region": "UA-43" })).status).toBe(451);
-    expect((await get({ "cf-ipcountry": "GB" })).status).toBe(200);
+    expect((await get({ "cf-ipcountry": "GB" })).status).toBe(451);
+    expect((await get({ "cf-ipcountry": "NL" })).status).toBe(200);
     expect((await get({})).status).toBe(200);
     expect(regionCodeOf(new Headers({ "cf-ipcountry": "US", "cf-region-code": "TX" }))).toBe("US-TX");
     expect(regionCodeOf(new Headers({ "cf-ipcountry": "US", "cf-region-code": "../x" }))).toBe("US");
