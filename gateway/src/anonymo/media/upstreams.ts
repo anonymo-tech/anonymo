@@ -2,6 +2,7 @@
 // gate and provenance have run (pipeline.ts). Media is only ever taken inline (base64 or a response body from the
 // configured host), never fetched from a URL an upstream names, so an upstream cannot point the gateway elsewhere.
 //
+// NanoGPT's image endpoint was exercised live (Nano Banana and GPT Image 2 return PNG as base64).
 // (U) Request shapes for Venice's image and video endpoints and for the ComfyUI worker pool are written from their
 // public API documentation and have not been exercised against live hosts (no keys or GPUs were available).
 
@@ -86,6 +87,44 @@ export function veniceAdapter(o: { base: string; apiKey: string; fetch?: typeof 
       if (type.startsWith("video/")) return { state: "done", media: media(await readCapped(res), type) };
       const j = (await res.json().catch(() => ({}))) as { status?: string };
       return /fail|error/i.test(j.status ?? "") ? { state: "failed", message: "Venice video job failed" } : { state: "running" };
+    },
+  };
+}
+
+// ---- NanoGPT (hosted; OpenAI-compatible images) ---------------------------------------------------------------
+/** Aspect ratios NanoGPT takes for models that size by ratio (Google's Nano Banana), keyed by our WxH sizes. */
+export const NANOGPT_ASPECT_RATIOS: Record<string, string> = {
+  "1024x1024": "1:1", "1344x768": "16:9", "768x1344": "9:16", "1184x864": "4:3", "864x1184": "3:4", "1248x832": "3:2", "832x1248": "2:3",
+};
+
+/** Images through NanoGPT. Models in `byAspectRatio` are sized with `aspect_ratio`, the rest with `size` ("WxH").
+ *  Only base64 is accepted (response_format b64_json); a URL in the answer is never fetched. Images only. */
+export function nanogptAdapter(o: { base: string; apiKey: string; byAspectRatio?: string[]; fetch?: typeof fetch }): ImageUpstream {
+  const f = o.fetch ?? fetch;
+  const ratio = new Set(o.byAspectRatio ?? []);
+  return {
+    async generate(r, signal) {
+      if (r.image) throw new UpstreamError("NanoGPT image edits are not wired", 400, true);
+      const size = `${r.width}x${r.height}`;
+      const sizing = ratio.has(r.model) ? { aspect_ratio: NANOGPT_ASPECT_RATIOS[size] ?? "1:1" } : { size };
+      const res = await f(o.base.replace(/\/$/, "") + "/images/generations", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${o.apiKey}` },
+        body: JSON.stringify({ model: r.model, prompt: r.prompt, n: r.n, response_format: "b64_json", ...sizing }),
+        signal,
+      });
+      if (!res.ok) {
+        await res.body?.cancel().catch(() => undefined);
+        throw failed("NanoGPT image", res.status);
+      }
+      const j = (await res.json()) as { data?: { b64_json?: unknown }[] };
+      const out: Media[] = [];
+      for (const d of j.data ?? []) {
+        const bytes = b64(d?.b64_json);
+        if (bytes?.length) out.push(media(bytes, "image/png"));
+      }
+      if (out.length !== r.n) throw new UpstreamError("NanoGPT returned fewer images than asked", 502);
+      return out;
     },
   };
 }

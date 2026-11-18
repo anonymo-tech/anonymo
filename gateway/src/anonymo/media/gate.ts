@@ -1,6 +1,6 @@
 // MediaGate (seams.ts): NSFW score × apparent age on every image and on sampled video frames, before anything is
-// stored or returned. Scores come from a classifier service (WS10 hosts it next to the ComfyUI workers) through
-// MediaClassifier; tests use a double. The gate fails CLOSED: a classifier that errors, times out, returns too few
+// stored or returned. Scores come from a classifier service through MediaClassifier: our own (httpClassifier, WS10)
+// or the hosted pair in hosted-classifier.ts (NanoGPT's NSFW check plus Llama Guard 4); tests use a double. The gate fails CLOSED: a classifier that errors, times out, returns too few
 // frames or numbers that are not numbers is a block ("unscored"), never a pass.
 
 import type { MediaGate, MediaVerdict } from "../seams.ts";
@@ -63,10 +63,11 @@ export function judgeFrames(frames: unknown, expected: number, opts: Pick<Assess
   for (const f of frames as FrameScore[]) {
     if (f.nsfw >= t.nsfw && f.realPerson != null && f.realPerson >= t.realPerson) return { ok: false, reason: "nsfw_real_person" };
   }
-  // An explicit frame whose age the estimator could not read cannot be shown to be of an adult: fail closed.
-  if ((frames as FrameScore[]).some((f) => f.nsfw >= t.nsfw && f.apparentAge === null)) return { ok: false, reason: "unscored" };
+  // Where no explicit frame may pass at all, the age does not change the outcome: say why it was blocked.
   if (explicit && opts.fromUpload) return { ok: false, reason: "explicit_from_upload" };
   if (explicit && !opts.explicitAllowed) return { ok: false, reason: "explicit" };
+  // An explicit frame whose age the estimator could not read cannot be shown to be of an adult: fail closed.
+  if ((frames as FrameScore[]).some((f) => f.nsfw >= t.nsfw && f.apparentAge === null)) return { ok: false, reason: "unscored" };
   return { ok: true, explicit };
 }
 

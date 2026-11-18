@@ -5,9 +5,12 @@
 // listed under any name (non-commercial). Venice models are listed only under a `venice/` prefix, never relabelled
 // one-for-one as ours (AGENTS.md), and only when configured: ANONYMO_VENICE_IMAGE_MODELS / ANONYMO_VENICE_VIDEO_MODELS
 // take a comma-separated list of Venice model ids, because which ones the business agreement covers is not settled.
+// Hosted models bought through NanoGPT keep their maker's name under the maker's prefix (google/…, openai/…), are
+// listed only when ANONYMO_NANOGPT_API_KEY is set, and were chosen because their makers filter sexual and child-safety
+// requests themselves, on top of Anonymo's own prompt check and output gate.
 
 export type MediaKind = "image" | "speech" | "video";
-export type Upstream = "venice" | "comfyui" | "tts";
+export type Upstream = "venice" | "comfyui" | "tts" | "nanogpt";
 type Base = { id: string; upstream: Upstream; upstreamModel: string; family: string; license: string; name: string };
 export type ImageModel = Base & { kind: "image"; usdPerImage: string; edit: boolean; sizes: string[]; defaultSize: string };
 export type SpeechModel = Base & { kind: "speech"; usdPer1kChars: string; voices: string[]; maxChars: number };
@@ -60,6 +63,10 @@ export function assertLicensed(m: MediaModel) {
     if (!m.id.startsWith("venice/")) throw new Error(`${m.id}: Venice models are listed only under venice/…`);
     return;
   }
+  if (m.upstream === "nanogpt") {
+    if (!/^(google|openai)\//.test(m.id)) throw new Error(`${m.id}: NanoGPT models keep their maker's prefix`);
+    return;
+  }
   if (!SELF_HOSTED_LICENSES[m.kind].includes(m.license)) throw new Error(`${m.id}: self-hosted ${m.kind} models must be ${SELF_HOSTED_LICENSES[m.kind].join(" or ")} (got ${m.license})`);
 }
 
@@ -70,6 +77,22 @@ function veniceModels(env: Record<string, string | undefined>): MediaModel[] {
     ...ids(env.ANONYMO_VENICE_IMAGE_MODELS).map((m): ImageModel => ({ kind: "image", id: `venice/${m}`, name: `${m} (Built in Venice)`, upstream: "venice", upstreamModel: m, family: "venice", license: "venice-terms", usdPerImage: env.ANONYMO_VENICE_IMAGE_USD ?? "0.020", edit: false, sizes: SQUARE_AND_WIDE, defaultSize: "1024x1024" })),
     ...ids(env.ANONYMO_VENICE_VIDEO_MODELS).map((m): VideoModel => ({ kind: "video", id: `venice/${m}`, name: `${m} (Built in Venice)`, upstream: "venice", upstreamModel: m, family: "venice", license: "venice-terms", usdPerSecond: env.ANONYMO_VENICE_VIDEO_USD_PER_S ?? "0.100", seconds: [5, 10], defaultSeconds: 5, sizes: ["1280x720", "720x1280"], defaultSize: "1280x720" })),
   ];
+}
+
+// Prices: NanoGPT's price (Nano Banana $0.039, GPT Image 2 $0.0655 at 1024x1024, November 2026), plus about $0.002
+// for the two output checks, plus about 15%. Override with ANONYMO_NANOGPT_IMAGE_USD_NANO_BANANA / _GPT_IMAGE_2.
+export const NANOGPT_IMAGE_MODELS: { upstreamModel: string; id: string; name: string; family: string; usd: string; envUsd: string; sizes: string[]; byAspectRatio: boolean }[] = [
+  { upstreamModel: "nano-banana", id: "google/nano-banana", name: "Nano Banana (Google)", family: "gemini", usd: "0.050", envUsd: "ANONYMO_NANOGPT_IMAGE_USD_NANO_BANANA", sizes: ["1024x1024", "1344x768", "768x1344", "1184x864", "864x1184"], byAspectRatio: true },
+  { upstreamModel: "gpt-image-2", id: "openai/gpt-image-2", name: "GPT Image 2 (OpenAI)", family: "gpt-image", usd: "0.080", envUsd: "ANONYMO_NANOGPT_IMAGE_USD_GPT_IMAGE_2", sizes: ["1024x1024", "1536x1024", "1024x1536"], byAspectRatio: false },
+];
+const USD = /^\d+(\.\d{1,6})?$/;
+function nanogptModels(env: Record<string, string | undefined>): MediaModel[] {
+  if (!env.ANONYMO_NANOGPT_API_KEY?.trim()) return [];
+  return NANOGPT_IMAGE_MODELS.map((m): ImageModel => {
+    const usd = env[m.envUsd]?.trim() || m.usd;
+    if (!USD.test(usd)) throw new Error(`${m.envUsd} must be a dollar amount`);
+    return { kind: "image", id: m.id, name: m.name, upstream: "nanogpt", upstreamModel: m.upstreamModel, family: m.family, license: "provider-terms", usdPerImage: usd, edit: false, sizes: m.sizes, defaultSize: "1024x1024" };
+  });
 }
 
 export class MediaCatalog {
@@ -84,7 +107,7 @@ export class MediaCatalog {
     this.models = models;
   }
   static fromEnv(env: Record<string, string | undefined>) {
-    return new MediaCatalog([...BUILTIN_MODELS, ...veniceModels(env)]);
+    return new MediaCatalog([...BUILTIN_MODELS, ...veniceModels(env), ...nanogptModels(env)]);
   }
   get<K extends MediaKind>(kind: K, id: unknown): Extract<MediaModel, { kind: K }> | null {
     return (this.models.find((m) => m.kind === kind && m.id === id) as Extract<MediaModel, { kind: K }>) ?? null;

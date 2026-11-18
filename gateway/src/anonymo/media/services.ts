@@ -6,6 +6,10 @@
 // Environment (all optional; an unset upstream answers 503 and charges nothing, an unset classifier blocks every
 // image and video, an unset video watermark sidecar blocks every video):
 //   ANONYMO_MEDIA_CLASSIFIER_URL / _TOKEN     NSFW × apparent-age classifier service (gate.ts httpClassifier)
+//   Without it, the hosted pair (hosted-classifier.ts) when both keys are set: ANONYMO_NANOGPT_API_KEY (NanoGPT's NSFW
+//   check) and ANONYMO_MEDIA_GUARD_KEY with ANONYMO_MEDIA_GUARD_URL (default https://api.ppq.ai/v1) and
+//   ANONYMO_MEDIA_GUARD_MODEL (default meta-llama/llama-guard-4-12b). Images only.
+//   ANONYMO_NANOGPT_API_KEY / ANONYMO_NANOGPT_BASE (default https://nano-gpt.com/api/v1): hosted image models (catalog.ts)
 //   ANONYMO_MEDIA_NSFW_THRESHOLD, ANONYMO_MEDIA_MIN_ADULT_AGE, ANONYMO_MEDIA_VIDEO_FRAMES
 //   ANONYMO_WATERMARK_URL / _TOKEN / _MIMES   watermark sidecar (watermark.ts httpWatermarker); MIMES defaults to video/mp4
 //   ANONYMO_WATERMARK_KEY                     64 hex chars; default derived from APP_SECRET
@@ -21,14 +25,15 @@
 import { hkdfSync } from "node:crypto";
 import type { Ctx } from "../../context.ts";
 import type { RegionRules } from "../seams.ts";
-import { MediaCatalog, type Upstream } from "./catalog.ts";
+import { MediaCatalog, NANOGPT_IMAGE_MODELS, type Upstream } from "./catalog.ts";
 import { provenanceKeyFromSeed } from "./c2pa.ts";
-import { createMediaGate, httpClassifier, unconfiguredClassifier, type MediaOutputGate } from "./gate.ts";
+import { createMediaGate, httpClassifier, unconfiguredClassifier, type MediaClassifier, type MediaOutputGate } from "./gate.ts";
+import { hostedClassifier } from "./hosted-classifier.ts";
 import { createProvenance, type MediaProvenance } from "./provenance.ts";
 import { promptCheckFromEnv, type MediaPromptCheck } from "./prompt-check.ts";
 import { placeholderRegionRules } from "./region.ts";
 import { MemoryMediaStore, type MediaStore } from "./store.ts";
-import { comfyAdapter, ttsAdapter, unconfigured, veniceAdapter, type ImageUpstream, type SpeechUpstream, type VideoUpstream } from "./upstreams.ts";
+import { comfyAdapter, nanogptAdapter, ttsAdapter, unconfigured, veniceAdapter, type ImageUpstream, type SpeechUpstream, type VideoUpstream } from "./upstreams.ts";
 import { chainWatermarkers, httpWatermarker, lsbWatermarker } from "./watermark.ts";
 import { workflowSet } from "./workflows.ts";
 
@@ -58,6 +63,21 @@ const hex32 = (v: string | undefined, name: string) => {
 const derive = (secret: string, label: string) => new Uint8Array(hkdfSync("sha256", secret, "anonymo-media", label, 32));
 const num = (v: string | undefined, fallback: number) => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : fallback);
 
+const nanogptBase = (env: Env) => env.ANONYMO_NANOGPT_BASE?.trim() || "https://nano-gpt.com/api/v1";
+
+/** Our classifier service when configured, else the hosted pair when both of its keys are set, else none (every
+ *  visual output is blocked). */
+export function classifierFromEnv(env: Env): MediaClassifier {
+  if (env.ANONYMO_MEDIA_CLASSIFIER_URL?.trim()) return httpClassifier(env.ANONYMO_MEDIA_CLASSIFIER_URL, { token: env.ANONYMO_MEDIA_CLASSIFIER_TOKEN });
+  const nanogptKey = env.ANONYMO_NANOGPT_API_KEY?.trim(), guardKey = env.ANONYMO_MEDIA_GUARD_KEY?.trim();
+  if (nanogptKey && guardKey)
+    return hostedClassifier({
+      nanogpt: { base: nanogptBase(env), apiKey: nanogptKey },
+      guard: { url: env.ANONYMO_MEDIA_GUARD_URL?.trim() || "https://api.ppq.ai/v1", model: env.ANONYMO_MEDIA_GUARD_MODEL?.trim() || "meta-llama/llama-guard-4-12b", apiKey: guardKey },
+    });
+  return unconfiguredClassifier;
+}
+
 export function buildMediaServices(ctx: Pick<Ctx, "cfg">, env: Env = process.env): MediaServices {
   const secret = ctx.cfg.appSecret;
   const key = provenanceKeyFromSeed(hex32(env.ANONYMO_PROVENANCE_KEY, "ANONYMO_PROVENANCE_KEY") ?? derive(secret, "provenance-v1"));
@@ -70,7 +90,10 @@ export function buildMediaServices(ctx: Pick<Ctx, "cfg">, env: Env = process.env
     ? [httpWatermarker(env.ANONYMO_WATERMARK_URL, { token: env.ANONYMO_WATERMARK_TOKEN, mimes: (env.ANONYMO_WATERMARK_MIMES ?? "video/mp4").split(",").map((s) => s.trim()) })]
     : [];
   const watermarker = chainWatermarkers([...sidecar, lsbWatermarker(hex32(env.ANONYMO_WATERMARK_KEY, "ANONYMO_WATERMARK_KEY") ?? derive(secret, "watermark-v1"))]);
-  const classifier = env.ANONYMO_MEDIA_CLASSIFIER_URL ? httpClassifier(env.ANONYMO_MEDIA_CLASSIFIER_URL, { token: env.ANONYMO_MEDIA_CLASSIFIER_TOKEN }) : unconfiguredClassifier;
+  const classifier = classifierFromEnv(env);
+  const nanogpt = env.ANONYMO_NANOGPT_API_KEY?.trim()
+    ? nanogptAdapter({ base: nanogptBase(env), apiKey: env.ANONYMO_NANOGPT_API_KEY.trim(), byAspectRatio: NANOGPT_IMAGE_MODELS.filter((m) => m.byAspectRatio).map((m) => m.upstreamModel) })
+    : unconfigured("NanoGPT");
   const venice = env.ANONYMO_VENICE_API_KEY ? veniceAdapter({ base: env.ANONYMO_VENICE_BASE ?? "https://api.venice.ai/api/v1", apiKey: env.ANONYMO_VENICE_API_KEY }) : unconfigured("Venice");
   const comfy = env.ANONYMO_COMFY_URL ? comfyAdapter({ base: env.ANONYMO_COMFY_URL, token: env.ANONYMO_COMFY_TOKEN, workflows: workflowSet(env.ANONYMO_COMFY_WORKFLOWS_DIR) }) : unconfigured("The ComfyUI worker pool");
   return {
@@ -84,7 +107,7 @@ export function buildMediaServices(ctx: Pick<Ctx, "cfg">, env: Env = process.env
     provenance: createProvenance({ key, watermarker, previousKeys }),
     region: placeholderRegionRules(env),
     store: new MemoryMediaStore(Math.max(16, num(env.ANONYMO_MEDIA_STORE_MB, 512)) * 1024 * 1024),
-    images: { venice, comfyui: comfy },
+    images: { venice, comfyui: comfy, nanogpt },
     video: { venice, comfyui: comfy },
     speech: env.ANONYMO_TTS_URL ? ttsAdapter({ base: env.ANONYMO_TTS_URL, token: env.ANONYMO_TTS_TOKEN }) : unconfigured("The TTS worker pool"),
     ttlMs: Math.min(86_400, Math.max(60, num(env.ANONYMO_MEDIA_TTL_S, 3600))) * 1000,

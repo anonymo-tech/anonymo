@@ -23,6 +23,8 @@ const FIXTURES: [string, FrameScore[], { explicitAllowed: boolean; fromUpload?: 
   ["safe, real person", [f(0.1, 30, 0.99)], ALLOW, "ok"],
   ["explicit adult, explicit not allowed", [f(0.9, 30)], { explicitAllowed: false }, "explicit"],
   ["safe, explicit not allowed", [f(0.1, 30)], { explicitAllowed: false }, "ok"],
+  ["explicit, age unreadable, explicit not allowed", [f(0.8, null)], { explicitAllowed: false }, "explicit"],
+  ["explicit, age unreadable, from an upload", [f(0.8, null)], { explicitAllowed: true, fromUpload: true }, "explicit_from_upload"],
   ["explicit adult from an upload", [f(0.9, 30)], { explicitAllowed: true, fromUpload: true }, "explicit_from_upload"],
   ["safe from an upload", [f(0.2, 30)], { explicitAllowed: true, fromUpload: true }, "ok"],
   ["minor beats real person and explicit", [f(0.9, 30, 0.9), f(0.9, 14)], { explicitAllowed: false }, "nsfw_minor"],

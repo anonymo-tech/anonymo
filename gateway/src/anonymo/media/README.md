@@ -34,7 +34,7 @@ Each is also served under `/api/v1`. Errors use the gateway's OpenAI-shaped enve
    region.
 5. For edits, the **upload itself** goes through the media gate. An explicit upload is refused before any model sees it.
 6. **Hold** (`reserve`) at the quoted price: per image, per 1k characters, or per video second.
-7. **Upstream** (Venice, the ComfyUI worker pool, or the TTS worker pool).
+7. **Upstream** (NanoGPT, Venice, the ComfyUI worker pool, or the TTS worker pool).
 8. **Media gate** on every image and on sampled video frames. A block releases the hold and nothing is stored or
    returned. One blocked image stops the whole batch.
 9. **Provenance**: an invisible watermark, then a signed C2PA manifest. `stamp()` verifies its own output and throws
@@ -108,9 +108,10 @@ rather than returned unmarked.
 |---|---|---|---|
 | Media gate | `MediaGate` (seams) / `MediaOutputGate` | `createMediaGate(httpClassifier(url))` | `createMediaGate(double)` |
 | Classifier | `MediaClassifier` | `POST {url}/v1/score` (contract in `gate.ts`) | mock scores keyed to fixture colours |
+| Hosted classifier | `MediaClassifier` | `hostedClassifier`: NanoGPT `POST /api/nsfw/image` + Llama Guard 4 (PPQ), images only | fetch doubles (`test/media/hosted.test.ts`) |
 | Provenance | `Provenance` (seams) / `MediaProvenance` | `createProvenance(...)` | same, with an MP4 watermark double |
 | Region rules | `RegionRules` (seams) | `ctx.anonymo.region` once WS02 adds it, else `placeholderRegionRules` | header `x-anonymo-country` |
-| Upstreams | `ImageUpstream`, `SpeechUpstream`, `VideoUpstream` | `veniceAdapter`, `comfyAdapter`, `ttsAdapter` | in-process doubles, and fake HTTP servers |
+| Upstreams | `ImageUpstream`, `SpeechUpstream`, `VideoUpstream` | `nanogptAdapter`, `veniceAdapter`, `comfyAdapter`, `ttsAdapter` | in-process doubles, and fake HTTP servers |
 
 Tests swap services with `setMediaServices(ctx, {...})`. Configuration is read from the environment (list in
 `services.ts`). An unconfigured upstream answers `503` and charges nothing. An unconfigured classifier blocks every
