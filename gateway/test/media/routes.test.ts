@@ -96,6 +96,7 @@ beforeAll(async () => {
     gate: createMediaGate(classifier, { timeoutMs: 2000 }),
     provenance: createProvenance({ key: provenanceKeyFromSeed(new Uint8Array(32).fill(5)), watermarker: testWatermarker() }),
     store: new MemoryMediaStore(64 * 1024 * 1024),
+    offered: new Set(["comfyui", "venice", "tts"] as const),
     images: { comfyui: images, venice: images },
     video: { comfyui: video, venice: video },
     speech,
@@ -561,6 +562,18 @@ describe("media store, provenance endpoints and privacy", () => {
     const j = (await (await h.request("/v1/media/models")).json()) as { data: { id: string; license: string; voices?: string[] }[] };
     expect(j.data.find((m) => m.id === "kokoro")?.voices?.length).toBe(54);
     expect(j.data.every((m) => m.license === "Apache-2.0" || m.license === "MIT" || m.license === "venice-terms")).toBe(true);
+  });
+
+  test("the model list leaves out models whose upstream this gateway has not configured", async () => {
+    const before = mediaServices(h.ctx).offered;
+    setMediaServices(h.ctx, { offered: new Set(["tts"] as const) });
+    try {
+      const j = (await (await h.request("/v1/media/models")).json()) as { data: { id: string; kind: string }[] };
+      expect(j.data.length).toBeGreaterThan(0);
+      expect(j.data.every((m) => m.kind === "speech")).toBe(true);
+    } finally {
+      s = setMediaServices(h.ctx, { offered: before });
+    }
   });
 
   test("no prompt text, input text or media reached the database, and the ledger invariants hold", async () => {

@@ -449,14 +449,14 @@ function listModels(ctx: Ctx, c: Context) {
   const s = mediaServices(ctx);
   return c.json({
     object: "list",
-    data: s.catalog.models.map((m) => ({
+    data: s.catalog.models.filter((m) => !s.offered || s.offered.has(m.upstream)).map((m) => ({
       id: m.id,
       object: "model",
       kind: m.kind,
       name: m.name,
       family: m.family,
       license: m.license,
-      upstream: m.upstream === "venice" ? "venice" : "self-hosted",
+      upstream: m.upstream === "venice" || m.upstream === "nanogpt" ? m.upstream : "self-hosted",
       ...(m.kind === "image" ? { pricing: { usd_per_image: m.usdPerImage }, edit: m.edit, sizes: m.sizes } : {}),
       ...(m.kind === "speech" ? { pricing: { usd_per_1k_chars: m.usdPer1kChars }, voices: m.voices, max_chars: m.maxChars, response_formats: ["wav"] } : {}),
       ...(m.kind === "video" ? { pricing: { usd_per_second: m.usdPerSecond }, seconds: { min: m.seconds[0], max: m.seconds[1] }, sizes: m.sizes } : {}),

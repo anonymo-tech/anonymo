@@ -39,6 +39,8 @@ import { workflowSet } from "./workflows.ts";
 
 export type MediaServices = {
   catalog: MediaCatalog;
+  /** Upstreams this gateway has configured: GET /v1/media/models lists only their models. Unset lists everything. */
+  offered?: ReadonlySet<Upstream>;
   gate: MediaOutputGate;
   /** Refuses image and video prompts that ask for nudity or sex, before anything is generated. */
   promptCheck: MediaPromptCheck;
@@ -98,6 +100,12 @@ export function buildMediaServices(ctx: Pick<Ctx, "cfg">, env: Env = process.env
   const comfy = env.ANONYMO_COMFY_URL ? comfyAdapter({ base: env.ANONYMO_COMFY_URL, token: env.ANONYMO_COMFY_TOKEN, workflows: workflowSet(env.ANONYMO_COMFY_WORKFLOWS_DIR) }) : unconfigured("The ComfyUI worker pool");
   return {
     catalog: MediaCatalog.fromEnv(env),
+    offered: new Set<Upstream>([
+      ...(env.ANONYMO_NANOGPT_API_KEY?.trim() ? (["nanogpt"] as const) : []),
+      ...(env.ANONYMO_VENICE_API_KEY ? (["venice"] as const) : []),
+      ...(env.ANONYMO_COMFY_URL ? (["comfyui"] as const) : []),
+      ...(env.ANONYMO_TTS_URL ? (["tts"] as const) : []),
+    ]),
     gate: createMediaGate(classifier, {
       nsfw: num(env.ANONYMO_MEDIA_NSFW_THRESHOLD, 0.5),
       minAdultAge: Math.max(18, num(env.ANONYMO_MEDIA_MIN_ADULT_AGE, 25)),
