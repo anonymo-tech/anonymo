@@ -118,4 +118,8 @@ Railway passes a client address to the app in `X-Forwarded-For` and `X-Real-IP`.
   - It prints no value.
 - **Deploying:** from a clean export of the reviewed commit, `git archive HEAD gateway | tar -x -C <dir>`, then `railway up gateway --path-as-root -s <service> --ci` in that directory. `dash` deploys the same way from `dash/`, built with `NEXT_PUBLIC_ANONYMO_API`.
 - **Domains:** `anonymo.tech` (dash) and `api.anonymo.tech` (api) are Railway custom domains behind Cloudflare (proxied CNAMEs, SSL mode Full, not Full (strict), which breaks Railway's certificate challenge; visitor location headers on). `PUBLIC_BASE_URL` is `https://api.anonymo.tech` and the dash is built with it. The services have no `up.railway.app` addresses.
-- **Origin lock (open):** the region rules read `cf-ipcountry`, `cf-region-code` and `x-anonymo-region`, which only Cloudflare should set. A Railway service is still reachable without going through Cloudflare, so a client could send those headers itself. Until the API checks a secret header that only Cloudflare adds, the region blocks can be bypassed by anyone who finds the origin.
+- **Origin lock:** the region rules trust Cloudflare's location headers, so the api refuses (403 `origin_locked`) any request that skipped Cloudflare.
+  - A Cloudflare request-header transform rule ("Origin lock", hostname `api.anonymo.tech`) sets `x-origin-lock` to `ORIGIN_LOCK_SECRET`; the api has `ORIGIN_LOCK_ENABLED=true`.
+  - `bun scripts/origin-lock.ts` (run it yourself) generates the secret on api when missing and copies it to the clipboard for the rule. It prints nothing.
+  - `/health` and `/ready` stay open for Railway's health checks; calls over the private network are exempt.
+  - To rotate: delete `ORIGIN_LOCK_SECRET` on api, re-run the script, paste the new value into the rule, then redeploy api.

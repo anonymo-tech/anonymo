@@ -138,5 +138,9 @@ describe("region rules", () => {
     expect((await get({})).status).toBe(200);
     expect(regionCodeOf(new Headers({ "cf-ipcountry": "US", "cf-region-code": "TX" }))).toBe("US-TX");
     expect(regionCodeOf(new Headers({ "cf-ipcountry": "US", "cf-region-code": "../x" }))).toBe("US");
+    // A client's own x-anonymo-region passes through Cloudflare untouched, so Cloudflare's country wins over it.
+    expect((await get({ "cf-ipcountry": "IR", "x-anonymo-region": "NL" })).status).toBe(451);
+    expect(regionCodeOf(new Headers({ "cf-ipcountry": "UA", "cf-region-code": "43", "x-anonymo-region": "NL" }))).toBe("UA-43");
+    expect(regionCodeOf(new Headers({ "x-anonymo-region": " " }))).toBe(null);
   });
 });
