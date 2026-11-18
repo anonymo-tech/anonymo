@@ -142,5 +142,13 @@ describe("region rules", () => {
     expect((await get({ "cf-ipcountry": "IR", "x-anonymo-region": "NL" })).status).toBe(451);
     expect(regionCodeOf(new Headers({ "cf-ipcountry": "UA", "cf-region-code": "43", "x-anonymo-region": "NL" }))).toBe("UA-43");
     expect(regionCodeOf(new Headers({ "x-anonymo-region": " " }))).toBe(null);
+    // Health checks carry no location: they must pass even when unknown regions are blocked, or every deploy fails.
+    const strict = new Hono();
+    strict.use("*", regionMiddleware(createRegionRules(regionConfigFromEnv({ ANONYMO_REGION_UNKNOWN_TEXT: "block" }))));
+    for (const p of ["/health", "/ready", "/x"]) strict.get(p, (c) => c.text("ok"));
+    expect((await strict.request("/health")).status).toBe(200);
+    expect((await strict.request("/ready")).status).toBe(200);
+    expect((await strict.request("/x")).status).toBe(451);
+    expect((await strict.request("/health/../x")).status).toBe(451);
   });
 });

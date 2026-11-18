@@ -26,10 +26,13 @@ export function regionCodeOf(headers: Headers, names: RegionHeaders = DEFAULT_RE
 
 export const regionPolicyOf = (c: Context, rules: RegionRules, names?: RegionHeaders): RegionPolicy => rules.forCountry(regionCodeOf(c.req.raw.headers, names));
 
+/** Liveness and readiness checks carry no location (Railway's health check comes from inside), and serve no content. */
+const UNGATED = new Set(["/health", "/ready"]);
+
 /** Refuses requests from blocked regions with 451 before any route runs. Nothing about the request is recorded. */
 export function regionMiddleware(rules: RegionRules, names?: RegionHeaders): MiddlewareHandler {
   return async (c, next) => {
-    if (regionPolicyOf(c, rules, names).blocked)
+    if (!UNGATED.has(c.req.path) && regionPolicyOf(c, rules, names).blocked)
       return c.json({ error: { code: 451, message: "Anonymo is not available in this region.", type: "region_blocked" } }, 451);
     await next();
   };
