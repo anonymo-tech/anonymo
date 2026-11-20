@@ -6,7 +6,7 @@
 // well-formed EVM address is shown, so a typo shows nothing rather than a wrong address.
 
 /** Paste the contract address here if you are not using the environment variable. */
-export const COIN_ADDRESS = '';
+export const COIN_ADDRESS = '0xafe293638b064d7786c5326a071520358c3f3198';
 export const COIN_CHAIN = 'Robinhood Chain';
 
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
