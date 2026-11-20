@@ -20,7 +20,7 @@ To generate a deployment like this one for your own model (weights hashed, every
 | `sidecar` | `oven/bun:1.3.14@sha256:e10577f0…e5c4` | Downloads the GitHub tarball of commit `dcfc2deeacd8f3d89ea61d7e7045259e173e8050`, checks sha256 `5b297e38…9027`, runs `bun install --frozen-lockfile --production --ignore-scripts` in `sidecar/`, then serves TLS on 8443 with `attestation.provider: dstack` through `/var/run/dstack.sock`. |
 
 The sidecar hashes the GGUF at boot and refuses to start unless the digest,
-`sha256:1144b5db331424ae40213378a83575a5cf67090b0ce1ad49cf66ec75f17e2095`, is on its allow-list. It serves one API key,
+`sha256:c902d0d6e7fedbd39c4828626bc6d979c6bdc2d070ad25d8197fc603b87ac19a`, is on its allow-list. It serves one API key,
 the router's, listed by its SHA-256 (120 requests and 120k tokens a minute; 150 and 150k across all callers). `image_digest` is
 declared as the `oven/bun` digest, the image the sidecar process runs in; the sidecar's own code is pinned by the
 tarball hash in the compose file instead.

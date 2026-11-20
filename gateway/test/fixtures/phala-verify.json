@@ -6,7 +6,7 @@
     "receipt_pubkey": "47acedd8dd1ffadc323468b927ecae45a14f3f7f415dd352b2fce59e97b3d224",
     "image_digest": "sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4",
     "compose_hash": "sha256:4bb1069e88343c2f600f3c08b4460be233e50094253bf2e5dc27208cdf0db583",
-    "model_digest": "sha256:1144b5db331424ae40213378a83575a5cf67090b0ce1ad49cf66ec75f17e2095"
+    "model_digest": "sha256:c902d0d6e7fedbd39c4828626bc6d979c6bdc2d070ad25d8197fc603b87ac19a"
   },
   "nonce": "2ef76e7c5f0a4d015944516a5786c6afaa7f4b2fee694216dfd247f98578b2cf",
   "response": {

@@ -38,7 +38,7 @@ describe("the Phala example compose file", () => {
     expect(pins.source).toMatchObject({ repository: "https://github.com/anonymo-tech/anonymo", commit: "dcfc2deeacd8f3d89ea61d7e7045259e173e8050", path: "sidecar", tarballSha256: "sha256:5b297e38e0cbea6e7784e496458ca5b4b930cf2421094b282feeb3947f979027" });
     expect(pins.weights).toMatchObject({ file: "qwen2.5-0.5b-instruct-q4_k_m.gguf", sha256: "sha256:74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db" });
     // the model digest the sidecar accepts is derived from the pinned weights hash alone
-    expect(pins.derivedModelDigest).toBe("sha256:1144b5db331424ae40213378a83575a5cf67090b0ce1ad49cf66ec75f17e2095");
+    expect(pins.derivedModelDigest).toBe("sha256:c902d0d6e7fedbd39c4828626bc6d979c6bdc2d070ad25d8197fc603b87ac19a");
     expect(pins.sidecar!.modelDigests).toEqual([pins.derivedModelDigest!]);
     expect(pins.sidecar!.imageDigest).toBe(SIDECAR_IMAGE);
   });
@@ -52,7 +52,7 @@ describe("the Phala example compose file", () => {
     expect(edit("oven/bun:1.3.14@sha256:e10577f0", "oven/bun:1.3.14@sha256:e10577f1")).toContain("declared_image_is_pinned");
     expect(edit("image: oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4", "image: oven/bun:1.3.14")).toContain("images_pinned");
     expect(edit("sum=74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db", "sum=74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9dc")).toContain("model_digest_derives_from_weights");
-    expect(edit("model_digests: [\"sha256:1144b5db", "model_digests: [\"sha256:1144b5dc")).toContain("model_digest_derives_from_weights");
+    expect(edit("model_digests: [\"sha256:c902d0d6", "model_digests: [\"sha256:c902d0d7")).toContain("model_digest_derives_from_weights");
     expect(edit("rev=dcfc2deeacd8f3d89ea61d7e7045259e173e8050", "rev=nothex")).toContain("source_pinned");
   });
   test("app-compose.json is read as a file or from a platform document, and hashed as given", () => {
@@ -96,7 +96,7 @@ describe("check-reproducible", () => {
     git("add", ".");
     git("commit", "-q", "-m", "one");
     rev = git("rev-parse", "HEAD");
-    const tar = spawnSync("git", ["archive", "--format=tar", `--prefix=Anonymo-${rev}/`, rev], { cwd: repo, maxBuffer: 1 << 28 }).stdout;
+    const tar = spawnSync("git", ["archive", "--format=tar", `--prefix=anonymo-${rev}/`, rev], { cwd: repo, maxBuffer: 1 << 28 }).stdout;
     tarball = Buffer.from(gzipSync(tar));
     compose = COMPOSE_TEXT.replace("rev=dcfc2deeacd8f3d89ea61d7e7045259e173e8050", `rev=${rev}`).replace("sum=5b297e38e0cbea6e7784e496458ca5b4b930cf2421094b282feeb3947f979027", `sum=${sha(tarball)}`);
   });

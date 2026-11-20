@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
 import { CopyButton } from '../copy-button';
 import { maskKey } from '@/lib/anonymo/key-store';
+import { API_BASE } from '@/lib/anonymo/config';
 import { formatUsdAmount, usdToMusd } from '@/lib/anonymo/money';
 import type { Balance } from '@/lib/anonymo/types';
 
@@ -48,9 +49,11 @@ export function Overview() {
             <Link className="btn btn-primary" href="/dashboard/key">
               Create a key
             </Link>
-            <Link className="btn btn-outline" href="/dashboard/chat?demo=1">
-              Try the demo
-            </Link>
+            {!API_BASE && (
+              <Link className="btn btn-outline" href="/dashboard/chat?demo=1">
+                Try the demo
+              </Link>
+            )}
           </div>
         </section>
         <section className="card card-photo span-5">
