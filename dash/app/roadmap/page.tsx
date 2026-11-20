@@ -7,7 +7,7 @@ export default function Roadmap() {
   return (
     <Publication id="roadmap">
       <p>
-        The web workspace, API reference and demo are public. The next milestone
+        The chat workspace and API reference are public. The next milestone
         is a funded customer. Four steps show how to judge the business as paid
         usage begins.
       </p>
@@ -63,7 +63,7 @@ export default function Roadmap() {
       <section>
         <h2>Inspect what exists today</h2>
         <p>
-          <Link href="/dashboard/chat?demo=1">Product demo</Link> ·{' '}
+          <Link href="/dashboard/chat">Chat workspace</Link> ·{' '}
           <a href="https://api.anonymo.tech/manifest">Live route manifest</a> ·{' '}
           <Link href="/docs">Developer guide</Link>
         </p>

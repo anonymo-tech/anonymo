@@ -35,12 +35,12 @@ export default function Whitepaper() {
         </dl>
       </section>
       <aside>
-        <h3>Follow one request</h3>
+        <h3>A worked example</h3>
         <p>
-          In the <Link href="/dashboard/chat?demo=1">browser demo</Link>, choose{' '}
-          <code>anonymo-1</code> and send “Help me reroute a walking tour.” The
-          word “reroute” triggers a scripted retry. Open the receipt and compare
-          the two route entries. Demo receipts are unsigned.
+          Suppose the first family declines an allowed request and a second
+          family answers. The first attempt costs the customer $0. The receipt
+          records both routes and the charge for the completed answer. The{' '}
+          <Link href="/docs#receipts">receipt reference</Link> explains the fields.
         </p>
       </aside>
       <section>
@@ -50,7 +50,7 @@ export default function Whitepaper() {
           can switch an OpenAI-compatible integration by changing its base URL
           and key. The public manifest on 20 November 2026 listed 373 entries
           across 58 families, with zero attested routes. The snapshot did not
-          list the branded demo models. A listing alone cannot establish
+          list the branded model IDs. A listing alone cannot establish
           availability.
         </p>
       </section>

@@ -44,7 +44,7 @@ export default function InvestorBrief() {
       <section>
         <h2>Explore the product</h2>
         <p>
-          <Link href="/dashboard/chat?demo=1">Open the product demo</Link> ·{' '}
+          <Link href="/dashboard/chat">Open the workspace</Link> ·{' '}
           <Link href="/docs">Developer guide</Link> ·{' '}
           <Link href="/presets">Client presets</Link>
         </p>
