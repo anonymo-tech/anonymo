@@ -1,0 +1,8 @@
+{
+  "chainId": 4663,
+  "depositRouter": "0x2733E571FeA442d5321Df773D8db3D8Fb0AF107D",
+  "safe": "0x05A6e4229DCE3026C9D9025339443c3fBA757062",
+  "schema": "anonymo.deployments/v1",
+  "stage": "router",
+  "timelock": "0x97B6e6a63668333b098469b5550B01B8DE9d6253"
+}
