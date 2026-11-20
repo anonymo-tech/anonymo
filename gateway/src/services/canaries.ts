@@ -144,9 +144,19 @@ export async function runCanaryFor(ctx: Ctx, c: Candidate, threshold = 0.35) {
   return { model: c.modelId, provider: c.providerId, quantMatch, guess, distance, quality, accuracy };
 }
 
+/**
+ * Whether a quant canary can tell us anything about this offer. An offer that declares no precision, on a live provider
+ * that neither attests nor runs in a TEE (for example a relay reselling a whole third-party catalogue), can never be a
+ * quantization mismatch, so the nine paid calls per model would only time out on slow third-party models and drag the
+ * public probe figure down. Shadow providers keep their canaries: promotion to live needs them.
+ */
+export function quantCanaryApplies(c: Pick<Candidate, "quant" | "provider">) {
+  return family(c.quant) !== "unknown" || c.provider.status === "shadow" || !!c.provider.attested || !!c.provider.teeKind;
+}
+
 export async function runCanaries(ctx: Ctx, opts: { threshold?: number; limit?: number } = {}) {
   await ctx.catalog.ensureFresh(0);
-  const all = [...ctx.catalog.offersByModel.values()].flat().filter((o) => (o.status === "live" || o.status === "shadow") && ["live", "shadow"].includes(o.provider.status));
+  const all = [...ctx.catalog.offersByModel.values()].flat().filter((o) => (o.status === "live" || o.status === "shadow") && ["live", "shadow"].includes(o.provider.status) && quantCanaryApplies(o));
   // Attested full-precision providers first, so references exist before the others are compared.
   all.sort((a, b) => Number(b.provider.attested) - Number(a.provider.attested));
   const results = [];
