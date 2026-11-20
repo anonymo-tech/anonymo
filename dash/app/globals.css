@@ -912,6 +912,13 @@ pre.snippet { margin: 0; padding: 16px; border: 1px solid var(--line-strong); bo
 .ca-chip-state { color: var(--faint); font-size: 12.5px; }
 .ca-chip-pending { cursor: default; color: var(--muted); }
 .ca-chip-pending:hover { border-color: var(--line-strong); }
+/* The landing hero: the same chip, larger, with the whole address on wide screens */
+.story-ca { margin-top: 26px; }
+.ca-chip-hero { min-height: 46px; gap: 12px; padding: 0 18px 0 6px; font-size: 15px; max-width: 100%; }
+.ca-chip-hero code { font-size: 15px; }
+.ca-chip-hero .ca-chip-label { height: 34px; min-width: 38px; font-size: 12.5px; }
+/* The workspace top bar: the chip without its "Copy" word on narrow screens */
+@media (max-width: 1100px) { .ws-top .ca-chip-state { display: none; } }
 @media (max-width: 760px) {
   .public-head .ca-chip { order: 3; }
   .public-head nav { order: 4; }

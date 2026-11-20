@@ -23,6 +23,7 @@ import {
 import { useAnonymo } from '../anonymo-provider';
 import { AdultsOnly, VeniceBadge, Wordmark } from '../brand';
 import { DemoNotice } from '../demo-notice';
+import { ContractAddressChip } from '../contract-address';
 import { WipeDevice } from './chat-history';
 import { updateOn, type UpdateId } from '@/lib/anonymo/updates';
 import { formatUsd, usdToMusd } from '@/lib/anonymo/money';
@@ -235,6 +236,7 @@ export function WorkspaceShell({
             <Wordmark href="/" />
           </span>
           <div className="ws-top-right">
+            <ContractAddressChip />
             <AdultsOnly compact />
             {ready && key && <Purse key={key} />}
             {ready && updateOn('history', demo) && <WipeDevice />}

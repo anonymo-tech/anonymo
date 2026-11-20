@@ -9,6 +9,7 @@
 // reduced motion, the whole receipt is printed and the steps read as a list.
 
 import Link from 'next/link';
+import { ContractAddressChip } from '../contract-address';
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 type Row =
@@ -345,6 +346,9 @@ export function ReceiptStory() {
               Private AI chat for adults. No account, no email. Just a key, and a receipt for every answer that shows what
               happened, never what you said.
             </p>
+            <div className="story-ca">
+              <ContractAddressChip className="ca-chip-hero" full />
+            </div>
             <div className="story-actions">
               <Link className="btn btn-primary btn-lg btn-square" href="/dashboard/chat">
                 Start chatting

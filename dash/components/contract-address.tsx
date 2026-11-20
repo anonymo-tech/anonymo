@@ -32,8 +32,9 @@ export function ContractAddress({ className = '' }: { className?: string }) {
   );
 }
 
-/** The same address as a compact chip for the site header, so it is visible without scrolling. The whole chip copies. */
-export function ContractAddressChip() {
+/** The same address as a compact chip, so it is visible without scrolling: the site header, the workspace top bar
+ * and the landing hero. The whole chip copies. `full` shows the whole address on wide screens (short on phones). */
+export function ContractAddressChip({ className = '', full = false }: { className?: string; full?: boolean }) {
   const address = coinAddress();
   const [copied, setCopied] = useState(false);
   useEffect(() => {
@@ -43,7 +44,7 @@ export function ContractAddressChip() {
   }, [copied]);
   if (!address)
     return (
-      <span className="ca-chip ca-chip-pending" title={`Contract address on ${COIN_CHAIN}: announced at launch`}>
+      <span className={`ca-chip ca-chip-pending ${className}`} title={`Contract address on ${COIN_CHAIN}: announced at launch`}>
         <span className="ca-chip-label">CA</span>
         <span>Announced at launch</span>
       </span>
@@ -51,7 +52,7 @@ export function ContractAddressChip() {
   return (
     <button
       type="button"
-      className="ca-chip"
+      className={`ca-chip ${className}`}
       title={`Copy the contract address (${COIN_CHAIN}): ${address}`}
       aria-label={copied ? 'Contract address copied' : `Copy contract address ${address}`}
       onClick={() => {
@@ -62,7 +63,14 @@ export function ContractAddressChip() {
       }}
     >
       <span className="ca-chip-label">CA</span>
-      <code>{shortAddress(address)}</code>
+      {full ? (
+        <code>
+          <span className="ca-full">{address}</span>
+          <span className="ca-short">{shortAddress(address)}</span>
+        </code>
+      ) : (
+        <code>{shortAddress(address)}</code>
+      )}
       {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
       <span className="ca-chip-state" aria-hidden="true">{copied ? 'Copied' : 'Copy'}</span>
     </button>
