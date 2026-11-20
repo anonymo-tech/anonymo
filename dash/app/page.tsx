@@ -2,7 +2,6 @@ import Link from 'next/link';
 import { ReceiptStory } from '@/components/landing/receipt-story';
 import { MaskGlyph } from '@/components/brand';
 import { PublicPage } from '@/components/site-chrome';
-import { ContractAddress } from '@/components/contract-address';
 
 const FLOOR = [
   'Any sexual content involving minors, including fully synthetic.',
@@ -24,10 +23,6 @@ export default function Home() {
     <PublicPage bare>
       <main id="main" tabIndex={-1} className="landing">
         <ReceiptStory />
-
-        <section className="land-ca" aria-label="Contract address">
-          <ContractAddress />
-        </section>
 
         <section className="land-section land-split" data-reveal>
           <div>

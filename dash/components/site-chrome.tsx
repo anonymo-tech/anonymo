@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { AdultsOnly, VeniceBadge, Wordmark } from './brand';
 import { DemoNotice } from './demo-notice';
+import { ContractAddressChip } from './contract-address';
 import { useAnonymo } from './anonymo-provider';
 import { updateOn } from '@/lib/anonymo/updates';
 
@@ -42,6 +43,7 @@ export function PublicHeader() {
   return (
     <header className="public-head">
       <Wordmark />
+      <ContractAddressChip />
       <nav aria-label="Public pages">
         {nav.map((item) => (
           <Link key={item.href} href={item.href} aria-current={pathname === item.href ? 'page' : undefined}>

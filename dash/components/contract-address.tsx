@@ -1,5 +1,7 @@
 'use client';
 
+import { Check, Copy } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { CopyButton } from './copy-button';
 import { COIN_CHAIN, coinAddress, shortAddress } from '@/lib/anonymo/coin';
 
@@ -27,5 +29,42 @@ export function ContractAddress({ className = '' }: { className?: string }) {
       )}
       <p className="ca-note">Only trust the address shown on anonymo.tech.</p>
     </div>
+  );
+}
+
+/** The same address as a compact chip for the site header, so it is visible without scrolling. The whole chip copies. */
+export function ContractAddressChip() {
+  const address = coinAddress();
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1600);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  if (!address)
+    return (
+      <span className="ca-chip ca-chip-pending" title={`Contract address on ${COIN_CHAIN}: announced at launch`}>
+        <span className="ca-chip-label">CA</span>
+        <span>Announced at launch</span>
+      </span>
+    );
+  return (
+    <button
+      type="button"
+      className="ca-chip"
+      title={`Copy the contract address (${COIN_CHAIN}): ${address}`}
+      aria-label={copied ? 'Contract address copied' : `Copy contract address ${address}`}
+      onClick={() => {
+        void navigator.clipboard?.writeText(address).then(
+          () => setCopied(true),
+          () => setCopied(false),
+        );
+      }}
+    >
+      <span className="ca-chip-label">CA</span>
+      <code>{shortAddress(address)}</code>
+      {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+      <span className="ca-chip-state" aria-hidden="true">{copied ? 'Copied' : 'Copy'}</span>
+    </button>
   );
 }

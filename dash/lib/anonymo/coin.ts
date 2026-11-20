@@ -1,4 +1,5 @@
-// The coin's contract address, shown with a copy button on the landing page and the dashboard overview.
+// The coin's contract address: a copyable chip in the public site header (every public page, no scrolling needed)
+// and a copyable field on the dashboard overview.
 //
 // To publish it at launch, set NEXT_PUBLIC_ANONYMO_COIN_ADDRESS on the dash service and redeploy (it is read at build
 // time), or paste it into COIN_ADDRESS below. Until one is set, the field says it is announced at launch. Only a
