@@ -4,10 +4,9 @@ The web workspace for Anonymo (Backend §2 "dash", Overview §2): create a key, 
 see every council seat, read receipts and their inclusion proofs, import character cards, copy frontend presets, and the
 public `/manifest` and `/leaderboard` pages. No email, name or identity fields anywhere, and no analytics.
 
-The workspace is a left sidebar (sections, mascot card, key status), a top bar (breadcrumb, purse, docs, chat) and the
-page. Chat keeps the Conclave answer cards with Compare, the purse and Paper Trail, with the composer pinned to the
-bottom. The look is deep plum, cream and hot pink, Figtree and IBM Plex Mono, with the felt sleep-mask mascot as photos
-in `public/mascot/`. Conclave's own features, server, brand, films and i18n are gone.
+The workspace groups destinations by task on desktop. On phones, Overview, Chat and Funds have dedicated shortcuts and
+the full navigation opens from More. The overview guides the visitor from a key to funding and a first chat. The site uses
+Space Grotesk and the felt sleep-mask mascot from `public/mascot/`.
 
 ## Run
 
@@ -19,6 +18,8 @@ npx -y pnpm@11.19.0 test         # client, wallet, copy rules, Solana verifier, 
 npx -y pnpm@11.19.0 lint
 npx -y pnpm@11.19.0 build && npx -y pnpm@11.19.0 start
 ```
+
+With the local demo server running (leave the API origin unset), set `WORKSPACE_PREVIEW_URL` to its origin and run `pnpm test:workspace-browser` to check the guided workspace in demo mode. Use `BROWSER_CHANNEL=chrome` for installed Chrome or install Chromium with `pnpm exec playwright-core install chromium`.
 
 ## Live and demo mode
 

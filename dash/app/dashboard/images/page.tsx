@@ -6,7 +6,7 @@ export const metadata = { title: 'Images — Anonymo' };
 
 export default function ImagesPage() {
   return (
-    <WorkspaceShell section="Images" title="Image studio" lede="Describe it. Get it. Signed as AI-made, kept only in this tab.">
+    <WorkspaceShell section="Images" title="Image studio" lede="Generate signed images and download the ones you want to keep.">
       <UpdateGate id="images">
         <ImageStudio />
       </UpdateGate>

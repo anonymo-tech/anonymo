@@ -89,7 +89,7 @@ export function DocsView() {
   const REQUEST = samples(base);
   const [lang, setLang] = useState<Lang>('cURL');
   return (
-    <div className="docs">
+    <main className="docs" id="main" tabIndex={-1}>
       <nav className="docs-nav" aria-label="Documentation">
         <h4>Documentation</h4>
         {SECTIONS.map((s) => (
@@ -319,6 +319,6 @@ export function DocsView() {
           </pre>
         </div>
       </aside>
-    </div>
+    </main>
   );
 }

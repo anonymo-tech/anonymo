@@ -117,13 +117,8 @@ export function CharactersPanel() {
         {note && <output className="notice notice-signal">{note}</output>}
         {error && <p className="error-text" role="alert">{error}</p>}
       </section>
-      <section className="panel">
-        <header>
-          <h2>Your characters</h2>
-        </header>
-        {!ready ? null : list.length === 0 ? (
-          <p className="lede">No characters yet. Imported cards stay in this browser.</p>
-        ) : (
+      {ready && list.length > 0 && <section className="panel">
+        <header><h2>Your characters</h2></header>
           <ul className="list">
             {list.map((c) => (
               <li key={c.id}>
@@ -151,8 +146,7 @@ export function CharactersPanel() {
               </li>
             ))}
           </ul>
-        )}
-      </section>
+      </section>}
     </div>
   );
 }

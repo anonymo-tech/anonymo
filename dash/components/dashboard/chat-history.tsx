@@ -355,6 +355,7 @@ export function WipeDevice() {
       <button
         type="button"
         className="btn btn-ghost btn-small wipe-btn"
+        aria-label="Wipe this device"
         title="Wipe everything Anonymo keeps in this browser"
         onClick={() => setAsking(true)}
       >

@@ -23,10 +23,7 @@ export function ReceiptsList() {
         <header>
           <h2>Look up a receipt</h2>
         </header>
-        <p className="lede">
-          Every call returns a signed receipt (the <code>x-anonymo-receipt</code> header, or <code>anonymo_receipt</code> on the
-          last stream event). Its <code>request_id</code> opens it here. Receipts are public by id and hold no prompt or output text.
-        </p>
+        <p className="lede">Anyone with the receipt ID can verify its routes and cost. The receipt contains no prompt or reply text.</p>
         <form
           className="row"
           onSubmit={(e) => {
@@ -41,7 +38,7 @@ export function ReceiptsList() {
           <input
             id="receipt-id"
             className="input mono"
-            style={{ flex: 1, minWidth: 220 }}
+            style={{ flex: '1 1 200px', minWidth: 0 }}
             placeholder="Receipt id"
             spellCheck={false}
             value={lookup}
@@ -51,6 +48,10 @@ export function ReceiptsList() {
             Open
           </button>
         </form>
+        <details className="field-help">
+          <summary>Where to find the ID</summary>
+          <p>Use the <code>x-anonymo-receipt</code> response header or <code>anonymo_receipt</code> on the last stream event.</p>
+        </details>
       </section>
       <section className="panel">
         <header>

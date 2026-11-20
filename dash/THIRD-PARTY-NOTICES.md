@@ -6,10 +6,9 @@ The Anonymo dashboard uses the third-party fonts and software listed below. Each
 
 | Font | Used for | License | License text |
 | --- | --- | --- | --- |
-| IBM Plex Sans | Interface and reading text | SIL Open Font License 1.1 | `@fontsource/ibm-plex-sans/LICENSE` |
-| IBM Plex Mono | Wordmark, keys, amounts and hashes | SIL Open Font License 1.1 | `@fontsource/ibm-plex-mono/LICENSE` |
+| Space Grotesk | Site typography | SIL Open Font License 1.1 | `@fontsource-variable/space-grotesk/LICENSE` |
 
-Both are installed from npm through [Fontsource](https://fontsource.org/) and bundled into the build output. "Plex" is a reserved font name of IBM Corp.
+Space Grotesk is installed through [Fontsource](https://fontsource.org/) and served with the site.
 
 ## Software shipped in the browser bundle
 

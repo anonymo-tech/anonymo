@@ -313,7 +313,7 @@ export function ChatWorkspace() {
   );
 
   return (
-    <WorkspaceShell section="Chat" composer={composer}>
+    <WorkspaceShell section="Chat" composer={key ? composer : undefined}>
       {(historyOn || catchupOn) && (
         <>
           <ChatBar
@@ -329,17 +329,17 @@ export function ChatWorkspace() {
           <div className="empty-hero">
             <Photo src="/mascot/avatar.jpg" alt="" width={256} height={256} />
             <div>
-              <h1>{character ? character.card.data.name : 'Ask anything. Get an answer.'}</h1>
+              <h1>{character ? character.card.data.name : 'Start a conversation'}</h1>
               <p className="muted">
                 {character
                   ? 'Character card from this device. It works with any model; switch characters below the message box.'
-                  : 'No refusals for legal adult use. Every answer comes with a signed receipt.'}
+                  : 'Choose a model for your message. Each answer includes a signed receipt.'}
               </p>
             </div>
           </div>
           {ready && !key ? (
-            <div className="notice row">
-              <span style={{ flex: 1 }}>You need a key to chat. No account, no email.</span>
+            <div className="chat-entry">
+              <span>Connect a key to send your first message.</span>
               <Link className="btn btn-primary btn-small" href="/dashboard/key">
                 Create a key
               </Link>
@@ -364,6 +364,7 @@ export function ChatWorkspace() {
               ))}
             </div>
           )}
+          {!key && <p className="ai-notice">{AI_NOTICE}</p>}
           {character && greetingsOf(character.card)[0] && (
             <div className="answer">
               <div className="answer-head">{character.card.data.name}</div>

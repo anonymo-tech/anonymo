@@ -6,9 +6,9 @@ export const metadata = { title: 'Overview — Anonymo' };
 
 export default function DashboardPage() {
   return (
-    <WorkspaceShell section="Overview" title="Overview" lede="Your key, your balance and your receipts, at a glance.">
-      <ContractAddress className="ca-dash" />
+    <WorkspaceShell section="Overview">
       <Overview />
+      <details className="contract-details"><summary>Coin contract address</summary><ContractAddress /></details>
     </WorkspaceShell>
   );
 }

@@ -23,6 +23,7 @@ export function KeyPanel() {
   const [dailyCap, setDailyCap] = useState('');
   const [sealedOnly, setSealedOnly] = useState(false);
   const [pasted, setPasted] = useState('');
+  const [method, setMethod] = useState<'create' | 'connect'>('create');
 
   async function create() {
     setBusy(true);
@@ -56,19 +57,28 @@ export function KeyPanel() {
         <section className="key-reveal" aria-labelledby="key-title">
           <h2 id="key-title">Your key. This is the only time it is shown.</h2>
           <p className="muted">
-            Anonymo keeps only a hash of it and cannot show it again or recover it. Anyone holding this key can spend its
-            credit, so store it like a password.
+            Anonymo keeps only a hash of it and cannot show it again or recover
+            it. Anyone holding this key can spend its credit, so store it like a
+            password.
           </p>
           <code>{created.key}</code>
           <div className="row">
             <CopyButton text={created.key} label="Copy key" />
             <label className="checkbox">
-              <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+              />
               Remember on this device
             </label>
           </div>
           <label className="checkbox">
-            <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={saved}
+              onChange={(e) => setSaved(e.target.checked)}
+            />
             I have stored this key somewhere safe
           </label>
           <div className="row">
@@ -82,7 +92,7 @@ export function KeyPanel() {
                 router.push('/dashboard/funds');
               }}
             >
-              Continue to deposit
+              View funding options
             </button>
           </div>
         </section>
@@ -95,11 +105,14 @@ export function KeyPanel() {
         <section className="panel">
           <header>
             <h2>Key on this device</h2>
-            <span className="chip chip-signal">{demo ? 'demo key' : 'active'}</span>
+            <span className="chip chip-signal">
+              {demo ? 'demo key' : 'active'}
+            </span>
           </header>
           <p className="mono">{maskKey(key)}</p>
           <p className="lede">
-            Use it as a Bearer token with any OpenAI-compatible client, or paste it into a frontend from{' '}
+            Use it as a Bearer token with any OpenAI-compatible client, or paste
+            it into a frontend from{' '}
             <Link href="/dashboard/presets">Presets</Link>.
           </p>
           <div className="row">
@@ -110,81 +123,130 @@ export function KeyPanel() {
               Forget key on this device
             </button>
           </div>
-          <p className="faint">Forgetting only removes it from this browser. The key and its credit keep working.</p>
+          <p className="faint">
+            Forgetting only removes it from this browser. The key and its credit
+            keep working.
+          </p>
         </section>
       ) : (
         <section className="panel">
-          <header>
-            <h2>Create a key</h2>
-            <span className="chip">No account · no email · no KYC</span>
-          </header>
-          <p className="lede">
-            A key is all you need. Fund it from your own wallet, and any unused stablecoin credit can always go back to the wallet
-            it came from.
-          </p>
-          <details>
-            <summary className="muted" style={{ cursor: 'pointer' }}>
-              Optional limits
-            </summary>
-            <div className="panel-stack" style={{ marginTop: 12 }}>
-              <label className="field">
-                Daily spend cap (USD)
-                <input className="input" inputMode="decimal" placeholder="No cap" value={dailyCap} onChange={(e) => setDailyCap(e.target.value)} />
-              </label>
+          <fieldset className="task-tabs" aria-label="Key setup">
+            <button
+              type="button"
+              aria-pressed={method === 'create'}
+              onClick={() => {
+                setError('');
+                setMethod('create');
+              }}
+            >
+              Create a key
+            </button>
+            <button
+              type="button"
+              aria-pressed={method === 'connect'}
+              onClick={() => {
+                setError('');
+                setMethod('connect');
+              }}
+            >
+              Use an existing key
+            </button>
+          </fieldset>
+          {method === 'create' ? (
+            <>
+              <h2>Create your API key</h2>
+              <p className="lede">
+                Save the key somewhere private. You’ll use it to access your
+                credit and chats.
+              </p>
+              <details>
+                <summary className="muted" style={{ cursor: 'pointer' }}>
+                  Optional limits
+                </summary>
+                <div className="panel-stack" style={{ marginTop: 12 }}>
+                  <label className="field">
+                    Daily spend cap (USD)
+                    <input
+                      className="input"
+                      inputMode="decimal"
+                      placeholder="No cap"
+                      value={dailyCap}
+                      onChange={(e) => setDailyCap(e.target.value)}
+                    />
+                  </label>
+                  <label className="checkbox">
+                    <input
+                      type="checkbox"
+                      checked={sealedOnly}
+                      onChange={(e) => setSealedOnly(e.target.checked)}
+                    />
+                    Sealed only: this key may use anonymo-sealed and nothing
+                    else
+                  </label>
+                </div>
+              </details>
+              <div className="row">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={busy}
+                  onClick={() => void create()}
+                >
+                  <KeyRound size={16} aria-hidden="true" />
+                  {busy ? 'Creating…' : 'Create key'}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <h2>Connect your key</h2>
+              <form
+                className="row"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!isApiKey(pasted)) {
+                    setError(
+                      'That does not look like an Anonymo key (anm_live_…).',
+                    );
+                    return;
+                  }
+                  setKey(pasted, remember);
+                  setPasted('');
+                }}
+              >
+                <label className="sr-only" htmlFor="paste-key">
+                  API key
+                </label>
+                <input
+                  id="paste-key"
+                  className="input mono"
+                  style={{ flex: '1 1 200px', minWidth: 0 }}
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="anm_live_…"
+                  value={pasted}
+                  onChange={(e) => setPasted(e.target.value)}
+                />
+                <button type="submit" className="btn">
+                  Use this key
+                </button>
+              </form>
               <label className="checkbox">
-                <input type="checkbox" checked={sealedOnly} onChange={(e) => setSealedOnly(e.target.checked)} />
-                Sealed only: this key may use anonymo-sealed and nothing else
+                <input
+                  type="checkbox"
+                  checked={remember}
+                  onChange={(e) => setRemember(e.target.checked)}
+                />
+                Remember on this device
               </label>
-            </div>
-          </details>
-          <div className="row">
-            <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void create()}>
-              <KeyRound size={16} aria-hidden="true" />
-              {busy ? 'Creating…' : 'Create key'}
-            </button>
-          </div>
-          {error && <p className="error-text" role="alert">{error}</p>}
-        </section>
-      )}
-      {!key && (
-        <section className="panel">
-          <header>
-            <h2>Already have a key?</h2>
-          </header>
-          <form
-            className="row"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!isApiKey(pasted)) {
-                setError('That does not look like an Anonymo key (anm_live_…).');
-                return;
-              }
-              setKey(pasted, remember);
-              setPasted('');
-            }}
-          >
-            <label className="sr-only" htmlFor="paste-key">
-              API key
-            </label>
-            <input
-              id="paste-key"
-              className="input mono"
-              style={{ flex: 1, minWidth: 220 }}
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="anm_live_…"
-              value={pasted}
-              onChange={(e) => setPasted(e.target.value)}
-            />
-            <button type="submit" className="btn">
-              Use this key
-            </button>
-          </form>
-          <label className="checkbox">
-            <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-            Remember on this device
-          </label>
+            </>
+          )}
+          {error && (
+            <p className="error-text" role="alert">
+              {error}
+            </p>
+          )}
         </section>
       )}
     </div>

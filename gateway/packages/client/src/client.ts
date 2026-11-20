@@ -74,8 +74,6 @@ export type ChatBody = { model: string; messages: unknown[]; stream?: boolean; p
 export type ChatCompletion = { id?: string; model?: string; choices?: unknown[]; usage?: Record<string, unknown>; receipt?: ReceiptEnvelope; [k: string]: unknown };
 export type ChatResult = ChatCompletion & {
   anonymo: AnonymoMeta;
-  /** @deprecated The same object as `anonymo`; removed in the next release. */
-  anonymo: AnonymoMeta;
 };
 
 export class Anonymo {
@@ -199,7 +197,7 @@ export class Anonymo {
         const json = (await res.json().catch(() => null)) as (ChatCompletion & { error?: { message?: string; type?: string; metadata?: unknown } }) | null;
         if (!res.ok || !json) throw new AnonymoError(json?.error?.message ?? `chat request failed with ${res.status}`, json?.error?.type ?? "request_failed", res.status, json?.error?.metadata);
         const meta = await this.finish(res, json.receipt ?? null, provider, o);
-        return { ...json, anonymo: meta, anonymo: meta };
+        return { ...json, anonymo: meta };
       },
       /**
        * POST with stream: true. Iterate for the parsed chunks; `meta()` resolves after the stream ends with the
@@ -274,7 +272,7 @@ export class ChatStream implements AsyncIterable<Record<string, unknown>> {
           if (cut < 0) break;
           const block = buf.slice(0, cut);
           buf = buf.slice(cut).replace(/^\r?\n\r?\n/, "");
-          const link = /^: (?:anonymo|anonymo)-chain (\d+) ([0-9a-f]{64})$/m.exec(block); // `anonymo-chain`: routers before the rebrand
+          const link = /^: anonymo-chain (\d+) ([0-9a-f]{64})$/m.exec(block);
           if (link && Number(link[1]) === this.chained.length && this.chained.length) this.chained[this.chained.length - 1].chain = link[2];
           const data = block
             .split(/\r?\n/)

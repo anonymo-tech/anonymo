@@ -13,7 +13,8 @@
     "lint": "oxlint",
     "format": "oxfmt",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test scripts/check-anonymo-client.mjs scripts/check-wallet.mjs scripts/check-copy.mjs scripts/check-solana.mjs scripts/check-guards.mjs scripts/check-safety.mjs scripts/check-history.mjs scripts/check-usage.mjs scripts/check-catchup.mjs scripts/check-status.mjs scripts/check-coin.mjs",
+    "test": "node --experimental-strip-types --test scripts/check-anonymo-client.mjs scripts/check-wallet.mjs scripts/check-copy.mjs scripts/check-solana.mjs scripts/check-guards.mjs scripts/check-safety.mjs scripts/check-history.mjs scripts/check-usage.mjs scripts/check-catchup.mjs scripts/check-status.mjs scripts/check-coin.mjs scripts/check-workspace.mjs",
+    "test:workspace-browser": "node --test scripts/check-workspace-browser.mjs",
     "test:client": "node --experimental-strip-types --test scripts/check-anonymo-client.mjs",
     "test:wallet": "node --experimental-strip-types --test scripts/check-wallet.mjs",
     "test:live": "node --experimental-strip-types --test scripts/check-gateway-live.mjs",
@@ -27,9 +28,7 @@
     "test:status": "node --experimental-strip-types --test scripts/check-status.mjs scripts/check-coin.mjs"
   },
   "dependencies": {
-    "@fontsource-variable/figtree": "5.2.10",
-    "@fontsource-variable/newsreader": "5.3.0",
-    "@fontsource/ibm-plex-mono": "5.2.7",
+    "@fontsource-variable/space-grotesk": "5.3.0",
     "@noble/curves": "2.4.0",
     "@noble/hashes": "2.4.0",
     "@scure/bip39": "2.4.0",
@@ -52,6 +51,7 @@
     "oxfmt": "0.61.0",
     "oxlint": "1.76.0",
     "oxlint-tsgolint": "7.0.2001",
+    "playwright-core": "1.65.1",
     "typescript": "5.9.3",
     "vite": "8.0.16"
   },

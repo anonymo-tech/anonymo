@@ -32,9 +32,10 @@ export function UsagePanel() {
   useEffect(() => {
     if (!ready || !key) return;
     const abort = new AbortController();
-    setError(null);
     Promise.all([client.spend(period, 'day', abort.signal), client.spend(period, 'model', abort.signal), client.runway(abort.signal)]).then(
       ([d, m, r]) => {
+        if (abort.signal.aborted) return;
+        setError(null);
         setDays(d);
         setModels(m);
         setRun(r);
@@ -57,26 +58,26 @@ export function UsagePanel() {
   return (
     <div className="usage">
       <div className="usage-bar">
-        <div className="segmented" role="group" aria-label="Period">
+        <fieldset className="segmented" aria-label="Period">
           {PERIODS.map((p) => (
             <button key={p.id} type="button" aria-pressed={p.id === period} onClick={() => setPeriod(p.id)}>
               {p.label}
             </button>
           ))}
-        </div>
+        </fieldset>
         <CsvButton />
       </div>
 
       {error && <div className="notice notice-rose">{error}</div>}
 
       {days?.anomaly.flagged && (
-        <div className="notice notice-amber row" role="status">
+        <output className="notice notice-amber row">
           <AlertTriangle size={16} aria-hidden="true" />
           <span>
             Today’s spend ({money(days.anomaly.today_usd)}) is {days.anomaly.ratio}× your daily average. If that’s not you, set a daily limit below, or wipe
             the key from devices you don’t trust.
           </span>
-        </div>
+        </output>
       )}
 
       <section className="usage-stats" aria-label="Totals">
@@ -90,16 +91,18 @@ export function UsagePanel() {
         />
       </section>
 
-      <section className="panel usage-chart-card">
+      {days?.totals.period_requests === 0 ? (
+        <section className="panel"><h2>No requests in this period</h2><p className="muted">Your spend chart and model breakdown appear after a request. You can set spending limits below.</p></section>
+      ) : <section className="panel usage-chart-card">
         <header className="panel-head">
           <h2>Spend per day</h2>
           <span className="muted">{days ? `${money(days.totals.period_usd)} · ${days.totals.period_requests.toLocaleString()} requests` : ''}</span>
         </header>
         {days ? <DayChart report={days} /> : <div className="usage-chart-empty muted">Loading…</div>}
-      </section>
+      </section>}
 
-      <div className="usage-cols">
-        <section className="panel">
+      <div className={days?.totals.period_requests === 0 ? 'panel-stack' : 'usage-cols'}>
+        {days?.totals.period_requests !== 0 && <section className="panel">
           <header className="panel-head">
             <h2>By model</h2>
           </header>
@@ -138,7 +141,7 @@ export function UsagePanel() {
               </tbody>
             </table>
           )}
-        </section>
+        </section>}
         <Limits spentToday={days?.totals.today_usd ?? null} spentMonth={days?.totals.month_to_date_usd ?? null} onSaved={refreshBalance} />
       </div>
 
@@ -190,12 +193,12 @@ function DayChart({ report }: { report: SpendReport }) {
           ))}
         </div>
         {tip && (
-          <div className="usage-tip" style={{ left: `${((hover! + 0.5) / n) * 100}%` }} role="status">
+          <output className="usage-tip" style={{ left: `${((hover! + 0.5) / n) * 100}%` }}>
             <strong>{money(tip.cost_usd)}</strong>
             <span>
               {short(tip.date)} · {tip.requests} {tip.requests === 1 ? 'request' : 'requests'}
             </span>
-          </div>
+          </output>
         )}
       </div>
       <div className="usage-axis muted" aria-hidden="true">

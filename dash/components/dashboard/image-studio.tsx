@@ -5,6 +5,7 @@
 // sexual prompts before anything is made and checks every image before it is returned (gateway src/anonymo/media).
 
 import Link from 'next/link';
+import { Photo } from '../photo';
 import { Download, ImageIcon, Loader2, ShieldCheck, Sparkles, Stamp, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
@@ -45,7 +46,7 @@ export function ImageStudio() {
   const [models, setModels] = useState<MediaImageModel[] | null>(null);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [modelId, setModelId] = useState('');
-  const [size, setSize] = useState('1024x1024');
+  const [chosenSize, setSize] = useState('1024x1024');
   const [n, setN] = useState(1);
   const [prompt, setPrompt] = useState('');
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -78,9 +79,7 @@ export function ImageStudio() {
   }, [jobs.length]);
 
   const model = models?.find((m) => m.id === modelId) ?? null;
-  useEffect(() => {
-    if (model && !model.sizes.includes(size)) setSize(model.sizes[0]);
-  }, [model, size]);
+  const size = model && !model.sizes.includes(chosenSize) ? model.sizes[0] : chosenSize;
   const cost = useMemo(() => (model ? usdToMusd(model.pricing.usd_per_image) * n : 0), [model, n]);
 
   async function generate() {
@@ -110,7 +109,7 @@ export function ImageStudio() {
   if (ready && !key)
     return (
       <div className="notice row">
-        <span style={{ flex: 1 }}>You need a key to make images. No account, no email.</span>
+        <span style={{ flex: 1 }}>Connect an API key to generate your first image.</span>
         <Link className="btn btn-primary btn-small" href="/dashboard/key">
           Create a key
         </Link>
@@ -172,6 +171,9 @@ export function ImageStudio() {
           )}
         </fieldset>
 
+        <details className="studio-options field-help">
+          <summary>Image options <span>{model ? shapeOf(size) + ' · ' : ''}{n === 1 ? '1 image' : n + ' images'}</span></summary>
+          <div className="studio-options-fields">
         {model && (
           <fieldset className="field">
             <legend>Shape</legend>
@@ -199,12 +201,15 @@ export function ImageStudio() {
           </div>
         </fieldset>
 
+          </div>
+        </details>
+
         <button type="submit" className="btn btn-primary studio-go" disabled={!model || !prompt.trim() || !key}>
           <ImageIcon size={18} aria-hidden="true" /> Make {n === 1 ? 'image' : `${n} images`}
           {model && <span className="studio-cost">{formatUsd(cost)}</span>}
         </button>
         <p className="studio-note">
-          <ShieldCheck size={14} aria-hidden="true" /> Safe for work only. Prompts asking for nudity or sex are refused before anything is made, and every image is checked before you see it. Refused or failed images are never charged.
+          <ShieldCheck size={14} aria-hidden="true" /> Safe for work only. Every image is checked. Refused or failed images cost nothing.
         </p>
       </form>
 
@@ -240,7 +245,7 @@ export function ImageStudio() {
           )}
           {shots.map((s) => (
             <figure key={s.id} className="shot">
-              <img src={s.src} alt={s.prompt} style={{ aspectRatio: ratioOf(s.size) }} />
+              <Photo src={s.src} alt={s.prompt} style={{ aspectRatio: ratioOf(s.size) }} />
               <figcaption>
                 <p title={s.prompt}>{s.prompt}</p>
                 <div className="shot-meta">

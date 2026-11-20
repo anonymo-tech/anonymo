@@ -1,8 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import '@fontsource-variable/figtree/index.css';
-import '@fontsource-variable/newsreader/opsz.css';
-import '@fontsource/ibm-plex-mono/400.css';
-import '@fontsource/ibm-plex-mono/500.css';
+import '@fontsource-variable/space-grotesk/index.css';
 import './globals.css';
 import { AgeGate } from '@/components/age-gate';
 import { AnonymoProvider } from '@/components/anonymo-provider';

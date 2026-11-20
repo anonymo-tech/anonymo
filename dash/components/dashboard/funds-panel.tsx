@@ -20,6 +20,7 @@ export function FundsPanel() {
   const { ready, key, client, balanceVersion, refreshBalance } = useAnonymo();
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState('');
+  const [task, setTask] = useState<'Deposit' | 'Withdraw' | 'Activity'>('Deposit');
 
   useEffect(() => {
     if (!ready || !key) return;
@@ -80,10 +81,22 @@ export function FundsPanel() {
           )}
         </div>
       </section>
-      {data && <Deposits instructions={data.instructions} onCredited={refreshBalance} />}
-      {data && data.deposits.length > 0 && <DepositList rows={data.deposits} />}
-      {b && <Withdrawals balance={b} onDone={refreshBalance} />}
-      {data && data.withdrawals.length > 0 && <WithdrawalList rows={data.withdrawals} />}
+      <fieldset className="task-tabs" aria-label="Fund actions">
+        {(['Deposit', 'Withdraw', 'Activity'] as const).map(item => (
+          <button type="button" key={item} aria-pressed={task === item} onClick={() => setTask(item)}>{item}</button>
+        ))}
+      </fieldset>
+      {!data && !error && <output className="muted">Loading funds…</output>}
+      {data && <div hidden={task !== 'Deposit'}><Deposits instructions={data.instructions} onCredited={refreshBalance} /></div>}
+      {b && <div hidden={task !== 'Withdraw'}><Withdrawals balance={b} onDone={refreshBalance} /></div>}
+      {data && task === 'Activity' && <>
+        {data.deposits.length > 0 && <DepositList rows={data.deposits} />}
+        {data.withdrawals.length > 0 && <WithdrawalList rows={data.withdrawals} />}
+        {!data.deposits.length && !data.withdrawals.length && <p className="muted">Deposits and withdrawals will appear here.</p>}
+      </>}
+      {b && usdToMusd(b.available_usd) > 0 && task === 'Deposit' &&
+        <Link className="funds-chat-link" href="/dashboard/chat">Continue to chat →</Link>}
+
     </div>
   );
 }

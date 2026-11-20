@@ -35,6 +35,9 @@ for (const kind of ["private-path", "private-content"]) {
     const run = (cmd: string[]) => Bun.spawnSync(cmd, { cwd: dir, env, stdout: "pipe", stderr: "pipe" }).exitCode;
     try {
       expect(run(["git", "init", "-q", "-b", "main"])).toBe(0);
+      // The default user-level ignore file can still apply with GIT_CONFIG_GLOBAL unset or disabled.
+      // Keep local ignore patterns outside this disposable fixture repository.
+      expect(run(["git", "config", "--local", "core.excludesFile", "/dev/null"])).toBe(0);
       mkdirSync(join(dir, ".githooks")); writeFileSync(join(dir, ".githooks/public-hex-allowlist.txt"), "");
       writeFileSync(join(dir, ".git/info/publish-denylist"), "fixture-private-marker\n");
       writeFileSync(join(dir, "base.txt"), "safe\n");
@@ -49,10 +52,16 @@ for (const kind of ["private-path", "private-content"]) {
       expect(run(["git", "add", "."])).toBe(0);
       expect(run(["git", "commit", "-qm", "Main"])).toBe(0);
       expect(run(["git", "merge", "--no-commit", "--no-ff", "feature"])).toBe(0);
-      writeFileSync(join(dir, kind === "private-path" ? ".env" : "base.txt"), kind === "private-path" ? "fixture only\n" : "fixture-private-marker\n");
+      const fixture = kind === "private-path" ? ".env" : "base.txt";
+      writeFileSync(join(dir, fixture), kind === "private-path" ? "fixture only\n" : "fixture-private-marker\n");
       expect(run(["git", "add", "."])).toBe(0);
       expect(run(["git", "commit", "-qm", "Resolve merge"])).toBe(0);
-      expect(run(["bash", guard, "range", "HEAD^..HEAD"])).not.toBe(0);
+      for (const parent of ["HEAD^1", "HEAD^2"]) {
+        expect(run(["git", "diff", "--quiet", parent, "HEAD", "--", fixture])).toBe(1);
+      }
+      const result = Bun.spawnSync(["bash", guard, "range", "HEAD^..HEAD"], { cwd: dir, env, stdout: "pipe", stderr: "pipe" });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr.toString()).toContain(kind === "private-path" ? "path must stay local: .env" : "denylisted string in base.txt");
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 }
