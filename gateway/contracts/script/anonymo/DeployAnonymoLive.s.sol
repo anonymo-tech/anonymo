@@ -40,6 +40,9 @@ interface ISafeView {
 ///   ANONYMO_SAFE         the treasury Safe on this chain: exactly 2 of 3, no modules, no guard. Create it in the Safe
 ///                        app first, with the same owners and salt on every chain so its address matches.
 ///   ANONYMO_SAFE_OWNERS  optional: the three owner addresses, comma-separated; the Safe must have exactly these.
+///   ANONYMO_SINGLE_WALLET optional, true: ANONYMO_SAFE is one plain wallet (an EOA, ideally a hardware wallet) instead
+///                        of a Safe. That one key receives every deposit, can pause, and is the timelock's only proposer,
+///                        so losing it loses the treasury. Use the same wallet on every chain so the addresses match.
 ///   ANONYMO_DEPLOYER     the address that signs (a hardware wallet or an encrypted keystore account). Use the same
 ///                        one on every chain: it is part of the DepositRouter's CREATE2 init code.
 ///   router:   ANONYMO_STABLES          comma-separated stablecoin addresses for this chain
@@ -78,6 +81,7 @@ contract DeployAnonymoLive is Script {
         Stage stage;
         address safe;
         address[] safeOwners; // optional: the exact owner set
+        bool singleWallet; // the treasury is one plain wallet, not a Safe (opt-in)
         address deployer;
         address[] stables;
         address receiptSigner;
@@ -103,6 +107,7 @@ contract DeployAnonymoLive is Script {
         p.stage = parseStage(vm.envString("ANONYMO_STAGE"));
         p.safe = vm.envAddress("ANONYMO_SAFE");
         p.safeOwners = vm.envOr("ANONYMO_SAFE_OWNERS", ",", new address[](0));
+        p.singleWallet = vm.envOr("ANONYMO_SINGLE_WALLET", false);
         p.deployer = vm.envAddress("ANONYMO_DEPLOYER");
         if (p.stage == Stage.Router) p.stables = vm.envAddress("ANONYMO_STABLES", ",");
         if (p.stage == Stage.Receipts) p.receiptSigner = vm.envAddress("ANONYMO_RECEIPT_SIGNER");
@@ -123,7 +128,8 @@ contract DeployAnonymoLive is Script {
         require(block.chainid != LOCAL_CHAIN_ID, "DeployAnonymoLive: use DeployAnonymo.s.sol on anvil");
         require(CREATE2_DEPLOYER.code.length != 0, "DeployAnonymoLive: CREATE2 deployer missing on this chain");
         require(p.deployer != address(0), "DeployAnonymoLive: deployer");
-        checkSafe(p.safe, p.safeOwners);
+        if (p.singleWallet) checkWallet(p.safe, p.safeOwners);
+        else checkSafe(p.safe, p.safeOwners);
         if (p.write && p.stage != Stage.Router && !p.allowRedeploy && _broadcasting()) {
             require(!vm.exists(manifestPath(p.stage, true)), "DeployAnonymoLive: this stage is already deployed on this chain");
         }
@@ -175,6 +181,16 @@ contract DeployAnonymoLive is Script {
     }
 
     // ------------------------------------------------------------ checks
+
+    /// @notice Single-wallet mode: the treasury is one plain wallet. It must be an externally owned account (or one
+    /// delegated under EIP-7702), never a contract: a contract here is most likely a Safe given in the wrong mode.
+    function checkWallet(address wallet, address[] memory expectedOwners) public view {
+        require(wallet != address(0), "check: ANONYMO_SAFE is the zero address");
+        require(expectedOwners.length == 0, "check: ANONYMO_SAFE_OWNERS is for a Safe, not a single wallet");
+        bytes memory c = wallet.code;
+        bool delegated = c.length == 23 && c[0] == 0xef && c[1] == 0x01 && c[2] == 0x00;
+        require(c.length == 0 || delegated, "check: ANONYMO_SINGLE_WALLET needs a plain wallet; this address is a contract");
+    }
 
     /// @notice The treasury must be exactly 2 of 3 (and, when given, these three owners), with no module that could
     /// execute outside the owner threshold and no transaction guard that could block the owners.

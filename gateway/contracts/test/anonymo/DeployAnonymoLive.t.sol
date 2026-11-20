@@ -206,6 +206,57 @@ contract DeployAnonymoLiveTest is Test {
         DepositRouter(d.depositRouter).deposit(stables[0], 1, keccak256("key"));
     }
 
+    function test_singleWallet() public {
+        address wallet = makeAddr("treasury-wallet");
+        DeployAnonymoLive.Params memory p = _params(DeployAnonymoLive.Stage.Router);
+        p.safe = wallet;
+        // Without the opt-in a plain wallet is refused.
+        vm.expectRevert(bytes("check: ANONYMO_SAFE has no code on this chain"));
+        script.deploy(p);
+
+        p.singleWallet = true;
+        DeployAnonymoLive.Deployment memory d = script.deploy(p);
+        script.checkRouter(d, stables);
+        assertEq(d.depositRouter, script.predictDepositRouter(wallet, deployer));
+        script.checkTimelock(d.timelock, wallet);
+
+        // Deposits land in the wallet, and the wallet alone can pause.
+        address user = makeAddr("user");
+        MockStable(stables[0]).mint(user, 5e6);
+        vm.startPrank(user);
+        IERC20(stables[0]).approve(d.depositRouter, 5e6);
+        DepositRouter(d.depositRouter).deposit(stables[0], 5e6, keccak256("key"));
+        vm.stopPrank();
+        assertEq(IERC20(stables[0]).balanceOf(wallet), 5e6);
+        vm.prank(wallet);
+        DepositRouter(d.depositRouter).pause();
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        DepositRouter(d.depositRouter).deposit(stables[0], 1, keccak256("key"));
+    }
+
+    function test_singleWalletRefusals() public {
+        DeployAnonymoLive.Params memory p = _params(DeployAnonymoLive.Stage.Router);
+        p.singleWallet = true;
+        // A Safe (any contract) given in single-wallet mode.
+        vm.expectRevert(bytes("check: ANONYMO_SINGLE_WALLET needs a plain wallet; this address is a contract"));
+        script.deploy(p);
+
+        p.safe = address(0);
+        vm.expectRevert(bytes("check: ANONYMO_SAFE is the zero address"));
+        script.deploy(p);
+
+        p.safe = makeAddr("treasury-wallet");
+        p.safeOwners = new address[](1);
+        p.safeOwners[0] = p.safe;
+        vm.expectRevert(bytes("check: ANONYMO_SAFE_OWNERS is for a Safe, not a single wallet"));
+        script.deploy(p);
+
+        // An EIP-7702 delegated wallet is still a wallet.
+        p.safeOwners = new address[](0);
+        vm.etch(p.safe, abi.encodePacked(hex"ef0100", makeAddr("delegate")));
+        script.deploy(p);
+    }
+
     function test_parseStage() public view {
         assertEq(uint8(script.parseStage("router")), uint8(DeployAnonymoLive.Stage.Router));
         assertEq(uint8(script.parseStage("receipts")), uint8(DeployAnonymoLive.Stage.Receipts));
