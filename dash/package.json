@@ -13,14 +13,15 @@
     "lint": "oxlint",
     "format": "oxfmt",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test scripts/check-anonymo-client.mjs scripts/check-wallet.mjs scripts/check-copy.mjs scripts/check-solana.mjs scripts/check-guards.mjs scripts/check-safety.mjs",
+    "test": "node --experimental-strip-types --test scripts/check-anonymo-client.mjs scripts/check-wallet.mjs scripts/check-copy.mjs scripts/check-solana.mjs scripts/check-guards.mjs scripts/check-safety.mjs scripts/check-history.mjs",
     "test:client": "node --experimental-strip-types --test scripts/check-anonymo-client.mjs",
     "test:wallet": "node --experimental-strip-types --test scripts/check-wallet.mjs",
     "test:live": "node --experimental-strip-types --test scripts/check-gateway-live.mjs",
     "test:copy": "node --experimental-strip-types --test scripts/check-copy.mjs",
     "test:solana": "node --experimental-strip-types scripts/check-solana.mjs",
     "test:guards": "node --experimental-strip-types scripts/check-guards.mjs",
-    "test:safety": "node --experimental-strip-types --test scripts/check-safety.mjs"
+    "test:safety": "node --experimental-strip-types --test scripts/check-safety.mjs",
+    "test:history": "node --experimental-strip-types --test scripts/check-history.mjs"
   },
   "dependencies": {
     "@fontsource-variable/figtree": "5.2.10",

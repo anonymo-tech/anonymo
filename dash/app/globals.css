@@ -645,3 +645,41 @@ pre.snippet { margin: 0; padding: 16px; border: 1px solid var(--line-strong); bo
   .empty-hero { grid-template-columns: 56px 1fr; }
   .empty-hero img { width: 56px; height: 56px; border-radius: 14px; }
 }
+
+/* ---- Update "history": saved chats and "Wipe this device" ---------------------------------------------------------- */
+.chat-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 auto 18px; flex: 0 0 auto; }
+.chat-bar .chip { margin-left: auto; }
+.icon-btn { display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-width: 32px; height: 32px; padding: 0 6px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+.icon-btn:hover, .icon-btn:focus-visible { border-color: var(--line-strong); color: var(--text); background: var(--raised); outline: none; }
+.icon-danger:hover, .icon-danger:focus-visible { color: var(--rose); border-color: #ff6b5e66; background: var(--rose-soft); }
+.icon-tag { font: 500 10.5px/1 var(--mono); letter-spacing: 0.04em; }
+.drawer-back { position: fixed; inset: 0; z-index: 90; background: #12051399; display: flex; justify-content: flex-end; }
+.drawer { width: min(420px, 100%); height: 100%; overflow: auto; display: flex; flex-direction: column; gap: 16px; padding: 22px; background: var(--surface); border-left: 1px solid var(--line-strong); box-shadow: -30px 0 80px #0008; }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; }
+.drawer-head h2 { font-size: 26px; }
+.drawer-empty { font-size: 14px; }
+.drawer-foot { margin-top: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 14px; color: var(--muted); }
+.switch-row { display: flex; gap: 12px; align-items: flex-start; padding: 14px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--raised); cursor: pointer; }
+.switch-row input { appearance: none; flex: 0 0 auto; position: relative; width: 38px; height: 22px; margin-top: 2px; border-radius: 999px; background: var(--line-strong); cursor: pointer; transition: background 160ms; }
+.switch-row input::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--text); transition: transform 160ms; }
+.switch-row input:checked { background: var(--ok); }
+.switch-row input:checked::after { transform: translateX(16px); background: var(--signal-ink); }
+.switch-row input:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+.switch-row span { display: grid; gap: 3px; }
+.switch-row small { color: var(--muted); font-size: 13px; line-height: 1.45; }
+.history-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.history-item { display: flex; align-items: center; gap: 6px; padding: 4px 4px 4px 0; border: 1px solid transparent; border-radius: var(--radius); }
+.history-item:hover, .history-item.is-open { border-color: var(--line-strong); background: var(--raised); }
+.history-open { flex: 1; min-width: 0; display: grid; gap: 3px; padding: 8px 10px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.history-open strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.history-open small { color: var(--faint); font-size: 12.5px; }
+.history-rename { flex: 1; padding: 4px; }
+.history-actions { display: flex; flex: 0 0 auto; }
+.wipe-btn { color: var(--rose); }
+.wipe-back { justify-content: center; align-items: center; padding: 16px; }
+.wipe-card { width: min(480px, 100%); display: grid; gap: 14px; padding: 28px; border: 1px solid #ff6b5e66; border-radius: 20px; background: var(--surface); box-shadow: 0 30px 80px #000a; }
+.wipe-card h2 { font-size: 30px; }
+.wipe-card p { color: var(--muted); }
+@media (max-width: 720px) { .history-actions .icon-tag { display: none; } }
+@media (prefers-reduced-motion: no-preference) { .drawer { animation: slide-in 260ms cubic-bezier(0.2, 0.7, 0.2, 1) both; } .wipe-card { animation: pop 300ms cubic-bezier(0.2, 0.7, 0.2, 1) both; } }
+@keyframes slide-in { from { transform: translateX(40px); opacity: 0; } to { transform: none; opacity: 1; } }

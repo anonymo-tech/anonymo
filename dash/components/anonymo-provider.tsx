@@ -1,7 +1,8 @@
 'use client';
 
 // Shared workspace state: demo or live mode, the API key held on this device, a typed client bound to both, the
-// conversation (memory only, never stored) and the receipt ids this device has seen (ids only, no text).
+// conversation (memory only, unless the person turns on keeping chats in this browser: lib/anonymo/history.ts) and
+// the receipt ids this device has seen (ids only, no text).
 
 import { useSearchParams } from 'next/navigation';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -28,6 +29,10 @@ type AnonymoState = {
   clearKey: () => void;
   turns: Turn[];
   setTurns: (update: (turns: Turn[]) => Turn[]) => void;
+  /** Which saved chat the current conversation is (a fresh id per new chat). */
+  chatId: string;
+  /** Start a new conversation, or open a saved one with its turns. */
+  openChat: (id: string | null, turns?: Turn[]) => void;
   receipts: SeenReceipt[];
   rememberReceipt: (receipt: SeenReceipt) => void;
   forgetReceipts: () => void;
@@ -59,6 +64,7 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
   const key = useDeviceStore(keyStore);
   const receipts = useDeviceStore(receiptsStore);
   const [turns, setTurnsState] = useState<Turn[]>([]);
+  const [chatId, setChatId] = useState<string>(() => newId());
   const [balanceVersion, setBalanceVersion] = useState(0);
   const search = useSearchParams();
   // `?demo=1` / `?demo=0` can arrive on a client-side navigation: re-read the mode and its key.
@@ -101,6 +107,10 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
     setTurnsState([]);
   }, [demo]);
   const setTurns = useCallback((update: (turns: Turn[]) => Turn[]) => setTurnsState(update), []);
+  const openChat = useCallback((id: string | null, saved?: Turn[]) => {
+    setChatId(id ?? newId());
+    setTurnsState(saved ?? []);
+  }, []);
   const refreshBalance = useCallback(() => setBalanceVersion((v) => v + 1), []);
 
   const value = useMemo<AnonymoState>(
@@ -114,6 +124,8 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
       clearKey,
       turns,
       setTurns,
+      chatId,
+      openChat,
       receipts,
       rememberReceipt,
       forgetReceipts,
@@ -121,10 +133,12 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
       refreshBalance,
       liveModels,
     }),
-    [ready, demo, key, client, mock, setKey, clearKey, turns, setTurns, receipts, balanceVersion, refreshBalance, liveModels],
+    [ready, demo, key, client, mock, setKey, clearKey, turns, setTurns, chatId, openChat, receipts, balanceVersion, refreshBalance, liveModels],
   );
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
+
+const newId = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `c${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`);
 
 /** Whether a model ID can be picked: listed by the gateway, or the list is not known yet. */
 export const isLiveModel = (live: ReadonlySet<string> | null, id: string) => !live || live.has(id);

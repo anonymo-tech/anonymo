@@ -22,6 +22,8 @@ import {
 import { useAnonymo } from '../anonymo-provider';
 import { AdultsOnly, VeniceBadge, Wordmark } from '../brand';
 import { DemoNotice } from '../demo-notice';
+import { WipeDevice } from './chat-history';
+import { updateOn } from '@/lib/anonymo/updates';
 import { formatUsd, usdToMusd } from '@/lib/anonymo/money';
 
 const NAV = [
@@ -111,6 +113,7 @@ export function WorkspaceShell({
           </div>
           <div className="ws-top-right">
             <AdultsOnly compact />
+            <TopUpdates />
             <Purse />
             <Link className="btn btn-ghost btn-small ws-top-docs" href="/docs">
               <BookOpen size={16} aria-hidden="true" />
@@ -188,4 +191,11 @@ function Purse() {
       {available === null ? '—' : formatUsd(available)}
     </Link>
   );
+}
+
+/** Top-bar controls that belong to updates (shown once the browser knows the mode). */
+function TopUpdates() {
+  const { ready, demo } = useAnonymo();
+  if (!ready) return null;
+  return <>{updateOn('history', demo) && <WipeDevice />}</>;
 }

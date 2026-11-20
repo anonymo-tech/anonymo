@@ -7,6 +7,7 @@ import { useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { isLiveModel, useAnonymo } from '../anonymo-provider';
 import { AnswerCard } from './answer-card';
+import { ChatBar, ChatHistoryPanel } from './chat-history';
 import type { Turn } from './chat-types';
 import { ModelPicker } from './model-picker';
 import { PaperTrail } from './paper-trail';
@@ -20,6 +21,8 @@ import { modelStore, setStoredModel } from '@/lib/anonymo/prefs';
 import type { AnonymoModelId, ChatMessage } from '@/lib/anonymo/types';
 import { paperPrompt, type PaperSource } from '@/lib/paper-trail';
 import { AI_NOTICE, AI_REMINDER, CRISIS_LINES, mentionsSelfHarm, reminderDue } from '@/lib/anonymo/safety';
+import { keepStore, saveChat } from '@/lib/anonymo/history';
+import { updateOn } from '@/lib/anonymo/updates';
 
 const STARTERS: { model: AnonymoModelId; text: string }[] = [
   { model: 'anonymo-1', text: 'What actually happens in the body during a long fast, hour by hour? Be frank.' },
@@ -29,7 +32,7 @@ const STARTERS: { model: AnonymoModelId; text: string }[] = [
 ];
 
 export function ChatWorkspace() {
-  const { ready, key, client, turns, setTurns, rememberReceipt, refreshBalance, liveModels } = useAnonymo();
+  const { ready, demo, key, client, turns, setTurns, chatId, rememberReceipt, refreshBalance, liveModels } = useAnonymo();
   const stored = useDeviceStore(modelStore);
   // A saved model that has no routes right now (not in /v1/models) falls back to anonymo-1 instead of failing on send.
   const model: AnonymoModelId = isLiveModel(liveModels, stored) ? stored : 'anonymo-1';
@@ -50,6 +53,14 @@ export function ChatWorkspace() {
   const streaming = turns.some((t) => t.status === 'streaming');
   // A character card is only a system prompt, so it works with any model, not just anonymo-rp.
   const character = characters.find((c) => c.id === characterId) ?? null;
+
+  // Update "history": finished turns are saved in this browser when the person has turned keeping on.
+  const historyOn = ready && updateOn('history', demo);
+  const keep = useDeviceStore(keepStore);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  useEffect(() => {
+    if (historyOn && keep && !streaming && turns.length) saveChat(demo, chatId, turns);
+  }, [historyOn, keep, streaming, turns, demo, chatId]);
 
   useEffect(() => () => controller.current?.abort(), []);
   useEffect(() => {
@@ -251,13 +262,19 @@ export function ChatWorkspace() {
       <p className="ai-notice">{AI_NOTICE}</p>
       <div className="dock-meta">
         <span>Enter to send · Shift+Enter for a new line</span>
-        <span>Conversations stay in this tab and are never stored.</span>
+        <span>{historyOn && keep ? 'Chats are saved in this browser only, never on Anonymo.' : 'Conversations stay in this tab and are never stored.'}</span>
       </div>
     </div>
   );
 
   return (
     <WorkspaceShell section="Chat" composer={composer}>
+      {historyOn && (
+        <>
+          <ChatBar onOpen={() => setHistoryOpen(true)} />
+          <ChatHistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />
+        </>
+      )}
       {turns.length === 0 ? (
         <section className="empty chat-col">
           <div className="empty-hero">

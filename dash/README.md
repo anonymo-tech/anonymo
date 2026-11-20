@@ -28,6 +28,7 @@ npx -y pnpm@11.19.0 build && npx -y pnpm@11.19.0 start
 | `NEXT_PUBLIC_ANONYMO_DEMO=1` | Force demo mode. |
 | `?demo=1` / `?demo=0` | Turn demo mode on or off for this tab (when an API is set). |
 | `NEXT_PUBLIC_ANONYMO_VENICE_BADGE=1` | Show the "Built in Venice" badge (Overview §4, §10). Off by default. |
+| `NEXT_PUBLIC_ANONYMO_UPDATES=history,images,…` or `all` | Turn on updates that ship switched off (`lib/anonymo/updates.ts`): `history`, `images`, `usage`, `catchup`, `status`. Demo mode shows them all. |
 | `NEXT_PUBLIC_ANONYMO_RHC_CHAIN_ID=46630` | Robinhood Chain testnet instead of mainnet (4663). Set `NEXT_PUBLIC_ANONYMO_RHC_RPC` with it. |
 | `NEXT_PUBLIC_ANONYMO_EVM_NETWORKS='{"rhc":{"chainId":…,"rpcUrl":"…"}}'` | Override the chain id, RPC or name the wallet is switched to, per EVM chain (testnets, local chains). |
 
