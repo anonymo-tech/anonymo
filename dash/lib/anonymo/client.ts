@@ -6,6 +6,7 @@
 // it on the device is the caller's choice (lib/anonymo/key-store.ts).
 
 import type {
+  StatusSlo,
   CapsUpdate,
   KeyCapsInput,
   Runway,
@@ -61,6 +62,10 @@ export const API_PATHS = {
   spend: '/api/v1/spend',
   runway: '/api/v1/account/runway',
   activity: '/api/v1/activity',
+  health: '/health',
+  statusSlo: '/api/v1/status/slo',
+  incidentsRss: '/api/v1/status/incidents.rss',
+  incidentsAtom: '/api/v1/status/incidents.atom',
   images: '/v1/images/generations',
 } as const;
 
@@ -173,6 +178,17 @@ export function createAnonymoClient(options: ClientOptions) {
     /** The key's activity as CSV text (the gateway's own columns), for a download. */
     activityCsv: async () => (await request(`${API_PATHS.activity}?format=csv`)).text(),
     updateCaps: (caps: KeyCapsInput) => json<CapsUpdate>(API_PATHS.caps, { method: 'PATCH', body: JSON.stringify(caps) }),
+
+    /** The public status figures (no key). */
+    statusSlo: (signal?: AbortSignal) => data<StatusSlo>(API_PATHS.statusSlo, { auth: false, signal }),
+    /** Round trip to the gateway's health check from this browser, in milliseconds. Throws when it is down. */
+    async ping(signal?: AbortSignal): Promise<number> {
+      const started = performance.now();
+      await request(API_PATHS.health, { auth: false, signal, cache: 'no-store' });
+      return Math.round(performance.now() - started);
+    },
+    /** Absolute URL of a gateway path (for links such as the incident feeds). */
+    url: (path: string) => `${base}${path}`,
 
     mediaModels: () => json<MediaModelList>(API_PATHS.mediaModels, { auth: false }),
     /** Images come back as base64 (`b64_json`): nothing is stored on the gateway, and the PNG carries its provenance. */

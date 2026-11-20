@@ -29,6 +29,7 @@ import type {
 } from '../types.ts';
 import { demoImage, DEMO_IMAGE_MODELS, DEMO_NUDITY } from './images.ts';
 import { RECAP_INSTRUCTION } from '../catchup.ts';
+import { demoStatus } from './status.ts';
 import { activityCsv, runway, sampleHistory, spendReport, spentWindows, type UsageEntry } from './usage.ts';
 import { COUNCIL_MERGED, DEMO_ANMO, DEMO_COIN_PAY, DEMO_LEADERBOARD, DEMO_MANIFEST, DEMO_MODELS, DEMO_PRICES, DEMO_ROUTER, DEMO_ROUTES, demoReply } from './fixtures.ts';
 
@@ -590,6 +591,8 @@ export function createMockGateway(options: MockOptions = {}) {
     if (method === 'GET' && path === API_PATHS.models) return json({ data: DEMO_MODELS });
     if (method === 'GET' && path === API_PATHS.manifest) return json(DEMO_MANIFEST);
     if (method === 'GET' && path === API_PATHS.leaderboard) return json(DEMO_LEADERBOARD);
+    if (method === 'GET' && path === API_PATHS.statusSlo) return json({ data: demoStatus(Date.now()) });
+    if (method === 'GET' && path === API_PATHS.health) return json({ ok: true });
     if (method === 'GET' && path === API_PATHS.mediaModels) return json({ object: 'list', data: DEMO_IMAGE_MODELS });
     const receiptMatch = /^\/v1\/receipts\/([^/]+)(\/proof)?$/.exec(path);
     if (method === 'GET' && receiptMatch) {

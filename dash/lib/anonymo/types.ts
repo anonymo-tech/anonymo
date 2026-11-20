@@ -427,3 +427,38 @@ export type Runway = { balance_usd: Usd; spend_7d_usd: Usd; per_day_usd: Usd; da
 /** PATCH /keys/caps. */
 export type CapsUpdate = { key_hash: string; caps: KeyCaps };
 
+
+// ---- Status (gateway src/api/status.ts, services/slo.ts) -------------------------------------------------------------
+export type SloState = 'operational' | 'degraded' | 'outage' | 'no_data';
+export type SloWindow = { availability: number | null; eligible: number };
+export type SloLatency = { p50_ms: number | null; p95_ms: number | null; samples: number };
+export type SloLane = {
+  lane: string;
+  state: SloState;
+  target: number;
+  windows: Record<'1h' | '24h' | '7d' | '30d', SloWindow>;
+  latency_24h?: SloLatency;
+  daily?: { day: string; availability: number | null; eligible: number }[];
+};
+export type SloSurface = { surface: string; state: SloState; target: number; windows: Record<'1h' | '24h' | '7d' | '30d', SloWindow>; latency_24h: SloLatency };
+export type Incident = {
+  id: string;
+  title: string;
+  status: 'investigating' | 'identified' | 'monitoring' | 'resolved' | 'dismissed';
+  impact: 'none' | 'minor' | 'major' | 'critical';
+  lanes: string[];
+  surfaces: string[];
+  started_at: string;
+  resolved_at: string | null;
+  updated_at: string;
+  updates: { at: string; status: string; text: string }[];
+};
+/** GET /api/v1/status/slo (`buildSlo`). */
+export type StatusSlo = {
+  generated_at: string;
+  targets: Record<string, number>;
+  lanes: SloLane[];
+  surfaces: SloSurface[];
+  synthetic_24h: { ok: number; total: number; availability: number | null };
+  incidents: { open: Incident[]; recent: Incident[] };
+};

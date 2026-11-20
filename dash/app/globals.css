@@ -783,3 +783,40 @@ pre.snippet { margin: 0; padding: 16px; border: 1px solid var(--line-strong); bo
 .chat-bar .chat-bar-chips .chip { margin-left: 0; }
 .catchup-btn.is-suggested { border-color: #f6b84b88; color: var(--amber); background: var(--amber-soft); }
 .recap-note { margin: 0 0 4px; padding: 8px 12px; border-left: 2px solid var(--amber); color: var(--muted); font-size: 13.5px; }
+
+/* ---- Update "status": the public status page --------------------------------------------------------------------- */
+.status { display: grid; gap: 18px; }
+.tone-ok { --tone: var(--ok); --tone-soft: var(--ok-soft); }
+.tone-warn { --tone: var(--amber); --tone-soft: var(--amber-soft); }
+.tone-bad { --tone: var(--rose); --tone-soft: var(--rose-soft); }
+.tone-none { --tone: var(--faint); --tone-soft: #a88fa61a; }
+.status-banner { display: grid; grid-template-columns: auto 1fr auto; gap: 16px; align-items: center; padding: 22px 24px; border: 1px solid var(--tone); border-radius: var(--radius-lg); background: linear-gradient(120deg, var(--tone-soft), var(--surface) 70%); }
+.status-banner > svg { color: var(--tone); }
+.status-banner h2 { font-size: 30px; }
+.status-banner p { color: var(--muted); }
+.status-banner small { align-self: start; color: var(--faint); font-size: 12.5px; }
+.status-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.status-list li { display: grid; grid-template-columns: auto auto 1fr; gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); }
+.status-list .muted { justify-self: end; font-size: 13px; text-align: right; }
+.status-dot { display: inline-grid; place-items: center; color: var(--tone); }
+.mono { font-family: var(--mono); font-weight: 500; font-size: 13.5px; }
+.uptime-strip { display: grid; grid-template-columns: repeat(90, 1fr); gap: 2px; height: 40px; }
+.uptime-day { border-radius: 2px; background: var(--tone); opacity: 0.9; }
+.uptime-day.tone-none { background: var(--line-strong); }
+.uptime-day:hover { opacity: 1; outline: 1px solid var(--text); outline-offset: 1px; }
+.uptime-axis { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 12px; }
+.uptime-legend { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.uptime-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--tone); margin-left: 8px; }
+.uptime-legend i.tone-none { background: var(--line-strong); }
+.state-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border: 1px solid var(--tone); border-radius: 999px; background: var(--tone-soft); color: var(--text); font-size: 12.5px; font-weight: 500; white-space: nowrap; }
+.state-chip svg { color: var(--tone); }
+.status-table th[scope='row'] { font-weight: 500; }
+.status-foot { font-size: 13px; }
+.incidents { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.incident { padding: 14px 16px; border: 1px solid var(--line); border-left: 3px solid var(--tone); border-radius: var(--radius); }
+.incident > header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
+.incident > header small { margin-left: auto; }
+.incident ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.incident ul li { display: grid; grid-template-columns: 52px 1fr; gap: 10px; font-size: 14px; color: var(--muted); }
+.incident ul li b { color: var(--text); font-weight: 600; }
+@media (max-width: 720px) { .status-banner { grid-template-columns: auto 1fr; } .status-banner small { grid-column: 1 / -1; } .uptime-strip { height: 30px; gap: 1px; } }

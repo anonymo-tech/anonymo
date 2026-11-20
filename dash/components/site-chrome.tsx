@@ -5,6 +5,8 @@ import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { AdultsOnly, VeniceBadge, Wordmark } from './brand';
 import { DemoNotice } from './demo-notice';
+import { useAnonymo } from './anonymo-provider';
+import { updateOn } from '@/lib/anonymo/updates';
 
 const NAV = [
   { href: '/docs', label: 'Docs' },
@@ -28,13 +30,20 @@ export function PublicPage({ children, wide = false, bare = false }: { children:
   );
 }
 
+/** The public links, with Status when update "status" is on. */
+function useNav() {
+  const { ready, demo } = useAnonymo();
+  return ready && updateOn('status', demo) ? [...NAV, { href: '/status', label: 'Status' }] : NAV;
+}
+
 export function PublicHeader() {
   const pathname = usePathname();
+  const nav = useNav();
   return (
     <header className="public-head">
       <Wordmark />
       <nav aria-label="Public pages">
-        {NAV.map((item) => (
+        {nav.map((item) => (
           <Link key={item.href} href={item.href} aria-current={pathname === item.href ? 'page' : undefined}>
             {item.label}
           </Link>
@@ -68,6 +77,7 @@ export function SiteFooter() {
       <div className="foot-col">
         <strong>Trust</strong>
         <Link href="/leaderboard">Refusal leaderboard</Link>
+        <StatusLink />
         <Link href="/dashboard/receipts">Receipts</Link>
       </div>
       <div className="foot-note">
@@ -80,4 +90,9 @@ export function SiteFooter() {
       </div>
     </footer>
   );
+}
+
+function StatusLink() {
+  const { ready, demo } = useAnonymo();
+  return ready && updateOn('status', demo) ? <Link href="/status">Status</Link> : null;
 }
