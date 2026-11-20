@@ -1,13 +1,14 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
+import { publicationPdfUrl } from '@/lib/publication-pdf';
 import { PublicPage } from './site-chrome';
 import styles from './publication.module.css';
 
 const publications = {
   brief: {
     label: 'Business brief',
-    file: 'Anonymo-Business-Brief.pdf',
+    download: publicationPdfUrl('Anonymo-Business-Brief.pdf'),
     title: 'Who pays when a model says no?',
     description:
       'How Anonymo turns an eligible model refusal into a second chance to answer, and what that means for its business.',
@@ -15,7 +16,7 @@ const publications = {
   },
   whitepaper: {
     label: 'Whitepaper',
-    file: 'Anonymo-Whitepaper.pdf',
+    download: publicationPdfUrl('Anonymo-Whitepaper.pdf'),
     title: 'What happens after the first refusal?',
     description:
       'Follow one request through policy checks, a retry, billing and a receipt. Examine the economics of a recovered answer.',
@@ -23,7 +24,7 @@ const publications = {
   },
   roadmap: {
     label: 'Commercial roadmap',
-    file: 'Anonymo-Commercial-Roadmap.pdf',
+    download: publicationPdfUrl('Anonymo-Commercial-Roadmap.pdf'),
     title: 'From a first deposit to a second',
     description:
       'The milestones for paid access, repeat use, routing economics and new capabilities.',
@@ -81,7 +82,7 @@ export function Publication({
             <h1>{doc.title}</h1>
             <div className={styles.byline}>
               <time dateTime="2026-11-20">20 November 2026</time>
-              <a href={'/publications/' + doc.file} download>
+              <a href={doc.download} download>
                 Download PDF
               </a>
             </div>

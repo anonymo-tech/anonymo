@@ -1,10 +1,12 @@
 // Product rules the dashboard's source must keep (Overview §10, Backend §2 "no email, no identity fields", the brief's
 // "no analytics that send identifiers"), plus a guard that no Conclave branding comes back.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import test from 'node:test';
 import nextConfig from '../next.config.ts';
+import { publicationPdfUrl } from '../lib/publication-pdf.ts';
 
 const root = new URL('..', import.meta.url).pathname;
 // The Solana deposit verifier and the secret guard are kept only as reference code for CI checks; they render no copy.
@@ -67,6 +69,16 @@ void test('no analytics or tracking scripts', () => {
   const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
   assert.deepEqual(deps.filter((d) => /analytics|posthog|segment|mixpanel|amplitude|plausible|sentry|datadog|hotjar|gtag/i.test(d)), []);
   assert.deepEqual(hits(/googletagmanager|google-analytics|gtag\(|posthog|mixpanel|plausible\.io|sentry/i), []);
+});
+
+void test('PDF download URLs identify the bytes of the current edition', () => {
+  const directory = join(root, 'public', 'publications');
+  for (const filename of readdirSync(directory).filter((name) => name.endsWith('.pdf'))) {
+    const url = new URL(publicationPdfUrl(filename), 'https://anonymo.tech');
+    const digest = createHash('sha256').update(readFileSync(join(directory, filename))).digest('hex');
+    assert.equal(url.pathname, '/publications/' + filename);
+    assert.equal(url.searchParams.get('v'), digest.slice(0, 16));
+  }
 });
 
 void test('public reading pages instruct the edge to leave their HTML intact', async () => {
