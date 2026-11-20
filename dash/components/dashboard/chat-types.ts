@@ -17,4 +17,5 @@ export type Turn = {
   councilMode: 'merge' | 'select' | null;
   aiReminder?: boolean; // show the 3-hourly “you’re talking to an AI” reminder above this turn
   crisis?: boolean; // the prompt mentioned suicide or self-harm: show crisis lines with the answer
+  recap?: boolean; // update "catchup": this turn is a recap of an earlier chat, sent as context at the start of this one
 };

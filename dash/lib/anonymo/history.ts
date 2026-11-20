@@ -17,6 +17,7 @@ export type SavedTurn = {
   error: string | null;
   receiptId: string | null;
   councilMode: 'merge' | 'select' | null;
+  recap?: boolean;
 };
 export type SavedChat = { id: string; title: string; createdAt: string; updatedAt: string; model: string; turns: SavedTurn[] };
 
@@ -55,6 +56,7 @@ export function toSaved(turns: TurnLike[]): SavedTurn[] {
       error: t.error,
       receiptId: t.receiptId,
       councilMode: t.councilMode,
+      ...(t.recap ? { recap: true } : {}),
     });
   }
   return out;

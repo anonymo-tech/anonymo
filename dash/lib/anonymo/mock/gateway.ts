@@ -28,6 +28,7 @@ import type {
   Withdrawal,
 } from '../types.ts';
 import { demoImage, DEMO_IMAGE_MODELS, DEMO_NUDITY } from './images.ts';
+import { RECAP_INSTRUCTION } from '../catchup.ts';
 import { activityCsv, runway, sampleHistory, spendReport, spentWindows, type UsageEntry } from './usage.ts';
 import { COUNCIL_MERGED, DEMO_ANMO, DEMO_COIN_PAY, DEMO_LEADERBOARD, DEMO_MANIFEST, DEMO_MODELS, DEMO_PRICES, DEMO_ROUTER, DEMO_ROUTES, demoReply } from './fixtures.ts';
 
@@ -454,6 +455,11 @@ export function createMockGateway(options: MockOptions = {}) {
     const first = servers[0] ?? DEMO_ROUTES[0];
     const other = servers.find((r) => r.family !== first.family) ?? DEMO_ROUTES[2];
     let text = demoReply(model);
+    // Update "catchup": a recap request gets recap-shaped notes built from what the person said.
+    if (typeof lastUser === 'string' && lastUser === RECAP_INSTRUCTION) {
+      const said = body.messages.filter((m) => m.role === 'user' && m.content !== RECAP_INSTRUCTION).map((m) => (typeof m.content === 'string' ? m.content : ''));
+      text = `Recap so far (demo: a real model writes this from the whole chat).\n\n${said.map((s) => `- ${s.replace(/\s+/g, ' ').slice(0, 140)}`).join('\n\n')}\n\nWhere it stands: the last point above. Keep the same tone and pick up from there.`;
+    }
     if (rerouted) text = `The first route refused this, so the router retried on a different model family (${other.family}) and billed the refused attempt nothing. ${text}`;
 
     const chunks = text.match(/\S+\s*/g) ?? [text];

@@ -648,7 +648,7 @@ pre.snippet { margin: 0; padding: 16px; border: 1px solid var(--line-strong); bo
 
 /* ---- Update "history": saved chats and "Wipe this device" ---------------------------------------------------------- */
 .chat-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 auto 18px; flex: 0 0 auto; }
-.chat-bar .chip { margin-left: auto; }
+.chat-bar > .chip { margin-left: auto; }
 .icon-btn { display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-width: 32px; height: 32px; padding: 0 6px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
 .icon-btn:hover, .icon-btn:focus-visible { border-color: var(--line-strong); color: var(--text); background: var(--raised); outline: none; }
 .icon-danger:hover, .icon-danger:focus-visible { color: var(--rose); border-color: #ff6b5e66; background: var(--rose-soft); }
@@ -777,3 +777,9 @@ pre.snippet { margin: 0; padding: 16px; border: 1px solid var(--line-strong); bo
 .ok-text { color: var(--ok); font-size: 13.5px; }
 .usage-privacy { font-size: 13px; }
 @media (max-width: 1000px) { .usage-cols { grid-template-columns: 1fr; } }
+
+/* ---- Update "catchup": recap a long chat into a fresh one --------------------------------------------------------- */
+.chat-bar-chips { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.chat-bar .chat-bar-chips .chip { margin-left: 0; }
+.catchup-btn.is-suggested { border-color: #f6b84b88; color: var(--amber); background: var(--amber-soft); }
+.recap-note { margin: 0 0 4px; padding: 8px 12px; border-left: 2px solid var(--amber); color: var(--muted); font-size: 13.5px; }

@@ -22,6 +22,7 @@ import type { AnonymoModelId, ChatMessage } from '@/lib/anonymo/types';
 import { paperPrompt, type PaperSource } from '@/lib/paper-trail';
 import { AI_NOTICE, AI_REMINDER, CRISIS_LINES, mentionsSelfHarm, reminderDue } from '@/lib/anonymo/safety';
 import { keepStore, saveChat } from '@/lib/anonymo/history';
+import { canRecap, recapContext, recapRequest, suggestRecap, threadTokens } from '@/lib/anonymo/catchup';
 import { updateOn } from '@/lib/anonymo/updates';
 
 const STARTERS: { model: AnonymoModelId; text: string }[] = [
@@ -32,7 +33,7 @@ const STARTERS: { model: AnonymoModelId; text: string }[] = [
 ];
 
 export function ChatWorkspace() {
-  const { ready, demo, key, client, turns, setTurns, chatId, rememberReceipt, refreshBalance, liveModels } = useAnonymo();
+  const { ready, demo, key, client, turns, setTurns, chatId, openChat, rememberReceipt, refreshBalance, liveModels } = useAnonymo();
   const stored = useDeviceStore(modelStore);
   // A saved model that has no routes right now (not in /v1/models) falls back to anonymo-1 instead of failing on send.
   const model: AnonymoModelId = isLiveModel(liveModels, stored) ? stored : 'anonymo-1';
@@ -77,6 +78,11 @@ export function ChatWorkspace() {
     const out: ChatMessage[] = [];
     for (const t of turns) {
       if (t.status !== 'done' && t.status !== 'stopped') continue;
+      if (t.recap) {
+        // Update "catchup": a recap turn starts the thread as context, not as something the person said.
+        if (t.content) out.push(...recapContext(t.content));
+        continue;
+      }
       out.push({ role: 'user', content: t.prompt });
       if (t.content) out.push({ role: 'assistant', content: t.content });
     }
@@ -115,6 +121,13 @@ export function ChatWorkspace() {
     setTurns((list) => [...list, turn]);
     setText('');
     setPaper(null);
+    await run(turn, messages);
+  }
+
+  /** Streams one turn's reply into it, then settles its receipt and the balance. */
+  async function run(turn: Turn, messages: ChatMessage[]) {
+    const { id, model } = turn;
+    const councilMode = turn.councilMode ?? 'merge';
     const abort = new AbortController();
     controller.current = abort;
     let receiptId: string | null = null;
@@ -149,6 +162,38 @@ export function ChatWorkspace() {
           () => undefined,
         );
     }
+  }
+
+  // Update "catchup": a long thread becomes a recap that starts a fresh chat (the old one stays saved, if kept).
+  const catchupOn = ready && updateOn('catchup', demo);
+  async function catchUp() {
+    if (streaming || !key || !canRecap(turns)) return;
+    let messages = recapRequest(history());
+    if (character) {
+      const built = buildCharacterMessages(character.card, messages);
+      messages = built.messages.map((m) => ({ role: m.role as ChatMessage['role'], content: typeof m.content === 'string' ? m.content : '' }));
+    }
+    // The council answers by committee; a recap only needs one model, so it goes to anonymo-1.
+    const recapModel: AnonymoModelId = model === 'anonymo-council' ? 'anonymo-1' : model;
+    const first = turns.find((t) => !t.recap)?.prompt ?? 'our chat';
+    const title = first.replace(/\s+/g, ' ').trim().slice(0, 48);
+    const turn: Turn = {
+      id: crypto.randomUUID(),
+      model: recapModel,
+      prompt: `Recap of “${title}${first.length > 48 ? '…' : ''}”`,
+      attachment: null,
+      character: character?.card.data.name ?? null,
+      content: '',
+      status: 'streaming',
+      error: null,
+      receiptId: null,
+      receipt: null,
+      council: null,
+      councilMode: null,
+      recap: true,
+    };
+    openChat(null, [turn]);
+    await run(turn, messages);
   }
 
   async function submit() {
@@ -269,10 +314,14 @@ export function ChatWorkspace() {
 
   return (
     <WorkspaceShell section="Chat" composer={composer}>
-      {historyOn && (
+      {(historyOn || catchupOn) && (
         <>
-          <ChatBar onOpen={() => setHistoryOpen(true)} />
-          <ChatHistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />
+          <ChatBar
+            history={historyOn}
+            onOpen={() => setHistoryOpen(true)}
+            catchUp={catchupOn ? { onCatchUp: () => void catchUp(), busy: streaming, ready: !!key && canRecap(turns), suggest: suggestRecap(turns), tokens: threadTokens(turns) } : null}
+          />
+          {historyOn && <ChatHistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />}
         </>
       )}
       {turns.length === 0 ? (
@@ -333,6 +382,11 @@ export function ChatWorkspace() {
                 </p>
               )}
               <p className="prompt">{turn.prompt}</p>
+              {turn.recap && (
+                <p className="recap-note" role="note">
+                  Caught up: this chat starts from a recap of the last one, so replies stay sharp and cheaper.
+                </p>
+              )}
               {(turn.attachment || turn.character) && (
                 <div className="prompt-meta">
                   {turn.attachment && <span className="chip">PDF · {turn.attachment}</span>}

@@ -8,6 +8,7 @@ import {
   History,
   Pencil,
   Plus,
+  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
@@ -30,6 +31,7 @@ import {
   type SavedChat,
 } from '@/lib/anonymo/history';
 import { charactersStore } from '@/lib/anonymo/characters-store';
+import { tokenLabel } from '@/lib/anonymo/catchup';
 import { keyStore } from '@/lib/anonymo/key-store';
 import { adultStore, modelStore, receiptsStore } from '@/lib/anonymo/prefs';
 
@@ -63,32 +65,45 @@ const toTurn = (t: SavedChat['turns'][number]): Turn => ({
   council: null,
 });
 
-/** The bar above the thread: open the saved chats, start a new chat. */
-export function ChatBar({ onOpen }: { onOpen: () => void }) {
+export type CatchUpBar = { onCatchUp: () => void; busy: boolean; ready: boolean; suggest: boolean; tokens: number };
+
+/** The bar above the thread: saved chats and a new chat (update "history"), "Catch me up" (update "catchup"). */
+export function ChatBar({ history, onOpen, catchUp }: { history: boolean; onOpen: () => void; catchUp: CatchUpBar | null }) {
   const { demo, turns, openChat } = useAnonymo();
   const keep = useDeviceStore(keepStore);
   const chats = useDeviceStore(chatsStore(demo));
   return (
     <div className="chat-bar chat-col">
-      <button
-        type="button"
-        className="btn btn-ghost btn-small"
-        onClick={onOpen}
-      >
-        <History size={16} aria-hidden="true" /> Chats
-        {keep && chats.length ? ` · ${chats.length}` : ''}
-      </button>
+      {history && (
+        <button type="button" className="btn btn-ghost btn-small" onClick={onOpen}>
+          <History size={16} aria-hidden="true" /> Chats
+          {keep && chats.length ? ` · ${chats.length}` : ''}
+        </button>
+      )}
       {turns.length > 0 && (
-        <button
-          type="button"
-          className="btn btn-ghost btn-small"
-          onClick={() => openChat(null)}
-        >
+        <button type="button" className="btn btn-ghost btn-small" onClick={() => openChat(null)}>
           <Plus size={16} aria-hidden="true" /> New chat
         </button>
       )}
-      <span className={keep ? 'chip chip-signal' : 'chip'}>
-        {keep ? 'Saved on this device' : 'Not saved'}
+      {catchUp && catchUp.ready && (
+        <button
+          type="button"
+          className={catchUp.suggest ? 'btn btn-small catchup-btn is-suggested' : 'btn btn-ghost btn-small catchup-btn'}
+          disabled={catchUp.busy}
+          title="Sum up this chat and continue from the recap in a fresh one: replies stay sharp and cost less."
+          onClick={catchUp.onCatchUp}
+        >
+          <Sparkles size={16} aria-hidden="true" /> Catch me up
+        </button>
+      )}
+      <span className="chat-bar-chips">
+        {catchUp && turns.length > 0 && (
+          <span className={catchUp.suggest ? 'chip chip-amber' : 'chip'} title="Every reply resends the whole thread, so long chats cost more each turn.">
+            {tokenLabel(catchUp.tokens)}
+            {catchUp.suggest ? ' · getting long' : ''}
+          </span>
+        )}
+        {history && <span className={keep ? 'chip chip-signal' : 'chip'}>{keep ? 'Saved on this device' : 'Not saved'}</span>}
       </span>
     </div>
   );
