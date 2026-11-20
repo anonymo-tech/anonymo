@@ -14,7 +14,10 @@ export function AgeGate() {
   const button = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     document.documentElement.toggleAttribute('data-gated', !confirmed);
+    const app = document.querySelector<HTMLElement>('.app-root');
+    if (app) app.inert = !confirmed;
     if (!confirmed) button.current?.focus();
+    return () => { if (app) app.inert = false; };
   }, [confirmed]);
   if (confirmed) return null;
   return (

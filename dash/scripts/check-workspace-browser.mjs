@@ -113,3 +113,36 @@ test('a visitor can connect a key, fund it, chat and inspect the receipt from mo
     await browser.close();
   }
 });
+
+test('the public receipt story keeps its original desktop and phone layouts alongside the redesigned dashboard', async () => {
+  const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || undefined });
+  try {
+    for (const width of [1440, 390]) {
+      const page = await browser.newPage({ viewport: { width, height: 900 } });
+      await page.route('**/*', route => new URL(route.request().url()).origin === origin.origin ? route.continue() : route.abort());
+      await page.goto(new URL('/?demo=1', origin).href);
+      await page.waitForFunction(() => document.querySelector('.app-root')?.inert);
+      await page.getByRole('button', { name: 'I am 18 or older' }).click();
+      const story = page.getByRole('region', { name: 'How Anonymo works' });
+      const hero = story.locator('h1');
+      await hero.waitFor();
+      assert.match(await hero.innerText(), /Ask anything\.\s*Keep the receipt\./);
+      await page.evaluate(() => document.fonts.ready);
+      assert.ok(await hero.evaluate(el => getComputedStyle(el).fontFamily.includes('Space Grotesk')));
+      if (width === 1440) {
+        await story.locator('.story-steps button').filter({ hasText: 'Refusals' }).click();
+        await story.locator('button[aria-current="step"]').filter({ hasText: 'Refusals' }).waitFor();
+        await story.locator('.rx-now .rx-stamp').waitFor();
+      } else {
+        assert.equal(await story.locator('.story-steps').isVisible(), false);
+        assert.equal(await story.locator('.story-beat h2:visible').count(), 6);
+        assert.ok(await story.locator('.printer .paper').isVisible());
+      }
+      await page.locator('.public-head').getByRole('link', { name: 'Open app' }).click();
+      await page.getByRole('heading', { name: 'Your private workspace' }).waitFor();
+      await page.close();
+    }
+  } finally {
+    await browser.close();
+  }
+});

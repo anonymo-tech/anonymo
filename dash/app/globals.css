@@ -49,7 +49,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .skip-link:focus { transform: none; }
 main:focus { outline: none; }
 ::selection { background: var(--signal); color: var(--signal-ink); }
-h1, h2 { margin: 0; font-family: var(--sans); font-weight: 570; letter-spacing: -0.04em; line-height: 1.1; }
+h1, h2 { margin: 0; font-family: var(--sans); font-weight: 400; letter-spacing: -0.012em; line-height: 1.1; }
+.ws :is(h1, h2) { font-weight: 570; letter-spacing: -0.04em; }
 h3 { margin: 0; font-weight: 600; letter-spacing: -0.005em; line-height: 1.25; }
 p { margin: 0; }
 code, .mono { font-family: var(--sans); font-size: 0.92em; }
@@ -62,7 +63,8 @@ code, .mono { font-family: var(--sans); font-size: 0.92em; }
 html[data-gated] .app-root { filter: blur(14px); pointer-events: none; user-select: none; }
 
 /* ---- brand ---------------------------------------------------------------------------------------------------- */
-.wordmark { display: inline-flex; align-items: center; gap: 10px; font: 570 26px/1 var(--sans); letter-spacing: -0.035em; text-decoration: none; color: var(--text); }
+.wordmark { display: inline-flex; align-items: center; gap: 10px; font: 400 26px/1 var(--sans); letter-spacing: -0.01em; text-decoration: none; color: var(--text); }
+.ws .wordmark { font-weight: 570; letter-spacing: -0.035em; }
 .wordmark svg { flex: none; }
 .wordmark-lg { font-size: clamp(40px, 8vw, 80px); gap: 0.35em; }
 
@@ -372,7 +374,7 @@ table.data th.num { text-align: right; }
 .ws-foot:empty { display: none; }
 .ws-main { flex: 1; width: 100%; max-width: 1440px; margin-inline: auto; padding: clamp(20px,3vw,44px) clamp(16px,3.3vw,52px) 48px; }
 .ws-main-chat { max-width: none; padding-bottom: 16px; display: flex; flex-direction: column; }
-.ws-head { display: grid; gap: 6px; margin-bottom: 22px; }
+.ws-head { display: grid; gap: 8px; padding: clamp(18px,2.7vw,36px); margin-bottom: 22px; border: 1px solid #594153; border-radius: var(--radius-lg); background: radial-gradient(ellipse at top right,#49243c,transparent 65%),var(--surface); }
 .ws-head h1 { font-size: clamp(30px, 3.7vw, 44px); }
 .ws-head p { color: var(--muted); font-size: 16.5px; }
 .ws-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin: 0 clamp(16px, 3vw, 36px); padding: 18px 0 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13.5px; }
@@ -668,14 +670,12 @@ pre.snippet { margin: 0; padding: 16px; border: 1px solid var(--line-strong); bo
   .land-split { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 1000px) {
-  .public-head { flex-wrap: wrap; row-gap: 8px; padding-block: 10px; }
-  .public-head-cta { margin-left: auto; }
-  .public-head nav { order: 4; width: 100%; margin-left: 0; overflow-x: auto; scrollbar-width: none; gap: 18px; font-size: 14.5px; }
-  .public-head nav a { flex: none; }
-}
-
 @media (max-width: 720px) {
+  .public-head { flex-wrap: wrap; padding-top: 12px; padding-bottom: 10px; }
+  /* phones: the wordmark and "Open app" share the first row, the page links scroll along the second */
+  .public-head { row-gap: 8px; }
+  .public-head nav { order: 3; width: 100%; margin-left: 0; overflow-x: auto; scrollbar-width: none; gap: 18px; font-size: 14.5px; mask: linear-gradient(90deg, #000 calc(100% - 32px), transparent); padding-right: 24px; }
+  .public-head nav a { flex: none; }
   .paper { padding-inline: 18px; font-size: 12px; }
   .story-notes > div { grid-template-columns: 1fr; padding-inline: 0; }
   .story-printed span { display: none; }
