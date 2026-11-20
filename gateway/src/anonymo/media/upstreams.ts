@@ -1,6 +1,6 @@
 // Media upstream adapters. Each one returns raw bytes; nothing an upstream returns is passed on before the media
-// gate and provenance have run (pipeline.ts). Media is only ever taken inline (base64 or a response body from the
-// configured host), never fetched from a URL an upstream names, so an upstream cannot point the gateway elsewhere.
+// gate and provenance have run (routes.ts). These adapters only take inline media or response bodies from the
+// configured host. The NanoGPT video adapter separately validates and pins provider-supplied download destinations.
 //
 // NanoGPT's image endpoint was exercised live (Nano Banana and GPT Image 2 return PNG as base64).
 // (U) Request shapes for Venice's image and video endpoints and for the ComfyUI worker pool are written from their
@@ -8,6 +8,8 @@
 
 import type { WorkflowSet } from "./workflows.ts";
 import { sniffMime } from "./containers.ts";
+import { NANOGPT_ASPECT_RATIOS, NANOGPT_IMAGE_MODELS, type ImageSizeFormat } from "./nanogpt-models.ts";
+import { isPng } from "./png.ts";
 
 export type Media = { bytes: Uint8Array; mime: string };
 export const MAX_MEDIA_BYTES = 100 * 1024 * 1024;
@@ -27,7 +29,7 @@ export class UpstreamError extends Error {
 export type ImageRequest = { model: string; prompt: string; n: number; width: number; height: number; seed: number; safe: boolean; image?: Media };
 export type SpeechRequest = { model: string; input: string; voice: string; speed: number };
 export type VideoRequest = { model: string; prompt: string; seconds: number; width: number; height: number; seed: number; safe: boolean };
-export type VideoPoll = { state: "running" } | { state: "failed"; message: string } | { state: "done"; media: Media };
+export type VideoPoll = { state: "running" } | { state: "failed"; message: string; blocked?: true } | { state: "done"; media: Media };
 
 export interface ImageUpstream {
   generate(r: ImageRequest, signal: AbortSignal): Promise<Media[]>;
@@ -41,12 +43,28 @@ export interface VideoUpstream {
   poll(ref: string, model: string, signal: AbortSignal): Promise<VideoPoll>;
 }
 
-async function readCapped(r: Response): Promise<Uint8Array> {
+export async function readCapped(r: Response): Promise<Uint8Array> {
   const len = Number(r.headers.get("content-length") ?? 0);
-  if (len > MAX_MEDIA_BYTES) throw new UpstreamError("upstream media exceeds 100 MB", 502);
-  const b = new Uint8Array(await r.arrayBuffer());
-  if (b.length > MAX_MEDIA_BYTES) throw new UpstreamError("upstream media exceeds 100 MB", 502);
-  return b;
+  if (len > MAX_MEDIA_BYTES) {
+    await r.body?.cancel().catch(() => undefined);
+    throw new UpstreamError("upstream media exceeds 100 MB", 502);
+  }
+  const reader = r.body?.getReader();
+  if (!reader) return new Uint8Array();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return Buffer.concat(chunks, size);
+      size += value.byteLength;
+      if (size > MAX_MEDIA_BYTES) throw new UpstreamError("upstream media exceeds 100 MB", 502);
+      chunks.push(value);
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
 }
 const failed = (label: string, status: number) =>
   new UpstreamError(`${label} returned ${status}`, [401, 402, 403, 429].includes(status) || status >= 500 ? 503 : 502, status >= 400 && status < 500 && ![401, 402, 403, 408, 429].includes(status));
@@ -92,25 +110,38 @@ export function veniceAdapter(o: { base: string; apiKey: string; fetch?: typeof 
 }
 
 // ---- NanoGPT (hosted; OpenAI-compatible images) ---------------------------------------------------------------
-/** Aspect ratios NanoGPT takes for models that size by ratio (Google's Nano Banana), keyed by our WxH sizes. */
-export const NANOGPT_ASPECT_RATIOS: Record<string, string> = {
-  "1024x1024": "1:1", "1344x768": "16:9", "768x1344": "9:16", "1184x864": "4:3", "864x1184": "3:4", "1248x832": "3:2", "832x1248": "2:3",
-};
+const nanoModels = new Map(NANOGPT_IMAGE_MODELS.map((model) => [model.upstreamModel, model]));
 
-/** Images through NanoGPT. Models in `byAspectRatio` are sized with `aspect_ratio`, the rest with `size` ("WxH").
- *  Only base64 is accepted (response_format b64_json); a URL in the answer is never fetched. Images only. */
-export function nanogptAdapter(o: { base: string; apiKey: string; byAspectRatio?: string[]; fetch?: typeof fetch }): ImageUpstream {
+function nanoSizing(format: ImageSizeFormat, size: string) {
+  switch (format) {
+    case "pixels": return { size };
+    case "asterisk": return { size: size.replace("x", "*") };
+    case "aspect-ratio": {
+      const aspect_ratio = NANOGPT_ASPECT_RATIOS[size];
+      if (!aspect_ratio) throw new UpstreamError("No NanoGPT aspect ratio for this image size", 400, true);
+      return { aspect_ratio };
+    }
+  }
+}
+
+/** Only inline base64 images are accepted. Normalize to the PNG carrier used by the media gate and provenance. */
+export function nanogptAdapter(o: { base: string; apiKey: string; fetch?: typeof fetch }): ImageUpstream {
   const f = o.fetch ?? fetch;
-  const ratio = new Set(o.byAspectRatio ?? []);
   return {
     async generate(r, signal) {
       if (r.image) throw new UpstreamError("NanoGPT image edits are not wired", 400, true);
+      const model = nanoModels.get(r.model);
       const size = `${r.width}x${r.height}`;
-      const sizing = ratio.has(r.model) ? { aspect_ratio: NANOGPT_ASPECT_RATIOS[size] ?? "1:1" } : { size };
+      if (!model || !model.sizes.includes(size)) throw new UpstreamError("Unsupported NanoGPT image model or size", 400, true);
+      if (!Number.isInteger(r.n) || r.n < 1 || r.n > model.maxImages) throw new UpstreamError("Invalid NanoGPT image count", 400, true);
       const res = await f(o.base.replace(/\/$/, "") + "/images/generations", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${o.apiKey}` },
-        body: JSON.stringify({ model: r.model, prompt: r.prompt, n: r.n, response_format: "b64_json", ...sizing }),
+        body: JSON.stringify({
+          model: r.model, prompt: r.prompt, n: r.n, response_format: "b64_json",
+          ...nanoSizing(model.sizeFormat, size),
+          ...model.parameters,
+        }),
         signal,
       });
       if (!res.ok) {
@@ -118,12 +149,18 @@ export function nanogptAdapter(o: { base: string; apiKey: string; byAspectRatio?
         throw failed("NanoGPT image", res.status);
       }
       const j = (await res.json()) as { data?: { b64_json?: unknown }[] };
+      if (!Array.isArray(j?.data) || j.data.length !== r.n) throw new UpstreamError("NanoGPT returned the wrong number of images", 502);
       const out: Media[] = [];
-      for (const d of j.data ?? []) {
+      for (const d of j.data) {
         const bytes = b64(d?.b64_json);
-        if (bytes?.length) out.push(media(bytes, "image/png"));
+        if (!bytes?.length || bytes.length > MAX_MEDIA_BYTES) throw new UpstreamError("Invalid inline NanoGPT image", 502);
+        try {
+          const png = isPng(bytes) ? bytes : await new Bun.Image(bytes, { maxPixels: 16_777_216 }).png().bytes();
+          out.push({ bytes: png, mime: "image/png" });
+        } catch {
+          throw new UpstreamError("Invalid NanoGPT image format", 502);
+        }
       }
-      if (out.length !== r.n) throw new UpstreamError("NanoGPT returned fewer images than asked", 502);
       return out;
     },
   };

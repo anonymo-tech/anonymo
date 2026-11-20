@@ -17,6 +17,7 @@ import { createPortal } from 'react-dom';
 import { useAnonymo } from '../anonymo-provider';
 import type { Turn } from './chat-types';
 import { useDeviceStore } from '@/lib/anonymo/device-store';
+import { useVault, VaultButton } from './vault-controls';
 import {
   chatsStore,
   deleteAllChats,
@@ -34,6 +35,9 @@ import { charactersStore } from '@/lib/anonymo/characters-store';
 import { tokenLabel } from '@/lib/anonymo/catchup';
 import { keyStore } from '@/lib/anonymo/key-store';
 import { adultStore, modelStore, receiptsStore } from '@/lib/anonymo/prefs';
+import { updateOn } from '@/lib/anonymo/updates';
+import { vanishStore } from '@/lib/anonymo/vanish-prefs';
+import { ChatExpiry, VanishBadge, VanishSettings } from './vanish-controls';
 
 function download(name: string, text: string, type: string) {
   const url = URL.createObjectURL(new Blob([text], { type }));
@@ -69,9 +73,11 @@ export type CatchUpBar = { onCatchUp: () => void; busy: boolean; ready: boolean;
 
 /** The bar above the thread: saved chats and a new chat (update "history"), "Catch me up" (update "catchup"). */
 export function ChatBar({ history, onOpen, catchUp }: { history: boolean; onOpen: () => void; catchUp: CatchUpBar | null }) {
-  const { demo, turns, openChat } = useAnonymo();
+  const { demo, chatId, turns, openChat } = useAnonymo();
   const keep = useDeviceStore(keepStore);
   const chats = useDeviceStore(chatsStore(demo));
+  const expiring = history && keep && updateOn('vanish', demo) ? chats.find((c) => c.id === chatId) : null;
+  const { mode } = useVault();
   return (
     <div className="chat-bar chat-col">
       {history && (
@@ -96,6 +102,7 @@ export function ChatBar({ history, onOpen, catchUp }: { history: boolean; onOpen
           <Sparkles size={16} aria-hidden="true" /> Catch me up
         </button>
       )}
+      {expiring && <ChatExpiry chat={expiring} demo={demo} onExpired={() => openChat(null)} />}
       <span className="chat-bar-chips">
         {catchUp && turns.length > 0 && (
           <span className={catchUp.suggest ? 'chip chip-amber' : 'chip'} title="Every reply resends the whole thread, so long chats cost more each turn.">
@@ -103,7 +110,7 @@ export function ChatBar({ history, onOpen, catchUp }: { history: boolean; onOpen
             {catchUp.suggest ? ' · getting long' : ''}
           </span>
         )}
-        {history && <span className={keep ? 'chip chip-signal' : 'chip'}>{keep ? 'Saved on this device' : 'Not saved'}</span>}
+        {history && <span className={keep ? 'chip chip-signal' : 'chip'}>{keep ? (mode === 'locked' ? 'Chats locked' : 'Saved on this device') : 'Not saved'}</span>}
       </span>
     </div>
   );
@@ -118,8 +125,10 @@ export function ChatHistoryPanel({
   onClose: () => void;
 }) {
   const { demo, chatId, openChat } = useAnonymo();
+  const vanish = updateOn('vanish', demo);
   const keep = useDeviceStore(keepStore);
   const chats = useDeviceStore(chatsStore(demo));
+  const { mode } = useVault();
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [confirmAll, setConfirmAll] = useState(false);
@@ -132,6 +141,14 @@ export function ChatHistoryPanel({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
+
+  useEffect(() => {
+    if (mode === 'locked' || mode === 'loading') {
+      setRenaming(null);
+      setDraft('');
+      setConfirmAll(false);
+    }
+  }, [mode]);
 
   if (!open) return null;
   return (
@@ -146,6 +163,7 @@ export function ChatHistoryPanel({
         >
           <header className="drawer-head">
             <h2 id="history-title">Chats</h2>
+            {updateOn('vault', demo) && <VaultButton />}
             <button
               ref={close}
               type="button"
@@ -163,6 +181,7 @@ export function ChatHistoryPanel({
               role="switch"
               aria-label="Keep chats on this device"
               checked={keep}
+              disabled={mode === 'locked' || mode === 'loading'}
               onChange={(e) => setKeep(e.target.checked)}
             />
             <span>
@@ -173,6 +192,7 @@ export function ChatHistoryPanel({
               </small>
             </span>
           </label>
+          {vanish && <VanishSettings />}
 
           <button
             type="button"
@@ -185,7 +205,9 @@ export function ChatHistoryPanel({
             <Plus size={16} aria-hidden="true" /> New chat
           </button>
 
-          {!keep ? (
+          {mode === 'locked' ? (
+            <p className="muted drawer-empty">Saved chats are locked. Unlock the vault to view them.</p>
+          ) : !keep ? (
             <p className="muted drawer-empty">
               Chats live in this tab only and are gone when you close it. Turn
               on keeping to find them here later.
@@ -235,6 +257,7 @@ export function ChatHistoryPanel({
                         {when(c.updatedAt)} · {c.model} · {c.turns.length}{' '}
                         {c.turns.length === 1 ? 'reply' : 'replies'}
                       </small>
+                      {vanish && <VanishBadge expiresAt={c.expiresAt} />}
                     </button>
                   )}
                   <div className="history-actions">
@@ -346,6 +369,8 @@ export function WipeDevice() {
   const { openChat } = useAnonymo();
   const [asking, setAsking] = useState(false);
   const [done, setDone] = useState(false);
+  const [wiping, setWiping] = useState(false);
+  const [wipeError, setWipeError] = useState(false);
   const wipe = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (asking) wipe.current?.focus();
@@ -357,7 +382,7 @@ export function WipeDevice() {
         className="btn btn-ghost btn-small wipe-btn"
         aria-label="Wipe this device"
         title="Wipe everything Anonymo keeps in this browser"
-        onClick={() => setAsking(true)}
+        onClick={() => { setWipeError(false); setAsking(true); }}
       >
         <Flame size={16} aria-hidden="true" />
         <span className="btn-label">Wipe</span>
@@ -366,7 +391,7 @@ export function WipeDevice() {
         <Layer>
           <div
             className="drawer-back wipe-back"
-            onClick={() => setAsking(false)}
+            onClick={() => !wiping && setAsking(false)}
           >
             <div
               className="wipe-card"
@@ -375,7 +400,7 @@ export function WipeDevice() {
               aria-labelledby="wipe-title"
               aria-describedby="wipe-text"
               onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => e.key === 'Escape' && setAsking(false)}
+              onKeyDown={(e) => e.key === 'Escape' && !wiping && setAsking(false)}
             >
               {done ? (
                 <>
@@ -396,20 +421,31 @@ export function WipeDevice() {
                   <h2 id="wipe-title">Wipe this device?</h2>
                   <p id="wipe-text">
                     This removes everything Anonymo keeps in this browser: your
-                    API key, saved chats, characters, receipt list and settings.
+                    API key, saved chats, library images, vault, characters, receipt list and settings.
                     It can’t be undone.{' '}
                     <strong>
                       If your key has credit, copy it somewhere safe first
                     </strong>
                     : Anonymo can’t show it again.
                   </p>
+                  {wipeError && <p role="alert">Couldn’t wipe device storage. Try again.</p>}
                   <div className="age-gate-actions">
                     <button
                       ref={wipe}
                       type="button"
                       className="btn btn-danger"
-                      onClick={() => {
-                        wipeDevice();
+                      disabled={wiping}
+                      onClick={async () => {
+                        setWiping(true);
+                        setWipeError(false);
+                        try {
+                          await wipeDevice();
+                        } catch {
+                          setWipeError(true);
+                          return;
+                        } finally {
+                          setWiping(false);
+                        }
                         for (const s of [
                           keyStore,
                           keepStore,
@@ -419,18 +455,19 @@ export function WipeDevice() {
                           receiptsStore,
                           modelStore,
                           adultStore,
+                          vanishStore,
                         ])
                           s.changed();
                         openChat(null);
                         setDone(true);
                       }}
                     >
-                      <Flame size={16} aria-hidden="true" /> Wipe everything
+                      <Flame size={16} aria-hidden="true" /> {wiping ? 'Wiping…' : 'Wipe everything'}
                     </button>
                     <button
                       type="button"
                       className="btn btn-ghost"
-                      onClick={() => setAsking(false)}
+                      onClick={() => !wiping && setAsking(false)}
                     >
                       Cancel
                     </button>

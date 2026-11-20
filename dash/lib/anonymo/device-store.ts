@@ -3,6 +3,7 @@
 // browser renders what is stored, and every reader updates when a value changes here or in another tab.
 
 import { useSyncExternalStore } from 'react';
+import { startVault, vault } from './vault-browser.ts';
 
 export type DeviceStore<T> = {
   subscribe: (listener: () => void) => () => void;
@@ -63,4 +64,27 @@ export function writeJson(key: string, value: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+export const DEVICE_PREFIX = 'anonymo.';
+
+export function wipeDevice(): Promise<number>;
+export function wipeDevice(storages: Storage[]): number;
+export function wipeDevice(storages?: Storage[]) {
+  if (storages) return removeDeviceKeys(storages);
+  startVault();
+  return vault.wipe(() => removeDeviceKeys([localStorage, sessionStorage]));
+}
+
+function removeDeviceKeys(storages: Storage[]) {
+  let removed = 0;
+  for (const storage of storages) {
+    const keys = Array.from({ length: storage.length }, (_, i) => storage.key(i));
+    for (const key of keys) {
+      if (!key?.startsWith(DEVICE_PREFIX)) continue;
+      storage.removeItem(key);
+      removed++;
+    }
+  }
+  return removed;
 }

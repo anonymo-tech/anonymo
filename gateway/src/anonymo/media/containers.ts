@@ -81,10 +81,11 @@ const wav: Container = {
 // ---- ISO BMFF / MP4 ------------------------------------------------------------------------------------------------
 export const C2PA_BMFF_UUID = Uint8Array.from(Buffer.from("d8fec3d61b0e483c92975828877ec481", "hex"));
 type Box = { type: string; start: number; end: number; header: number };
-function boxes(b: Uint8Array): Box[] {
+function boxes(b: Uint8Array, limit = Infinity): Box[] {
   const out: Box[] = [];
   let at = 0;
   while (at + 8 <= b.length) {
+    if (out.length === limit) throw new Error("too many MP4 boxes");
     let size = readU32be(b, at);
     let header = 8;
     if (size === 1) {
@@ -98,6 +99,23 @@ function boxes(b: Uint8Array): Box[] {
   }
   if (at !== b.length || !out.length) throw new Error("not an MP4 file");
   return out;
+}
+
+/** The frame classifier reviews one picture track. Refuse containers with an additional playable track. */
+export function isSilentMp4(bytes: Uint8Array): boolean {
+  const payload = (b: Uint8Array, type: string) => {
+    const found = boxes(b, 1024).filter((x) => x.type === type);
+    if (found.length !== 1) throw new Error("expected one MP4 " + type + " box");
+    const [box] = found;
+    return b.subarray(box.start + box.header, box.end);
+  };
+  try {
+    if (!mp4.matches(bytes)) return false;
+    const handler = payload(payload(payload(payload(bytes, "moov"), "trak"), "mdia"), "hdlr");
+    return handler.length >= 24 && ascii(handler, 8, 4) === "vide";
+  } catch {
+    return false;
+  }
 }
 const isC2paBox = (b: Uint8Array, x: Box) => x.type === "uuid" && C2PA_BMFF_UUID.every((v, i) => b[x.start + x.header + i] === v);
 const MP4_PURPOSE = te.encode("manifest\0");

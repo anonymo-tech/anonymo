@@ -10,6 +10,7 @@ import { balanceOf, verifyInvariants } from "../../src/ledger/ledger.ts";
 import { usdToPico } from "../../src/lib/money.ts";
 import type { FloorGate, FloorInput } from "../../src/anonymo/seams.ts";
 import { provenanceKeyFromSeed } from "../../src/anonymo/media/c2pa.ts";
+import { MediaCatalog } from "../../src/anonymo/media/catalog.ts";
 import { createMediaGate, type FrameScore, type MediaClassifier } from "../../src/anonymo/media/gate.ts";
 import { decodePng } from "../../src/anonymo/media/png.ts";
 import { createProvenance } from "../../src/anonymo/media/provenance.ts";
@@ -93,12 +94,13 @@ beforeAll(async () => {
   auth = { ...k.auth, ...US };
   accountId = (await h.ctx.db.select().from(keys).where(eq(keys.keyHash, k.hash)))[0].accountId;
   s = setMediaServices(h.ctx, {
+    catalog: MediaCatalog.fromEnv({ ANONYMO_NANOGPT_API_KEY: "test-key" }),
     gate: createMediaGate(classifier, { timeoutMs: 2000 }),
     provenance: createProvenance({ key: provenanceKeyFromSeed(new Uint8Array(32).fill(5)), watermarker: testWatermarker() }),
     store: new MemoryMediaStore(64 * 1024 * 1024),
-    offered: new Set(["comfyui", "venice", "tts"] as const),
-    images: { comfyui: images, venice: images },
-    video: { comfyui: video, venice: video },
+    offered: new Set(["comfyui", "venice", "tts", "nanogpt"] as const),
+    images: { comfyui: images, venice: images, nanogpt: images },
+    video: { comfyui: video, venice: video, nanogpt: video },
     speech,
     pollIntervalMs: 0,
   });
@@ -150,6 +152,24 @@ async function nothingCharged(run: () => Promise<Response>) {
 
 // ---- Images --------------------------------------------------------------------------------------------------------
 describe("POST /v1/images/generations", () => {
+  test("uses the hosted model's batch limit, checks every image and charges per output", async () => {
+    const model = "ideogram/v4.5";
+    const request = { model, prompt: "a green square", response_format: "b64_json" };
+    const listed = await (await h.request("/v1/media/models")).json() as { data: { id: string; max_images?: number }[] };
+    expect(listed.data.find((m) => m.id === model)?.max_images).toBe(8);
+    expect((await untouched(() => post("/v1/images/generations", { ...request, n: 9 }))).status).toBe(400);
+    expect((await untouched(() => post("/v1/images/generations", { ...request, model: "bfl/flux.2-flash", n: 5 }))).status).toBe(400);
+    const before = await balance();
+    const checksBefore = classifierCalls;
+    const res = await post("/v1/images/generations", { ...request, n: 8 });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { data: { b64_json: string }[] };
+    expect(body.data).toHaveLength(8);
+    expect(classifierCalls - checksBefore).toBe(8);
+    for (const image of body.data) await verified(Buffer.from(image.b64_json, "base64"));
+    expect(before - await balance()).toBe(usdToPico("0.608"));
+  });
+
   test("returns signed URLs to stamped PNGs, charges per image, and signs a receipt", async () => {
     const before = await balance();
     const res = await post("/v1/images/generations", { model: "flux.1-schnell", prompt: `a green square ${PROMPT_MARK}`, n: 2, size: "1024x1024" });
@@ -414,7 +434,7 @@ describe("/v1/video/generations", () => {
     await Bun.sleep(2);
     return h.request(`/v1/video/generations/${id}`, { headers });
   };
-  type Job = { id: string; status: string; url?: string; error?: { type: string; reason?: string }; anonymo: { cost_usd: number } };
+  type Job = { id: string; status: string; url?: string; error?: { type: string; reason?: string }; anonymo: { cost_usd: number; receipt?: { payload: { outputs_sha256: string[] }; sig: string } } };
 
   test("submit → in progress → completed with a signed URL to a stamped MP4, charged per second", async () => {
     const before = await balance();
@@ -435,7 +455,16 @@ describe("/v1/video/generations", () => {
     expect(await openHolds()).toBe(0);
     const file = await h.request(pathOf(done.url!));
     expect(file.headers.get("content-type")).toBe("video/mp4");
-    await verified(new Uint8Array(await file.arrayBuffer()));
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const hash = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+    expect(done.anonymo.receipt).toMatchObject({ payload: { request_id: job.id, unit: "second", cost_usd: 0.2, outputs_sha256: [hash] }, sig: expect.any(String) });
+    const download = await h.request(pathOf(done.url!) + "&download=1");
+    expect(download.headers.get("content-disposition")).toStartWith("attachment;");
+    const range = await h.request(pathOf(done.url!), { headers: { range: "bytes=0-1" } });
+    expect(range.status).toBe(206);
+    expect(range.headers.get("content-range")).toBe(`bytes 0-1/${bytes.length}`);
+    expect(new Uint8Array(await range.arrayBuffer())).toEqual(bytes.subarray(0, 2));
+    await verified(bytes);
     // Polling again neither re-polls the upstream nor charges twice.
     const polled = calls.videoPoll;
     expect(((await (await poll(job.id)).json()) as Job).status).toBe("completed");
@@ -512,6 +541,32 @@ describe("/v1/video/generations", () => {
     expect((await errorOf(res)).type).toBe("floor_blocked");
   });
 
+  test("NanoGPT models list their allowed lengths and reject gaps and references before submission", async () => {
+    const offered = s.offered;
+    s = setMediaServices(h.ctx, { offered: new Set(["nanogpt"]) });
+    try {
+      const models = await (await h.request("/v1/media/models")).json() as { data: { id: string; kind: string }[] };
+      expect(models.data.filter((m) => m.kind === "video")).toHaveLength(5);
+      expect(models.data.find((m) => m.id === "google/veo-3.1-lite")).toMatchObject({
+        pricing: { usd_per_second: "0.065" }, seconds: { min: 4, max: 8, default: 8, allowed: [4, 6, 8] }, sizes: ["1280x720", "720x1280"],
+      });
+      expect(await errorOf(await untouched(() => submit({ model: "google/veo-3.1-lite", seconds: 5 })))).toMatchObject({ type: "invalid_duration" });
+      for (const field of ["reference_videos", "referenceAudios", "imageDataUrl", "videoAttachmentId", "last_image"]) {
+        expect(await errorOf(await untouched(() => submit({ model: "google/veo-3.1-lite", [field]: "fixture" })))).toMatchObject({ type: "video_uploads_not_supported" });
+      }
+      const created = await submit({ model: "google/veo-3.1-lite", seconds: 6, size: "720x1280" });
+      expect(created.status).toBe(202);
+      const job = await created.json() as Job;
+      videoPolls = [{ state: "failed", blocked: true, message: "private provider error" }];
+      const blocked = await (await poll(job.id)).json() as Job;
+      expect(blocked).toMatchObject({ status: "failed", error: { type: "upstream_blocked" }, anonymo: { cost_usd: 0 } });
+      expect(JSON.stringify(blocked)).not.toContain("private provider error");
+      expect(await openHolds()).toBe(0);
+    } finally {
+      s = setMediaServices(h.ctx, { offered });
+    }
+  });
+
   test("a submission the upstream refuses releases the hold and records a failed job", async () => {
     const before = await balance();
     const held = await openHolds();
@@ -559,9 +614,12 @@ describe("media store, provenance endpoints and privacy", () => {
   });
 
   test("the model list shows prices, voices and licences", async () => {
-    const j = (await (await h.request("/v1/media/models")).json()) as { data: { id: string; license: string; voices?: string[] }[] };
+    const j = (await (await h.request("/v1/media/models")).json()) as { data: { id: string; license: string; upstream: string; voices?: string[] }[] };
     expect(j.data.find((m) => m.id === "kokoro")?.voices?.length).toBe(54);
-    expect(j.data.every((m) => m.license === "Apache-2.0" || m.license === "MIT" || m.license === "venice-terms")).toBe(true);
+    for (const model of j.data) {
+      if (model.upstream === "nanogpt") expect(model.license).toBe("provider-terms");
+      else expect(["Apache-2.0", "MIT", "venice-terms"]).toContain(model.license);
+    }
   });
 
   test("the model list leaves out models whose upstream this gateway has not configured", async () => {

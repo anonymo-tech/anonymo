@@ -13,7 +13,7 @@
     "lint": "oxlint",
     "format": "oxfmt",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test scripts/check-anonymo-client.mjs scripts/check-wallet.mjs scripts/check-copy.mjs scripts/check-solana.mjs scripts/check-guards.mjs scripts/check-safety.mjs scripts/check-history.mjs scripts/check-usage.mjs scripts/check-catchup.mjs scripts/check-status.mjs scripts/check-coin.mjs scripts/check-workspace.mjs",
+    "test": "node --experimental-strip-types --test scripts/check-anonymo-client.mjs scripts/check-wallet.mjs scripts/check-copy.mjs scripts/check-solana.mjs scripts/check-guards.mjs scripts/check-safety.mjs scripts/check-history.mjs scripts/check-usage.mjs scripts/check-catchup.mjs scripts/check-status.mjs scripts/check-coin.mjs scripts/check-workspace.mjs scripts/check-compare.mjs scripts/check-vanish.mjs scripts/check-vault.mjs scripts/check-image-models.mjs scripts/check-video.mjs",
     "test:workspace-browser": "node --test scripts/check-workspace-browser.mjs",
     "test:client": "node --experimental-strip-types --test scripts/check-anonymo-client.mjs",
     "test:wallet": "node --experimental-strip-types --test scripts/check-wallet.mjs",

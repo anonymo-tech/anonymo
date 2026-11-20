@@ -26,7 +26,7 @@ import { ApiError, fail } from "../../lib/errors.ts";
 import { picoToUsd, usdToPico, type Pico } from "../../lib/money.ts";
 import { log } from "../../lib/util.ts";
 import type { FloorInput } from "../seams.ts";
-import type { ImageModel, MediaModel, SpeechModel, VideoModel } from "./catalog.ts";
+import { DEFAULT_MAX_IMAGES, type ImageModel, type MediaModel, type SpeechModel, type VideoModel } from "./catalog.ts";
 import { containerFor } from "./containers.ts";
 import type { GateReason } from "./gate.ts";
 import { ProvenanceError } from "./provenance.ts";
@@ -43,7 +43,7 @@ const IMAGE_DEADLINE_MS = 240_000;
 const VIDEO_HOLD_MS = 60 * 60_000;
 // Fields that would carry a voice sample or a reference image into a model that only takes stock inputs.
 const CLONE_FIELDS = ["reference_audio", "speaker_wav", "voice_sample", "audio", "audio_prompt", "prompt_audio", "voice_url", "clone", "reference_text", "speaker_audio", "voice_file"];
-const VIDEO_UPLOAD_FIELDS = ["image", "image_url", "input_reference", "input_image", "first_frame", "last_frame", "reference_image", "video", "video_url"];
+const VIDEO_UPLOAD_FIELD = /^(?:(?:input|reference|first|last|start|end|source)?(?:image|video|audio)s?(?:url|dataurl|attachmentid|file)?|inputreference|(?:first|last|start|end)frame|references?)$/i;
 
 class MediaBlocked extends Error {
   constructor(readonly reason: GateReason) {
@@ -151,7 +151,7 @@ function mediaError(e: unknown, what: string): unknown {
   return e;
 }
 
-function receipt(ctx: Ctx, o: { requestId: string; model: MediaModel; units: number; unit: string; charged: Pico; outputs: Media[] }) {
+function receipt(ctx: Ctx, o: { requestId: string; model: MediaModel; units: number; unit: string; charged: Pico; outputs: Media[]; at?: Date }) {
   const payload = {
     v: 1,
     kind: "media",
@@ -163,7 +163,7 @@ function receipt(ctx: Ctx, o: { requestId: string; model: MediaModel; units: num
     cost_usd: picoToUsd(o.charged),
     outputs_sha256: o.outputs.map((m) => new Bun.CryptoHasher("sha256").update(m.bytes).digest("hex")),
     provenance: "c2pa+watermark",
-    ts: new Date().toISOString(),
+    ts: (o.at ?? new Date()).toISOString(),
   };
   const s = ctx.signer.sign(payload);
   return { payload, key_id: s.keyId, sig: s.sig };
@@ -185,7 +185,8 @@ function readImageFields(s: MediaServices, f: Record<string, unknown>, edit: boo
   const prompt = str(f.prompt);
   if (!prompt.trim() || prompt.length > MAX_PROMPT) fail(400, `Enter a prompt of 1–${MAX_PROMPT.toLocaleString("en-US")} characters.`);
   const n = f.n == null ? 1 : Number(f.n);
-  if (!Number.isInteger(n) || n < 1 || n > 4) fail(400, "n must be 1–4.");
+  const maxImages = model.maxImages ?? DEFAULT_MAX_IMAGES;
+  if (!Number.isInteger(n) || n < 1 || n > maxImages) fail(400, `n must be 1–${maxImages}.`);
   const format = f.response_format == null ? "url" : f.response_format;
   if (format !== "url" && format !== "b64_json") fail(400, 'response_format must be "url" or "b64_json".');
   return { model, prompt, n, ...parseSize(model, f.size), seed: parseSeed(f.seed == null ? undefined : Number(f.seed)), format };
@@ -314,12 +315,14 @@ async function submitVideo(ctx: Ctx, c: Context): Promise<Response> {
   const s = mediaServices(ctx);
   const body = await readJson(c);
   const model = modelOr404(s.catalog.get("video", body.model), "video");
-  if (VIDEO_UPLOAD_FIELDS.some((f) => body[f] != null)) fail(400, "Video takes a text prompt only; reference images and uploads are not accepted.", "video_uploads_not_supported");
+  if (Object.entries(body).some(([field, value]) => value != null && VIDEO_UPLOAD_FIELD.test(field.replace(/[_-]/g, ""))))
+    fail(400, "Video takes a text prompt only; references and uploads are not accepted.", "video_uploads_not_supported");
   const prompt = str(body.prompt);
   if (!prompt.trim() || prompt.length > MAX_VIDEO_PROMPT) fail(400, `Enter a prompt of 1–${MAX_VIDEO_PROMPT.toLocaleString("en-US")} characters.`);
   const seconds = body.seconds ?? body.duration ?? model.defaultSeconds;
   const secs = Number(typeof seconds === "string" ? seconds.replace(/s$/, "") : seconds);
   if (!Number.isInteger(secs) || secs < model.seconds[0] || secs > model.seconds[1]) fail(400, `seconds must be a whole number from ${model.seconds[0]} to ${model.seconds[1]}.`);
+  if (model.allowedSeconds && !model.allowedSeconds.includes(secs)) fail(400, `Choose a length this model offers: ${model.allowedSeconds.join(", ")} seconds.`, "invalid_duration");
   const { width, height, size } = parseSize(model, body.size);
   const seed = parseSeed(body.seed);
   await floorCheck(ctx, { text: prompt, modality: "video", hasUpload: false });
@@ -367,7 +370,7 @@ async function advance(ctx: Ctx, s: MediaServices, job: JobRow): Promise<void> {
     return; // transient: try again on the next poll; the hold's own expiry bounds how long
   }
   if (polled.state === "running") return;
-  if (polled.state === "failed") return end("failed", "upstream_failed");
+  if (polled.state === "failed") return polled.blocked ? end("blocked", "upstream_blocked") : end("failed", "upstream_failed");
   const finishing = await ctx.db.update(mediaJobs).set({ status: "finishing", updatedAt: new Date() }).where(and(eq(mediaJobs.id, job.id), eq(mediaJobs.status, "running"))).returning({ id: mediaJobs.id });
   if (!finishing.length) return;
   let mediaId: string | null = null;
@@ -390,6 +393,7 @@ async function advance(ctx: Ctx, s: MediaServices, job: JobRow): Promise<void> {
 const ERROR_MESSAGES: Record<string, string> = {
   upstream_unavailable: "The video provider was unavailable. Nothing was charged.",
   upstream_failed: "The video provider failed. Nothing was charged.",
+  upstream_blocked: "The video provider blocked this request. Nothing was charged.",
   model_unavailable: "This video model is no longer available. Nothing was charged.",
   media_gate_unavailable: "The video could not be safety-checked, so it was not returned. Nothing was charged.",
   explicit_media_unavailable: "Anonymo makes no explicit video. Nothing was returned or charged.",
@@ -398,11 +402,16 @@ const ERROR_MESSAGES: Record<string, string> = {
   internal: "The job failed. Nothing was charged.",
 };
 
-function videoJson(ctx: Ctx, job: JobRow) {
+function videoJson(ctx: Ctx, s: MediaServices, job: JobRow) {
   const status = job.status === "completed" ? "completed" : job.status === "failed" || job.status === "blocked" ? "failed" : job.status === "queued" ? "queued" : "in_progress";
   const expires = job.mediaExpiresAt?.getTime() ?? 0;
   const live = job.status === "completed" && job.mediaId && expires > Date.now();
   const [type, reason] = (job.errorType ?? "").split(":");
+  const output = live ? s.store.get(job.mediaId!) : null;
+  const model = output ? s.catalog.get("video", job.model) : null;
+  const signed = output && model && job.chargedPico != null
+    ? receipt(ctx, { requestId: job.id, model, units: job.seconds, unit: "second", charged: job.chargedPico, outputs: [output], at: job.updatedAt })
+    : null;
   return {
     id: job.id,
     object: "video.generation",
@@ -416,7 +425,7 @@ function videoJson(ctx: Ctx, job: JobRow) {
     ...(job.errorType
       ? { error: { type, message: type === "media_blocked" ? "The video crossed a line Anonymo blocks for everyone. Nothing was returned, stored or charged." : (ERROR_MESSAGES[type] ?? ERROR_MESSAGES.internal), ...(reason ? { reason } : {}) } }
       : {}),
-    anonymo: { request_id: job.id, cost_usd: job.chargedPico != null ? usd(job.chargedPico) : 0, quoted_usd: usd(job.pricePico), ...(job.status === "completed" ? { provenance: { c2pa: true, watermark: true } } : {}) },
+    anonymo: { request_id: job.id, cost_usd: job.chargedPico != null ? usd(job.chargedPico) : 0, quoted_usd: usd(job.pricePico), ...(job.status === "completed" ? { provenance: { c2pa: true, watermark: true } } : {}), ...(signed ? { receipt: signed } : {}) },
   };
 }
 
@@ -428,7 +437,7 @@ async function getVideo(ctx: Ctx, c: Context): Promise<Response> {
   const job = await load();
   if (!job) fail(404, "Unknown video job.", "not_found");
   if (job.status === "running") await advance(ctx, s, job);
-  return c.json(videoJson(ctx, (await load())!));
+  return c.json(videoJson(ctx, s, (await load())!));
 }
 
 // ---- Shared endpoints ----------------------------------------------------------------------------------------------
@@ -440,9 +449,28 @@ function getMedia(ctx: Ctx, c: Context): Response {
   const item = s.store.get(id);
   if (!item) return notFound();
   const ext = item.mime === "image/png" ? "png" : item.mime === "audio/wav" ? "wav" : "mp4";
-  return new Response(item.bytes as unknown as ConstructorParameters<typeof Response>[0], {
-    headers: { "content-type": item.mime, "cache-control": "private, no-store", "content-disposition": `inline; filename="${id}.${ext}"`, "x-content-type-options": "nosniff", "x-anonymo-provenance": "c2pa+watermark" },
-  });
+  const disposition = ext === "mp4" && c.req.query("download") === "1" ? "attachment" : "inline";
+  const headers = new Headers({ "content-type": item.mime, "cache-control": "private, no-store", "content-disposition": `${disposition}; filename="${id}.${ext}"`, "x-content-type-options": "nosniff", "x-anonymo-provenance": "c2pa+watermark" });
+  let bytes = item.bytes;
+  let status = 200;
+  if (ext === "mp4") {
+    headers.set("accept-ranges", "bytes");
+    const range = /^bytes=(\d*)-(\d*)$/i.exec(c.req.header("range") ?? "");
+    if (range && (range[1] || range[2])) {
+      const length = bytes.length;
+      const start = range[1] ? Number(range[1]) : Math.max(0, length - Number(range[2]));
+      const end = Math.min(length - 1, range[1] && range[2] ? Number(range[2]) : length - 1);
+      if (start > end) {
+        headers.set("content-range", `bytes */${length}`);
+        return new Response(null, { status: 416, headers });
+      }
+      headers.set("content-range", `bytes ${start}-${end}/${length}`);
+      bytes = bytes.subarray(start, end + 1);
+      status = 206;
+    }
+  }
+  headers.set("content-length", String(bytes.length));
+  return new Response(bytes as unknown as ConstructorParameters<typeof Response>[0], { status, headers });
 }
 
 function listModels(ctx: Ctx, c: Context) {
@@ -457,9 +485,9 @@ function listModels(ctx: Ctx, c: Context) {
       family: m.family,
       license: m.license,
       upstream: m.upstream === "venice" || m.upstream === "nanogpt" ? m.upstream : "self-hosted",
-      ...(m.kind === "image" ? { pricing: { usd_per_image: m.usdPerImage }, edit: m.edit, sizes: m.sizes } : {}),
+      ...(m.kind === "image" ? { pricing: { usd_per_image: m.usdPerImage }, edit: m.edit, sizes: m.sizes, max_images: m.maxImages ?? DEFAULT_MAX_IMAGES } : {}),
       ...(m.kind === "speech" ? { pricing: { usd_per_1k_chars: m.usdPer1kChars }, voices: m.voices, max_chars: m.maxChars, response_formats: ["wav"] } : {}),
-      ...(m.kind === "video" ? { pricing: { usd_per_second: m.usdPerSecond }, seconds: { min: m.seconds[0], max: m.seconds[1] }, sizes: m.sizes } : {}),
+      ...(m.kind === "video" ? { pricing: { usd_per_second: m.usdPerSecond }, seconds: { min: m.seconds[0], max: m.seconds[1], default: m.defaultSeconds, ...(m.allowedSeconds ? { allowed: m.allowedSeconds } : {}) }, sizes: m.sizes } : {}),
     })),
   });
 }

@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { assertLicensed, MediaCatalog } from "../../src/anonymo/media/catalog.ts";
 import { createMediaGate } from "../../src/anonymo/media/gate.ts";
 import { hostedClassifier, hostedFrame, parseGuardVerdict } from "../../src/anonymo/media/hosted-classifier.ts";
+import { decodePng } from "../../src/anonymo/media/png.ts";
 import { classifierFromEnv } from "../../src/anonymo/media/services.ts";
 import { nanogptAdapter, UpstreamError } from "../../src/anonymo/media/upstreams.ts";
 import { loadConfig } from "../../src/config.ts";
@@ -107,21 +108,49 @@ describe("NanoGPT images", () => {
   const b64 = Buffer.from(png).toString("base64");
   const adapter = (answer: (url: string, body: any) => Response) => {
     const ff = fakeFetch(answer);
-    return { up: nanogptAdapter({ ...NANO, byAspectRatio: ["nano-banana"], fetch: ff.f }), calls: ff.calls };
+    return { up: nanogptAdapter({ ...NANO, fetch: ff.f }), calls: ff.calls };
   };
   const req = (model: string, width = 1024, height = 1024, n = 1) => ({ model, prompt: "a lighthouse", n, width, height, seed: 1, safe: true });
   const signal = new AbortController().signal;
 
-  test("asks for base64, sized by aspect ratio or by WxH depending on the model", async () => {
-    const { up, calls } = adapter(() => json({ data: [{ b64_json: b64 }] }));
-    const [img] = await up.generate(req("nano-banana", 1344, 768), signal);
-    expect(img.mime).toBe("image/png");
-    expect(img.bytes).toEqual(png);
-    expect(calls[0].url).toBe("https://nano.example/api/v1/images/generations");
-    expect(calls[0].body).toEqual({ model: "nano-banana", prompt: "a lighthouse", n: 1, response_format: "b64_json", aspect_ratio: "16:9" });
-    expect((calls[0].init.headers as Record<string, string>).authorization).toBe("Bearer nano-test-key");
-    await up.generate(req("gpt-image-2", 1536, 1024), signal);
-    expect(calls[1].body).toEqual({ model: "gpt-image-2", prompt: "a lighthouse", n: 1, response_format: "b64_json", size: "1536x1024" });
+  test("maps caller dimensions to each model's request format", async () => {
+    const cases = [
+      [req("nano-banana", 1344, 768), { aspect_ratio: "16:9" }],
+      [req("gpt-image-2", 1536, 1024), { size: "1536x1024" }],
+      [req("flux-2-max"), { size: "1024*1024" }],
+      [req("flux-2-flash", 720, 1280), { size: "720*1280" }],
+      [req("ideogram/v4.5", 1280, 720, 8), { size: "1280x720" }],
+      [req("recraft-ai/recraft-v4.1/text-to-image", 576, 1024, 8), { size: "576x1024", enable_safety_checker: true }],
+      [req("krea/v2/medium/text-to-image", 1280, 720), { aspect_ratio: "16:9" }],
+      [req("xai/grok-imagine-image/v2.0/text-to-image", 720, 1280), { aspect_ratio: "9:16", resolution: "1k", output_format: "png" }],
+    ] as const;
+    for (const [request, sizing] of cases) {
+      const { up, calls } = adapter(() => json({ data: Array.from({ length: request.n }, () => ({ b64_json: b64 })) }));
+      const output = await up.generate(request, signal);
+      expect(output).toHaveLength(request.n);
+      expect(output[0]).toEqual({ mime: "image/png", bytes: png });
+      expect(calls[0].url).toBe("https://nano.example/api/v1/images/generations");
+      expect(calls[0].body).toEqual({ model: request.model, prompt: request.prompt, n: request.n, response_format: "b64_json", ...sizing });
+      expect((calls[0].init.headers as Record<string, string>).authorization).toBe("Bearer nano-test-key");
+    }
+  });
+
+  test("rejects an unsupported size and an oversized batch before calling NanoGPT", async () => {
+    const { up, calls } = adapter(() => json({}));
+    await expect(up.generate(req("flux-2-max", 1024, 1024, 5), signal)).rejects.toMatchObject({ status: 400, rejected: true });
+    await expect(up.generate(req("ideogram/v4.5", 1024, 1024, 9), signal)).rejects.toMatchObject({ status: 400, rejected: true });
+    await expect(up.generate(req("krea/v2/medium/text-to-image", 1111, 2222), signal)).rejects.toMatchObject({ status: 400, rejected: true });
+    expect(calls).toHaveLength(0);
+  });
+
+  test("normalizes inline JPEG and WebP to a PNG the provenance code can decode", async () => {
+    for (const encoded of [new Bun.Image(png).jpeg(), new Bun.Image(png).webp()]) {
+      const inline = Buffer.from(await encoded.bytes()).toString("base64");
+      const { up } = adapter(() => json({ data: [{ b64_json: inline }] }));
+      const [img] = await up.generate(req("flux-2-max"), signal);
+      expect(img.mime).toBe("image/png");
+      expect(decodePng(img.bytes)).toMatchObject({ width: 4, height: 4 });
+    }
   });
 
   test("never fetches a URL from the answer, and a short batch is an error", async () => {
@@ -129,7 +158,7 @@ describe("NanoGPT images", () => {
     await expect(up.generate(req("gpt-image-2"), signal)).rejects.toThrow(UpstreamError);
     expect(calls).toHaveLength(1);
     const short = adapter(() => json({ data: [{ b64_json: b64 }] }));
-    await expect(short.up.generate(req("gpt-image-2", 1024, 1024, 2), signal)).rejects.toThrow(/fewer images/);
+    await expect(short.up.generate(req("gpt-image-2", 1024, 1024, 2), signal)).rejects.toThrow(/wrong number of images/);
   });
 
   test("errors: a refused prompt is a rejection, auth or credit problems mean unavailable, edits are not wired", async () => {
@@ -145,14 +174,42 @@ describe("NanoGPT images", () => {
 });
 
 describe("NanoGPT models in the catalog", () => {
-  test("listed only with a key, under their maker's prefix, priced from the code or the environment", () => {
-    expect(MediaCatalog.fromEnv({}).models.some((m) => m.upstream === "nanogpt")).toBe(false);
-    const c = MediaCatalog.fromEnv({ ANONYMO_NANOGPT_API_KEY: "k", ANONYMO_NANOGPT_IMAGE_USD_GPT_IMAGE_2: "0.09" });
-    expect(c.get("image", "google/nano-banana")).toMatchObject({ upstream: "nanogpt", upstreamModel: "nano-banana", usdPerImage: "0.050", edit: false });
-    expect(c.get("image", "openai/gpt-image-2")).toMatchObject({ upstreamModel: "gpt-image-2", usdPerImage: "0.09" });
-    expect(() => MediaCatalog.fromEnv({ ANONYMO_NANOGPT_API_KEY: "k", ANONYMO_NANOGPT_IMAGE_USD_NANO_BANANA: "free" })).toThrow(/dollar amount/);
+  const models = [
+    ["google/nano-banana", "nano-banana", "0.050", "NANO_BANANA", 4],
+    ["openai/gpt-image-2", "gpt-image-2", "0.080", "GPT_IMAGE_2", 4],
+    ["bfl/flux.2-max", "flux-2-max", "0.090", "FLUX_2_MAX", 4],
+    ["bfl/flux.2-flash", "flux-2-flash", "0.032", "FLUX_2_FLASH", 4],
+    ["ideogram/v4.5", "ideogram/v4.5", "0.076", "IDEOGRAM_V4_5", 8],
+    ["recraft/v4.1", "recraft-ai/recraft-v4.1/text-to-image", "0.050", "RECRAFT_V4_1", 8],
+    ["krea/krea-2-medium", "krea/v2/medium/text-to-image", "0.038", "KREA_2_MEDIUM", 4],
+    ["xai/grok-imagine-2", "xai/grok-imagine-image/v2.0/text-to-image", "0.076", "GROK_IMAGINE_2", 4],
+  ] as const;
+  const env = { ANONYMO_NANOGPT_API_KEY: "test-key" };
+
+  test("all eight appear with a key and none appear without one", () => {
+    for (const missing of [{}, { ANONYMO_NANOGPT_API_KEY: " " }]) {
+      expect(MediaCatalog.fromEnv(missing).models.filter((m) => m.upstream === "nanogpt")).toEqual([]);
+    }
+    const c = MediaCatalog.fromEnv(env);
+    expect(c.models.filter((m) => m.upstream === "nanogpt" && m.kind === "image").map((m) => m.id)).toEqual(models.map(([id]) => id));
+    for (const [id, upstreamModel, usdPerImage, , maxImages] of models) {
+      expect(c.get("image", id)).toMatchObject({ upstream: "nanogpt", upstreamModel, usdPerImage, maxImages, edit: false, defaultSize: "1024x1024" });
+      expect(c.get("image", id)?.sizes.every((size) => /^\d+x\d+$/.test(size))).toBe(true);
+    }
     const relabelled = { ...c.get("image", "google/nano-banana")!, id: "anonymo-image" };
     expect(() => assertLicensed(relabelled)).toThrow(/maker's prefix/);
+    expect(() => assertLicensed({ ...c.get("image", "bfl/flux.2-max")!, upstreamModel: "flux-2-dev" })).toThrow(/FLUX/);
+  });
+
+  test("each price override is validated and affects only its own model", () => {
+    for (const [id, , , suffix] of models) {
+      const key = "ANONYMO_NANOGPT_IMAGE_USD_" + suffix;
+      const c = MediaCatalog.fromEnv({ ...env, [key]: " 0.123456 " });
+      for (const [otherId, , defaultUsd] of models) {
+        expect(c.get("image", otherId)?.usdPerImage).toBe(otherId === id ? "0.123456" : defaultUsd);
+      }
+      expect(() => MediaCatalog.fromEnv({ ...env, [key]: "free" })).toThrow(/dollar amount/);
+    }
   });
 });
 

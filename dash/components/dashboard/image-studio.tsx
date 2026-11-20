@@ -1,7 +1,7 @@
 'use client';
 
 // Update "images": the image studio. Prompt, model, size and count; images come back as base64 PNGs with provenance
-// (a hidden watermark and a signed C2PA label) and stay in this tab only. Safe for work: the gateway refuses nude or
+// (a hidden watermark and a signed C2PA label) and stay in this tab until downloaded or saved. Safe for work: the gateway refuses nude or
 // sexual prompts before anything is made and checks every image before it is returned (gateway src/anonymo/media).
 
 import Link from 'next/link';
@@ -12,6 +12,9 @@ import { useAnonymo } from '../anonymo-provider';
 import { AnonymoApiError, describeError, isOutOfCredit } from '@/lib/anonymo/client';
 import { formatUsd, usdToMusd } from '@/lib/anonymo/money';
 import type { MediaImageModel } from '@/lib/anonymo/types';
+import { updateOn } from '@/lib/anonymo/updates';
+import { ImageCompare } from './image-compare';
+import { SaveLibraryImage } from './save-library-image';
 
 type Shot = { id: string; src: string; prompt: string; model: string; size: string; costUsd: string; requestId: string; at: number };
 type Job = { id: string; n: number; ratio: string; started: number };
@@ -42,7 +45,11 @@ function imageError(error: unknown): string {
 }
 
 export function ImageStudio() {
-  const { ready, key, client, refreshBalance } = useAnonymo();
+  const { ready, key, client, refreshBalance, demo } = useAnonymo();
+  const compareOn = updateOn('compare', demo);
+  const [compareMode, setCompareMode] = useState(false);
+  const studioModeButton = useRef<HTMLButtonElement>(null);
+  const comparing = compareOn && compareMode;
   const [models, setModels] = useState<MediaImageModel[] | null>(null);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [modelId, setModelId] = useState('');
@@ -116,8 +123,28 @@ export function ImageStudio() {
       </div>
     );
 
-  return (
-    <div className="studio">
+  return (<>
+    {compareOn && (
+      <>
+        <div className="compare-mode" role="group" aria-label="Image studio mode">
+          <button ref={studioModeButton} type="button" className="size-chip" aria-pressed={!comparing} onClick={() => setCompareMode(false)}>Studio</button>
+          <button type="button" className="size-chip" aria-pressed={comparing} onClick={() => setCompareMode(true)}>Compare</button>
+        </div>
+        <div hidden={!comparing}>
+          <ImageCompare
+            models={models} modelsError={modelsError} prompt={prompt} setPrompt={setPrompt}
+            preferredModel={modelId} preferredSize={size}
+            onUseModel={(id, resultSize) => {
+              setModelId(id);
+              setSize(resultSize);
+              setCompareMode(false);
+              studioModeButton.current?.focus();
+            }}
+          />
+        </div>
+      </>
+    )}
+    <div className="studio" hidden={comparing}>
       <form
         className="studio-panel"
         onSubmit={(e) => {
@@ -259,6 +286,7 @@ export function ImageStudio() {
                   <a className="btn btn-small" href={s.src} download={`anonymo-${s.requestId}.png`}>
                     <Download size={15} aria-hidden="true" /> Download PNG
                   </a>
+                  {updateOn('vault', demo) && <SaveLibraryImage demo={demo} src={s.src} title={s.model} />}
                   <button type="button" className="btn btn-ghost btn-small" onClick={() => setPrompt(s.prompt)}>
                     Reuse prompt
                   </button>
@@ -281,5 +309,6 @@ export function ImageStudio() {
         </div>
       </section>
     </div>
+  </>
   );
 }

@@ -10,6 +10,7 @@ import {
   Drama,
   Ellipsis,
   ImageIcon,
+  Images,
   KeyRound,
   LayoutGrid,
   ListTree,
@@ -17,6 +18,7 @@ import {
   Plug,
   ReceiptText,
   Trophy,
+  Video,
   Wallet,
   X,
 } from 'lucide-react';
@@ -25,6 +27,8 @@ import { AdultsOnly, VeniceBadge, Wordmark } from '../brand';
 import { DemoNotice } from '../demo-notice';
 import { ContractAddressChip } from '../contract-address';
 import { WipeDevice } from './chat-history';
+import { useVanishWorkspace } from './panic-key';
+import { VaultTopBar } from './vault-controls';
 import { updateOn, type UpdateId } from '@/lib/anonymo/updates';
 import { formatUsd, usdToMusd } from '@/lib/anonymo/money';
 
@@ -50,6 +54,8 @@ const groups: { title: string; links: Destination[] }[] = [
         icon: ImageIcon,
         feature: 'images',
       },
+      { href: '/dashboard/video', label: 'Video studio', icon: Video, feature: 'video' },
+      { href: '/dashboard/library', label: 'Library', icon: Images, feature: 'vault' },
       { href: '/dashboard/characters', label: 'Characters', icon: Drama },
     ],
   },
@@ -211,6 +217,7 @@ export function WorkspaceShell({
 }) {
   const pathname = usePathname();
   const { ready, demo, key } = useAnonymo();
+  if (useVanishWorkspace()) return null;
   return (
     <div className="ws">
       <a className="skip-link" href="#main">
@@ -239,7 +246,8 @@ export function WorkspaceShell({
             <ContractAddressChip />
             <AdultsOnly compact />
             {ready && key && <Purse key={key} />}
-            {ready && updateOn('history', demo) && <WipeDevice />}
+            {ready && updateOn('vault', demo) && <VaultTopBar />}
+            {ready && (updateOn('history', demo) || updateOn('vault', demo)) && <WipeDevice />}
           </div>
         </header>
         <main

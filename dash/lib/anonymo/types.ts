@@ -386,6 +386,7 @@ export type MediaImageModel = {
   pricing: { usd_per_image: string };
   edit: boolean;
   sizes: string[];
+  max_images?: number;
 };
 export type MediaModelList = { object: 'list'; data: ({ kind: string } & Partial<MediaImageModel>)[] };
 

@@ -40,6 +40,7 @@ import type {
   WithdrawResponse,
   Withdrawal,
 } from './types.ts';
+import type { VideoJob, VideoModel, VideoRequest } from './video.ts';
 
 /** Every path the dashboard calls, in one place. */
 export const API_PATHS = {
@@ -67,6 +68,8 @@ export const API_PATHS = {
   incidentsRss: '/api/v1/status/incidents.rss',
   incidentsAtom: '/api/v1/status/incidents.atom',
   images: '/v1/images/generations',
+  videos: '/v1/video/generations',
+  video: (id: string) => `/v1/video/generations/${encodeURIComponent(id)}`,
 } as const;
 
 /** `anonymo-council` answers as one JSON body; the gateway refuses `stream: true` for it. */
@@ -194,6 +197,15 @@ export function createAnonymoClient(options: ClientOptions) {
     /** Images come back as base64 (`b64_json`): nothing is stored on the gateway, and the PNG carries its provenance. */
     generateImages: (body: ImageRequest, signal?: AbortSignal) =>
       json<ImageGeneration>(API_PATHS.images, { method: 'POST', body: JSON.stringify({ ...body, response_format: 'b64_json' }), signal }),
+
+    async videoModels(signal?: AbortSignal): Promise<VideoModel[]> {
+      const list = await data<(Partial<Omit<VideoModel, 'kind'>> & { kind: string })[]>(API_PATHS.mediaModels, { auth: false, signal });
+      return list.filter((m): m is VideoModel => m.kind === 'video' && !!m.id && !!m.name && !!m.pricing?.usd_per_second && !!m.seconds && !!m.sizes?.length);
+    },
+    generateVideo: (body: VideoRequest, signal?: AbortSignal) =>
+      json<VideoJob>(API_PATHS.videos, { method: 'POST', body: JSON.stringify(body), signal }),
+    videoStatus: (id: string, signal?: AbortSignal) => json<VideoJob>(API_PATHS.video(id), { signal, cache: 'no-store' }),
+    videoMediaUrl: (url: string) => url.startsWith('/v1/media/') ? `${base}${url}` : url,
 
     importCharacter: (body: CharacterImportRequest) =>
       json<CharacterImportResponse>(API_PATHS.characters, { method: 'POST', body: JSON.stringify(body) }),

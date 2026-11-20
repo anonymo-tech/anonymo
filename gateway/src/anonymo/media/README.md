@@ -7,17 +7,37 @@ Drizzle. Spec: Overview §2 (media table) and §6, Backend §2 (media-gate, prov
 
 | Endpoint | Notes |
 |---|---|
-| `POST /v1/images/generations` | `model`, `prompt`, `n` 1–4, `size`, `response_format` `url` \| `b64_json`, `seed` |
+| `POST /v1/images/generations` | `model`, `prompt`, `n` from 1 to the model's `max_images`, `size`, `response_format` `url` \| `b64_json`, `seed` |
 | `POST /v1/images/edits` | multipart `image` (or JSON `image` as a data URL), same fields. No masks. Image URLs are never fetched |
 | `POST /v1/audio/speech` | `model`, `input`, `voice` (stock only), `speed`. Returns WAV |
 | `POST /v1/video/generations` | `model`, `prompt`, `seconds`, `size`, `seed`. Returns `202` with a job id |
 | `GET /v1/video/generations/{id}` | Polls the job. `queued` → `in_progress` → `completed` (with a signed `url`) or `failed` |
 | `GET /v1/media/{id}?expires=&sig=` | Short-lived signed download. No key needed, the signature is the credential |
-| `GET /v1/media/models` | Models, prices, voices, sizes, licences |
+| `GET /v1/media/models` | Models, prices, voices, sizes, licences and per-model image batch limits (`max_images`) |
 | `GET /v1/media/provenance/keys` | The Ed25519 keys that sign manifests (JWK) |
 | `POST /v1/media/provenance/verify` | Body = a media file (API key required). Reports the manifest check and the watermark |
 
 Each is also served under `/api/v1`. Errors use the gateway's OpenAI-shaped envelope.
+
+## NanoGPT image models
+
+Set `ANONYMO_NANOGPT_API_KEY` to list these models for text-to-image generation. To override a dollar price, set
+`ANONYMO_NANOGPT_IMAGE_USD_` followed by the suffix in the table.
+
+| Anonymo model ID | NanoGPT model ID | USD/image | Max images | Price override suffix |
+|---|---|---:|---:|---|
+| `google/nano-banana` | `nano-banana` | 0.050 | 4 | `NANO_BANANA` |
+| `openai/gpt-image-2` | `gpt-image-2` | 0.080 | 4 | `GPT_IMAGE_2` |
+| `bfl/flux.2-max` | `flux-2-max` | 0.090 | 4 | `FLUX_2_MAX` |
+| `bfl/flux.2-flash` | `flux-2-flash` | 0.032 | 4 | `FLUX_2_FLASH` |
+| `ideogram/v4.5` | `ideogram/v4.5` | 0.076 | 8 | `IDEOGRAM_V4_5` |
+| `recraft/v4.1` | `recraft-ai/recraft-v4.1/text-to-image` | 0.050 | 8 | `RECRAFT_V4_1` |
+| `krea/krea-2-medium` | `krea/v2/medium/text-to-image` | 0.038 | 4 | `KREA_2_MEDIUM` |
+| `xai/grok-imagine-2` | `xai/grok-imagine-image/v2.0/text-to-image` | 0.076 | 4 | `GROK_IMAGINE_2` |
+
+Choose a `size` from the model's listed width × height presets. The default is `1024x1024`. For aspect-ratio models,
+these presets specify the shape and the provider determines the pixel dimensions. Grok Imagine Image 2.0 uses the
+1K tier at the listed price. [NanoGPT image API reference](https://docs.nano-gpt.com/api-reference/image-generation)
 
 ## The order every request runs in
 

@@ -1,10 +1,16 @@
 // Chats saved in this browser (update "history"). Off unless the person turns it on: by default a conversation lives
-// in the tab's memory only. When on, finished turns are written to localStorage on this device and nowhere else;
+// in the tab's memory only. When on, finished turns are written to browser storage on this device and nowhere else;
 // nothing is sent to Anonymo, and "Wipe this device" removes it with everything else Anonymo keeps here.
 // Live and demo chats are kept apart. Receipts are kept by id only (the gateway serves them); council seat texts and
 // streaming turns are not kept.
 
 import { deviceStore, readJson, writeJson } from './device-store.ts';
+import { clearChatData, readChatData, writeChatData } from './history-storage.ts';
+import { updateOn } from './updates.ts';
+import { chatTiming, hasExpired, sweepExpired } from './vanish.ts';
+import { loadVanishPrefs } from './vanish-prefs.ts';
+import { vault } from './vault-browser.ts';
+export { DEVICE_PREFIX, wipeDevice } from './device-store.ts';
 
 export type SavedTurn = {
   id: string;
@@ -19,7 +25,7 @@ export type SavedTurn = {
   councilMode: 'merge' | 'select' | null;
   recap?: boolean;
 };
-export type SavedChat = { id: string; title: string; createdAt: string; updatedAt: string; model: string; turns: SavedTurn[] };
+export type SavedChat = { id: string; title: string; createdAt: string; updatedAt: string; model: string; turns: SavedTurn[]; expiresAt?: number };
 
 /** The fields of a live turn that are saved. Kept structural so this file has no React or component imports. */
 type TurnLike = Omit<SavedTurn, 'status'> & { status: string };
@@ -30,7 +36,6 @@ export const MAX_BYTES = 2_500_000;
 const TITLE_MAX = 60;
 
 const keepSlot = 'anonymo.history.keep.v1';
-const listSlot = (demo: boolean) => (demo ? 'anonymo.demo.history.v1' : 'anonymo.history.v1');
 
 export function titleOf(turns: { prompt: string; character: string | null }[]): string {
   const first = turns.find((t) => t.prompt.trim());
@@ -103,84 +108,57 @@ function valid(c: unknown): c is SavedChat {
 // ---- Storage -------------------------------------------------------------------------------------------------------
 export const keepStore = deviceStore<boolean>(() => readJson<boolean>(keepSlot, false) === true, false);
 
+/** Saved chats, minus any whose disappearing timer has run out (update "vanish"); those are deleted on the spot. */
 export function loadChats(demo: boolean): SavedChat[] {
-  const parsed = readJson<unknown>(listSlot(demo), []);
-  return Array.isArray(parsed) ? parsed.filter(valid) : [];
+  const list = readChatData(demo).filter(valid);
+  const kept = sweepExpired(list);
+  if (kept.length !== list.length) void write(demo, (l) => l);
+  return kept;
 }
 const stores = { live: deviceStore<SavedChat[]>(() => loadChats(false), []), demo: deviceStore<SavedChat[]>(() => loadChats(true), []) };
 export const chatsStore = (demo: boolean) => (demo ? stores.demo : stores.live);
 
-function write(demo: boolean, list: SavedChat[]) {
-  const ok = writeJson(listSlot(demo), list);
-  chatsStore(demo).changed();
-  return ok;
+vault.subscribe(() => {
+  stores.live.changed();
+  stores.demo.changed();
+});
+
+/** Every write goes through the vault (encrypted when it is on) and drops expired chats on the way. */
+function write(demo: boolean, change: (list: SavedChat[]) => SavedChat[]) {
+  return writeChatData(demo, (list) => sweepExpired(change(sweepExpired(list.filter(valid)))));
 }
+export { write as writeChats };
 
 /** Turning keeping off also deletes what was kept, so "off" always means nothing is on this device. */
 export function setKeep(on: boolean) {
   writeJson(keepSlot, on);
   keepStore.changed();
-  if (!on) {
-    for (const demo of [false, true]) {
-      try {
-        localStorage.removeItem(listSlot(demo));
-      } catch {
-        // storage blocked: nothing was kept
-      }
-      chatsStore(demo).changed();
-    }
-  }
+  if (!on) void clearChatData();
 }
 
-export function saveChat(demo: boolean, id: string, turns: TurnLike[], createdAt?: string): boolean {
+export function saveChat(demo: boolean, id: string, turns: TurnLike[], createdAt?: string) {
+  // After the panic key, nothing more is written.
+  if (typeof document !== 'undefined' && document.documentElement.hasAttribute('data-anonymo-panic')) return Promise.resolve(true);
   const saved = toSaved(turns);
-  if (!saved.length) return true;
-  const now = new Date().toISOString();
-  const prior = chatsStore(demo).get().find((c) => c.id === id);
-  const chat: SavedChat = {
-    id,
-    title: prior?.title && prior.title !== titleOf(prior.turns) ? prior.title : titleOf(saved), // keep a rename
-    createdAt: prior?.createdAt ?? createdAt ?? now,
-    updatedAt: now,
-    model: saved[saved.length - 1].model,
-    turns: saved,
-  };
-  return write(demo, upsert(chatsStore(demo).get(), chat));
+  if (!saved.length) return Promise.resolve(true);
+  const newChatExpiry = updateOn('vanish', demo) ? loadVanishPrefs().defaultExpiry : null;
+  return write(demo, (list) => {
+    if (!readJson(keepSlot, false)) return list;
+    const now = Date.now();
+    const prior = list.find((c) => c.id === id);
+    if (prior && hasExpired(prior, now)) return list; // it has disappeared; write() drops it
+    const chat: SavedChat = {
+      id,
+      title: prior?.title && prior.title !== titleOf(prior.turns) ? prior.title : titleOf(saved), // keep a rename
+      createdAt: prior?.createdAt ?? createdAt ?? new Date(now).toISOString(),
+      ...chatTiming(prior, saved[saved.length - 1], now, newChatExpiry),
+      model: saved[saved.length - 1].model,
+      turns: saved,
+    };
+    return upsert(list, chat);
+  });
 }
 
-export const renameChat = (demo: boolean, id: string, title: string) => write(demo, rename(chatsStore(demo).get(), id, title));
-export const deleteChat = (demo: boolean, id: string) => write(demo, remove(chatsStore(demo).get(), id));
-export const deleteAllChats = (demo: boolean) => write(demo, []);
-
-/** Every key Anonymo keeps in this browser starts with this prefix (key, chats, characters, receipts, choices). */
-export const DEVICE_PREFIX = 'anonymo.';
-
-/** "Wipe this device": removes everything Anonymo keeps in this browser's storage. Returns how many entries went. */
-export function wipeDevice(storages: Storage[] = defaultStorages()): number {
-  let removed = 0;
-  for (const s of storages) {
-    const doomed: string[] = [];
-    for (let i = 0; i < s.length; i++) {
-      const k = s.key(i);
-      if (k?.startsWith(DEVICE_PREFIX)) doomed.push(k);
-    }
-    for (const k of doomed) s.removeItem(k);
-    removed += doomed.length;
-  }
-  return removed;
-}
-
-function defaultStorages(): Storage[] {
-  const out: Storage[] = [];
-  try {
-    out.push(localStorage);
-  } catch {
-    // blocked
-  }
-  try {
-    out.push(sessionStorage);
-  } catch {
-    // blocked
-  }
-  return out;
-}
+export const renameChat = (demo: boolean, id: string, title: string) => write(demo, (list) => rename(list, id, title));
+export const deleteChat = (demo: boolean, id: string) => write(demo, (list) => remove(list, id));
+export const deleteAllChats = (demo: boolean) => write(demo, () => []);

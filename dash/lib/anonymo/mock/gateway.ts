@@ -30,8 +30,9 @@ import type {
 import { demoImage, DEMO_IMAGE_MODELS, DEMO_NUDITY } from './images.ts';
 import { RECAP_INSTRUCTION } from '../catchup.ts';
 import { demoStatus } from './status.ts';
+import { createDemoVideo } from './video.ts';
 import { activityCsv, runway, sampleHistory, spendReport, spentWindows, type UsageEntry } from './usage.ts';
-import { COUNCIL_MERGED, DEMO_ANMO, DEMO_COIN_PAY, DEMO_LEADERBOARD, DEMO_MANIFEST, DEMO_MODELS, DEMO_PRICES, DEMO_ROUTER, DEMO_ROUTES, demoReply } from './fixtures.ts';
+import { COUNCIL_MERGED, DEMO_ANMO, DEMO_COIN_PAY, DEMO_LEADERBOARD, DEMO_MANIFEST, DEMO_MODELS, DEMO_PRICES, DEMO_ROUTER, DEMO_ROUTES, DEMO_VIDEO_MODELS, demoReply } from './fixtures.ts';
 
 type Row = DepositRow & { musd: number };
 type KeyState = {
@@ -61,6 +62,8 @@ export type MockOptions = {
   coinPriceUsd?: string | null;
   /** How long an image takes, in ms (the real models take 10–40 s). */
   imageDelayMs?: number;
+  /** Clock for demo video jobs. */
+  videoNow?: () => number;
 };
 
 const STORAGE_KEY = 'anonymo.demo.state.v2';
@@ -74,8 +77,8 @@ const randomB58 = (n: number) => {
   return Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => alphabet[b % alphabet.length]).join('');
 };
 
-async function sha256Hex(text: string) {
-  const digest = await crypto.subtle.digest('SHA-256', enc.encode(text));
+async function sha256Hex(input: string | Uint8Array<ArrayBuffer>) {
+  const digest = await crypto.subtle.digest('SHA-256', typeof input === 'string' ? enc.encode(input) : input);
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
@@ -225,6 +228,12 @@ export function createMockGateway(options: MockOptions = {}) {
       if (cap !== null && used >= usdToMusd(String(cap))) return fail(402, 'key_cap_reached', `This key reached its ${name} spend cap of $${cap}.`);
     return null;
   }
+
+  const video = createDemoVideo<KeyState>({
+    json, fail, now: options.videoNow ?? Date.now, id: () => `vid_demo_${randomHex(12)}`,
+    check: (k, cost) => k.balance - k.held < cost ? fail(402, 'insufficient_balance', 'Not enough credit for this request.') : capRefusal(k),
+    charge: (k, cost, job) => { spend(k, cost, { model: job.model, kind: 'call', requestId: job.id }); persist(); },
+  });
 
   /** Sample history plus what the key really spent, for the usage reports. */
   const usageOf = (k: KeyState) => [...sampleHistory(k.keyHash, Date.now()), ...(k.usage ?? [])];
@@ -566,7 +575,8 @@ export function createMockGateway(options: MockOptions = {}) {
     if (DEMO_NUDITY.test(prompt))
       return fail(451, 'explicit_media_unavailable', 'Anonymo makes no nude or sexual images or video. Nothing was sent or charged.', { stage: 'prompt' });
     const n = body?.n ?? 1;
-    if (!Number.isInteger(n) || n < 1 || n > 4) return fail(400, 'invalid_request', 'n must be 1–4.');
+    const maxImages = model.max_images ?? 4;
+    if (!Number.isInteger(n) || n < 1 || n > maxImages) return fail(400, 'invalid_request', `n must be 1–${maxImages}.`);
     const size = body?.size ?? model.sizes[0];
     if (!model.sizes.includes(size)) return fail(400, 'invalid_request', `size must be one of ${model.sizes.join(', ')}.`);
     const cost = usdToMusd(model.pricing.usd_per_image) * n;
@@ -575,12 +585,26 @@ export function createMockGateway(options: MockOptions = {}) {
     if (capped) return capped;
     const [w, h] = size.split('x').map(Number);
     const data = [];
-    for (let i = 0; i < n; i++) data.push({ b64_json: await demoImage(prompt, w, h, i) });
+    for (let i = 0; i < n; i++) data.push({ b64_json: await demoImage(prompt, w, h, i, model.id) });
+    const hashes = await Promise.all(data.map(({ b64_json }) => sha256Hex(Uint8Array.from(atob(b64_json), (c) => c.charCodeAt(0)))));
     await new Promise((r) => setTimeout(r, options.imageDelayMs ?? 1600));
+    // Another image may have settled while this one was rendering.
+    if (k.balance - k.held < cost) return fail(402, 'insufficient_balance', 'Not enough credit for this request.');
+    const cappedAtSettlement = capRefusal(k);
+    if (cappedAtSettlement) return cappedAtSettlement;
     const requestId = `img-${Math.floor(Date.now() / 1000)}-${randomHex(7)}`;
+    const costUsd = musdToUsdString(cost);
+    const receipt = {
+      payload: {
+        v: 1, kind: 'media', request_id: requestId, model_id: model.id,
+        routes: [`demo:${model.id}`], media_units: n, unit: 'image', cost_usd: costUsd,
+        outputs_sha256: hashes, provenance: 'demo', ts: new Date().toISOString(),
+      },
+      key_id: 'demo', sig: null,
+    };
     spend(k, cost, { model: model.id, kind: 'image', requestId });
     persist();
-    return json({ created: Math.floor(Date.now() / 1000), data, anonymo: { request_id: requestId, model: model.id, cost_usd: musdToUsdString(cost), provenance: { c2pa: true, watermark: true } } });
+    return json({ created: Math.floor(Date.now() / 1000), data, anonymo: { request_id: requestId, model: model.id, cost_usd: costUsd, provenance: { c2pa: true, watermark: true }, receipt } });
   }
 
   async function handle(request: Request): Promise<Response> {
@@ -593,7 +617,7 @@ export function createMockGateway(options: MockOptions = {}) {
     if (method === 'GET' && path === API_PATHS.leaderboard) return json(DEMO_LEADERBOARD);
     if (method === 'GET' && path === API_PATHS.statusSlo) return json({ data: demoStatus(Date.now()) });
     if (method === 'GET' && path === API_PATHS.health) return json({ ok: true });
-    if (method === 'GET' && path === API_PATHS.mediaModels) return json({ object: 'list', data: DEMO_IMAGE_MODELS });
+    if (method === 'GET' && path === API_PATHS.mediaModels) return json({ object: 'list', data: [...DEMO_IMAGE_MODELS, ...DEMO_VIDEO_MODELS] });
     const receiptMatch = /^\/v1\/receipts\/([^/]+)(\/proof)?$/.exec(path);
     if (method === 'GET' && receiptMatch) {
       const id = decodeURIComponent(receiptMatch[1]);
@@ -629,6 +653,8 @@ export function createMockGateway(options: MockOptions = {}) {
     if (method === 'POST' && path === API_PATHS.withdraw) return withdraw(request, k);
     if (method === 'POST' && path === API_PATHS.chat) return chat(request, k);
     if (method === 'POST' && path === API_PATHS.images) return images(request, k);
+    if (method === 'POST' && path === API_PATHS.videos) return video.submit(request, k);
+    if (method === 'GET' && path.startsWith(`${API_PATHS.videos}/`)) return video.status(path.slice(API_PATHS.videos.length + 1), k);
     if (method === 'PATCH' && path === API_PATHS.caps) return patchCaps(request, k);
     if (method === 'GET' && path === API_PATHS.spend) {
       const period = url.searchParams.get('period') ?? '30d';

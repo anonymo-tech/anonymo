@@ -5,16 +5,19 @@
 // listed under any name (non-commercial). Venice models are listed only under a `venice/` prefix, never relabelled
 // one-for-one as ours (AGENTS.md), and only when configured: ANONYMO_VENICE_IMAGE_MODELS / ANONYMO_VENICE_VIDEO_MODELS
 // take a comma-separated list of Venice model ids, because which ones the business agreement covers is not settled.
-// Hosted models bought through NanoGPT keep their maker's name under the maker's prefix (google/…, openai/…), are
-// listed only when ANONYMO_NANOGPT_API_KEY is set, and were chosen because their makers filter sexual and child-safety
-// requests themselves, on top of Anonymo's own prompt check and output gate.
+// Hosted models bought through NanoGPT keep their maker's prefix and are listed only with ANONYMO_NANOGPT_API_KEY.
+
+import { NANOGPT_IMAGE_MODELS } from "./nanogpt-models.ts";
+
+export { NANOGPT_IMAGE_MODELS } from "./nanogpt-models.ts";
 
 export type MediaKind = "image" | "speech" | "video";
 export type Upstream = "venice" | "comfyui" | "tts" | "nanogpt";
 type Base = { id: string; upstream: Upstream; upstreamModel: string; family: string; license: string; name: string };
-export type ImageModel = Base & { kind: "image"; usdPerImage: string; edit: boolean; sizes: string[]; defaultSize: string };
+export const DEFAULT_MAX_IMAGES = 4;
+export type ImageModel = Base & { kind: "image"; usdPerImage: string; edit: boolean; sizes: string[]; defaultSize: string; maxImages?: number };
 export type SpeechModel = Base & { kind: "speech"; usdPer1kChars: string; voices: string[]; maxChars: number };
-export type VideoModel = Base & { kind: "video"; usdPerSecond: string; seconds: [number, number]; defaultSeconds: number; sizes: string[]; defaultSize: string };
+export type VideoModel = Base & { kind: "video"; usdPerSecond: string; seconds: [number, number]; allowedSeconds?: readonly number[]; defaultSeconds: number; sizes: string[]; defaultSize: string };
 export type MediaModel = ImageModel | SpeechModel | VideoModel;
 
 const SQUARE_AND_WIDE = ["1024x1024", "1152x896", "896x1152", "1216x832", "832x1216", "1344x768", "768x1344"];
@@ -64,7 +67,8 @@ export function assertLicensed(m: MediaModel) {
     return;
   }
   if (m.upstream === "nanogpt") {
-    if (!/^(google|openai)\//.test(m.id)) throw new Error(`${m.id}: NanoGPT models keep their maker's prefix`);
+    if (!(m.kind === "video" ? /^(alibaba|kling|bytedance|google|lightricks)\// : /^(google|openai|bfl|ideogram|recraft|krea|xai)\//).test(m.id))
+      throw new Error(`${m.id}: NanoGPT models keep their maker's prefix`);
     return;
   }
   if (!SELF_HOSTED_LICENSES[m.kind].includes(m.license)) throw new Error(`${m.id}: self-hosted ${m.kind} models must be ${SELF_HOSTED_LICENSES[m.kind].join(" or ")} (got ${m.license})`);
@@ -79,20 +83,37 @@ function veniceModels(env: Record<string, string | undefined>): MediaModel[] {
   ];
 }
 
-// Prices: NanoGPT's price (Nano Banana $0.039, GPT Image 2 $0.0655 at 1024x1024, November 2026), plus about $0.002
-// for the two output checks, plus about 15%. Override with ANONYMO_NANOGPT_IMAGE_USD_NANO_BANANA / _GPT_IMAGE_2.
-export const NANOGPT_IMAGE_MODELS: { upstreamModel: string; id: string; name: string; family: string; usd: string; envUsd: string; sizes: string[]; byAspectRatio: boolean }[] = [
-  { upstreamModel: "nano-banana", id: "google/nano-banana", name: "Nano Banana (Google)", family: "gemini", usd: "0.050", envUsd: "ANONYMO_NANOGPT_IMAGE_USD_NANO_BANANA", sizes: ["1024x1024", "1344x768", "768x1344", "1184x864", "864x1184"], byAspectRatio: true },
-  { upstreamModel: "gpt-image-2", id: "openai/gpt-image-2", name: "GPT Image 2 (OpenAI)", family: "gpt-image", usd: "0.080", envUsd: "ANONYMO_NANOGPT_IMAGE_USD_GPT_IMAGE_2", sizes: ["1024x1024", "1536x1024", "1024x1536"], byAspectRatio: false },
+type NanoGptVideoModel = Pick<VideoModel, "id" | "name" | "family" | "upstreamModel" | "usdPerSecond" | "seconds" | "allowedSeconds" | "defaultSeconds"> & {
+  envUsd: string;
+  numericDuration?: boolean;
+  audioSwitch?: "enable_audio" | "generateAudio" | "save_audio";
+};
+export const NANOGPT_VIDEO_MODELS: readonly NanoGptVideoModel[] = [
+  { id: "alibaba/wan-3.0", upstreamModel: "alibaba/wan-3.0/text-to-video", name: "Wan 3.0", family: "wan", usdPerSecond: "0.125", envUsd: "ANONYMO_NANOGPT_VIDEO_USD_WAN_3_0", seconds: [2, 30], defaultSeconds: 5, numericDuration: true, audioSwitch: "enable_audio" },
+  { id: "kling/kling-3.0-turbo", upstreamModel: "kling-v3-turbo-standard", name: "Kling 3.0 Turbo", family: "kling", usdPerSecond: "0.140", envUsd: "ANONYMO_NANOGPT_VIDEO_USD_KLING_3_0_TURBO", seconds: [3, 15], defaultSeconds: 5 },
+  { id: "bytedance/seedance-2.0-fast", upstreamModel: "bytedance-seedance-2-0-fast", name: "Seedance 2.0 Fast", family: "seedance", usdPerSecond: "0.150", envUsd: "ANONYMO_NANOGPT_VIDEO_USD_SEEDANCE_2_0_FAST", seconds: [5, 15], allowedSeconds: [5, 10, 15], defaultSeconds: 5 },
+  { id: "google/veo-3.1-lite", upstreamModel: "veo3-1-lite-video", name: "Veo 3.1 Lite", family: "veo", usdPerSecond: "0.065", envUsd: "ANONYMO_NANOGPT_VIDEO_USD_VEO_3_1_LITE", seconds: [4, 8], allowedSeconds: [4, 6, 8], defaultSeconds: 8 },
+  { id: "lightricks/ltx-2.3-fast", upstreamModel: "lightricks/ltx-2.3/fast", name: "LTX 2.3 Fast", family: "ltx", usdPerSecond: "0.040", envUsd: "ANONYMO_NANOGPT_VIDEO_USD_LTX_2_3_FAST", seconds: [6, 20], allowedSeconds: [6, 8, 10, 12, 14, 16, 18, 20], defaultSeconds: 6, audioSwitch: "generateAudio" },
 ];
 const USD = /^\d+(\.\d{1,6})?$/;
 function nanogptModels(env: Record<string, string | undefined>): MediaModel[] {
   if (!env.ANONYMO_NANOGPT_API_KEY?.trim()) return [];
-  return NANOGPT_IMAGE_MODELS.map((m): ImageModel => {
-    const usd = env[m.envUsd]?.trim() || m.usd;
-    if (!USD.test(usd)) throw new Error(`${m.envUsd} must be a dollar amount`);
-    return { kind: "image", id: m.id, name: m.name, upstream: "nanogpt", upstreamModel: m.upstreamModel, family: m.family, license: "provider-terms", usdPerImage: usd, edit: false, sizes: m.sizes, defaultSize: "1024x1024" };
-  });
+  const price = (key: string, fallback: string) => {
+    const usd = env[key]?.trim() || fallback;
+    if (!USD.test(usd)) throw new Error(`${key} must be a dollar amount`);
+    return usd;
+  };
+  return [
+    ...NANOGPT_IMAGE_MODELS.map((m): ImageModel => ({
+      kind: "image", id: m.id, name: m.name, upstream: "nanogpt", upstreamModel: m.upstreamModel, family: m.family,
+      license: "provider-terms", usdPerImage: price(m.envUsd, m.usd), edit: false, sizes: m.sizes, defaultSize: "1024x1024", maxImages: m.maxImages,
+    })),
+    ...NANOGPT_VIDEO_MODELS.map((m): VideoModel => ({
+      kind: "video", id: m.id, name: m.name, upstream: "nanogpt", upstreamModel: m.upstreamModel, family: m.family,
+      license: "provider-terms", usdPerSecond: price(m.envUsd, m.usdPerSecond), seconds: m.seconds,
+      allowedSeconds: m.allowedSeconds, defaultSeconds: m.defaultSeconds, sizes: ["1280x720", "720x1280"], defaultSize: "1280x720",
+    })),
+  ];
 }
 
 export class MediaCatalog {

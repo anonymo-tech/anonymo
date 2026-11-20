@@ -5,6 +5,19 @@
 
 import { keccakHex } from '../proof.ts';
 import type { Leaderboard, Manifest, ManifestRoute, ModelInfo } from '../types.ts';
+import type { VideoModel } from '../video.ts';
+
+function videoModel(id: string, name: string, price: string, min: number, max: number, defaultSeconds: number, allowed?: number[]): VideoModel {
+  return { id, name, kind: 'video', pricing: { usd_per_second: price }, seconds: { min, max, default: defaultSeconds, ...(allowed ? { allowed } : {}) }, sizes: ['1280x720', '720x1280'] };
+}
+
+export const DEMO_VIDEO_MODELS = [
+  videoModel('alibaba/wan-3.0', 'Wan 3.0', '0.125', 2, 30, 5),
+  videoModel('kling/kling-3.0-turbo', 'Kling 3.0 Turbo', '0.140', 3, 15, 5),
+  videoModel('bytedance/seedance-2.0-fast', 'Seedance 2.0 Fast', '0.150', 5, 15, 5, [5, 10, 15]),
+  videoModel('google/veo-3.1-lite', 'Veo 3.1 Lite', '0.065', 4, 8, 8, [4, 6, 8]),
+  videoModel('lightricks/ltx-2.3-fast', 'LTX 2.3 Fast', '0.040', 6, 20, 6, [6, 8, 10, 12, 14, 16, 18, 20]),
+];
 
 const enc = new TextEncoder();
 const fakeHash = (label: string) => keccakHex(enc.encode(`demo-weights:${label}`));
