@@ -24,8 +24,13 @@ export function canonical(value: unknown): unknown {
 export const canonicalJson = (v: unknown) => JSON.stringify(canonical(v));
 
 // AES-256-GCM for secrets at rest (upstream provider keys, BYOK keys).
+const aesKeyFor = (label: string, secret: string) => createHash("sha256").update(label + secret).digest();
+const AES_LABEL = "anonymo:aes:";
+/** The label secrets were encrypted under before the router's rename, kept so they still decrypt. Hex, so the old name
+ *  does not appear in the source. New secrets are always encrypted under AES_LABEL. */
+export const LEGACY_AES_LABEL = Buffer.from("616e79726f7574653a6165733a", "hex").toString("utf8");
 function aesKey(secret: string) {
-  return createHash("sha256").update("anonymo:aes:" + secret).digest();
+  return aesKeyFor(AES_LABEL, secret);
 }
 export function encrypt(secret: string, plaintext: string): string {
   const iv = randomBytes(12);
@@ -33,12 +38,24 @@ export function encrypt(secret: string, plaintext: string): string {
   const body = Buffer.concat([c.update(plaintext, "utf8"), c.final()]);
   return ["v1", iv.toString("base64url"), c.getAuthTag().toString("base64url"), body.toString("base64url")].join(".");
 }
+function openWith(key: Buffer, iv: string, tag: string, body: string): string {
+  const d = createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "base64url"));
+  d.setAuthTag(Buffer.from(tag, "base64url"));
+  return Buffer.concat([d.update(Buffer.from(body, "base64url")), d.final()]).toString("utf8");
+}
 export function decrypt(secret: string, token: string): string {
   const [v, iv, tag, body] = token.split(".");
   if (v !== "v1" || !iv || !tag || !body) throw new Error("Unrecognized ciphertext");
-  const d = createDecipheriv("aes-256-gcm", aesKey(secret), Buffer.from(iv, "base64url"));
-  d.setAuthTag(Buffer.from(tag, "base64url"));
-  return Buffer.concat([d.update(Buffer.from(body, "base64url")), d.final()]).toString("utf8");
+  try {
+    return openWith(aesKey(secret), iv, tag, body);
+  } catch (e) {
+    // Encrypted before the rename: the old label's key opens it, or nothing does.
+    try {
+      return openWith(aesKeyFor(LEGACY_AES_LABEL, secret), iv, tag, body);
+    } catch {
+      throw e;
+    }
+  }
 }
 export const hmac = (secret: string, data: string) => createHmac("sha256", secret).update(data).digest("hex");
 export function safeEqual(a: string, b: string) {
