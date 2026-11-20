@@ -22,11 +22,6 @@ export function captureStructuredOutput(ctx: Ctx, c: Context, kind: string, body
     return;
   }
   if (!ctx.cfg.structuredOutputCheckEnabled) return;
-  // WS01: the request option was `anonymo` before the rebrand; read for one release as an alias of `anonymo`.
-  if (body.anonymo !== undefined) {
-    body.anonymo ??= body.anonymo;
-    delete body.anonymo;
-  }
   if (body.anonymo?.json_check == null) return;
   if (!["/api/v1/chat/completions", "/v1/chat/completions"].includes(new URL(c.req.url).pathname)) fail(400, "JSON checking is supported only on chat completions endpoints.", "invalid_request");
   const mode = body.anonymo.json_check;

@@ -38,7 +38,6 @@ import { chatRoutes } from "./api/chat.ts";
 import { keyPolicyMiddleware } from "./anonymo/deposits/index.ts";
 import { regionMiddleware } from "./anonymo/region/middleware.ts";
 import { regionRulesFromEnv } from "./anonymo/region/rules.ts";
-import { legacyHeaderAliases, withLegacyEnv } from "./lib/legacy-names.ts";
 import { anonymoRoutes } from "./anonymo/routes.ts";
 import { createAnonymoServices, type AnonymoServices } from "./anonymo/services.ts";
 import { modelsRoutes } from "./api/models.ts";
@@ -82,8 +81,8 @@ export type AppOptions = {
 
 export async function createApp(opts: AppOptions = {}) {
   const cfg = loadConfig(opts.env ?? {});
-  // The same settings loadConfig read (process env, then overrides), with the old ANONYMO_* names as aliases (WS01).
-  const env = withLegacyEnv({ ...process.env, ...(opts.env ?? {}) } as Record<string, unknown>);
+  // The same settings loadConfig read (process env, then overrides).
+  const env = { ...process.env, ...(opts.env ?? {}) } as Record<string, unknown>;
     setLogLevel(cfg.logLevel);
   const ownedDatabase = opts.database ? undefined : await openDatabase(cfg.databaseUrl, { migrate: cfg.autoMigrate });
   const handle = opts.database ?? ownedDatabase!;
@@ -120,7 +119,6 @@ export async function createApp(opts: AppOptions = {}) {
   // The workspace UI is dash/ (WS07), deployed on its own; the router serves the API and a small built-in page.
   const csp = "frame-ancestors 'none'; object-src 'none'; base-uri 'none'";
   const app = new Hono();
-  app.use("*", legacyHeaderAliases()); // WS01: x-anonymo-* request headers are read as x-anonymo-* for one release.
   app.use("*", originLockMiddleware(ctx)); // HD1: authenticate ingress before CORS, including preflights.
   // The OpenAI-style /v1/* aliases get the same CORS as /api/*, so a browser can read the receipt, lane and policy headers on either.
   const apiCors = cors({ origin: "*", allowHeaders: ["authorization", "content-type", "x-payment", "payment-signature", "payment-recovery", "x-wallet-auth", "x-anonymo-cache", "x-anonymo-disclosure-max", "x-anonymo-lane", "x-anonymo-lane-downgrade", "x-anonymo-sealed", "x-anonymo-refusal-catch", /* WS01: old names, one release */ "x-anonymo-cache", "x-anonymo-disclosure-max", "x-anonymo-lane", "x-anonymo-lane-downgrade", "http-referer", "x-title", "traceparent", "x-api-key", "anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access"], exposeHeaders: [...EXPOSED_RESPONSE_HEADERS, ...(cfg.routeExplain ? ["x-anonymo-route"] : []), /* V84 */ ...(cfg.structuredOutputCheckEnabled ? ["x-anonymo-json-check"] : []), /* V83 */] });

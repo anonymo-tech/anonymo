@@ -26,4 +26,4 @@ console.log(res.anonymo.receiptVerification?.valid, res.anonymo.disclosure, res.
 - `@anonymo/client/characters` encrypts private character cards and memory on your device.
 
 Errors are `AnonymoError` (with `AttestationRefused` and `ReceiptInvalid`). `Anonymo`, `AnonymoError`,
-`AnonymoMeta` and `res.anonymo` are deprecated aliases from before the rebrand and are removed in the next release.
+

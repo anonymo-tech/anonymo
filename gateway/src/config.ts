@@ -1,4 +1,3 @@
-import { withLegacyEnv } from "./lib/legacy-names.ts";
 import { hardeningEnv, hardeningSettings } from "./hardening/config.ts"; // HD1
 import { rpcEnv, rpcSettings } from "./chain/rpc-config.ts"; // RPC1: private transport settings.
 import { rushEnv, rushSettings } from "./rush/config.ts"; // ON3
@@ -260,7 +259,7 @@ export type Config = ReturnType<typeof loadConfig>;
 
 export function loadConfig(overrides: Record<string, unknown> = {}) {
   const raw = { ...process.env, ...overrides } as Record<string, unknown>;
-  const parsed = schema.safeParse(withLegacyEnv(raw));
+  const parsed = schema.safeParse(raw);
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
     throw new Error(`Invalid configuration: ${issues}`);

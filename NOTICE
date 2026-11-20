@@ -1,0 +1,11 @@
+Required Notice: Copyright 2026 Anonymo
+
+Anonymo-authored material without a separate licence notice is offered under the PolyForm Noncommercial License 1.0.0
+in LICENSE. Commercial use outside that licence's permitted purposes needs separate written permission. Licensing
+enquiries: https://github.com/anonymo-tech/anonymo/issues
+
+Files carrying their own SPDX or licence notices keep those terms. In particular, dash/ keeps dash/LICENSE, Solidity
+files marked MIT remain MIT, and gateway/contracts/lib/forge-std keeps its upstream MIT/Apache-2.0 licensing. Package
+dependencies and their assets remain under their own licences.
+
+No trademark licence to the Anonymo name, mascot or logo is granted by the software licence.

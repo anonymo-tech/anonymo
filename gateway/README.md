@@ -57,11 +57,6 @@ bun test --timeout 20000
 (cd contracts && forge test --no-match-path 'test/fork/*')
 ```
 
-## Renamed in this release
-
-The router was forked from Anonymo. Old names still work for one release and are removed in the next one; see
-[`docs/rebrand.md`](docs/rebrand.md).
-
 ## License
 
 Source-available under [PolyForm Noncommercial 1.0.0](LICENSE), except for files with their own license notices. This

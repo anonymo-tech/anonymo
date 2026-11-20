@@ -89,7 +89,6 @@ export const presetDocSchema = z
     system_prompt: z.string().min(1, "leave system_prompt out instead of sending it empty").max(LIMITS.systemPromptChars, `system_prompt must be at most ${LIMITS.systemPromptChars} characters`).optional(),
     response_format: responseFormatSchema.optional(),
     anonymo: structuredOutputOptions.optional(), // V83
-    anonymo: structuredOutputOptions.optional(), // WS01: the pre-rebrand name of `anonymo`, read for one release
     tools: toolsSchema.optional(),
     tool_choice: toolChoiceSchema.optional(),
   })
@@ -109,7 +108,7 @@ export function normalizePreset(doc: PresetDoc): PresetDoc {
   const out: PresetDoc = { ...(doc.description ? { description: doc.description } : {}), ...route };
   if (doc.system_prompt) out.system_prompt = doc.system_prompt;
   if (doc.response_format) out.response_format = doc.response_format;
-  const checks = doc.anonymo ?? doc.anonymo; // V83 (WS01: `anonymo` is the old name)
+  const checks = doc.anonymo; // V83
   if (checks) out.anonymo = checks;
   if (doc.tools) out.tools = doc.tools;
   if (doc.tool_choice !== undefined) out.tool_choice = doc.tool_choice;
@@ -205,7 +204,7 @@ const hasSystem = (messages: unknown) => Array.isArray(messages) && messages.som
 export function applyPreset(body: Record<string, unknown>, doc: PresetDoc) {
   applyRouteConfig(body, { models: doc.models, provider: doc.provider, params: doc.params } as RouteConfig);
   if (doc.system_prompt && Array.isArray(body.messages) && !hasSystem(body.messages)) body.messages = [{ role: "system", content: doc.system_prompt }, ...body.messages];
-  const checks = doc.anonymo ?? doc.anonymo; // WS01: `anonymo` is the old name
+  const checks = doc.anonymo;
   if (checks) body.anonymo = { ...checks, ...((body.anonymo as object) ?? (body.anonymo as object) ?? {}) }; // V83: request wins.
   if (doc.response_format && body.response_format === undefined) body.response_format = structuredClone(doc.response_format);
   if (doc.tools && body.tools === undefined) {
