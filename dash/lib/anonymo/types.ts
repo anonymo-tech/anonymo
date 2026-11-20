@@ -397,3 +397,33 @@ export type ImageGeneration = {
   anonymo: { request_id: string; model: string; cost_usd: string; provenance: { c2pa: boolean; watermark: boolean } };
 };
 
+// ---- Usage and limits (gateway src/api/spend.ts, account-runway.ts, activity.ts; anonymo/keys/caps.ts) --------------
+export type SpendPeriod = '7d' | '30d' | '90d';
+export type SpendGroup = 'day' | 'model';
+/** GET /api/v1/spend?period=&group_by= (`spendReport`). */
+export type SpendReport = {
+  scope: 'key' | 'account';
+  period: string;
+  group_by: string;
+  as_of: string;
+  timezone: string;
+  range: { from: string; to: string };
+  totals: {
+    today_usd: Usd;
+    last_7d_usd: Usd;
+    month_to_date_usd: Usd;
+    projected_month_usd: Usd;
+    period_usd: Usd;
+    period_requests: number;
+    day_of_month: number;
+    days_in_month: number;
+  };
+  anomaly: { flagged: boolean; today_usd: Usd; trailing_daily_avg_usd: Usd; ratio: number | null; multiplier: number; min_today_usd: Usd };
+  series: { date: string; cost_usd: Usd; requests: number }[];
+  breakdown: { id: string; name?: string | null; label?: string | null; cost_usd: Usd; requests: number; share: number }[];
+};
+/** GET /api/v1/account/runway (`runwayMath`). */
+export type Runway = { balance_usd: Usd; spend_7d_usd: Usd; per_day_usd: Usd; days_left: number | null };
+/** PATCH /keys/caps. */
+export type CapsUpdate = { key_hash: string; caps: KeyCaps };
+

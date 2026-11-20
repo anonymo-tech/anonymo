@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import {
+  BarChart3,
   BookOpen,
   ImageIcon,
   Drama,
@@ -41,6 +42,7 @@ const NAV = [
 const navFor = (demo: boolean) => {
   const extra = [
     ...(updateOn('images', demo) ? [{ after: '/dashboard/chat', item: { href: '/dashboard/images', label: 'Images', icon: ImageIcon } }] : []),
+    ...(updateOn('usage', demo) ? [{ after: '/dashboard/funds', item: { href: '/dashboard/usage', label: 'Usage & limits', icon: BarChart3 } }] : []),
   ];
   const out = [...NAV];
   for (const { after, item } of extra) out.splice(out.findIndex((n) => n.href === after) + 1, 0, item);

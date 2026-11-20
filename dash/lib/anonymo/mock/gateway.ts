@@ -23,9 +23,12 @@ import type {
   Receipt,
   ReceiptRoute,
   ReceiptView,
+  SpendGroup,
+  SpendPeriod,
   Withdrawal,
 } from '../types.ts';
 import { demoImage, DEMO_IMAGE_MODELS, DEMO_NUDITY } from './images.ts';
+import { activityCsv, runway, sampleHistory, spendReport, spentWindows, type UsageEntry } from './usage.ts';
 import { COUNCIL_MERGED, DEMO_ANMO, DEMO_COIN_PAY, DEMO_LEADERBOARD, DEMO_MANIFEST, DEMO_MODELS, DEMO_PRICES, DEMO_ROUTER, DEMO_ROUTES, demoReply } from './fixtures.ts';
 
 type Row = DepositRow & { musd: number };
@@ -39,6 +42,8 @@ type KeyState = {
   deposits: Row[];
   withdrawals: (Withdrawal & { musd: number; idem: string })[];
   characters: string[];
+  /** What this key spent (update "usage"); older saved demo state has none. */
+  usage?: UsageEntry[];
 };
 type StoredReceipt = { view: Omit<ReceiptView, 'anchor'>; hourLeaves: string[] };
 type State = { v: 2; keys: Record<string, KeyState>; receipts: Record<string, StoredReceipt> };
@@ -200,9 +205,38 @@ export function createMockGateway(options: MockOptions = {}) {
     };
   }
 
-  function spend(k: KeyState, musd: number) {
+  function spend(k: KeyState, musd: number, use?: Omit<UsageEntry, 'at' | 'musd'>) {
     k.balance -= musd;
     k.usageOnly = Math.max(0, k.usageOnly - musd); // usage-only credit is spent first
+    if (use) (k.usage ??= []).push({ ...use, at: Date.now(), musd });
+  }
+
+  /** The key's caps, checked like the gateway's capsVerdict (402 key_cap_reached once a window is used up). */
+  function capRefusal(k: KeyState): Response | null {
+    const spent = spentWindows(k.usage ?? [], Date.now());
+    const windows = [
+      [k.caps.daily_usd, spent.day, 'daily'],
+      [k.caps.monthly_usd, spent.month, 'monthly'],
+      [k.caps.lifetime_usd, spent.life, 'lifetime'],
+    ] as const;
+    for (const [cap, used, name] of windows)
+      if (cap !== null && used >= usdToMusd(String(cap))) return fail(402, 'key_cap_reached', `This key reached its ${name} spend cap of $${cap}.`);
+    return null;
+  }
+
+  /** Sample history plus what the key really spent, for the usage reports. */
+  const usageOf = (k: KeyState) => [...sampleHistory(k.keyHash, Date.now()), ...(k.usage ?? [])];
+
+  async function patchCaps(request: Request, k: KeyState) {
+    const body = (await request.json().catch(() => null)) as KeyCapsInput | null;
+    if (!body || typeof body !== 'object') return fail(400, 'invalid_request', 'Send the caps as a JSON object.');
+    const money = (v: unknown) => v === null || (typeof v === 'number' && v >= 0) || (typeof v === 'string' && /^\d{1,12}(\.\d{1,12})?$/.test(v));
+    for (const f of ['daily_usd', 'monthly_usd', 'lifetime_usd'] as const)
+      if (f in body && !money(body[f])) return fail(400, 'invalid_request', `${f} must be a dollar amount or null.`);
+    const next = capsOut({ ...k.caps, ...body });
+    k.caps = { ...next, ...(k.caps.wallet !== undefined ? { wallet: k.caps.wallet } : {}) };
+    persist();
+    return json({ key_hash: k.keyHash, caps: k.caps });
   }
 
   /** Demo-only: credit a stablecoin deposit as if the watcher had confirmed it (stands in for DepositSink.credit). */
@@ -354,6 +388,8 @@ export function createMockGateway(options: MockOptions = {}) {
     const p = price ?? DEMO_PRICES['anonymo-1'];
     const maxCost = Math.ceil((tin * p.in + 900 * p.out) / 1_000_000);
     if (k.balance - k.held < maxCost) return fail(402, 'insufficient_balance', 'Not enough credit for this request.');
+    const capped = capRefusal(k);
+    if (capped) return capped;
 
     const requestId = `gen-${Math.floor(Date.now() / 1000)}-${randomHex(7)}`;
     const ts = new Date().toISOString();
@@ -382,7 +418,7 @@ export function createMockGateway(options: MockOptions = {}) {
         council: { mode, outcome: mode === 'merge' ? 'merged' : 'selected', selected: mode === 'select' ? 'A' : null, proposers: 3, answered: 3 },
         ts,
       };
-      spend(k, cost);
+      spend(k, cost, { model, kind: 'call', requestId });
       const seat = (r: ReceiptRoute) => ({ model: r.model, provider: r.provider, status: r.status, cost: r.cost, receipt_id: `${requestId}-${r.route}` });
       const council: CouncilResult = {
         mode,
@@ -426,7 +462,7 @@ export function createMockGateway(options: MockOptions = {}) {
       const tout = tokensOf(delivered);
       const cost = Math.min(maxCost, Math.ceil((tin * p.in + tout * p.out) / 1_000_000));
       k.held -= maxCost;
-      spend(k, cost);
+      spend(k, cost, { model, kind: 'call', requestId });
       const served = rerouted ? other : first;
       const routes = [
         ...(rerouted ? [routeEntry(first.id, 'single', 0, { in: 0, out: 0 }, 'refused', sealed)] : []),
@@ -528,13 +564,15 @@ export function createMockGateway(options: MockOptions = {}) {
     if (!model.sizes.includes(size)) return fail(400, 'invalid_request', `size must be one of ${model.sizes.join(', ')}.`);
     const cost = usdToMusd(model.pricing.usd_per_image) * n;
     if (k.balance - k.held < cost) return fail(402, 'insufficient_balance', 'Not enough credit for this request.');
+    const capped = capRefusal(k);
+    if (capped) return capped;
     const [w, h] = size.split('x').map(Number);
     const data = [];
     for (let i = 0; i < n; i++) data.push({ b64_json: await demoImage(prompt, w, h, i) });
     await new Promise((r) => setTimeout(r, options.imageDelayMs ?? 1600));
-    k.balance -= cost;
-    persist();
     const requestId = `img-${Math.floor(Date.now() / 1000)}-${randomHex(7)}`;
+    spend(k, cost, { model: model.id, kind: 'image', requestId });
+    persist();
     return json({ created: Math.floor(Date.now() / 1000), data, anonymo: { request_id: requestId, model: model.id, cost_usd: musdToUsdString(cost), provenance: { c2pa: true, watermark: true } } });
   }
 
@@ -582,6 +620,15 @@ export function createMockGateway(options: MockOptions = {}) {
     if (method === 'POST' && path === API_PATHS.withdraw) return withdraw(request, k);
     if (method === 'POST' && path === API_PATHS.chat) return chat(request, k);
     if (method === 'POST' && path === API_PATHS.images) return images(request, k);
+    if (method === 'PATCH' && path === API_PATHS.caps) return patchCaps(request, k);
+    if (method === 'GET' && path === API_PATHS.spend) {
+      const period = url.searchParams.get('period') ?? '30d';
+      const group = url.searchParams.get('group_by') ?? 'day';
+      if (!['7d', '30d', '90d'].includes(period) || !['day', 'model'].includes(group)) return fail(400, 'invalid_request', 'period is 7d, 30d or 90d; group_by is day or model.');
+      return json({ data: spendReport(usageOf(k), period as SpendPeriod, group as SpendGroup, Date.now()) });
+    }
+    if (method === 'GET' && path === API_PATHS.runway) return json(runway(k.balance - k.held, usageOf(k), Date.now()));
+    if (method === 'GET' && path === API_PATHS.activity) return new Response(activityCsv(usageOf(k)), { headers: { 'content-type': 'text/csv; charset=utf-8' } });
     if (method === 'POST' && path === API_PATHS.characters) {
       const body = (await request.json().catch(() => null)) as { sealed_card?: string; card_hash?: string; card?: unknown; png?: unknown } | null;
       if (body?.card || body?.png) return fail(400, 'plaintext_refused', 'A private card is encrypted on your device: send sealed_card and card_hash.');

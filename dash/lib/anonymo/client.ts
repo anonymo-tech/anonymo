@@ -6,6 +6,12 @@
 // it on the device is the caller's choice (lib/anonymo/key-store.ts).
 
 import type {
+  CapsUpdate,
+  KeyCapsInput,
+  Runway,
+  SpendGroup,
+  SpendPeriod,
+  SpendReport,
   ImageGeneration,
   ImageRequest,
   MediaModelList,
@@ -51,6 +57,10 @@ export const API_PATHS = {
   manifest: '/manifest',
   leaderboard: '/leaderboard',
   mediaModels: '/v1/media/models',
+  caps: '/keys/caps',
+  spend: '/api/v1/spend',
+  runway: '/api/v1/account/runway',
+  activity: '/api/v1/activity',
   images: '/v1/images/generations',
 } as const;
 
@@ -156,6 +166,13 @@ export function createAnonymoClient(options: ClientOptions) {
     receiptProof: (id: string) => data<ProofView>(API_PATHS.receiptProof(id), { auth: false }),
     manifest: () => json<Manifest>(API_PATHS.manifest, { auth: false, headers: { accept: 'application/json' } }),
     leaderboard: () => json<Leaderboard>(API_PATHS.leaderboard, { auth: false, headers: { accept: 'application/json' } }),
+
+    spend: (period: SpendPeriod, groupBy: SpendGroup, signal?: AbortSignal) =>
+      json<{ data: SpendReport }>(`${API_PATHS.spend}?period=${period}&group_by=${groupBy}`, { signal }).then((r) => r.data),
+    runway: (signal?: AbortSignal) => json<Runway>(API_PATHS.runway, { signal }),
+    /** The key's activity as CSV text (the gateway's own columns), for a download. */
+    activityCsv: async () => (await request(`${API_PATHS.activity}?format=csv`)).text(),
+    updateCaps: (caps: KeyCapsInput) => json<CapsUpdate>(API_PATHS.caps, { method: 'PATCH', body: JSON.stringify(caps) }),
 
     mediaModels: () => json<MediaModelList>(API_PATHS.mediaModels, { auth: false }),
     /** Images come back as base64 (`b64_json`): nothing is stored on the gateway, and the PNG carries its provenance. */
