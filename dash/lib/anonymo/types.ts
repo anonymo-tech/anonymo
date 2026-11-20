@@ -372,3 +372,28 @@ export type CharacterImportResponse = { data: { id: string; model: string; visib
 export type ApiErrorBody = {
   error: { message: string; type?: string; code?: number | string; metadata?: { category?: string } & Record<string, unknown> };
 };
+
+// ---- Media (gateway src/anonymo/media/routes.ts) ---------------------------------------------------------------------
+/** GET /v1/media/models: one image model as listed (only upstreams the gateway has configured). */
+export type MediaImageModel = {
+  id: string;
+  object: 'model';
+  kind: 'image';
+  name: string;
+  family: string;
+  license: string;
+  upstream: string;
+  pricing: { usd_per_image: string };
+  edit: boolean;
+  sizes: string[];
+};
+export type MediaModelList = { object: 'list'; data: ({ kind: string } & Partial<MediaImageModel>)[] };
+
+/** POST /v1/images/generations (OpenAI-compatible, with Anonymo's provenance and receipt). */
+export type ImageRequest = { model: string; prompt: string; n?: number; size?: string; response_format?: 'b64_json' | 'url'; seed?: number };
+export type ImageGeneration = {
+  created: number;
+  data: { b64_json?: string; url?: string; expires_at?: number }[];
+  anonymo: { request_id: string; model: string; cost_usd: string; provenance: { c2pa: boolean; watermark: boolean } };
+};
+

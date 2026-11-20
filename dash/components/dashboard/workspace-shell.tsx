@@ -9,6 +9,7 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import {
   BookOpen,
+  ImageIcon,
   Drama,
   KeyRound,
   LayoutGrid,
@@ -36,6 +37,16 @@ const NAV = [
   { href: '/dashboard/receipts', label: 'Receipts', icon: ReceiptText },
 ];
 
+/** The workspace sections, with the ones that come from updates when those are on. */
+const navFor = (demo: boolean) => {
+  const extra = [
+    ...(updateOn('images', demo) ? [{ after: '/dashboard/chat', item: { href: '/dashboard/images', label: 'Images', icon: ImageIcon } }] : []),
+  ];
+  const out = [...NAV];
+  for (const { after, item } of extra) out.splice(out.findIndex((n) => n.href === after) + 1, 0, item);
+  return out;
+};
+
 const PUBLIC_NAV = [
   { href: '/leaderboard', label: 'Leaderboard', icon: Trophy },
   { href: '/manifest', label: 'Model manifest', icon: ListTree },
@@ -58,6 +69,7 @@ export function WorkspaceShell({
   wide?: boolean;
 }) {
   const pathname = usePathname();
+  const { ready, demo } = useAnonymo();
   const active = (href: string) =>
     href === '/dashboard' ? pathname === '/dashboard' : pathname === href || pathname.startsWith(`${href}/`);
   const onChat = active('/dashboard/chat');
@@ -69,7 +81,7 @@ export function WorkspaceShell({
       <aside className="ws-side">
         <Wordmark href="/" />
         <nav className="ws-nav" aria-label="Workspace">
-          {NAV.map(({ href, label, icon: Icon }) => (
+          {navFor(ready && demo).map(({ href, label, icon: Icon }) => (
             <Link key={href} href={href} aria-current={active(href) ? 'page' : undefined}>
               <Icon size={19} strokeWidth={1.75} aria-hidden="true" />
               {label}

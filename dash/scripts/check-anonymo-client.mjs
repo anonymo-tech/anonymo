@@ -326,3 +326,23 @@ void test('character cards: V2 JSON and V3 PNG import, build an rp prompt, and s
   const saved = await client.importCharacter({ visibility: 'private', sealed_card: sealed.sealed_card, card_hash: sealed.card_hash });
   assert.match(saved.data.id, /^ch_/);
 });
+
+void test('images (update "images"): models, price × n charged, nudity refused before charging, too little credit is 402', async () => {
+  const { mock, client, created } = await funded({ imageDelayMs: 0 });
+  const models = await client.mediaModels();
+  const nano = models.data.find((m) => m.id === 'google/nano-banana');
+  assert.ok(nano && nano.kind === 'image' && nano.pricing.usd_per_image === '0.050');
+  await assert.rejects(client.generateImages({ model: 'google/nano-banana', prompt: 'a lighthouse', n: 1 }), (e) => e instanceof AnonymoApiError && e.status === 402);
+  await mock.simulateDeposit(created.key, 'rhc', 'USDG', 1_000_000);
+  const before = usdToMusd((await client.balance()).available_usd);
+  const res = await client.generateImages({ model: 'google/nano-banana', prompt: 'a lighthouse at dusk', n: 2, size: '1344x768' });
+  assert.equal(res.data.length, 2);
+  assert.ok(res.data.every((d) => typeof d.b64_json === 'string' && Buffer.from(d.b64_json, 'base64').subarray(1, 4).toString() === 'PNG'));
+  assert.equal(res.anonymo.cost_usd, '0.1');
+  assert.deepEqual(res.anonymo.provenance, { c2pa: true, watermark: true });
+  assert.equal(usdToMusd((await client.balance()).available_usd), before - 100_000);
+  await assert.rejects(client.generateImages({ model: 'google/nano-banana', prompt: 'a nude portrait', n: 1 }), (e) => e instanceof AnonymoApiError && e.status === 451 && e.code === 'explicit_media_unavailable');
+  assert.equal(usdToMusd((await client.balance()).available_usd), before - 100_000, 'a refused prompt is not charged');
+  await assert.rejects(client.generateImages({ model: 'google/nano-banana', prompt: 'x', size: '640x480' }), (e) => e instanceof AnonymoApiError && e.status === 400);
+  await assert.rejects(client.generateImages({ model: 'nope', prompt: 'x' }), (e) => e instanceof AnonymoApiError && e.status === 404);
+});

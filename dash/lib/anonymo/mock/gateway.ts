@@ -25,6 +25,7 @@ import type {
   ReceiptView,
   Withdrawal,
 } from '../types.ts';
+import { demoImage, DEMO_IMAGE_MODELS, DEMO_NUDITY } from './images.ts';
 import { COUNCIL_MERGED, DEMO_ANMO, DEMO_COIN_PAY, DEMO_LEADERBOARD, DEMO_MANIFEST, DEMO_MODELS, DEMO_PRICES, DEMO_ROUTER, DEMO_ROUTES, demoReply } from './fixtures.ts';
 
 type Row = DepositRow & { musd: number };
@@ -51,6 +52,8 @@ export type MockOptions = {
   sealedAvailable?: boolean;
   /** The ANMO price in USD for the coin rail; null = coin payments unavailable; undefined = the demo price. */
   coinPriceUsd?: string | null;
+  /** How long an image takes, in ms (the real models take 10–40 s). */
+  imageDelayMs?: number;
 };
 
 const STORAGE_KEY = 'anonymo.demo.state.v2';
@@ -510,6 +513,31 @@ export function createMockGateway(options: MockOptions = {}) {
     };
   }
 
+  // Images: priced like the gateway, refused like the gateway's nudity check, painted in the browser (demoImage).
+  async function images(request: Request, k: KeyState) {
+    const body = (await request.json().catch(() => null)) as { model?: string; prompt?: string; n?: number; size?: string } | null;
+    const model = DEMO_IMAGE_MODELS.find((m) => m.id === body?.model);
+    if (!model) return fail(404, 'model_not_found', 'Unknown image model. GET /v1/media/models lists them.');
+    const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
+    if (!prompt.trim()) return fail(400, 'invalid_request', 'Enter a prompt of 1–4,000 characters.');
+    if (DEMO_NUDITY.test(prompt))
+      return fail(451, 'explicit_media_unavailable', 'Anonymo makes no nude or sexual images or video. Nothing was sent or charged.', { stage: 'prompt' });
+    const n = body?.n ?? 1;
+    if (!Number.isInteger(n) || n < 1 || n > 4) return fail(400, 'invalid_request', 'n must be 1–4.');
+    const size = body?.size ?? model.sizes[0];
+    if (!model.sizes.includes(size)) return fail(400, 'invalid_request', `size must be one of ${model.sizes.join(', ')}.`);
+    const cost = usdToMusd(model.pricing.usd_per_image) * n;
+    if (k.balance - k.held < cost) return fail(402, 'insufficient_balance', 'Not enough credit for this request.');
+    const [w, h] = size.split('x').map(Number);
+    const data = [];
+    for (let i = 0; i < n; i++) data.push({ b64_json: await demoImage(prompt, w, h, i) });
+    await new Promise((r) => setTimeout(r, options.imageDelayMs ?? 1600));
+    k.balance -= cost;
+    persist();
+    const requestId = `img-${Math.floor(Date.now() / 1000)}-${randomHex(7)}`;
+    return json({ created: Math.floor(Date.now() / 1000), data, anonymo: { request_id: requestId, model: model.id, cost_usd: musdToUsdString(cost), provenance: { c2pa: true, watermark: true } } });
+  }
+
   async function handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -518,6 +546,7 @@ export function createMockGateway(options: MockOptions = {}) {
     if (method === 'GET' && path === API_PATHS.models) return json({ data: DEMO_MODELS });
     if (method === 'GET' && path === API_PATHS.manifest) return json(DEMO_MANIFEST);
     if (method === 'GET' && path === API_PATHS.leaderboard) return json(DEMO_LEADERBOARD);
+    if (method === 'GET' && path === API_PATHS.mediaModels) return json({ object: 'list', data: DEMO_IMAGE_MODELS });
     const receiptMatch = /^\/v1\/receipts\/([^/]+)(\/proof)?$/.exec(path);
     if (method === 'GET' && receiptMatch) {
       const id = decodeURIComponent(receiptMatch[1]);
@@ -552,6 +581,7 @@ export function createMockGateway(options: MockOptions = {}) {
     }
     if (method === 'POST' && path === API_PATHS.withdraw) return withdraw(request, k);
     if (method === 'POST' && path === API_PATHS.chat) return chat(request, k);
+    if (method === 'POST' && path === API_PATHS.images) return images(request, k);
     if (method === 'POST' && path === API_PATHS.characters) {
       const body = (await request.json().catch(() => null)) as { sealed_card?: string; card_hash?: string; card?: unknown; png?: unknown } | null;
       if (body?.card || body?.png) return fail(400, 'plaintext_refused', 'A private card is encrypted on your device: send sealed_card and card_hash.');

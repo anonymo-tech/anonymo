@@ -6,6 +6,9 @@
 // it on the device is the caller's choice (lib/anonymo/key-store.ts).
 
 import type {
+  ImageGeneration,
+  ImageRequest,
+  MediaModelList,
   ApiErrorBody,
   Balance,
   BtcpayInvoice,
@@ -47,6 +50,8 @@ export const API_PATHS = {
   characters: '/api/v1/characters',
   manifest: '/manifest',
   leaderboard: '/leaderboard',
+  mediaModels: '/v1/media/models',
+  images: '/v1/images/generations',
 } as const;
 
 /** `anonymo-council` answers as one JSON body; the gateway refuses `stream: true` for it. */
@@ -151,6 +156,11 @@ export function createAnonymoClient(options: ClientOptions) {
     receiptProof: (id: string) => data<ProofView>(API_PATHS.receiptProof(id), { auth: false }),
     manifest: () => json<Manifest>(API_PATHS.manifest, { auth: false, headers: { accept: 'application/json' } }),
     leaderboard: () => json<Leaderboard>(API_PATHS.leaderboard, { auth: false, headers: { accept: 'application/json' } }),
+
+    mediaModels: () => json<MediaModelList>(API_PATHS.mediaModels, { auth: false }),
+    /** Images come back as base64 (`b64_json`): nothing is stored on the gateway, and the PNG carries its provenance. */
+    generateImages: (body: ImageRequest, signal?: AbortSignal) =>
+      json<ImageGeneration>(API_PATHS.images, { method: 'POST', body: JSON.stringify({ ...body, response_format: 'b64_json' }), signal }),
 
     importCharacter: (body: CharacterImportRequest) =>
       json<CharacterImportResponse>(API_PATHS.characters, { method: 'POST', body: JSON.stringify(body) }),
