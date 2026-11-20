@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import test from 'node:test';
+import nextConfig from '../next.config.ts';
 
 const root = new URL('..', import.meta.url).pathname;
 // The Solana deposit verifier and the secret guard are kept only as reference code for CI checks; they render no copy.
@@ -66,6 +67,15 @@ void test('no analytics or tracking scripts', () => {
   const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
   assert.deepEqual(deps.filter((d) => /analytics|posthog|segment|mixpanel|amplitude|plausible|sentry|datadog|hotjar|gtag/i.test(d)), []);
   assert.deepEqual(hits(/googletagmanager|google-analytics|gtag\(|posthog|mixpanel|plausible\.io|sentry/i), []);
+});
+
+void test('public reading pages instruct the edge to leave their HTML intact', async () => {
+  const rules = await nextConfig.headers();
+  for (const route of ['/', '/docs', '/brief', '/whitepaper', '/roadmap']) {
+    const rule = rules.find((entry) => entry.source === route);
+    const cache = rule?.headers.find((header) => header.key.toLowerCase() === 'cache-control');
+    assert.ok(cache?.value.split(',').map((part) => part.trim()).includes('no-transform'), route);
+  }
 });
 
 void test('adults only is stated on every surface', () => {

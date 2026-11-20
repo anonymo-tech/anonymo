@@ -68,10 +68,13 @@ export function SiteFooter() {
         <Link href="/dashboard/chat">Chat</Link>
         <Link href="/dashboard/characters">Characters</Link>
         <Link href="/presets">Presets</Link>
+        <a href="/brief">Business brief</a>
       </div>
       <div className="foot-col">
         <strong>Developers</strong>
         <Link href="/docs">API docs</Link>
+        <a href="/whitepaper">Whitepaper</a>
+        <a href="/roadmap">Roadmap</a>
         <Link href="/manifest">Model manifest</Link>
       </div>
       <div className="foot-col">
