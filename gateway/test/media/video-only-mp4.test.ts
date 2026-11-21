@@ -3,7 +3,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { concatBytes, te, u32be } from "../../src/anonymo/media/bytes.ts";
-import { isSilentMp4, videoOnlyMp4 } from "../../src/anonymo/media/containers.ts";
+import { C2PA_BMFF_UUID, containerFor, isSilentMp4, videoOnlyMp4 } from "../../src/anonymo/media/containers.ts";
 
 const fixture = (name: string) => new Uint8Array(readFileSync(new URL(`../fixtures/${name}`, import.meta.url)));
 const box = (type: string, data: Uint8Array) => concatBytes([u32be(data.length + 8), te.encode(type), data]);
@@ -72,3 +72,39 @@ test("fragmented files, files with no or two picture tracks, and non-MP4 bytes g
   expect(videoOnlyMp4(concatBytes([ftyp, box("moov", track("vide")), box("moof", new Uint8Array(0)), mdat]))).toBeNull();
   expect(videoOnlyMp4(te.encode("not an mp4 at all"))).toBeNull();
 });
+
+test("removing an upstream C2PA box that sits before the media data keeps every sample findable (Veo's layout)", () => {
+  for (const name of ["av-faststart.mp4", "av-moov-last.mp4"]) {
+    const input = fixture(name);
+    const ftypEnd = new DataView(input.buffer, input.byteOffset).getUint32(0);
+    const upstream = box("uuid", concatBytes([C2PA_BMFF_UUID, new Uint8Array(4), te.encode("manifest\0"), new Uint8Array(8), new Uint8Array(500).fill(7)]));
+    const withUpstream = withUpstreamFixed(input, ftypEnd, upstream);
+    expect(layout(withUpstream).offsets).not.toEqual(layout(input).offsets);
+    const stripped = containerFor("video/mp4")!.strip(withUpstream);
+    const after = layout(stripped);
+    const before = layout(input);
+    expect(after.top).toEqual(before.top);
+    for (let i = 0; i < before.offsets.length; i++)
+      expect(Buffer.from(stripped.subarray(after.offsets[i], after.offsets[i] + 32))).toEqual(Buffer.from(input.subarray(before.offsets[i], before.offsets[i] + 32)));
+  }
+});
+
+/** The fixture with an extra box after ftyp and its chunk offsets moved forward to match, as a muxer would write it. */
+function withUpstreamFixed(input: Uint8Array, ftypEnd: number, extra: Uint8Array): Uint8Array {
+  const file = concatBytes([input.subarray(0, ftypEnd), extra, input.subarray(ftypEnd)]);
+  const dv = new DataView(file.buffer, file.byteOffset, file.byteLength);
+  const walk = (start: number, end: number) => {
+    for (let at = start; at < end; ) {
+      const size = dv.getUint32(at);
+      const type = new TextDecoder().decode(file.subarray(at + 4, at + 8));
+      if (["moov", "trak", "mdia", "minf", "stbl"].includes(type)) walk(at + 8, at + size);
+      if (type === "stco") {
+        const count = dv.getUint32(at + 12);
+        for (let i = 0; i < count; i++) dv.setUint32(at + 16 + i * 4, dv.getUint32(at + 16 + i * 4) + extra.length);
+      }
+      at += size;
+    }
+  };
+  walk(0, file.length);
+  return file;
+}

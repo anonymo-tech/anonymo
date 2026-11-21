@@ -117,61 +117,80 @@ export function isSilentMp4(bytes: Uint8Array): boolean {
     return false;
   }
 }
+const inner = (b: Uint8Array, box: Box) => b.subarray(box.start + box.header, box.end);
+const child = (b: Uint8Array, type: string) => {
+  const found = boxes(b, 1024).filter((x) => x.type === type);
+  if (found.length !== 1) throw new Error("expected one MP4 " + type + " box");
+  return inner(b, found[0]);
+};
+
+/** A copy of a moov body with every track's chunk offsets (stco or co64: absolute file positions of the samples)
+ *  passed through `map`. Box sizes do not change. Throws on anything it cannot rewrite exactly. */
+function remapChunkOffsets(moovBody: Uint8Array, map: (offset: number) => number): Uint8Array {
+  const copy = Uint8Array.from(moovBody);
+  for (const trak of boxes(copy, 1024).filter((x) => x.type === "trak")) {
+    const stbl = child(child(child(inner(copy, trak), "mdia"), "minf"), "stbl");
+    const tables = boxes(stbl, 1024).filter((x) => x.type === "stco" || x.type === "co64");
+    if (tables.length !== 1) throw new Error("expected one chunk offset table");
+    const t = tables[0];
+    const view = new DataView(stbl.buffer, stbl.byteOffset + t.start + t.header, t.end - t.start - t.header);
+    const wide = t.type === "co64";
+    const count = view.getUint32(4);
+    if (8 + count * (wide ? 8 : 4) > view.byteLength) throw new Error("truncated chunk offset table");
+    for (let i = 0; i < count; i++) {
+      const at = 8 + i * (wide ? 8 : 4);
+      const next = map(wide ? Number(view.getBigUint64(at)) : view.getUint32(at));
+      if (!Number.isSafeInteger(next) || next < 0 || (!wide && next > 0xffffffff)) throw new Error("chunk offset out of range");
+      if (wide) view.setBigUint64(at, BigInt(next));
+      else view.setUint32(at, next);
+    }
+  }
+  return copy;
+}
+
+/** Rebuild an MP4 from its top-level boxes, dropping some and replacing moov's body. Every chunk offset moves back by
+ *  the bytes that now precede it less than before (dropped boxes, and moov's own change in size), so the samples are
+ *  still found. Fragmented files (moof, mvex) address samples relatively and are refused. */
+function rebuildMp4(b: Uint8Array, drop: (x: Box) => boolean, moovBody?: (body: Uint8Array) => Uint8Array): Uint8Array {
+  const top = boxes(b, 1024);
+  const moovs = top.filter((x) => x.type === "moov");
+  if (moovs.length !== 1 || top.some((x) => x.type === "moof")) throw new Error("expected one moov and no fragments");
+  const moov = moovs[0];
+  if (boxes(inner(b, moov), 1024).some((x) => x.type === "mvex")) throw new Error("fragmented MP4");
+  const body = (moovBody ?? ((x: Uint8Array) => x))(inner(b, moov));
+  const moovDelta = moov.end - moov.start - (8 + body.length); // bytes the moov box shrinks by
+  const shifts = top
+    .filter((x) => drop(x) || x === moov)
+    .map((x) => ({ end: x.end, by: x === moov ? moovDelta : x.end - x.start }));
+  const map = (offset: number) => offset - shifts.filter((s) => s.end <= offset).reduce((n, s) => n + s.by, 0);
+  const newMoov = concatBytes([u32be(8 + body.length), te.encode("moov"), remapChunkOffsets(body, map)]);
+  return concatBytes(top.filter((x) => !drop(x)).map((x) => (x === moov ? newMoov : b.subarray(x.start, x.end))));
+}
+
 /** The same MP4 with every track but its one picture track removed, so nothing the frame classifier did not review
  *  (a soundtrack, subtitles) reaches the caller. Some hosted models add an audio track even when asked not to.
- *  Only the index (moov) changes: the dropped tracks' samples stay in mdat unreferenced, and when moov sits before
- *  mdat the kept track's chunk offsets move back by the bytes removed. Fragmented MP4s (moof/mvex), files without
- *  exactly one picture track, and anything that does not parse give null. */
+ *  Only the index (moov) changes: the dropped tracks' samples stay in mdat unreferenced, and the kept track's chunk
+ *  offsets follow any shift. Fragmented MP4s, files without exactly one picture track, and anything that does not
+ *  parse give null. */
 export function videoOnlyMp4(bytes: Uint8Array): Uint8Array | null {
   try {
     if (!mp4.matches(bytes)) return null;
     const top = boxes(bytes, 1024);
-    const moovs = top.filter((x) => x.type === "moov");
-    if (moovs.length !== 1 || top.some((x) => x.type === "moof")) return null;
-    const moov = moovs[0];
-    const inner = (b: Uint8Array, box: Box) => b.subarray(box.start + box.header, box.end);
-    const child = (b: Uint8Array, type: string) => {
-      const found = boxes(b, 1024).filter((x) => x.type === type);
-      if (found.length !== 1) throw new Error("expected one MP4 " + type + " box");
-      return inner(b, found[0]);
-    };
-    const moovBody = inner(bytes, moov);
-    const kids = boxes(moovBody, 1024);
-    if (kids.some((x) => x.type === "mvex")) return null;
+    const moov = top.filter((x) => x.type === "moov");
+    if (moov.length !== 1 || top.some((x) => x.type === "moof")) return null;
+    const moovBody = inner(bytes, moov[0]);
+    if (boxes(moovBody, 1024).some((x) => x.type === "mvex")) return null;
     const handlerOf = (trak: Uint8Array) => {
       const hdlr = child(child(trak, "mdia"), "hdlr");
       return hdlr.length >= 12 ? ascii(hdlr, 8, 4) : "";
     };
-    const traks = kids.filter((x) => x.type === "trak");
+    const traks = boxes(moovBody, 1024).filter((x) => x.type === "trak");
     const video = traks.filter((x) => handlerOf(inner(moovBody, x)) === "vide");
     if (video.length !== 1) return null;
     if (traks.length === 1) return bytes;
-    const removed = traks.filter((x) => x !== video[0]).reduce((n, x) => n + (x.end - x.start), 0);
-
-    // moov before the media data: everything after it moves back by `removed`, so the kept offsets must too.
-    const firstMdat = top.find((x) => x.type === "mdat");
-    const shift = firstMdat && moov.start < firstMdat.start ? removed + (moov.header - 8) : 0;
-    const kept = Uint8Array.from(moovBody.subarray(video[0].start, video[0].end));
-    if (shift) {
-      const stbl = child(child(child(inner(kept, boxes(kept)[0]), "mdia"), "minf"), "stbl");
-      const tables = boxes(stbl, 1024).filter((x) => x.type === "stco" || x.type === "co64");
-      if (tables.length !== 1) return null;
-      const t = tables[0];
-      const view = new DataView(stbl.buffer, stbl.byteOffset + t.start + t.header, t.end - t.start - t.header);
-      const count = view.getUint32(4);
-      const wide = t.type === "co64";
-      if (8 + count * (wide ? 8 : 4) > view.byteLength) return null;
-      for (let i = 0; i < count; i++) {
-        const at = 8 + i * (wide ? 8 : 4);
-        const next = (wide ? Number(view.getBigUint64(at)) : view.getUint32(at)) - shift;
-        if (next < 0) return null;
-        if (wide) view.setBigUint64(at, BigInt(next));
-        else view.setUint32(at, next);
-      }
-    }
-    const body = concatBytes(kids.map((x) => (x === video[0] ? kept : x.type === "trak" ? new Uint8Array(0) : moovBody.subarray(x.start, x.end))));
-    const newMoov = concatBytes([u32be(8 + body.length), te.encode("moov"), body]);
-    return concatBytes(top.map((x) => (x === moov ? newMoov : bytes.subarray(x.start, x.end))));
+    const keepOnlyVideo = (body: Uint8Array) =>
+      concatBytes(boxes(body, 1024).filter((x) => x.type !== "trak" || x.start === video[0].start).map((x) => body.subarray(x.start, x.end)));
+    return rebuildMp4(bytes, () => false, keepOnlyVideo);
   } catch {
     return null;
   }
@@ -182,7 +201,10 @@ const mp4: Container = {
   mime: "video/mp4",
   matches: (b) => b.length >= 12 && ascii(b, 4, 4) === "ftyp",
   strip(b) {
-    return concatBytes(boxes(b).filter((x) => !isC2paBox(b, x)).map((x) => b.subarray(x.start, x.end)));
+    // An upstream's manifest can sit before the media data (Veo's does); removing it moves the samples, so the
+    // chunk offsets are rewritten to match.
+    if (!boxes(b).some((x) => isC2paBox(b, x))) return b;
+    return rebuildMp4(b, (x) => isC2paBox(b, x));
   },
   insert(b, store) {
     const last = boxes(b).at(-1)!;
