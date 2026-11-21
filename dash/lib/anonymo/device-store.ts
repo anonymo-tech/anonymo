@@ -3,6 +3,7 @@
 // browser renders what is stored, and every reader updates when a value changes here or in another tab.
 
 import { useSyncExternalStore } from 'react';
+import { wipeFaces } from './faces-store.ts';
 import { startVault, vault } from './vault-browser.ts';
 
 export type DeviceStore<T> = {
@@ -73,7 +74,7 @@ export function wipeDevice(storages: Storage[]): number;
 export function wipeDevice(storages?: Storage[]) {
   if (storages) return removeDeviceKeys(storages);
   startVault();
-  return vault.wipe(() => removeDeviceKeys([localStorage, sessionStorage]));
+  return Promise.all([vault.wipe(() => removeDeviceKeys([localStorage, sessionStorage])), wipeFaces()]).then(([removed]) => removed);
 }
 
 function removeDeviceKeys(storages: Storage[]) {

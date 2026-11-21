@@ -27,9 +27,9 @@ With the local demo server running (leave the API origin unset), set `WORKSPACE_
 | --- | --- |
 | `NEXT_PUBLIC_ANONYMO_API=https://…` | Gateway origin. Unset means demo mode. |
 | `NEXT_PUBLIC_ANONYMO_DEMO=1` | Force demo mode. |
-| `?demo=1` / `?demo=0` | Turn demo mode on or off for this tab (when an API is set). |
+| `?demo=1` / `?demo=0` | A live build uses its configured API and ignores this query parameter. |
 | `NEXT_PUBLIC_ANONYMO_VENICE_BADGE=1` | Show the "Built in Venice" badge (Overview §4, §10). Off by default. |
-| `NEXT_PUBLIC_ANONYMO_UPDATES=history,images,…` or `all` | Turn on updates that ship switched off (`lib/anonymo/updates.ts`): `history`, `images`, `usage`, `catchup`, `status`. Demo mode shows them all. |
+| `NEXT_PUBLIC_ANONYMO_UPDATES=history,images,…` or `all` | Turn on updates that ship switched off (`lib/anonymo/updates.ts`): `history`, `images`, `usage`, `catchup`, `status`. Other optional updates include `compare`, `vanish`, `vault` and `video`. Faces is available in the live workspace. Demo mode shows all updates. |
 | `NEXT_PUBLIC_ANONYMO_RHC_CHAIN_ID=46630` | Robinhood Chain testnet instead of mainnet (4663). Set `NEXT_PUBLIC_ANONYMO_RHC_RPC` with it. |
 | `NEXT_PUBLIC_ANONYMO_EVM_NETWORKS='{"rhc":{"chainId":…,"rpcUrl":"…"}}'` | Override the chain id, RPC or name the wallet is switched to, per EVM chain (testnets, local chains). |
 
@@ -69,6 +69,8 @@ wallet SDK and no WalletConnect.
   address with no code would "succeed" and move nothing.
 
 ## What stays on the device
+
+- Faces keeps plush designs, expression tiles, imported card art, painted sheets and Stage backdrops in IndexedDB. The plush maker works without credits. Outfits, hats, glasses, face shapes, mouths and cheek details mix independently. Fabric, mask, eye stitching and felt each accept preset or custom colors. The image painter and backdrop painter use the gateway after a click. Wipe removes the saved artwork.
 
 - The API key, only if the person ticks "Remember on this device" (otherwise for the tab only). It is sent only as the
   `Authorization` header.
