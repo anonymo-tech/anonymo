@@ -30,10 +30,14 @@ import type {
 import { DEMO_IMAGE_MODELS, DEMO_NUDITY } from './images.ts';
 import { demoFaceReply, demoPicture } from './faces.ts';
 import { RECAP_INSTRUCTION } from '../catchup.ts';
+import { moveInReply, withTextPrices } from './movein.ts';
 import { demoStatus } from './status.ts';
+import { expiredKeyRefusal } from './tickets.ts';
 import { createDemoVideo } from './video.ts';
+import { createDemoSpeech, demoStoryReply, DEMO_SPEECH_MODELS } from './voice.ts';
 import { activityCsv, runway, sampleHistory, spendReport, spentWindows, type UsageEntry } from './usage.ts';
 import { COUNCIL_MERGED, DEMO_ANMO, DEMO_COIN_PAY, DEMO_LEADERBOARD, DEMO_MANIFEST, DEMO_MODELS, DEMO_PRICES, DEMO_ROUTER, DEMO_ROUTES, DEMO_VIDEO_MODELS, demoReply } from './fixtures.ts';
+import { sideBySideReply } from './sidebyside.ts';
 
 type Row = DepositRow & { musd: number };
 type KeyState = {
@@ -65,6 +69,8 @@ export type MockOptions = {
   imageDelayMs?: number;
   /** Clock for demo video jobs. */
   videoNow?: () => number;
+  /** How long a demo speech clip takes, in ms. */
+  speechDelayMs?: number;
 };
 
 const STORAGE_KEY = 'anonymo.demo.state.v2';
@@ -234,6 +240,13 @@ export function createMockGateway(options: MockOptions = {}) {
     json, fail, now: options.videoNow ?? Date.now, id: () => `vid_demo_${randomHex(12)}`,
     check: (k, cost) => k.balance - k.held < cost ? fail(402, 'insufficient_balance', 'Not enough credit for this request.') : capRefusal(k),
     charge: (k, cost, job) => { spend(k, cost, { model: job.model, kind: 'call', requestId: job.id }); persist(); },
+  });
+
+  // Update "voice": demo speech for Night Call (mock/voice.ts), checked and charged like any other call.
+  const speech = createDemoSpeech<KeyState>({
+    fail, id: () => `med_demo_${randomHex(12)}`, delayMs: options.speechDelayMs,
+    check: (k, cost) => k.balance - k.held < cost ? fail(402, 'insufficient_balance', 'Not enough credit for this request.') : capRefusal(k),
+    charge: (k, cost, model, requestId) => { spend(k, cost, { model, kind: 'call', requestId }); persist(); },
   });
 
   /** Sample history plus what the key really spent, for the usage reports. */
@@ -466,6 +479,8 @@ export function createMockGateway(options: MockOptions = {}) {
     const first = servers[0] ?? DEMO_ROUTES[0];
     const other = servers.find((r) => r.family !== first.family) ?? DEMO_ROUTES[2];
     let text = demoReply(model);
+    // Update "sidebyside": a direct model id answers in its own words, and a merge request gets a merged reply.
+    text = sideBySideReply(model, body.messages, text);
     // Update "catchup": a recap request gets recap-shaped notes built from what the person said.
     if (typeof lastUser === 'string' && lastUser === RECAP_INSTRUCTION) {
       const said = body.messages.filter((m) => m.role === 'user' && m.content !== RECAP_INSTRUCTION).map((m) => (typeof m.content === 'string' ? m.content : ''));
@@ -474,6 +489,10 @@ export function createMockGateway(options: MockOptions = {}) {
       // Update "faces": a look or scene sentence for those requests, and an in-character line in a character chat.
       text = demoFaceReply(body.messages) ?? text;
     }
+    // Update "voice": the Night Call bedtime starter, and each "keep reading" after it, gets the next part of a story.
+    text = demoStoryReply(body.messages) ?? text;
+    // Update "movein": a memory request (a running summary, or the facts) gets a memory-shaped answer.
+    text = moveInReply(body.messages) ?? text;
     if (rerouted) text = `The first route refused this, so the router retried on a different model family (${other.family}) and billed the refused attempt nothing. ${text}`;
 
     const chunks = text.match(/\S+\s*/g) ?? [text];
@@ -616,12 +635,12 @@ export function createMockGateway(options: MockOptions = {}) {
     const path = url.pathname;
     const method = request.method.toUpperCase();
 
-    if (method === 'GET' && path === API_PATHS.models) return json({ data: DEMO_MODELS });
+    if (method === 'GET' && path === API_PATHS.models) return json({ data: withTextPrices(DEMO_MODELS, DEMO_PRICES) });
     if (method === 'GET' && path === API_PATHS.manifest) return json(DEMO_MANIFEST);
     if (method === 'GET' && path === API_PATHS.leaderboard) return json(DEMO_LEADERBOARD);
     if (method === 'GET' && path === API_PATHS.statusSlo) return json({ data: demoStatus(Date.now()) });
     if (method === 'GET' && path === API_PATHS.health) return json({ ok: true });
-    if (method === 'GET' && path === API_PATHS.mediaModels) return json({ object: 'list', data: [...DEMO_IMAGE_MODELS, ...DEMO_VIDEO_MODELS] });
+    if (method === 'GET' && path === API_PATHS.mediaModels) return json({ object: 'list', data: [...DEMO_IMAGE_MODELS, ...DEMO_VIDEO_MODELS, ...DEMO_SPEECH_MODELS] });
     const receiptMatch = /^\/v1\/receipts\/([^/]+)(\/proof)?$/.exec(path);
     if (method === 'GET' && receiptMatch) {
       const id = decodeURIComponent(receiptMatch[1]);
@@ -636,6 +655,8 @@ export function createMockGateway(options: MockOptions = {}) {
 
     const k = await keyState(request);
     if (k instanceof Response) return k;
+    const lapsed = expiredKeyRefusal(k.caps, Date.now(), fail);
+    if (lapsed) return lapsed;
     if (method === 'GET' && path === API_PATHS.keyInfo) return json({ key_hash: k.keyHash, label: null, caps: k.caps, deposit: instructions(k) });
     if (method === 'GET' && path === API_PATHS.balance) return json(balanceOf(k));
     if (method === 'GET' && path === API_PATHS.deposits)
@@ -657,6 +678,7 @@ export function createMockGateway(options: MockOptions = {}) {
     if (method === 'POST' && path === API_PATHS.withdraw) return withdraw(request, k);
     if (method === 'POST' && path === API_PATHS.chat) return chat(request, k);
     if (method === 'POST' && path === API_PATHS.images) return images(request, k);
+    if (method === 'POST' && path === API_PATHS.speech) return speech.speak(request, k);
     if (method === 'POST' && path === API_PATHS.videos) return video.submit(request, k);
     if (method === 'GET' && path.startsWith(`${API_PATHS.videos}/`)) return video.status(path.slice(API_PATHS.videos.length + 1), k);
     if (method === 'PATCH' && path === API_PATHS.caps) return patchCaps(request, k);

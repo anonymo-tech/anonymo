@@ -6,6 +6,7 @@
 import { keccakHex } from '../proof.ts';
 import type { Leaderboard, Manifest, ManifestRoute, ModelInfo } from '../types.ts';
 import type { VideoModel } from '../video.ts';
+import { listPricing } from './sidebyside.ts';
 
 function videoModel(id: string, name: string, price: string, min: number, max: number, defaultSeconds: number, allowed?: number[]): VideoModel {
   return { id, name, kind: 'video', pricing: { usd_per_second: price }, seconds: { min, max, default: defaultSeconds, ...(allowed ? { allowed } : {}) }, sizes: ['1280x720', '720x1280'] };
@@ -157,6 +158,11 @@ export const DEMO_PRICES: Record<string, { in: number; out: number }> = {
   'anonymo-council': { in: 2_000_000, out: 8_100_000 },
   'anonymo-sealed': { in: 540_000, out: 2_160_000 },
 };
+
+// Update "sidebyside": every demo model lists its text price, as the gateway's /v1/models does (USD per token), so a
+// price can be shown before anything is sent. A model with no price of its own is listed at anonymo-1's, which is
+// what the demo gateway charges it.
+for (const model of DEMO_MODELS) model.pricing = listPricing(DEMO_PRICES[model.id] ?? DEMO_PRICES['anonymo-1']);
 
 const SENTENCES: Record<string, string[]> = {
   'anonymo-1': [

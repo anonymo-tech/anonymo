@@ -5,6 +5,7 @@
 import { useSyncExternalStore } from 'react';
 import { wipeFaces } from './faces-store.ts';
 import { startVault, vault } from './vault-browser.ts';
+import { deleteArchiveDb } from './movein/archive-idb.ts';
 
 export type DeviceStore<T> = {
   subscribe: (listener: () => void) => () => void;
@@ -74,7 +75,8 @@ export function wipeDevice(storages: Storage[]): number;
 export function wipeDevice(storages?: Storage[]) {
   if (storages) return removeDeviceKeys(storages);
   startVault();
-  return Promise.all([vault.wipe(() => removeDeviceKeys([localStorage, sessionStorage])), wipeFaces()]).then(([removed]) => removed);
+  const moveIn = deleteArchiveDb(); // update "movein": what moved in lives in its own IndexedDB database
+  return Promise.all([vault.wipe(() => removeDeviceKeys([localStorage, sessionStorage])), wipeFaces(), moveIn]).then(([removed]) => removed);
 }
 
 function removeDeviceKeys(storages: Storage[]) {

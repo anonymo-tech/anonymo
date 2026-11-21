@@ -1,0 +1,122 @@
+/* Update "movein": the Move In page. Built on the workspace's own tokens and classes (app/globals.css); only what is
+   particular to this page lives here: the wall of characters that moved in, and the felt memory board. */
+
+/* ---- the drop -------------------------------------------------------------------------------------------------- */
+.mi-drop { padding: clamp(28px, 6vw, 56px) 24px; font-size: 16.5px; background: radial-gradient(ellipse at top, #49243c55, transparent 70%); }
+.mi-drop svg { color: var(--amber); }
+.mi-drop:disabled { cursor: progress; opacity: 0.6; }
+.mi-reading { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 12px 16px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--raised); }
+.mi-reading .mono { flex: 1; min-width: 200px; overflow-wrap: anywhere; }
+.mi-spool { flex: none; width: 16px; height: 16px; border-radius: 50%; border: 2px dashed var(--amber); }
+.mi-outcome { display: grid; gap: 6px; }
+.mi-outcome details { font-size: 13.5px; color: var(--muted); }
+.mi-outcome summary { cursor: pointer; }
+.mi-outcome details ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.mi-sources { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; font-size: 14.5px; }
+.mi-sources li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.mi-sources li:last-child { border-bottom: 0; }
+.mi-sources strong { min-width: 112px; font-weight: 600; }
+
+/* ---- who moved in ---------------------------------------------------------------------------------------------- */
+.mi-moved { display: grid; gap: 16px; min-width: 0; }
+.mi-count { margin: 4px 2px 0; font-size: 15.5px; letter-spacing: 0.02em; color: var(--text); }
+.mi-wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 16px; align-items: start; margin: 0; padding: 0; list-style: none; }
+.mi-card { gap: 12px; padding: 18px; }
+.mi-card-head { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: center; }
+.mi-card-title { display: grid; gap: 6px; min-width: 0; }
+.mi-card-title h3 { font-size: 19px; overflow-wrap: anywhere; }
+.mi-card-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 13px; }
+.mi-blurb { font-size: 14px; overflow-wrap: anywhere; }
+.mi-says { font-size: 13.5px; color: var(--muted); }
+.mi-says summary { cursor: pointer; color: var(--faint); }
+.mi-says p { margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
+.mi-greeting { padding: 8px 12px; border-left: 2px solid var(--amber); }
+.mi-card-tools { gap: 8px; }
+.mi-badge { min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--amber-soft); color: var(--amber); font-size: 12px; line-height: 20px; text-align: center; }
+.mi-chats { display: grid; gap: 8px; padding-top: 4px; border-top: 1px solid var(--line); }
+.mi-chats .list li { flex-wrap: nowrap; gap: 12px; padding: 9px 0; }
+.mi-chat-title { display: grid; gap: 1px; min-width: 0; }
+.mi-chat-title > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mi-chat-title .faint { font-size: 12.5px; }
+.mi-chats .btn-ghost { justify-self: start; }
+.mi-rename { display: flex; flex-wrap: wrap; gap: 6px; }
+.mi-rename .input { flex: 1; min-width: 140px; min-height: 34px; padding: 4px 10px; }
+.mi-all { justify-content: flex-end; font-size: 14px; color: var(--muted); }
+.mi .ai-notice { order: 0; }
+
+/* A character's picture: the mascot, in a stitched ring of its own felt colour. */
+.mi-face { position: relative; display: block; flex: none; width: var(--mi-face, 56px); height: var(--mi-face, 56px); margin: 5px; border-radius: 50%; box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--mi-ring, var(--amber)); }
+.mi-face::after { content: ''; position: absolute; inset: -9px; border: 1.5px dashed var(--mi-ring, var(--amber)); border-radius: 50%; opacity: 0.55; pointer-events: none; }
+.mi-face img { display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+
+/* ---- the memory board ------------------------------------------------------------------------------------------ */
+.mi-board { width: min(1000px, calc(100% - 24px)); max-width: none; max-height: min(92dvh, 940px); padding: 0; overflow: auto; overscroll-behavior: contain; border: 1px solid #6d4a66; border-radius: 22px; color: var(--text); background: radial-gradient(ellipse at top, #45213f, #1f0c21 68%); box-shadow: 0 40px 120px #000c; }
+.mi-board::backdrop { background: #110813c7; }
+.mi-board-inner { display: grid; gap: 20px; padding: clamp(18px, 3vw, 30px); outline: 1.5px dashed #f3e6dc26; outline-offset: -9px; border-radius: 22px; }
+.mi-board-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.mi-board-head h2 { font-size: clamp(26px, 3.4vw, 36px); font-weight: 570; letter-spacing: -0.04em; overflow-wrap: anywhere; }
+.mi-board-head p { margin-top: 8px; max-width: 62ch; font-size: 15px; }
+.mi-board-empty { padding: 28px; border: 1.5px dashed var(--line-strong); border-radius: 16px; text-align: center; color: var(--muted); }
+.mi-patches { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); gap: 18px 16px; margin: 0; padding: 6px 2px; list-style: none; }
+.mi-patch {
+  position: relative; display: grid; gap: 8px; align-content: start; padding: 20px 18px 12px; border-radius: 14px; color: #2a0b2d; font-size: 14.5px; line-height: 1.5;
+  /* felt: a flat colour with a faint nap */
+  background: radial-gradient(circle at 20% 15%, #ffffff3d 0 1px, transparent 2px) 0 0 / 7px 7px, radial-gradient(circle at 70% 60%, #0000000f 0 1px, transparent 2px) 0 0 / 9px 9px, var(--mi-felt, #f3e6dc);
+  box-shadow: 0 1px 0 #ffffff66 inset, 0 12px 26px #0007;
+  transform: rotate(calc(var(--mi-tilt, 0) * 0.3deg));
+}
+/* the stitching */
+.mi-patch::before { content: ''; position: absolute; inset: 6px; border: 1.5px dashed #2a0b2d5c; border-radius: 9px; pointer-events: none; }
+.mi-patch[data-kind='summary'] { grid-column: 1 / -1; padding: 22px 24px 14px; font-size: 15.5px; line-height: 1.6; transform: none; }
+.mi-patch p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mi-patch-kind { font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: #2a0b2d99; }
+.mi-patch-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: #2a0b2da6; }
+.mi-patch-tools { display: inline-flex; gap: 2px; }
+.mi-patch-tools button { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: #2a0b2d; cursor: pointer; }
+.mi-patch-tools button:hover:not(:disabled) { background: #2a0b2d1f; }
+.mi-patch-tools button:disabled { opacity: 0.4; cursor: not-allowed; }
+.mi-patch-tools button[aria-pressed='true'] { background: #2a0b2d26; }
+.mi-patch :focus-visible { outline-color: #2a0b2d; }
+/* a brass button holds a pinned patch */
+.mi-pin { position: absolute; top: -7px; left: 50%; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #ffe9a8, #d99a1e 60%, #94640f); box-shadow: 0 2px 4px #0009; }
+.mi-patch-edit { display: grid; gap: 8px; }
+.mi-patch-edit label { font-size: 13.5px; font-weight: 500; }
+.mi-patch .mi-patch-edit .textarea { background: #fffaf5; color: #2a0b2d; border-color: #2a0b2d55; }
+.mi-patch .btn { color: #2a0b2d; border-color: #2a0b2d66; }
+.mi-patch .btn-primary { background: #2a0b2d; border-color: #2a0b2d; color: #f6ede4; }
+.mi-patch .btn:hover { background: #2a0b2d1f; }
+.mi-patch .btn-primary:hover { background: #40154a; }
+.mi-add { padding: 16px; border: 1.5px dashed var(--line-strong); border-radius: 14px; }
+.mi-add .mi-patch-edit label { color: var(--muted); }
+.mi-build { display: grid; gap: 12px; padding: 18px; border: 1px solid var(--line-strong); border-radius: 16px; background: #1b0b1dcc; }
+.mi-build h3 { font-size: 17px; }
+.mi-build-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 12px; }
+.mi-build a:not(.btn) { color: var(--text); text-underline-offset: 3px; }
+.mi-run { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.mi-run progress { flex: 1 1 100%; width: 100%; height: 8px; accent-color: var(--amber); }
+.mi-run .mono { flex: 1; min-width: 200px; }
+/* money is amber */
+.mi-cost { color: var(--amber); font-weight: 600; }
+.mi-go { min-height: 44px; }
+.mi-go .mi-cost { padding-left: 12px; border-left: 1px solid #2a0b2d40; color: inherit; font-weight: 500; opacity: 0.85; }
+
+@media (max-width: 640px) {
+  .mi-board { width: 100%; max-height: 94dvh; margin: auto 0 0; border-radius: 20px 20px 0 0; border-width: 1px 0 0; }
+  .mi-board-inner { border-radius: 20px 20px 0 0; }
+  .mi-sources strong { min-width: 0; flex-basis: auto; }
+  .mi-all { justify-content: flex-start; }
+  .mi-patch { transform: none; }
+}
+
+/* ---- motion: characters arrive one after another; off for anyone who asks for reduced motion ------------------- */
+@media (prefers-reduced-motion: no-preference) {
+  .mi-card { animation: mi-arrive 520ms cubic-bezier(0.2, 0.7, 0.2, 1) both; animation-delay: calc(var(--mi-order, 0) * 90ms); }
+  .mi-count { animation: mi-settle 400ms ease-out both; }
+  .mi-patch { animation: mi-sewn 360ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+  .mi-board[open] { animation: mi-settle 220ms ease-out; }
+  .mi-spool { animation: mi-spin 1.1s linear infinite; }
+  @keyframes mi-arrive { from { opacity: 0; transform: translateY(22px) rotate(-1.4deg) scale(0.96); } to { opacity: 1; transform: none; } }
+  @keyframes mi-settle { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @keyframes mi-sewn { from { opacity: 0; scale: 0.94; } to { opacity: 1; scale: 1; } }
+  @keyframes mi-spin { to { transform: rotate(360deg); } }
+}

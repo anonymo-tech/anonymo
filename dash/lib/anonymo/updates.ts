@@ -1,7 +1,8 @@
 // Optional updates that ship switched off, so a deploy never turns one on by surprise. The dashboard is built with
 // NEXT_PUBLIC_ANONYMO_UPDATES listing the ones that are on, comma-separated, or "all":
 //
-// Faces is released in the live workspace. The following switches are independent.
+// Faces, Night Call (voice), Move In (movein), Side by Side (sidebyside) and Tickets (tickets) are released in the live
+// workspace: they are on in every build. The following switches are independent.
 //
 //   history   chats saved in this browser (opt-in), rename, export, delete, and "wipe this device"
 //   images    the image studio (needs the gateway's media routes on: ANONYMO_FEATURE_MEDIA)
@@ -15,7 +16,7 @@
 //
 // Demo mode (?demo=1) shows every update, so each can be tried and filmed without a key or a deploy that has it on.
 
-export const UPDATE_IDS = ['history', 'images', 'usage', 'catchup', 'status', 'compare', 'vanish', 'vault', 'video', 'faces'] as const;
+export const UPDATE_IDS = ['history', 'images', 'usage', 'catchup', 'status', 'compare', 'vanish', 'vault', 'video', 'faces', 'voice', 'movein', 'sidebyside', 'tickets'] as const;
 export type UpdateId = (typeof UPDATE_IDS)[number];
 
 export function parseUpdates(raw: string | undefined): ReadonlySet<UpdateId> {
@@ -29,5 +30,8 @@ export function parseUpdates(raw: string | undefined): ReadonlySet<UpdateId> {
 
 export const BUILT_WITH = parseUpdates(process.env.NEXT_PUBLIC_ANONYMO_UPDATES);
 
-/** Whether an update is on: built with it, or this tab is in demo mode. */
-export const updateOn = (id: UpdateId, demo: boolean) => id === 'faces' || demo || BUILT_WITH.has(id);
+/** Updates that are released: on in every build, with no switch. */
+export const RELEASED: ReadonlySet<UpdateId> = new Set(['faces', 'voice', 'movein', 'sidebyside', 'tickets']);
+
+/** Whether an update is on: released, built with it, or this tab is in demo mode. */
+export const updateOn = (id: UpdateId, demo: boolean) => RELEASED.has(id) || demo || BUILT_WITH.has(id);

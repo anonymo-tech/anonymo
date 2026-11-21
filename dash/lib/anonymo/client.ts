@@ -16,6 +16,10 @@ import type {
   ImageGeneration,
   ImageRequest,
   MediaModelList,
+  MediaSpeechModel,
+  SpeechReceipt,
+  SpeechRequest,
+  SpeechResult,
   ApiErrorBody,
   Balance,
   BtcpayInvoice,
@@ -41,6 +45,7 @@ import type {
   Withdrawal,
 } from './types.ts';
 import type { VideoJob, VideoModel, VideoRequest } from './video.ts';
+import { usdToMusd } from './money.ts';
 
 /** Every path the dashboard calls, in one place. */
 export const API_PATHS = {
@@ -68,6 +73,7 @@ export const API_PATHS = {
   incidentsRss: '/api/v1/status/incidents.rss',
   incidentsAtom: '/api/v1/status/incidents.atom',
   images: '/v1/images/generations',
+  speech: '/v1/audio/speech',
   videos: '/v1/video/generations',
   video: (id: string) => `/v1/video/generations/${encodeURIComponent(id)}`,
 } as const;
@@ -198,6 +204,32 @@ export function createAnonymoClient(options: ClientOptions) {
     generateImages: (body: ImageRequest, signal?: AbortSignal) =>
       json<ImageGeneration>(API_PATHS.images, { method: 'POST', body: JSON.stringify({ ...body, response_format: 'b64_json' }), signal }),
 
+    /** The speech models the gateway lists (`kind: "speech"`): none until a voice worker is configured. */
+    async speechModels(signal?: AbortSignal): Promise<MediaSpeechModel[]> {
+      const list = await data<(Partial<Omit<MediaSpeechModel, 'kind'>> & { kind: string })[]>(API_PATHS.mediaModels, { auth: false, signal });
+      return list.filter((m): m is MediaSpeechModel => m.kind === 'speech' && !!m.id && !!m.name && !!m.pricing?.usd_per_1k_chars && !!m.voices?.length && !!m.max_chars);
+    },
+    /**
+     * `POST /v1/audio/speech`: one of the model's stock voices reads `input` and the reply is a WAV file. The body is
+     * built field by field, so nothing but the model, the text, a stock voice id and the pace can ever be sent: there
+     * is no way to pass a voice sample through this client. The charge and the signed receipt arrive as headers.
+     */
+    async speech(body: SpeechRequest, signal?: AbortSignal): Promise<SpeechResult> {
+      const payload = { model: String(body.model), input: String(body.input), voice: String(body.voice), speed: Number(body.speed ?? 1), response_format: 'wav' };
+      const response = await request(API_PATHS.speech, { method: 'POST', body: JSON.stringify(payload), headers: { accept: 'audio/wav' }, signal });
+      const audio = await response.arrayBuffer();
+      const charged = response.headers.get('x-anonymo-cost-usd');
+      const cost = charged ? Number(charged) : Number.NaN;
+      const receipt = mediaReceiptFromHeader(response.headers.get('x-anonymo-receipt'));
+      return {
+        audio,
+        requestId: response.headers.get('x-anonymo-request-id') ?? receipt?.payload.request_id ?? null,
+        costMusd: Number.isFinite(cost) && cost >= 0 ? usdToMusd(cost) : null,
+        provenance: response.headers.get('x-anonymo-provenance'),
+        receipt,
+      };
+    },
+
     async videoModels(signal?: AbortSignal): Promise<VideoModel[]> {
       const list = await data<(Partial<Omit<VideoModel, 'kind'>> & { kind: string })[]>(API_PATHS.mediaModels, { auth: false, signal });
       return list.filter((m): m is VideoModel => m.kind === 'video' && !!m.id && !!m.name && !!m.pricing?.usd_per_second && !!m.seconds && !!m.sizes?.length);
@@ -288,6 +320,18 @@ export function receiptIdFromHeader(header: string | null): string | null {
     const bin = atob(part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '='));
     const parsed = JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)))) as { request_id?: unknown };
     return typeof parsed.request_id === 'string' ? parsed.request_id : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The signed receipt inside a media reply's `x-anonymo-receipt` header (base64url of `{payload, key_id, sig}`), or null. */
+export function mediaReceiptFromHeader(header: string | null): SpeechReceipt | null {
+  if (!header) return null;
+  try {
+    const bin = atob(header.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(header.length / 4) * 4, '='));
+    const parsed = JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)))) as Partial<SpeechReceipt> | null;
+    return parsed && typeof parsed.payload?.request_id === 'string' ? { payload: parsed.payload, key_id: parsed.key_id ?? null, sig: parsed.sig ?? null } : null;
   } catch {
     return null;
   }

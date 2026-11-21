@@ -18,6 +18,7 @@ import { useContentGuard } from './use-content-guard';
 import { createPortal } from 'react-dom';
 import { buildCharacterMessages, greetingsOf } from '@/lib/anonymo/card';
 import { charactersStore } from '@/lib/anonymo/characters-store';
+import { memoryFor } from '@/lib/anonymo/movein/store';
 import { describeError, isOutOfCredit } from '@/lib/anonymo/client';
 import { useDeviceStore } from '@/lib/anonymo/device-store';
 import { modelStore, setStoredModel } from '@/lib/anonymo/prefs';
@@ -133,7 +134,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     const content = paper ? paperPrompt(prompt, paper) : prompt;
     let messages: ChatMessage[] = [...history(), { role: 'user', content }];
     if (character) {
-      const built = buildCharacterMessages(character.card, messages);
+      const built = buildCharacterMessages(character.card, messages, { memory: memoryFor(demo, character.id) });
       messages = built.messages.map((m) => ({ role: m.role as ChatMessage['role'], content: typeof m.content === 'string' ? m.content : '' }));
     }
     const id = crypto.randomUUID();
@@ -207,7 +208,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     if (streaming || !key || !canRecap(turns)) return;
     let messages = recapRequest(history());
     if (character) {
-      const built = buildCharacterMessages(character.card, messages);
+      const built = buildCharacterMessages(character.card, messages, { memory: memoryFor(demo, character.id) });
       messages = built.messages.map((m) => ({ role: m.role as ChatMessage['role'], content: typeof m.content === 'string' ? m.content : '' }));
     }
     // The council answers by committee; a recap only needs one model, so it goes to anonymo-1.

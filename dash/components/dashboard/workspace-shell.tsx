@@ -7,16 +7,20 @@ import {
   AudioLines,
   BarChart3,
   BookOpen,
+  Columns3,
   Drama,
   Ellipsis,
+  Headphones,
   ImageIcon,
   Images,
   KeyRound,
   LayoutGrid,
   ListTree,
   MessageSquare,
+  PackageOpen,
   Plug,
   ReceiptText,
+  Ticket,
   Trophy,
   Video,
   Wallet,
@@ -48,6 +52,8 @@ const groups: { title: string; links: Destination[] }[] = [
     links: [
       overview,
       chat,
+      { href: '/dashboard/call', label: 'Night Call', icon: Headphones, feature: 'voice' },
+      { href: '/dashboard/side-by-side', label: 'Side by side', icon: Columns3, feature: 'sidebyside' },
       {
         href: '/dashboard/images',
         label: 'Image studio',
@@ -57,6 +63,7 @@ const groups: { title: string; links: Destination[] }[] = [
       { href: '/dashboard/video', label: 'Video studio', icon: Video, feature: 'video' },
       { href: '/dashboard/library', label: 'Library', icon: Images, feature: 'vault' },
       { href: '/dashboard/characters', label: 'Characters', icon: Drama },
+      { href: '/dashboard/move-in', label: 'Move in', icon: PackageOpen, feature: 'movein' },
     ],
   },
   {
@@ -64,6 +71,7 @@ const groups: { title: string; links: Destination[] }[] = [
     links: [
       { href: '/dashboard/key', label: 'API key', icon: KeyRound },
       funds,
+      { href: '/dashboard/tickets', label: 'Tickets', icon: Ticket, feature: 'tickets' },
       {
         href: '/dashboard/usage',
         label: 'Usage & limits',

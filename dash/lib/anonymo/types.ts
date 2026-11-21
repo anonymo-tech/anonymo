@@ -187,6 +187,8 @@ export type ModelInfo = {
   weights_hash: string | null;
   attested: boolean;
   refusal_rate_30d: number | null; // 0..1, null = unknown
+  /** List price in USD per token, as decimal strings (gateway/src/api/models.ts `offerPricing`). Update "sidebyside" reads it. */
+  pricing?: { prompt?: string; completion?: string };
 };
 export type ModelList = { data: ModelInfo[] };
 
@@ -396,6 +398,53 @@ export type ImageGeneration = {
   created: number;
   data: { b64_json?: string; url?: string; expires_at?: number }[];
   anonymo: { request_id: string; model: string; cost_usd: string; provenance: { c2pa: boolean; watermark: boolean } };
+};
+
+/** GET /v1/media/models: one speech model as listed (`kind: "speech"`). Stock voices only; priced per 1,000 characters. */
+export type MediaSpeechModel = {
+  id: string;
+  object: 'model';
+  kind: 'speech';
+  name: string;
+  family: string;
+  license: string;
+  upstream: string;
+  pricing: { usd_per_1k_chars: string };
+  voices: string[];
+  max_chars: number;
+  response_formats: string[];
+};
+
+/**
+ * POST /v1/audio/speech (`runSpeech`). These four fields are all the dashboard ever sends: `voice` is one of the
+ * model's stock voice ids, and nothing that carries a voice sample exists on this type (the gateway refuses it anyway).
+ */
+export type SpeechRequest = { model: string; input: string; voice: string; speed?: number };
+/** The signed media receipt that rides on the reply's `x-anonymo-receipt` header (`receipt` in media/routes.ts). */
+export type SpeechReceipt = {
+  payload: {
+    v: number;
+    kind: 'media';
+    request_id: string;
+    model_id: string;
+    routes: string[];
+    media_units: number;
+    unit: string;
+    cost_usd: UsdString | Usd;
+    outputs_sha256: string[];
+    provenance: string;
+    ts: string;
+  };
+  key_id: string | null;
+  sig: string | null;
+};
+/** A spoken reply: WAV bytes, with the charge and the receipt read from the response headers. */
+export type SpeechResult = {
+  audio: ArrayBuffer;
+  requestId: string | null; // x-anonymo-request-id
+  costMusd: MicroUsd | null; // x-anonymo-cost-usd, in micro-USD; null when the header is missing
+  provenance: string | null; // x-anonymo-provenance ("c2pa+watermark"; "demo" from the mock gateway)
+  receipt: SpeechReceipt | null;
 };
 
 // ---- Usage and limits (gateway src/api/spend.ts, account-runway.ts, activity.ts; anonymo/keys/caps.ts) --------------

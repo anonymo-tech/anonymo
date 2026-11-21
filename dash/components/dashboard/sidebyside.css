@@ -1,0 +1,193 @@
+/* Update "sidebyside": Side by Side (components/dashboard/side-by-side.tsx). Built on the workspace tokens and classes
+   in app/globals.css. The receipt paper, the printer slot and the REFUNDED stamp are rebuilt here after the landing
+   receipt (components/landing/receipt-story.tsx), so the two can change apart. Every class starts with "sbs-". */
+
+/* The space at the bottom lets the last row scroll clear of the chat mascot, which floats in that corner. */
+.sbs { container: sbs / inline-size; display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; min-width: 0; padding-bottom: 56px; }
+
+/* Every one-column grid below names its track minmax(0, 1fr). An "auto" track grows to the widest unbreakable line
+   inside it (a receipt row, a code block), and on a phone that would push a column wider than its card. */
+
+/* ---- the question, and the three slots ---------------------------------------------------------------------------- */
+.sbs-ask { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; padding: clamp(14px, 2vw, 22px); border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); }
+.sbs-slots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.sbs-slot { position: relative; min-width: 0; }
+.sbs-slot-btn { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; min-height: 56px; padding: 8px 12px; border: 1px solid var(--line-strong); border-radius: 12px; background: #1f0c21; color: var(--text); text-align: left; cursor: pointer; transition: background-color 180ms ease, border-color 180ms ease; }
+.sbs-slot-btn:hover, .sbs-slot-btn[aria-expanded='true'] { border-color: var(--faint); background: var(--raised); }
+.sbs-slot-btn > svg { color: var(--faint); }
+.sbs-slot-text { display: grid; min-width: 0; }
+.sbs-slot-text strong { overflow: hidden; font: 500 14.5px/1.35 var(--sans); text-overflow: ellipsis; white-space: nowrap; }
+.sbs-slot-text small { overflow: hidden; color: var(--faint); font-size: 12px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.sbs-letter { display: inline-grid; place-items: center; flex: none; width: 26px; height: 26px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--text); font: 600 12.5px/1 var(--sans); }
+.sbs-letter-merge { border-color: #f6b84b66; color: var(--amber); }
+
+.sbs-menu { position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; scroll-margin: 76px 0 84px; width: min(420px, calc(100vw - 32px)); padding: 8px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--raised); box-shadow: 0 18px 50px #000b; }
+.sbs-slot:last-child .sbs-menu { right: 0; left: auto; }
+.sbs-search { position: relative; display: block; }
+.sbs-search > svg { position: absolute; top: 50%; left: 12px; color: var(--faint); transform: translateY(-50%); pointer-events: none; }
+.sbs-search .input { padding-left: 36px; font-size: 16px; }
+.sbs-menu ul { display: grid; gap: 2px; max-height: min(330px, 48vh); margin: 8px 0 0; padding: 0; overflow-y: auto; list-style: none; overscroll-behavior: contain; }
+.sbs-menu li > button { display: grid; gap: 2px; width: 100%; padding: 9px 10px; border: 0; border-radius: 10px; background: transparent; text-align: left; cursor: pointer; }
+.sbs-menu li > button:hover, .sbs-menu li > button:focus-visible, .sbs-menu li > button[aria-current='true'] { background: var(--raised-2); }
+.sbs-menu li > button:focus-visible { outline-offset: -2px; }
+.sbs-opt-name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; color: var(--text); font: 500 14px/1.4 var(--sans); overflow-wrap: anywhere; }
+.sbs-opt-name > svg { color: var(--ok); }
+.sbs-opt-name .chip { color: var(--amber); }
+.sbs-opt-meta { color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+.sbs-opt-none { padding: 12px 10px; color: var(--muted); font-size: 14px; }
+
+.sbs-hint { margin-top: -4px; font-size: 12.5px; }
+.sbs-question { min-height: 88px; max-height: 280px; font-size: 16px; line-height: 1.5; resize: vertical; }
+.sbs-send { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; }
+.sbs-charges { flex: 1 1 280px; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+.sbs-charges strong { color: var(--text); font-weight: 600; }
+.sbs-go { min-height: 48px; padding: 0 18px; font-size: 16px; }
+.sbs-cost { margin-left: 4px; padding-left: 12px; border-left: 1px solid #2a0b2d40; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.sbs-starters { display: flex; flex-wrap: wrap; gap: 6px; }
+.sbs-starters button { max-width: 100%; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: transparent; color: var(--muted); font-size: 13px; line-height: 1.35; text-align: left; cursor: pointer; transition: border-color 180ms ease, color 180ms ease; }
+.sbs-starters button:hover { border-color: var(--faint); color: var(--text); }
+/* globals.css moves the AI notice to the end of the chat composer; here it keeps its place above the privacy line */
+.sbs-ask .ai-notice { order: 0; }
+.sbs-private { margin-top: -8px; font-size: 12.5px; }
+
+/* before the first question: the three columns as they will be laid out */
+.sbs-preview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 0; padding: 0; list-style: none; }
+.sbs-preview li { display: grid; gap: 4px; align-content: start; justify-items: start; min-height: 140px; min-width: 0; padding: 16px; border: 1px dashed var(--line-strong); border-radius: var(--radius-lg); font-size: 12.5px; }
+.sbs-preview strong { margin-top: 6px; color: var(--text); font: 500 14px/1.35 var(--sans); overflow-wrap: anywhere; }
+
+/* ---- a round: the question, three columns ------------------------------------------------------------------------- */
+/* A round is at least a screen tall, so a new question can always scroll its answers up under the top bar, and a
+   short round replacing a long one does not yank the page. */
+.sbs-answers { min-width: 0; scroll-margin-top: 76px; }
+.sbs-round { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-content: start; min-width: 0; min-height: calc(100svh - 150px); }
+.sbs-round > .prompt { max-width: min(80%, 760px); }
+.sbs-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 32px; min-width: 0; }
+.sbs-status { font-size: 13px; }
+.sbs-tabs { display: none; flex: 1; gap: 6px; min-width: 0; }
+.sbs-tabs button { display: inline-flex; flex: 1 1 0; align-items: center; gap: 7px; min-width: 0; min-height: 40px; padding: 4px 10px 4px 6px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); font-size: 12.5px; cursor: pointer; }
+.sbs-tabs button[aria-current='true'] { border-color: var(--signal); color: var(--text); }
+.sbs-tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sbs-tabs button[data-status='streaming'] .sbs-letter { border-color: var(--pink); }
+.sbs-tabs button[data-status='error'] .sbs-letter { border-color: var(--rose); color: var(--rose); }
+.sbs-tabs button[data-refunded] .sbs-letter { border-color: var(--amber); color: var(--amber); }
+
+/* The three cards are one height, and each foot sits at the bottom of its card, so the costs and receipts line up. */
+.sbs-columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: stretch; min-width: 0; }
+.sbs-col, .sbs-merged { position: relative; display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
+.sbs-col[data-status='streaming'], .sbs-merged[data-status='streaming'] { border-color: var(--line-strong); }
+.sbs-col[data-status='streaming'] .sbs-letter { border-color: var(--pink); box-shadow: 0 0 0 3px var(--pink-soft); }
+.sbs-col[data-refunded] { border-color: #f6b84b80; background: linear-gradient(#f6b84b12, #f6b84b00 200px), var(--surface); }
+.sbs-col-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.sbs-col-name { display: grid; flex: 1; min-width: 0; }
+.sbs-col-name strong { font: 500 14.5px/1.35 var(--sans); overflow-wrap: anywhere; }
+.sbs-col-name span { font-size: 12.5px; line-height: 1.4; }
+/* Models write lists with one line break between items; keep those breaks instead of running the items together. */
+.sbs .answer-body { font-size: 15px; line-height: 1.62; }
+.sbs .answer-body p { white-space: pre-wrap; }
+.sbs-note { font-size: 13px; }
+.sbs-foot { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line); }
+.sbs-price { color: var(--amber); font-variant-numeric: tabular-nums; }
+
+/* ---- receipt paper: the slip on a refunded column, and the strip from the printer --------------------------------- */
+.sbs-paper {
+  color: #4a2c4d;
+  font: 500 12.5px/1.25 var(--sans);
+  letter-spacing: 0.01em;
+  text-shadow: 0 0 0.5px #4a2c4d99;
+  background:
+    linear-gradient(90deg, #00000012, transparent 8%, transparent 92%, #00000012),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .3 0 0 0 0 .2 0 0 0 0 .25 0 0 0 .09 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
+    #f4e8dd;
+  /* a torn, zigzag bottom edge */
+  mask:
+    conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% 100% / calc(2 * var(--z)) var(--z) repeat-x,
+    linear-gradient(#000 0 0) top / 100% calc(100% - var(--z) + 1px) no-repeat;
+}
+.sbs-rx { position: relative; padding: 5px 0; }
+.sbs-rx-pair { display: flex; align-items: baseline; gap: 8px; }
+.sbs-rx-pair > span { white-space: nowrap; }
+.sbs-rx-pair > span:first-child { min-width: 0; overflow: hidden; color: #6d4c6b; text-overflow: ellipsis; }
+.sbs-rx-pair > span:nth-child(3) { font-weight: 600; }
+.sbs-rx-pair i { flex: 1; min-width: 12px; height: 0.8em; background: radial-gradient(circle, currentColor 0.8px, transparent 1.2px) 0 100% / 6px 4px repeat-x; opacity: 0.35; }
+.sbs-rx-amber > span:last-child { color: #a8640f; }
+.sbs-rx-center { color: #7a5a77; text-align: center; }
+.sbs-rx-big { padding-top: 4px; color: inherit; font-size: 17px; letter-spacing: 0.32em; }
+.sbs-rx-rule { height: 18px; background: radial-gradient(circle, currentColor 0.9px, transparent 1.3px) 0 50% / 7px 4px repeat-x; opacity: 0.6; }
+.sbs-rx-logo { display: flex; justify-content: center; padding-top: 0; }
+.sbs-rx-head { display: flex; align-items: baseline; gap: 8px; margin-top: 8px; padding-top: 12px; border-top: 1.5px dashed #4a2c4d55; font-weight: 600; }
+.sbs-rx-head b { display: inline-grid; place-items: center; flex: none; width: 18px; height: 18px; border: 1.5px solid currentColor; border-radius: 50%; font-size: 10.5px; line-height: 1; }
+.sbs-rx-head span { min-width: 0; overflow-wrap: anywhere; }
+/* the rubber stamp: amber ink pressed onto the paper at an angle, worn where the rubber missed. It sits over the dotted
+   leader, to the left of "said no", so a long model name stays readable under it. */
+.sbs-stamp { position: absolute; top: -3px; right: 62px; padding: 3px 9px 2px; border: 2.5px solid #d4851a; border-radius: 4px; color: #d4851a; font: 600 16px/1 var(--sans); letter-spacing: 0.1em; text-shadow: none; opacity: 0.86; transform: rotate(-9deg); mix-blend-mode: multiply;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='40'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='.55' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -2.4 2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+
+.sbs-slip { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.sbs-slip-shadow { filter: drop-shadow(0 8px 14px #0008); }
+.sbs-slip-paper { --z: 7px; padding: 9px 12px calc(11px + var(--z)); }
+.sbs-slip > p { color: var(--amber); font-size: 13px; line-height: 1.5; }
+
+/* ---- the total, the merge, and the printer ------------------------------------------------------------------------ */
+.sbs-total { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 12px 16px; border: 1px dashed #f6b84b66; border-radius: var(--radius); font-size: 14.5px; }
+.sbs-total strong { color: var(--amber); font-size: 15px; font-variant-numeric: tabular-nums; }
+.sbs-offer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 24px; padding: clamp(16px, 2vw, 22px); border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: linear-gradient(var(--signal-soft), transparent 75%), var(--surface); }
+.sbs-offer > div { display: grid; flex: 1 1 320px; gap: 6px; min-width: 0; }
+.sbs-offer h2 { font-size: 24px; }
+.sbs-offer p { max-width: 68ch; font-size: 14.5px; }
+.sbs-merge { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; min-width: 0; }
+.sbs-merge[data-printed] { grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); align-items: start; }
+.sbs-merged { padding: clamp(16px, 2vw, 22px); border-color: var(--line-strong); background: linear-gradient(var(--signal-soft), transparent 60%), var(--surface); }
+.sbs-merged .answer-body { font-size: 16px; line-height: 1.68; }
+
+/* The animated plush (components/mascot-sprite.tsx) stands over a slot and the strip hangs out of it. The paper starts
+   inside the slot (clipped at its middle), so it reads as fed out of it. */
+.sbs-printer { min-width: 0; }
+.sbs-printer-body { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; align-content: start; }
+.sbs-printer-mascot { position: relative; z-index: 3; width: min(150px, 46%); margin-bottom: -10px; }
+.sbs-printer-slot { position: relative; z-index: 2; width: min(340px, 100%); height: 14px; border-radius: 7px; background: linear-gradient(#000 0 45%, #1c0b1f); box-shadow: inset 0 3px 6px #000, 0 1px 0 #f3e6dc2e, 0 -1px 0 #00000080, 0 12px 14px -8px #000000d9; }
+.sbs-paper-window { position: relative; z-index: 1; width: min(316px, 93%); margin-top: -7px; filter: drop-shadow(0 18px 24px #0009); clip-path: inset(0 -48px -80px); }
+.sbs-strip { --z: 9px; padding: 22px 18px calc(26px + var(--z)); }
+
+/* ---- motion: off for anyone who asks for less (and globals.css switches off whatever is left inside the workspace) -- */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes sbs-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  @keyframes sbs-pop { from { opacity: 0; transform: translateY(6px) scale(0.98); } to { opacity: 1; transform: none; } }
+  @keyframes sbs-live { 50% { box-shadow: 0 0 0 6px #ff5fae00; } }
+  @keyframes sbs-unfurl { from { translate: 0 -100%; } }
+  @keyframes sbs-stamp { from { opacity: 0; transform: rotate(-4deg) scale(1.9); } to { opacity: 0.86; transform: rotate(-9deg) scale(1); } }
+  .sbs-col { animation: sbs-rise 340ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .sbs-col:nth-child(2) { animation-delay: 70ms; }
+  .sbs-col:nth-child(3) { animation-delay: 140ms; }
+  .sbs-merged, .sbs-offer, .sbs-total { animation: sbs-rise 340ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .sbs-menu { animation: sbs-pop 160ms ease-out both; transform-origin: top left; }
+  .sbs-col[data-status='streaming'] .sbs-letter { animation: sbs-live 1.4s ease-in-out infinite; }
+  .sbs-slip-shadow { animation: sbs-pop 300ms ease-out both; }
+  .sbs-stamp { animation: sbs-stamp 320ms 420ms cubic-bezier(0.3, 1.4, 0.5, 1) both; }
+  /* the strip feeds out of the slot, torn edge first; its stamps land once it is out */
+  .sbs-strip { animation: sbs-unfurl 1300ms cubic-bezier(0.25, 0.85, 0.3, 1) 250ms backwards; }
+  .sbs-strip .sbs-stamp { animation-delay: 1500ms; }
+}
+
+/* ---- narrower: the columns become a row to swipe through, then everything stacks ------------------------------------ */
+@container sbs (max-width: 900px) {
+  .sbs-merge[data-printed] { grid-template-columns: minmax(0, 1fr); }
+}
+@container sbs (max-width: 780px) {
+  .sbs-status { display: none; }
+  .sbs-tabs { display: flex; }
+  .sbs-columns { display: flex; gap: 12px; margin-inline: -2px; padding: 2px 2px 10px; overflow-x: auto; overscroll-behavior-x: contain; scroll-padding-inline: 2px; scroll-snap-type: x mandatory; scrollbar-width: thin; }
+  .sbs-col { flex: 0 0 min(88%, 460px); scroll-snap-align: start; }
+  .sbs-round > .prompt { max-width: 92%; }
+}
+@container sbs (max-width: 620px) {
+  .sbs-slots { grid-template-columns: minmax(0, 1fr); }
+  .sbs-menu, .sbs-slot:last-child .sbs-menu { right: 0; left: 0; width: auto; }
+  .sbs-go { width: 100%; }
+  .sbs-preview { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .sbs-preview li { grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 2px 10px; min-height: 0; padding: 10px 12px; }
+  .sbs-preview .sbs-letter { grid-row: span 2; }
+  .sbs-preview strong { margin-top: 0; }
+  .sbs-tab-name { display: none; }
+  .sbs-tabs button { flex: 0 0 auto; padding-right: 6px; }
+  .sbs-offer h2 { font-size: 22px; }
+}

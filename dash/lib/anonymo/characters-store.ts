@@ -5,7 +5,7 @@ import { CardError, normalizeCard, readCardFromPng, type CharacterCard } from '.
 import { deviceStore, readJson, writeJson } from './device-store.ts';
 
 const STORE = 'anonymo.characters.v1';
-const MAX_CARDS = 30;
+export const MAX_CARDS = 30;
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
 export type StoredCharacter = { id: string; hash: string; card: CharacterCard; importedAt: string };

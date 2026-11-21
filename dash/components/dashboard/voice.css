@@ -1,0 +1,168 @@
+/* Update "voice": Night Call (components/dashboard/night-call.tsx). Built on the tokens and classes in app/globals.css.
+   The lobby sits in the workspace; the call itself is a full-screen dialog in deep plum with the mascot in the middle,
+   gold rings at its headphone cups and a line of gold stitches across the screen. The caption uses the site's serif
+   when it has one (--serif) and its reading face otherwise. */
+
+/* ---- lobby ---------------------------------------------------------------------------------------------------------- */
+.nc-lobby { display: grid; gap: 18px; }
+.nc-hero { position: relative; isolation: isolate; display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: clamp(18px, 3vw, 44px); align-items: center; padding: clamp(18px, 3vw, 40px); border: 1px solid #594153; border-radius: 20px; background: radial-gradient(60% 90% at 16% 46%, #4a1f47, transparent 70%), var(--surface); overflow: hidden; }
+.nc-hero > img { display: block; width: 100%; height: auto; aspect-ratio: 1; mask: radial-gradient(circle at 50% 50%, #000 54%, transparent 71%); }
+.nc-hero-copy { display: grid; gap: 14px; justify-items: start; min-width: 0; }
+.nc-kicker { font: 400 12.5px/1 var(--sans); letter-spacing: 0.12em; text-transform: uppercase; color: var(--amber); }
+.nc-hero h1 { max-width: 16ch; font-size: clamp(32px, 4.2vw, 56px); letter-spacing: -0.045em; line-height: 1; text-wrap: balance; }
+.nc-hero .lede { max-width: 56ch; color: var(--muted); font-size: 16px; }
+.nc-start { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+.nc-start .btn { flex-direction: column; align-items: flex-start; justify-content: center; gap: 1px; height: auto; min-height: 58px; padding-block: 9px; white-space: normal; text-align: left; }
+.nc-start-label { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.nc-start .studio-cost { margin: 0; padding: 0 0 0 26px; font-size: 13px; opacity: 0.8; }
+.nc-fine { max-width: 68ch; margin: 0; color: var(--faint); font-size: 13px; line-height: 1.55; }
+.nc-fine strong { color: var(--amber); font-weight: 500; }
+.nc-fine code { color: var(--muted); }
+.nc-summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.nc-setup { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.nc-pace { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--muted); }
+.nc-pace .select { width: auto; min-height: 34px; padding-block: 4px; }
+.nc-sleep-choices { justify-self: start; }
+
+/* ---- the voice picker (lobby and call) ------------------------------------------------------------------------------ */
+.nc-voices { display: grid; gap: 20px; min-width: 0; }
+.nc-voices section { display: grid; gap: 8px; min-width: 0; }
+.nc-voices header { display: flex; align-items: center; gap: 10px; }
+.nc-voices h3 { font-size: 15px; }
+.nc-voices .lede, .nc-panel .lede { color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+.nc-voices ul { display: grid; gap: 6px; max-height: 15rem; margin: 0; padding: 2px; overflow-y: auto; list-style: none; }
+.nc-voice { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 6px 8px 6px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius); }
+.nc-voice[data-on='true'] { border-color: var(--amber); background: var(--amber-soft); }
+.nc-voice:has(input:focus-visible) { outline: 2px solid var(--signal); outline-offset: 2px; }
+.nc-voice label { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; min-height: 32px; cursor: pointer; }
+.nc-voice input { accent-color: var(--amber); }
+.nc-voice-name { font-weight: 500; overflow-wrap: anywhere; }
+.nc-voice small { color: var(--faint); font-size: 12.5px; }
+.nc-voice .btn { flex: none; }
+.nc-voice-price { font-size: 13.5px; color: var(--muted); }
+.nc-voice-price strong { color: var(--text); font-weight: 600; }
+.nc-voice-model { display: grid; gap: 6px; }
+.nc-empty { padding: 12px 14px; border: 1px dashed var(--line-strong); border-radius: var(--radius); color: var(--faint); font-size: 13.5px; }
+
+/* ---- the call: a full-screen dialog --------------------------------------------------------------------------------- */
+.nc { position: fixed; inset: 0; width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; overflow: hidden; color: var(--text);
+  background: radial-gradient(90% 62% at 50% 40%, #3a1340 0%, #25102a 46%, var(--bg) 78%, #120613 100%); }
+.nc:not([open]) { display: none; }
+.nc::backdrop { background: var(--bg); }
+/* the same fine grain the rest of the site wears (body::after cannot reach into the top layer) */
+.nc::after { content: ''; position: absolute; inset: 0; z-index: 5; pointer-events: none; opacity: 0.5; mix-blend-mode: soft-light;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .22 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+.nc[data-phase='farewell'] { background: radial-gradient(80% 60% at 50% 42%, #24102a 0%, var(--bg) 60%, #0e0510 100%); }
+
+.nc-screen { position: relative; overflow-x: clip; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; gap: 6px; height: 100%;
+  padding: max(14px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  transition: opacity 3.6s ease; }
+.nc[data-dim='true'] .nc-screen { opacity: 0; }
+
+.nc-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; }
+.nc-who { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.nc-who h2 { overflow: hidden; font-size: 17px; font-weight: 570; letter-spacing: -0.02em; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+.nc-who .adults-only { flex: none; }
+.nc-meter { display: flex; align-items: center; gap: 14px; flex: none; font-size: 15px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.nc-cost { padding: 2px 10px; border: 1px solid #f6b84b66; border-radius: 999px; background: var(--amber-soft); color: var(--amber); }
+
+/* the mascot, the rings at its headphone cups, and the stitched wave that runs behind it at the height of the cups */
+.nc-stage { --nc-level: 0; position: relative; min-height: 0; }
+.nc-mascot { position: absolute; left: 50%; top: 50%; height: min(100%, 60dvh, 88vw, 500px); aspect-ratio: 1; translate: -50% -50%; }
+.nc-mascot img { display: block; width: 100%; height: 100%; mask: radial-gradient(circle at 50% 50%, #000 52%, transparent 70%); }
+.nc-wave { position: absolute; left: 50%; top: 38.5%; width: 100vw; height: 52%; translate: -50% -50%; pointer-events: none; filter: drop-shadow(0 0 6px #f6b84b55); }
+/* Each set of rings is centred on a cup and shows only its outer half, fading out before it reaches the face. The box
+   is as wide as the largest ring grows, so the fade (a mask on the box) is never outrun. */
+.nc-rings { position: absolute; top: 38.6%; width: 78%; aspect-ratio: 1; translate: -50% -50%; pointer-events: none; }
+.nc-rings-left { left: 23.6%; mask: linear-gradient(90deg, #000 37%, transparent 49%); }
+.nc-rings-right { left: 76.2%; mask: linear-gradient(270deg, #000 37%, transparent 49%); }
+.nc-rings i { --b: 1; --k: 0.5; --o: 0.85; position: absolute; inset: 36.5%; border: 1.5px solid var(--amber); border-radius: 50%;
+  opacity: calc(var(--nc-level) * var(--o)); transform: scale(calc(var(--b) + var(--nc-level) * var(--k))); }
+.nc-rings i:nth-child(2) { --b: 1.45; --k: 1; --o: 0.6; }
+.nc-rings i:nth-child(3) { --b: 1.95; --k: 1.7; --o: 0.4; }
+
+.nc-words { display: grid; gap: 8px; justify-items: center; min-width: 0; }
+.nc-caption { width: min(100%, 44em); min-height: 2.7em; margin: 0; text-align: center; font: 500 clamp(20px, 3.1vw, 30px)/1.3 var(--serif, var(--sans)); letter-spacing: -0.012em; text-wrap: balance; overflow-wrap: anywhere; }
+.nc-caption[data-who='hint'] { color: var(--faint); font-weight: 400; }
+.nc-caption[data-who='you'] { color: var(--muted); font-style: italic; }
+.nc-notes { display: grid; gap: 8px; width: min(100%, 640px); max-height: 27dvh; overflow-y: auto; overscroll-behavior: contain; }
+.nc-notes:empty { display: none; }
+.nc-notes .notice { padding: 9px 14px; font-size: 13px; line-height: 1.5; }
+.nc-notes .ai-reminder { justify-self: center; }
+.nc-notes .nc-fine { max-width: none; text-align: center; }
+.nc-type { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; width: min(100%, 640px); }
+.nc-type .nc-fine { grid-column: 1 / -1; max-width: none; text-align: center; }
+
+.nc-panel { position: absolute; z-index: 4; left: 50%; bottom: calc(172px + env(safe-area-inset-bottom, 0px)); translate: -50% 0; display: grid; gap: 12px; align-content: start;
+  width: min(560px, calc(100% - 24px)); max-height: min(64dvh, 600px); padding: 16px; overflow-y: auto; overscroll-behavior: contain;
+  border: 1px solid var(--line-strong); border-radius: 18px; background: #26102afa; box-shadow: 0 24px 70px #000c; }
+.nc-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.nc-panel h3 { font-size: 18px; }
+
+.nc-foot { display: grid; gap: 8px; justify-items: center; padding-top: 4px; }
+.nc-controls { display: flex; align-items: flex-start; justify-content: center; gap: clamp(8px, 3.4vw, 30px); }
+.nc-control { display: grid; justify-items: center; gap: 6px; width: 84px; padding: 0; border: 0; background: none; color: var(--muted); font-size: 12.5px; line-height: 1.3; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.nc-control-icon { display: grid; place-items: center; width: 58px; height: 58px; border: 1.5px solid var(--line-strong); border-radius: 50%; background: #2a112ecc; color: var(--text);
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 200ms ease, transform 160ms ease; }
+.nc-control:hover .nc-control-icon { border-color: var(--faint); background: var(--raised-2); }
+.nc-control:focus-visible { outline: none; }
+.nc-control:focus-visible .nc-control-icon { outline: 2px solid var(--signal); outline-offset: 3px; }
+.nc-control[aria-expanded='true'] .nc-control-icon { border-color: var(--amber); color: var(--amber); }
+.nc-control-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.nc-talk { touch-action: none; user-select: none; }
+.nc-talk .nc-control-icon { width: 72px; height: 72px; margin-top: -7px; border-color: var(--signal); background: var(--signal); color: var(--signal-ink); }
+.nc-talk:hover .nc-control-icon { border-color: var(--signal-hover); background: var(--signal-hover); }
+.nc-talk[aria-pressed='true'] .nc-control-icon { border-color: var(--amber); background: var(--amber); box-shadow: 0 0 0 9px var(--amber-soft), 0 0 34px #f6b84b66; }
+.nc-hangup .nc-control-icon { border-color: #ff6b5e88; background: #ff6b5e24; color: var(--rose); }
+.nc-hangup:hover .nc-control-icon { border-color: var(--rose); background: #ff6b5e3d; }
+.nc-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 8px; min-height: 28px; }
+.nc-tool { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 2px 11px; border: 1px solid var(--line-strong); border-radius: 999px; background: transparent; color: var(--muted); font: 500 12.5px/1.5 var(--sans); cursor: pointer; }
+.nc-tool:hover { border-color: var(--faint); color: var(--text); }
+.nc-tool[aria-pressed='true'] { border-color: var(--amber); background: var(--amber-soft); color: var(--amber); }
+.nc-foot .ai-notice { text-align: center; }
+
+.nc-farewell { display: grid; place-content: center; justify-items: center; gap: 14px; height: 100%; padding: 24px; text-align: center; }
+.nc-farewell img { width: min(44vw, 210px); height: auto; aspect-ratio: 1; opacity: 0.62; mask: radial-gradient(circle at 50% 50%, #000 50%, transparent 70%); }
+.nc-farewell h2 { font: 500 clamp(30px, 6vw, 56px)/1.1 var(--serif, var(--sans)); letter-spacing: -0.02em; }
+.nc-farewell .crisis-notice { max-width: 560px; text-align: left; }
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes nc-breathe { 50% { transform: translateY(-3px) scale(1.012); } }
+  @keyframes nc-arrive { from { opacity: 0; transform: translateY(10px); } }
+  .nc-mascot img { animation: nc-breathe 6.5s ease-in-out infinite; }
+  .nc-rings i { transition: transform 110ms linear, opacity 160ms linear; }
+  .nc-screen > *, .nc-farewell > * { animation: nc-arrive 520ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .nc-farewell > * { animation-duration: 1600ms; }
+  .nc-panel { animation: nc-arrive 180ms ease-out both; }
+  .nc-talk[aria-pressed='true'] .nc-control-icon { transform: scale(1.06); }
+}
+
+/* Reduced motion: no pulsing and no fade. The rings hold still and simply show who has the floor. */
+@media (prefers-reduced-motion: reduce) {
+  .nc-screen { transition: none; }
+  .nc-rings i { opacity: 0; transform: scale(var(--b)); }
+  .nc-stage[data-mode='speaking'] .nc-rings i, .nc-stage[data-mode='listening'] .nc-rings i { opacity: calc(var(--o) * 0.5); }
+}
+
+@media (max-width: 900px) {
+  .nc-setup { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 720px) {
+  .nc-hero { grid-template-columns: minmax(0, 1fr); gap: 4px; padding: 16px 18px 20px; }
+  .nc-hero > img { width: min(64%, 240px); margin: -8px auto -4px; }
+  .nc-start { width: 100%; }
+  .nc-start .btn { flex: 1 1 100%; }
+  .nc-voice { flex-wrap: wrap; }
+  .nc-who h2 { font-size: 15.5px; }
+  .nc-meter { gap: 8px; font-size: 14px; }
+  .nc-control { width: 72px; font-size: 12px; }
+  .nc-control-icon { width: 52px; height: 52px; }
+  .nc-talk .nc-control-icon { width: 66px; height: 66px; }
+  .nc-panel { bottom: calc(160px + env(safe-area-inset-bottom, 0px)); }
+}
+
+@media (max-height: 620px) {
+  .nc-caption { min-height: 1.4em; font-size: clamp(17px, 2.6vw, 22px); }
+  .nc-foot .ai-notice { font-size: 11.5px; }
+}

@@ -29,7 +29,7 @@ With the local demo server running (leave the API origin unset), set `WORKSPACE_
 | `NEXT_PUBLIC_ANONYMO_DEMO=1` | Force demo mode. |
 | `?demo=1` / `?demo=0` | A live build uses its configured API and ignores this query parameter. |
 | `NEXT_PUBLIC_ANONYMO_VENICE_BADGE=1` | Show the "Built in Venice" badge (Overview §4, §10). Off by default. |
-| `NEXT_PUBLIC_ANONYMO_UPDATES=history,images,…` or `all` | Turn on updates that ship switched off (`lib/anonymo/updates.ts`): `history`, `images`, `usage`, `catchup`, `status`. Other optional updates include `compare`, `vanish`, `vault` and `video`. Faces is available in the live workspace. Demo mode shows all updates. |
+| `NEXT_PUBLIC_ANONYMO_UPDATES=history,images,…` or `all` | Turn on updates that ship switched off (`lib/anonymo/updates.ts`): `history`, `images`, `usage`, `catchup`, `status`. Other optional updates include `compare`, `vanish`, `vault` and `video`. Faces, Night Call (`voice`), Move In (`movein`), Side by Side (`sidebyside`) and Tickets (`tickets`) are available in the live workspace. Demo mode shows all updates. |
 | `NEXT_PUBLIC_ANONYMO_RHC_CHAIN_ID=46630` | Robinhood Chain testnet instead of mainnet (4663). Set `NEXT_PUBLIC_ANONYMO_RHC_RPC` with it. |
 | `NEXT_PUBLIC_ANONYMO_EVM_NETWORKS='{"rhc":{"chainId":…,"rpcUrl":"…"}}'` | Override the chain id, RPC or name the wallet is switched to, per EVM chain (testnets, local chains). |
 
@@ -37,6 +37,9 @@ Demo mode serves every endpoint from an in-browser mock gateway (`lib/anonymo/mo
 gateway's shapes. The same client code runs in both modes; only `fetch` differs. In demo mode the funds page can simulate
 a confirmed USDG deposit or an ANMO payment, and a prompt containing the word "reroute" shows a refused-then-rerouted
 answer.
+
+Side by Side (`/dashboard/side-by-side`) asks three models at once and merges their answers; in demo mode a question
+containing "reroute" is refused and rerouted in the anonymo-1 column only.
 
 Against a local gateway (`cd gateway && bun run launch`, http://127.0.0.1:8787):
 
@@ -76,6 +79,11 @@ wallet SDK and no WalletConnect.
   `Authorization` header.
 - Receipt ids with their model and time, imported character cards, the last model picked, the 18+ answer.
 - Conversations live in memory and are gone when the tab closes. Prompt and output text are never written to storage.
+- Move In keeps the characters, chats and memory brought from other apps in IndexedDB (`anonymo.movein.v1`), live and
+  demo apart. The export is read in the browser and never uploaded; Wipe deletes the database.
+- Tickets keeps the keys of tickets the person gave, so what is left on a ticket can be taken back. Wipe removes them,
+  and the credit can then no longer be taken back.
+- Night Call keeps the voice that was picked. No audio is kept.
 
 ## API shapes the dashboard uses
 
