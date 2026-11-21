@@ -58,7 +58,9 @@ these presets specify the shape and the provider determines the pixel dimensions
 8. **Media gate** on every image and on sampled video frames. A block releases the hold and nothing is stored or
    returned. One blocked image stops the whole batch.
 9. **Provenance**: an invisible watermark, then a signed C2PA manifest. `stamp()` verifies its own output and throws
-   otherwise, so unmarked media cannot be returned.
+   otherwise, so unmarked media cannot be returned. MP4 video, when no video watermarker is configured (the built-in
+   one marks PNG and WAV), carries the signed manifest alone, with its watermark recorded as `{ "alg": "none" }`;
+   verification accepts that for MP4 video only.
 10. Delivery (signed URL or inline), then **settle**.
 
 Any failure after step 6 releases the hold, so nothing is charged.

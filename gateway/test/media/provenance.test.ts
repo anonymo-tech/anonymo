@@ -1,7 +1,7 @@
 // WS06 · Provenance: every output format carries a signed C2PA manifest and an invisible watermark, both verifiable,
 // and stamp() refuses anything it cannot mark (Backend §2 provenance, §10 "no media without it").
 import { describe, expect, test } from "bun:test";
-import { provenanceKeyFromSeed, verifyManifest, TRAINED_ALGORITHMIC_MEDIA } from "../../src/anonymo/media/c2pa.ts";
+import { embedManifest, provenanceKeyFromSeed, verifyManifest, TRAINED_ALGORITHMIC_MEDIA } from "../../src/anonymo/media/c2pa.ts";
 import { containerFor, sniffMime } from "../../src/anonymo/media/containers.ts";
 import { decodePng, pngChunks } from "../../src/anonymo/media/png.ts";
 import { createProvenance, ProvenanceError } from "../../src/anonymo/media/provenance.ts";
@@ -108,10 +108,29 @@ describe("provenance", () => {
     const jpeg = Uint8Array.of(0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1);
     await expect(prov.stamp(jpeg, "image/jpeg", meta)).rejects.toBeInstanceOf(ProvenanceError);
     await expect(prov.stamp(toneWav(0.2), "image/png", meta)).rejects.toBeInstanceOf(ProvenanceError);
-    const noVideoMark = createProvenance({ key, watermarker: lsbWatermarker(TEST_WATERMARK_KEY) });
-    expect(noVideoMark.supports("video/mp4")).toBe(false);
-    await expect(noVideoMark.stamp(tinyMp4(), "video/mp4", meta)).rejects.toBeInstanceOf(ProvenanceError);
     // Too small to carry the 96-bit mark three times over.
     await expect(prov.stamp(solidPng(4, 4, [0, 0, 0]), "image/png", meta)).rejects.toThrow();
+  });
+
+  test("with no video watermarker, MP4 video carries the signed manifest alone, and says so", async () => {
+    const pngOnly = createProvenance({ key, watermarker: lsbWatermarker(TEST_WATERMARK_KEY) });
+    expect(pngOnly.supports("video/mp4")).toBe(true);
+    const out = await pngOnly.stamp(tinyMp4(), "video/mp4", meta);
+    const check = await pngOnly.verify(out);
+    expect(check.ok).toBe(true);
+    expect(check.watermark).toBeNull();
+    expect((check.manifest as { generation: { watermark: { alg: string } } }).generation.watermark.alg).toBe("none");
+    // Any byte change still breaks the signed manifest.
+    const tampered = Uint8Array.from(out);
+    tampered[tampered.length - 1] ^= 1;
+    expect((await pngOnly.verify(tampered)).ok).toBe(false);
+  });
+
+  test("a signed manifest that claims no watermark is accepted for MP4 video only, never for an image", async () => {
+    const pngOnly = createProvenance({ key, watermarker: lsbWatermarker(TEST_WATERMARK_KEY) });
+    const unmarkedPng = embedManifest(solidPng(64, 64, [9, 9, 9]), "image/png", { requestId: "r", model: "m", generatedAt: new Date().toISOString(), watermark: { alg: "none", id: "" } }, key);
+    const check = await pngOnly.verify(unmarkedPng);
+    expect(check.manifest.ok).toBe(true);
+    expect(check.ok).toBe(false);
   });
 });
