@@ -3,7 +3,7 @@
 // generated or classified for real here.
 import { describe, expect, test } from "bun:test";
 import { assertLicensed, MediaCatalog } from "../../src/anonymo/media/catalog.ts";
-import { createMediaGate } from "../../src/anonymo/media/gate.ts";
+import { createMediaGate, DEFAULT_THRESHOLDS } from "../../src/anonymo/media/gate.ts";
 import { hostedClassifier, hostedFrame, parseGuardVerdict } from "../../src/anonymo/media/hosted-classifier.ts";
 import { decodePng } from "../../src/anonymo/media/png.ts";
 import { classifierFromEnv } from "../../src/anonymo/media/services.ts";
@@ -89,18 +89,35 @@ describe("hosted classifier", () => {
     expect(await createMediaGate(hostedClassifier({ nanogpt: NANO, guard: GUARD, fetch: nsfwDown.f })).assess(png, "image/png", opts)).toEqual({ ok: false, reason: "unscored" });
   });
 
-  test("checks images only: a video is never scored, so never served", async () => {
+  test("checks a video frame by frame: every sampled frame goes through both checks, and one flagged frame blocks it", async () => {
+    const stills = async (_video: Uint8Array, n: number) => Array.from({ length: n }, () => png);
+    const clean = classifierWith(false, "safe");
+    const gate = createMediaGate(hostedClassifier({ nanogpt: NANO, guard: GUARD, fetch: clean.f, frames: stills }));
+    expect(await gate.assess(tinyMp4(), "video/mp4", { explicitAllowed: false })).toEqual({ ok: true, explicit: false });
+    expect(clean.calls).toHaveLength(2 * DEFAULT_THRESHOLDS.videoFrames);
+    let nsfwCalls = 0;
+    const oneBad = fakeFetch((url) => (url.includes("/api/nsfw/image") ? json({ has_nsfw_concepts: [++nsfwCalls === 3] }) : guardSays("safe")));
+    expect(await createMediaGate(hostedClassifier({ nanogpt: NANO, guard: GUARD, fetch: oneBad.f, frames: stills })).assess(tinyMp4(), "video/mp4", { explicitAllowed: false }))
+      .toEqual({ ok: false, reason: "explicit" });
+  });
+
+  test("a video whose frames cannot all be read is never scored, so never served", async () => {
     const { f, calls } = classifierWith(false, "safe");
-    const gate = createMediaGate(hostedClassifier({ nanogpt: NANO, guard: GUARD, fetch: f }));
-    expect(await gate.assess(tinyMp4(), "video/mp4", { explicitAllowed: false })).toEqual({ ok: false, reason: "unscored" });
+    const broken = async () => { throw new Error("unreadable"); };
+    const short = async () => [png];
+    for (const frames of [broken, short]) {
+      const gate = createMediaGate(hostedClassifier({ nanogpt: NANO, guard: GUARD, fetch: f, frames }));
+      expect(await gate.assess(tinyMp4(), "video/mp4", { explicitAllowed: false })).toEqual({ ok: false, reason: "unscored" });
+    }
     expect(calls).toHaveLength(0);
+    expect(await createMediaGate(hostedClassifier({ nanogpt: NANO, guard: GUARD, fetch: f })).assess(png, "audio/wav", { explicitAllowed: false })).toEqual({ ok: false, reason: "unscored" });
   });
 
   test("from the environment: our own service first, the hosted pair only with both keys, else nothing passes", async () => {
     await expect(classifierFromEnv({}).score(png, "image/png", { frames: 1 })).rejects.toThrow(/not configured/);
     await expect(classifierFromEnv({ ANONYMO_NANOGPT_API_KEY: "k" }).score(png, "image/png", { frames: 1 })).rejects.toThrow(/not configured/);
     await expect(classifierFromEnv({ ANONYMO_MEDIA_GUARD_KEY: "k" }).score(png, "image/png", { frames: 1 })).rejects.toThrow(/not configured/);
-    await expect(classifierFromEnv({ ANONYMO_NANOGPT_API_KEY: "k", ANONYMO_MEDIA_GUARD_KEY: "k" }).score(tinyMp4(), "video/mp4", { frames: 8 })).rejects.toThrow(/images only/);
+    await expect(classifierFromEnv({ ANONYMO_NANOGPT_API_KEY: "k", ANONYMO_MEDIA_GUARD_KEY: "k" }).score(tinyMp4(), "video/mp4", { frames: 8 })).rejects.toThrow();
   });
 });
 

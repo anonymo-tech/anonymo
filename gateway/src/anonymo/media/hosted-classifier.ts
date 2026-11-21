@@ -6,16 +6,20 @@
 //      Other Llama Guard categories (violence and so on) are allowed in Anonymo's images and are ignored here.
 // Neither estimates an age, so an explicit image is scored with no age: the gate blocks it as explicit (images and
 // video are safe for work only). It fails closed like every classifier: any error, timeout or odd answer throws,
-// and the gate turns that into a block. Images only: a video throws, so no video is served through this classifier.
-// The image travels as a data URL; nothing about it is logged or stored.
+// and the gate turns that into a block. A video is checked as still frames (video-frames.ts samples the number the
+// gate asks for), each through both checks; any frame that cannot be read or checked blocks the whole clip.
+// Each image or frame travels as a data URL; nothing about it is logged or stored.
 
 import type { FrameScore, MediaClassifier } from "./gate.ts";
 import { normalizeMime } from "./containers.ts";
+import { sampleVideoFrames } from "./video-frames.ts";
 
 export type HostedClassifierOptions = {
   nanogpt: { base: string; apiKey: string };
   guard: { url: string; model: string; apiKey: string };
   fetch?: typeof fetch;
+  /** Frame sampler for video (tests replace it). */
+  frames?: typeof sampleVideoFrames;
 };
 
 export const LLAMA_GUARD_MINOR = ["S4"];
@@ -78,12 +82,18 @@ export function hostedClassifier(o: HostedClassifierOptions): MediaClassifier {
   }
 
   return {
-    async score(bytes, mimeIn, { signal }) {
+    async score(bytes, mimeIn, { frames: count, signal }) {
       const mime = normalizeMime(mimeIn);
-      if (!mime.startsWith("image/")) throw new Error("the hosted classifier checks images only");
-      const dataUrl = `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`;
-      const [nsfw, guard] = await Promise.all([nanogptNsfw(dataUrl, signal), llamaGuard(dataUrl, signal)]);
-      return { frames: [hostedFrame(nsfw, guard)] };
+      const check = async (image: Uint8Array, imageMime: string) => {
+        const dataUrl = `data:${imageMime};base64,${Buffer.from(image).toString("base64")}`;
+        const [nsfw, guard] = await Promise.all([nanogptNsfw(dataUrl, signal), llamaGuard(dataUrl, signal)]);
+        return hostedFrame(nsfw, guard);
+      };
+      if (mime.startsWith("image/")) return { frames: [await check(bytes, mime)] };
+      if (mime !== "video/mp4") throw new Error("the hosted classifier checks images and MP4 video only");
+      const stills = await (o.frames ?? sampleVideoFrames)(bytes, count, { signal });
+      if (stills.length !== count) throw new Error("not every video frame was sampled");
+      return { frames: await Promise.all(stills.map((still) => check(still, "image/png"))) };
     },
   };
 }

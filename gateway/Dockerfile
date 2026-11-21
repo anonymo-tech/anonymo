@@ -16,6 +16,8 @@ COPY config ./config
 # Anonymo signal exporter (compose.monitoring.yml runs it from this image).
 COPY monitoring/anonymo-exporter.ts ./monitoring/anonymo-exporter.ts
 COPY docs ./docs
+# ffmpeg samples still frames from generated video for the safety gate (src/anonymo/media/video-frames.ts).
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 USER bun
 EXPOSE 8787
 HEALTHCHECK --interval=15s --timeout=3s CMD bun -e "fetch('http://127.0.0.1:8787/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
