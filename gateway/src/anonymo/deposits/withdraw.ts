@@ -10,7 +10,7 @@
 // The ledger debit (`wd:<id>`) is posted in the same transaction that records the withdrawal. The payout itself goes
 // through the Payout interface, keyed by the withdrawal id so a retry can never pay twice.
 
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, ne, sql } from "drizzle-orm";
 import type { Db, Tx } from "../../db/client.ts";
 import { accounts } from "../../db/schema.ts";
 import { post } from "../../ledger/ledger.ts";
@@ -63,6 +63,23 @@ export async function coinCreditPico(db: Db | Tx, keyHash: string): Promise<Pico
     .select({ total: sql<string | null>`sum(${anonymoDeposits.amountPico})` })
     .from(anonymoDeposits)
     .where(and(eq(anonymoDeposits.keyHash, keyHash), eq(anonymoDeposits.chain, "coin"), eq(anonymoDeposits.status, "credited")));
+  return BigInt(row?.total ?? 0);
+}
+
+/** How long credit funded through BTC or Lightning (BTCPay) waits before it can be withdrawn. */
+export const BITCOIN_WITHDRAW_HOLD_MS = 24 * 3_600_000;
+
+/**
+ * Credit funded through BTC or Lightning in the last day can be spent at once but not withdrawn yet: a light guard so
+ * a mistake in the settlement path cannot be drained in one go (only settled payments are credited, so this is not a
+ * confirmation wait). It counts as spent last, like coin credit.
+ */
+export async function recentBitcoinCreditPico(db: Db | Tx, keyHash: string, now = new Date()): Promise<Pico> {
+  const since = new Date(now.getTime() - BITCOIN_WITHDRAW_HOLD_MS);
+  const [row] = await db
+    .select({ total: sql<string | null>`sum(${anonymoDeposits.amountPico})` })
+    .from(anonymoDeposits)
+    .where(and(eq(anonymoDeposits.keyHash, keyHash), inArray(anonymoDeposits.chain, ["btc", "ln"]), eq(anonymoDeposits.status, "credited"), gt(anonymoDeposits.creditedAt, since)));
   return BigInt(row?.total ?? 0);
 }
 
@@ -134,7 +151,8 @@ export async function requestWithdrawal(db: Db, o: { minPico: Pico }, w: Withdra
       return { row: prior, replay: true };
     }
     const [acct] = await tx.select().from(accounts).where(eq(accounts.id, w.accountId)).for("update");
-    const available = (acct ? acct.balance - acct.held : 0n) - (await coinCreditPico(tx, w.keyHash));
+    const settling = await recentBitcoinCreditPico(tx, w.keyHash);
+    const available = (acct ? acct.balance - acct.held : 0n) - (await coinCreditPico(tx, w.keyHash)) - settling;
     const dests = await withdrawDestinations(tx, w.keyHash);
     const d = dests.get(dest(chain, to));
     if (!d) fail(403, "Withdrawals go only to an address this key's deposits came from, on the same chain.", "not_source_address", { allowed: [...dests.values()].map((x) => ({ chain: x.chain, address: x.address })) });
@@ -142,7 +160,8 @@ export async function requestWithdrawal(db: Db, o: { minPico: Pico }, w: Withdra
     const max = sourceCap < available ? sourceCap : available;
     const amount = requested === "all" ? max : requested;
     if (amount <= 0n) fail(402, "Nothing is available to withdraw to this address.", "nothing_to_withdraw", { available_usd: picoToUsd(available > 0n ? available : 0n) });
-    if (amount > available) fail(402, `Only $${picoToUsd(available > 0n ? available : 0n)} is available (balance less open holds).`, "insufficient_balance", { available_usd: picoToUsd(available > 0n ? available : 0n) });
+    if (amount > available)
+      fail(402, `Only $${picoToUsd(available > 0n ? available : 0n)} is available (balance less open holds${settling > 0n ? `, less $${picoToUsd(settling)} of BTC or Lightning credit that can be withdrawn 24 hours after it arrived` : ""}).`, "insufficient_balance", { available_usd: picoToUsd(available > 0n ? available : 0n), ...(settling > 0n ? { bitcoin_hold_usd: picoToUsd(settling) } : {}) });
     if (amount > sourceCap) fail(403, `At most $${picoToUsd(sourceCap)} can go back to this address: that is what came from it.`, "exceeds_source", { max_usd: picoToUsd(sourceCap) });
     if (amount < o.minPico) fail(400, `The smallest withdrawal is $${picoToUsd(o.minPico)}.`, "below_minimum");
     const id = uid("wd_");

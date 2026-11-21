@@ -22,7 +22,7 @@ import { handleBtcpayEvent, refundTarget, verifyBtcpaySignature } from "./btcpay
 import { depositInstructions } from "./instructions.ts";
 import { anonymoBtcpayInvoices, anonymoDeposits, anonymoWithdrawals } from "./schema.ts";
 import { registerMoneyJobs, type MoneyDeps } from "./services.ts";
-import { attemptPayout, coinCreditPico, requestWithdrawal, withdrawalJson, withdrawDestinations } from "./withdraw.ts";
+import { attemptPayout, coinCreditPico, recentBitcoinCreditPico, requestWithdrawal, withdrawalJson, withdrawDestinations } from "./withdraw.ts";
 
 const withdrawBody = z
   .object({
@@ -47,13 +47,16 @@ export function moneyRoutes(app: Hono, ctx: Ctx, deps: MoneyDeps, o: { jobs?: bo
     const dests = await withdrawDestinations(ctx.db, key.keyHash);
     const available = b.available > 0n ? b.available : 0n;
     const coin = await coinCreditPico(ctx.db, key.keyHash);
-    const cashable = available > coin ? available - coin : 0n;
+    const settling = await recentBitcoinCreditPico(ctx.db, key.keyHash);
+    const cashable = available > coin + settling ? available - coin - settling : 0n;
     return c.json({
       balance_usd: picoToUsd(b.balance),
       held_usd: picoToUsd(b.held),
       available_usd: picoToUsd(available),
       // Paid in the coin: spendable on usage, never withdrawn.
       usage_only_usd: picoToUsd(available < coin ? available : coin),
+      // Credit from BTC or Lightning in the last 24 hours: spendable now, withdrawable a day after it arrived.
+      ...(settling > 0n ? { bitcoin_hold_usd: picoToUsd(settling) } : {}),
       withdraw_to: [...dests.values()].map((d) => ({ chain: d.chain, address: d.address, max_usd: picoToUsd(d.remaining === null || d.remaining > cashable ? cashable : d.remaining) })),
     });
   });
