@@ -21,7 +21,7 @@ export const DEMO_NUDITY = /\b(?:nude|nudes|nudity|naked|topless|undress\w*|nsfw
 // A 1x1 plum PNG.
 const TINY_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkqP9fDwAFDAJAuIXa2QAAAABJRU5ErkJggg==';
 
-export function seeded(text: string) {
+function seeded(text: string) {
   let h = 2166136261;
   for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
   return () => {

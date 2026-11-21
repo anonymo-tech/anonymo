@@ -27,8 +27,7 @@ import type {
   SpendPeriod,
   Withdrawal,
 } from '../types.ts';
-import { DEMO_IMAGE_MODELS, DEMO_NUDITY } from './images.ts';
-import { demoFaceReply, demoPicture } from './faces.ts';
+import { demoImage, DEMO_IMAGE_MODELS, DEMO_NUDITY } from './images.ts';
 import { RECAP_INSTRUCTION } from '../catchup.ts';
 import { demoStatus } from './status.ts';
 import { createDemoVideo } from './video.ts';
@@ -470,9 +469,6 @@ export function createMockGateway(options: MockOptions = {}) {
     if (typeof lastUser === 'string' && lastUser === RECAP_INSTRUCTION) {
       const said = body.messages.filter((m) => m.role === 'user' && m.content !== RECAP_INSTRUCTION).map((m) => (typeof m.content === 'string' ? m.content : ''));
       text = `Recap so far (demo: a real model writes this from the whole chat).\n\n${said.map((s) => `- ${s.replace(/\s+/g, ' ').slice(0, 140)}`).join('\n\n')}\n\nWhere it stands: the last point above. Keep the same tone and pick up from there.`;
-    } else {
-      // Update "faces": a look or scene sentence for those requests, and an in-character line in a character chat.
-      text = demoFaceReply(body.messages) ?? text;
     }
     if (rerouted) text = `The first route refused this, so the router retried on a different model family (${other.family}) and billed the refused attempt nothing. ${text}`;
 
@@ -589,7 +585,7 @@ export function createMockGateway(options: MockOptions = {}) {
     if (capped) return capped;
     const [w, h] = size.split('x').map(Number);
     const data = [];
-    for (let i = 0; i < n; i++) data.push({ b64_json: await demoPicture(prompt, w, h, i, model.id) });
+    for (let i = 0; i < n; i++) data.push({ b64_json: await demoImage(prompt, w, h, i, model.id) });
     const hashes = await Promise.all(data.map(({ b64_json }) => sha256Hex(Uint8Array.from(atob(b64_json), (c) => c.charCodeAt(0)))));
     await new Promise((r) => setTimeout(r, options.imageDelayMs ?? 1600));
     // Another image may have settled while this one was rendering.

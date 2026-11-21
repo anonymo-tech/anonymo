@@ -37,7 +37,7 @@ const shapeOf = (size: string) => {
 };
 
 /** Image errors say what happened without the chat's floor wording when the gateway's own message is clearer. */
-export function imageError(error: unknown): string {
+function imageError(error: unknown): string {
   if (error instanceof AnonymoApiError && (error.code === 'explicit_media_unavailable' || error.code === 'media_blocked' || error.code === 'media_gate_unavailable' || error.code?.startsWith('upstream_')))
     return error.message;
   if (error instanceof AnonymoApiError && error.status === 404 && error.code !== 'model_not_found') return 'Images are not switched on for this gateway yet.';

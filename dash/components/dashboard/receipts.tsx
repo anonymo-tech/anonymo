@@ -142,7 +142,11 @@ export function ReceiptViewer({ id }: { id: string }) {
             ) : (
               <span className="chip">Zero retention (policy)</span>
             )}
-            {refusedRoutes.length > 0 && <span className="chip chip-amber">{r.refused ? 'Refused twice' : 'Refusal rerouted'}</span>}
+            {refusedRoutes.length > 0 && (
+              <span className="chip chip-amber">
+                {!r.refused ? 'Refusal rerouted' : refusedRoutes.length > 1 ? 'Refused twice · billed $0' : 'Refused · billed $0'}
+              </span>
+            )}
             {view.signature_valid ? (
               <span className="chip chip-signal">Signature valid</span>
             ) : demo ? (

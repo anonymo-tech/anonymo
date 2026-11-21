@@ -247,7 +247,7 @@ export function WorkspaceShell({
             <AdultsOnly compact />
             {ready && key && <Purse key={key} />}
             {ready && updateOn('vault', demo) && <VaultTopBar />}
-            {ready && (updateOn('history', demo) || updateOn('vault', demo) || updateOn('faces', demo)) && <WipeDevice />}
+            {ready && (updateOn('history', demo) || updateOn('vault', demo)) && <WipeDevice />}
           </div>
         </header>
         <main
