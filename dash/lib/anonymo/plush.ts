@@ -129,8 +129,11 @@ export function readPlush(v: unknown): Plush | undefined {
     ? restored
     : undefined;
 }
+// Advance the revision when the wardrobe artwork changes so cached responses stay with their release.
+const artworkUrl = (file: string) => '/mascot/faces/' + file + '?v=1';
+export const headUrl = (head: 'captain' | 'pilot' | 'stargazer') => artworkUrl(head + '.jpg');
 export const partUrl = (part: 'outfit' | 'hat' | 'glasses', name: string) =>
-  '/mascot/faces/' + part + '-' + name.toLowerCase() + '.webp';
+  artworkUrl(part + '-' + name.toLowerCase() + '.webp');
 export const dyeHex = (dye: Dye) =>
   dye.startsWith('#') ? dye : DYES[dye as keyof typeof DYES];
 const rgb = (dye: Dye) =>

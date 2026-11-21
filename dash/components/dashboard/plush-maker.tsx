@@ -27,6 +27,7 @@ import {
   OUTFITS,
   SHAPES,
   dyeHex,
+  headUrl,
   partUrl,
   type Plush,
 } from '@/lib/anonymo/plush';
@@ -118,7 +119,7 @@ function Choices<T extends string>({
                 <span
                   className="part-head"
                   style={{
-                    backgroundImage: `url(/mascot/faces/${item === 'Star cap' ? 'stargazer' : 'pilot'}.jpg)`,
+                    backgroundImage: `url(${headUrl(item === 'Star cap' ? 'stargazer' : 'pilot')})`,
                   }}
                 />
               ) : (

@@ -1,4 +1,4 @@
-import { dyeFabric, partUrl, type Plush } from './plush.ts';
+import { dyeFabric, headUrl, partUrl, type Plush } from './plush.ts';
 
 const sources = new Map<string, Promise<HTMLImageElement>>();
 function source(url: string) {
@@ -203,7 +203,7 @@ export async function plushCanvas(
         : 'captain';
   const fit = hatSize[plush.hat];
   const [atlas, outfit, hat, glasses] = await Promise.all([
-    source('/mascot/faces/' + head + '.jpg'),
+    source(headUrl(head)),
     source(partUrl('outfit', plush.outfit)),
     fit ? source(partUrl('hat', plush.hat)) : null,
     plush.glasses === 'None' ? null : source(partUrl('glasses', plush.glasses)),

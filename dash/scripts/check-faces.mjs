@@ -318,3 +318,14 @@ void test('a named plush becomes a new chat card with the supplied personality',
   assert.throws(() => plushCard('A'.repeat(65), ''));
   assert.throws(() => plushCard('Orbit', 'x'.repeat(601)));
 });
+
+void test('preview and renderer use revisioned URLs for every wardrobe asset', async () => {
+  const { headUrl, partUrl, OUTFITS, HATS, GLASSES } = await import('../lib/anonymo/plush.ts');
+  const urls = [...['captain', 'pilot', 'stargazer'].map(headUrl), ...OUTFITS.map(n => partUrl('outfit', n)),
+    ...HATS.slice(3).map(n => partUrl('hat', n)), ...GLASSES.slice(1).map(n => partUrl('glasses', n))];
+  for (const path of urls) {
+    const asset = new URL('../public' + path, import.meta.url);
+    assert.ok(asset.searchParams.get('v'));
+    assert.ok(existsSync(asset), asset.pathname);
+  }
+});
