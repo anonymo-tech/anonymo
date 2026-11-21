@@ -292,13 +292,23 @@ void test('proof: sorted-pair hashing is commutative and a tampered sibling fail
 });
 
 void test('presets: every frontend from the spec, each carrying the base URL and the key only when given', () => {
-  assert.deepEqual(PRESETS.map((p) => p.name), ['JanitorAI', 'SillyTavern', 'Chub', 'Agnai', 'Open WebUI', 'LibreChat', 'TypingMind']);
+  assert.deepEqual(PRESETS.map((p) => p.name), ['JanitorAI', 'SillyTavern', 'Chub', 'Agnai', 'Open WebUI', 'LibreChat', 'Codex CLI', 'TypingMind']);
   for (const p of PRESETS) {
-    assert.ok(ANONYMO_MODEL_IDS.includes(p.defaultModel));
+    assert.ok((p.models ?? ANONYMO_MODEL_IDS).includes(p.defaultModel));
     const text = presetText(p, { base: 'https://api.example', key: KEY_PLACEHOLDER, model: p.defaultModel });
     assert.match(text, /https:\/\/api\.example\/v1/);
     assert.match(text, /anm_live_YOUR_KEY|ANONYMO_API_KEY/);
   }
+});
+
+void test('presets: Codex points its provider at /v1 with the Responses wire API, a tool-capable model and the MCP server', () => {
+  const codex = PRESETS.find((p) => p.id === 'codex');
+  const text = presetText(codex, { base: 'https://api.example', key: KEY_PLACEHOLDER, model: codex.defaultModel });
+  assert.match(text, /base_url = "https:\/\/api\.example\/v1"/);
+  assert.match(text, /wire_api = "responses"/);
+  assert.match(text, /env_key = "ANONYMO_API_KEY"/);
+  assert.match(text, /url = "https:\/\/api\.example\/mcp"/);
+  assert.ok(!codex.models.includes('anonymo-1'), 'anonymo-1 has no tool calling yet, so Codex cannot use it as its model');
 });
 
 void test('character cards: V2 JSON and V3 PNG import, build an rp prompt, and save sealed (no plaintext leaves)', async () => {

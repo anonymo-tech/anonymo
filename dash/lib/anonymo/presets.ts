@@ -8,6 +8,8 @@ export type Preset = {
   name: string;
   where: string; // where the settings live in that frontend
   defaultModel: string;
+  /** The models this frontend can use, when not every Anonymo model fits (Codex needs tool calling). */
+  models?: string[];
   fields: (ctx: PresetContext) => PresetField[];
   snippet?: (ctx: PresetContext) => { language: string; text: string };
   note?: string;
@@ -17,6 +19,8 @@ export type PresetContext = { base: string; key: string; model: string };
 export const KEY_PLACEHOLDER = 'anm_live_YOUR_KEY';
 
 const v1 = (base: string) => `${base}/v1`;
+/** Live models with tool calling and few refusals, for agent frontends that always send tools. */
+export const CODEX_MODELS = ['deepseek-v4.1-flash-1017-ultrafast', 'kimi-k3.1-pro-fast', 'glm-5.2-fast'];
 const completions = (base: string) => `${base}/v1/chat/completions`;
 
 export const PRESETS: Preset[] = [
@@ -109,6 +113,40 @@ export const PRESETS: Preset[] = [
         `# .env: ANONYMO_API_KEY=${key}`,
       ].join('\n'),
     }),
+  },
+  {
+    id: 'codex',
+    name: 'Codex CLI',
+    where: '~/.codex/config.toml, with your key in the ANONYMO_API_KEY environment variable',
+    defaultModel: CODEX_MODELS[0],
+    models: CODEX_MODELS,
+    fields: ({ base, model }) => [
+      { label: 'Provider base URL', value: v1(base) },
+      { label: 'Wire API', value: 'responses' },
+      { label: 'Model', value: model },
+      { label: 'MCP server (optional)', value: `${base}/mcp` },
+    ],
+    snippet: ({ base, key, model }) => ({
+      language: 'toml',
+      text: [
+        `model = "${model}"`,
+        'model_provider = "anonymo"',
+        '',
+        '[model_providers.anonymo]',
+        'name = "Anonymo"',
+        `base_url = "${v1(base)}"`,
+        'env_key = "ANONYMO_API_KEY"',
+        'wire_api = "responses"',
+        '',
+        '# Optional: Anonymo as a tool inside Codex, for anonymo-1 and the council.',
+        '[mcp_servers.anonymo]',
+        `url = "${base}/mcp"`,
+        'bearer_token_env_var = "ANONYMO_API_KEY"',
+        '',
+        `# In your shell: export ANONYMO_API_KEY=${key}`,
+      ].join('\n'),
+    }),
+    note: 'Codex sends tools (shell, file edits) with every request, so it needs a model that supports tool calling: these do. anonymo-1 does not yet, but through the MCP server Codex can still ask it as a tool.',
   },
   {
     id: 'typingmind',

@@ -42,8 +42,9 @@ export function PresetsView() {
           <label className="field" style={{ minWidth: 220 }}>
             Model
             <select className="select" value={chosenModel} onChange={(e) => setModel(e.target.value)}>
-              {ANONYMO_MODEL_IDS.map((id) => {
-                const off = !isLiveModel(liveModels, id);
+              {(preset.models ?? ANONYMO_MODEL_IDS).map((id) => {
+                // The demo gateway lists Anonymo's own models only, so a preset's own list (Codex) is not checked there.
+                const off = !(demo && preset.models) && !isLiveModel(liveModels, id);
                 return (
                   <option key={id} value={id} disabled={off}>
                     {off ? `${id} (not live yet)` : id}
