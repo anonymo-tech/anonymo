@@ -1,5 +1,6 @@
 'use client';
 
+import { MascotSprite } from '../mascot-sprite';
 import { Photo } from '@/components/photo';
 import Link from 'next/link';
 import { ArrowUp, Drama, ShieldCheck, Square } from 'lucide-react';
@@ -12,7 +13,7 @@ import type { Turn } from './chat-types';
 import { ModelPicker } from './model-picker';
 import { PaperTrail } from './paper-trail';
 import { useContentGuard } from './use-content-guard';
-import { WorkspaceShell } from './workspace-shell';
+import { createPortal } from 'react-dom';
 import { buildCharacterMessages, greetingsOf } from '@/lib/anonymo/card';
 import { charactersStore } from '@/lib/anonymo/characters-store';
 import { describeError, isOutOfCredit } from '@/lib/anonymo/client';
@@ -32,18 +33,22 @@ const STARTERS: { model: AnonymoModelId; text: string }[] = [
   { model: 'anonymo-sealed', text: 'Help me draft a hard conversation with my doctor. Keep it private.' },
 ];
 
-export function ChatWorkspace() {
+export function ChatWorkspace({ compact, threadHost, composerHost }: {
+  compact: boolean;
+  threadHost: HTMLDivElement | null;
+  composerHost: HTMLDivElement | null;
+}) {
   const { ready, demo, key, client, turns, setTurns, chatId, openChat, rememberReceipt, refreshBalance, liveModels } = useAnonymo();
   const stored = useDeviceStore(modelStore);
   // A saved model that has no routes right now (not in /v1/models) falls back to anonymo-1 instead of failing on send.
   const model: AnonymoModelId = isLiveModel(liveModels, stored) ? stored : 'anonymo-1';
-  const params = useSearchParams();
+  const requestedCharacter = useSearchParams().get('character');
   const [councilMode, setCouncilMode] = useState<'merge' | 'select'>('merge');
   const [refusalCatch, setRefusalCatch] = useState(true);
   const [text, setText] = useState('');
   const [paper, setPaper] = useState<PaperSource | null>(null);
   const characters = useDeviceStore(charactersStore);
-  const [characterId, setCharacterId] = useState<string | null>(() => params.get('character'));
+  const [characterId, setCharacterId] = useState<string | null>(requestedCharacter);
   const [guardNote, setGuardNote] = useState<{ redacted: string; message: string } | null>(null);
   const controller = useRef<AbortController | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -63,11 +68,37 @@ export function ChatWorkspace() {
     if (historyOn && keep && !streaming && turns.length) saveChat(demo, chatId, turns);
   }, [historyOn, keep, streaming, turns, demo, chatId]);
 
-  useEffect(() => () => controller.current?.abort(), []);
+  const [lastCharacter, setLastCharacter] = useState(requestedCharacter);
+  if (requestedCharacter !== lastCharacter) {
+    setLastCharacter(requestedCharacter);
+    if (requestedCharacter) setCharacterId(requestedCharacter);
+  }
+  const [draftChat, setDraftChat] = useState(chatId);
+  if (draftChat !== chatId) {
+    setDraftChat(chatId);
+    setText('');
+    setPaper(null);
+    setGuardNote(null);
+  }
+  const pendingScan = useRef(0);
+  useEffect(() => { pendingScan.current++; }, [chatId]);
+  useEffect(() => () => controller.current?.abort(), [key, demo]);
   useEffect(() => {
     const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    end.current?.scrollIntoView({ block: 'end', behavior: still ? 'auto' : 'smooth' });
-  }, [turns.length]);
+    if (compact && threadHost) threadHost.scrollTop = threadHost.scrollHeight;
+    else end.current?.scrollIntoView({ block: 'end', behavior: still ? 'auto' : 'smooth' });
+  }, [turns.length, threadHost, compact]);
+  const followReply = useRef(true);
+  useEffect(() => {
+    if (!compact || !threadHost) return;
+    followReply.current = true;
+    const onScroll = () => { followReply.current = threadHost.scrollHeight - threadHost.scrollTop - threadHost.clientHeight < 60; };
+    threadHost.addEventListener('scroll', onScroll);
+    return () => threadHost.removeEventListener('scroll', onScroll);
+  }, [compact, threadHost]);
+  useEffect(() => {
+    if (compact && threadHost && followReply.current) threadHost.scrollTop = threadHost.scrollHeight;
+  }, [turns, compact, threadHost]);
 
   const chooseModel = (id: AnonymoModelId) => setStoredModel(id);
 
@@ -91,7 +122,7 @@ export function ChatWorkspace() {
 
   async function send(promptText: string) {
     const prompt = promptText.trim();
-    if (!prompt || streaming || !key) return;
+    if (!prompt || streaming || controller.current || !key) return;
     setGuardNote(null);
     const content = paper ? paperPrompt(prompt, paper) : prompt;
     let messages: ChatMessage[] = [...history(), { role: 'user', content }];
@@ -151,7 +182,7 @@ export function ChatWorkspace() {
       const stopped = abort.signal.aborted;
       update(id, { status: stopped ? 'stopped' : 'error', error: stopped ? null : describeError(error), needsFunds: !stopped && isOutOfCredit(error) });
     } finally {
-      controller.current = null;
+      if (controller.current === abort) controller.current = null;
       refreshBalance();
     }
     if (receiptId) {
@@ -198,8 +229,10 @@ export function ChatWorkspace() {
 
   async function submit() {
     const prompt = text.trim();
-    if (!prompt) return;
+    if (!prompt || streaming || !key) return;
+    const request = ++pendingScan.current;
     const result = await scan(prompt);
+    if (request !== pendingScan.current) return;
     const blocking = result.findings.filter((f) => f.severity === 'block');
     if (blocking.length) {
       setGuardNote({ redacted: result.redacted, message: blocking[0].message });
@@ -312,11 +345,12 @@ export function ChatWorkspace() {
     </div>
   );
 
-  return (
-    <WorkspaceShell section="Chat" composer={key ? composer : undefined}>
+  const thread = (
+    <>
       {(historyOn || catchupOn) && (
         <>
           <ChatBar
+            compact={compact}
             history={historyOn}
             onOpen={() => setHistoryOpen(true)}
             catchUp={catchupOn ? { onCatchUp: () => void catchUp(), busy: streaming, ready: !!key && canRecap(turns), suggest: suggestRecap(turns), tokens: threadTokens(turns) } : null}
@@ -324,7 +358,13 @@ export function ChatWorkspace() {
           {historyOn && <ChatHistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />}
         </>
       )}
-      {turns.length === 0 ? (
+      {compact && !turns.length ? (
+        <div className="mascot-welcome">
+          <MascotSprite mood="greet" />
+          <h3>{character?.card.data.name ?? 'What’s on your mind?'}</h3>
+          {key ? <p>Start a conversation here.</p> : <Link className="btn btn-primary btn-small" href="/dashboard/key">Create a key to chat</Link>}
+        </div>
+      ) : turns.length === 0 ? (
         <section className="empty chat-col">
           <div className="empty-hero">
             <Photo src="/mascot/avatar.jpg" alt="" width={256} height={256} />
@@ -404,8 +444,9 @@ export function ChatWorkspace() {
           <div ref={end} />
         </div>
       )}
-    </WorkspaceShell>
+    </>
   );
+  return <>{threadHost && createPortal(thread, threadHost)}{key && composerHost && createPortal(composer, composerHost)}</>;
 }
 
 /** Shown with any message that mentions suicide or self-harm. It never blocks the chat. */

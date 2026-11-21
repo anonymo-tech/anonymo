@@ -12,6 +12,9 @@ import { deviceStore, useDeviceStore, useHydrated } from '@/lib/anonymo/device-s
 import { forgetKey, keyStore, saveKey } from '@/lib/anonymo/key-store';
 import { createMockGateway, type MockGateway } from '@/lib/anonymo/mock/gateway';
 import { forgetReceipts, receiptsStore, rememberReceipt, type SeenReceipt } from '@/lib/anonymo/prefs';
+import { keepStore } from '@/lib/anonymo/history';
+import { freshTabChats, switchTabChat, type TabChat } from '@/lib/anonymo/tab-chats';
+import { updateOn } from '@/lib/anonymo/updates';
 import type { Turn } from './dashboard/chat-types';
 
 const DEMO_BASE = 'https://demo.anonymo.invalid';
@@ -31,6 +34,8 @@ type AnonymoState = {
   setTurns: (update: (turns: Turn[]) => Turn[]) => void;
   /** Which saved chat the current conversation is (a fresh id per new chat). */
   chatId: string;
+  recentChats: TabChat[];
+  resetChats: () => void;
   /** Start a new conversation, or open a saved one with its turns. */
   openChat: (id: string | null, turns?: Turn[]) => void;
   receipts: SeenReceipt[];
@@ -63,8 +68,14 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
   const demo = useDeviceStore(demoStore);
   const key = useDeviceStore(keyStore);
   const receipts = useDeviceStore(receiptsStore);
-  const [turns, setTurnsState] = useState<Turn[]>([]);
-  const [chatId, setChatId] = useState<string>(() => newId());
+  const [chats, setChats] = useState(() => freshTabChats(newId()));
+  const { id: chatId, turns } = chats.active;
+  const keeping = useDeviceStore(keepStore) && updateOn('history', demo);
+  const [scope, setScope] = useState({ key, demo, keeping });
+  if (key !== scope.key || demo !== scope.demo || keeping !== scope.keeping) {
+    setScope({ key, demo, keeping });
+    setChats(key !== scope.key || demo !== scope.demo ? freshTabChats(newId()) : { ...chats, recent: [] });
+  }
   const [balanceVersion, setBalanceVersion] = useState(0);
   const search = useSearchParams();
   // `?demo=1` / `?demo=0` can arrive on a client-side navigation: re-read the mode and its key.
@@ -104,13 +115,16 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
   );
   const clearKey = useCallback(() => {
     forgetKey(demo);
-    setTurnsState([]);
+    setChats(freshTabChats(newId()));
   }, [demo]);
-  const setTurns = useCallback((update: (turns: Turn[]) => Turn[]) => setTurnsState(update), []);
-  const openChat = useCallback((id: string | null, saved?: Turn[]) => {
-    setChatId(id ?? newId());
-    setTurnsState(saved ?? []);
+  const resetChats = useCallback(() => setChats(freshTabChats(newId())), []);
+  const setTurns = useCallback((update: (turns: Turn[]) => Turn[]) => {
+    setChats((state) => ({ ...state, active: { ...state.active, turns: update(state.active.turns) } }));
   }, []);
+  const openChat = useCallback((id: string | null, saved?: Turn[]) => {
+    const next = id ?? newId();
+    setChats((state) => switchTabChat(state, next, saved, !keeping));
+  }, [keeping]);
   const refreshBalance = useCallback(() => setBalanceVersion((v) => v + 1), []);
 
   const value = useMemo<AnonymoState>(
@@ -125,6 +139,8 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
       turns,
       setTurns,
       chatId,
+      recentChats: chats.recent,
+      resetChats,
       openChat,
       receipts,
       rememberReceipt,
@@ -133,7 +149,7 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
       refreshBalance,
       liveModels,
     }),
-    [ready, demo, key, client, mock, setKey, clearKey, turns, setTurns, chatId, openChat, receipts, balanceVersion, refreshBalance, liveModels],
+    [ready, demo, key, client, mock, setKey, clearKey, turns, setTurns, chatId, chats.recent, resetChats, openChat, receipts, balanceVersion, refreshBalance, liveModels],
   );
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

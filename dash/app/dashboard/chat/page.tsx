@@ -1,7 +1,7 @@
-import { ChatWorkspace } from '@/components/dashboard/chat-workspace';
+import { FullPageChat } from '@/components/mascot-chat';
 
 export const metadata = { title: 'Chat — Anonymo' };
 
 export default function ChatPage() {
-  return <ChatWorkspace />;
+  return <FullPageChat />;
 }

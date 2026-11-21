@@ -73,3 +73,38 @@ test('updates are off unless listed; "all" turns every one on', () => {
   assert.deepEqual([...parseUpdates(' History, usage ,nope')].sort(), ['history', 'usage']);
   assert.deepEqual([...parseUpdates('all')], [...UPDATE_IDS]);
 });
+
+test('switching sessions restores tab-only turns without mixing in saved history', async () => {
+  const { freshTabChats, switchTabChat } = await import('../lib/anonymo/tab-chats.ts');
+  const a = { ...freshTabChats('a'), active: { id: 'a', turns: [turn()] } };
+  const b = switchTabChat(a, 'b', undefined, true);
+  assert.deepEqual(b.active.turns, []);
+  assert.deepEqual(b.recent, [a.active]);
+  assert.deepEqual(switchTabChat(b, 'a', undefined, true), a);
+  assert.deepEqual(switchTabChat(a, 'saved', [turn({ id: 'saved-turn' })], false).recent, []);
+  const busy = { ...a, active: { id: 'a', turns: [turn({ status: 'streaming' })] } };
+  assert.equal(switchTabChat(busy, 'b', undefined, true), busy);
+  assert.equal(switchTabChat(a, 'a', [], true), a);
+  assert.deepEqual(freshTabChats('wiped'), { active: { id: 'wiped', turns: [] }, recent: [] });
+});
+
+test('tab session history drops empty sessions and bounds recent conversations', async () => {
+  const { freshTabChats, switchTabChat } = await import('../lib/anonymo/tab-chats.ts');
+  let state = freshTabChats('start');
+  for (let id = 0; id < 20; id++) {
+    state.active.turns = [turn()];
+    state = switchTabChat(state, String(id), undefined, true);
+  }
+  assert.equal(state.recent.length, 12);
+  assert.deepEqual(state.recent.map((chat) => chat.id), Array.from({ length: 12 }, (_, i) => String(18 - i)));
+  assert.deepEqual(switchTabChat(state, 'empty', undefined, true).recent, state.recent);
+});
+
+test('the mascot advertises only enabled features, in a stable rotation', async () => {
+  const { availableFeatureTips } = await import('../lib/anonymo/feature-tips.ts');
+  const { updateOn } = await import('../lib/anonymo/updates.ts');
+  const demo = availableFeatureTips(true), live = availableFeatureTips(false);
+  assert.equal(new Set(demo.map(tip => tip.title)).size, 9);
+  assert.deepEqual(live, demo.filter(tip => !tip.update || updateOn(tip.update, false)));
+  assert.ok(demo.every(tip => tip.href.startsWith('/') && !tip.href.startsWith('//')));
+});

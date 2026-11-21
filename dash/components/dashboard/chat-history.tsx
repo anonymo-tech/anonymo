@@ -63,7 +63,7 @@ const Layer = ({ children }: { children: ReactNode }) =>
     ? null
     : createPortal(children, document.body);
 
-const toTurn = (t: SavedChat['turns'][number]): Turn => ({
+export const toTurn = (t: SavedChat['turns'][number]): Turn => ({
   ...t,
   receipt: null,
   council: null,
@@ -72,7 +72,7 @@ const toTurn = (t: SavedChat['turns'][number]): Turn => ({
 export type CatchUpBar = { onCatchUp: () => void; busy: boolean; ready: boolean; suggest: boolean; tokens: number };
 
 /** The bar above the thread: saved chats and a new chat (update "history"), "Catch me up" (update "catchup"). */
-export function ChatBar({ history, onOpen, catchUp }: { history: boolean; onOpen: () => void; catchUp: CatchUpBar | null }) {
+export function ChatBar({ history, onOpen, catchUp, compact }: { compact: boolean; history: boolean; onOpen: () => void; catchUp: CatchUpBar | null }) {
   const { demo, chatId, turns, openChat } = useAnonymo();
   const keep = useDeviceStore(keepStore);
   const chats = useDeviceStore(chatsStore(demo));
@@ -86,8 +86,8 @@ export function ChatBar({ history, onOpen, catchUp }: { history: boolean; onOpen
           {keep && chats.length ? ` · ${chats.length}` : ''}
         </button>
       )}
-      {turns.length > 0 && (
-        <button type="button" className="btn btn-ghost btn-small" onClick={() => openChat(null)}>
+      {!compact && turns.length > 0 && (
+        <button type="button" className="btn btn-ghost btn-small" disabled={turns.some((turn) => turn.status === 'streaming')} onClick={() => openChat(null)}>
           <Plus size={16} aria-hidden="true" /> New chat
         </button>
       )}
@@ -124,8 +124,9 @@ export function ChatHistoryPanel({
   open: boolean;
   onClose: () => void;
 }) {
-  const { demo, chatId, openChat } = useAnonymo();
+  const { demo, chatId, openChat, turns } = useAnonymo();
   const vanish = updateOn('vanish', demo);
+  const busy = turns.some((turn) => turn.status === 'streaming');
   const keep = useDeviceStore(keepStore);
   const chats = useDeviceStore(chatsStore(demo));
   const { mode } = useVault();
@@ -197,6 +198,7 @@ export function ChatHistoryPanel({
           <button
             type="button"
             className="btn btn-primary btn-small"
+            disabled={busy}
             onClick={() => {
               openChat(null);
               onClose();
@@ -247,6 +249,7 @@ export function ChatHistoryPanel({
                     <button
                       type="button"
                       className="history-open"
+                      disabled={busy}
                       onClick={() => {
                         openChat(c.id, c.turns.map(toTurn));
                         onClose();
@@ -308,6 +311,7 @@ export function ChatHistoryPanel({
                     <button
                       type="button"
                       className="icon-btn icon-danger"
+                      disabled={busy && c.id === chatId}
                       aria-label={`Delete ${c.title}`}
                       title="Delete"
                       onClick={() => {
@@ -331,6 +335,7 @@ export function ChatHistoryPanel({
                   <button
                     type="button"
                     className="btn btn-danger btn-small"
+                    disabled={busy}
                     onClick={() => {
                       deleteAllChats(demo);
                       setConfirmAll(false);
@@ -366,7 +371,7 @@ export function ChatHistoryPanel({
 
 /** "Wipe this device": one button in the top bar, one confirmation, then everything Anonymo keeps here is gone. */
 export function WipeDevice() {
-  const { openChat } = useAnonymo();
+  const { resetChats } = useAnonymo();
   const [asking, setAsking] = useState(false);
   const [done, setDone] = useState(false);
   const [wiping, setWiping] = useState(false);
@@ -458,7 +463,7 @@ export function WipeDevice() {
                           vanishStore,
                         ])
                           s.changed();
-                        openChat(null);
+                        resetChats();
                         setDone(true);
                       }}
                     >

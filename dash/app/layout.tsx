@@ -3,6 +3,7 @@ import '@fontsource-variable/space-grotesk/index.css';
 import './globals.css';
 import { AgeGate } from '@/components/age-gate';
 import { AnonymoProvider } from '@/components/anonymo-provider';
+import { MascotChat } from '@/components/mascot-chat';
 import { RevealOnScroll } from '@/components/reveal';
 
 export const metadata: Metadata = {
@@ -32,7 +33,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en" data-gated="">
       <body>
         <AnonymoProvider>
-          <div className="app-root">{children}</div>
+          <div className="app-root"><MascotChat>{children}</MascotChat></div>
           <AgeGate />
           <RevealOnScroll />
         </AnonymoProvider>
