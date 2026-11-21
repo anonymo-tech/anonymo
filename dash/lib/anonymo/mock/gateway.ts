@@ -29,12 +29,15 @@ import type {
 } from '../types.ts';
 import { DEMO_IMAGE_MODELS, DEMO_NUDITY } from './images.ts';
 import { demoFaceReply, demoPicture } from './faces.ts';
+import { demoMemoryReply, demoRememberedReply } from './memory.ts';
 import { RECAP_INSTRUCTION } from '../catchup.ts';
 import { moveInReply, withTextPrices } from './movein.ts';
 import { demoStatus } from './status.ts';
+import { DEMO_TRANSCRIPT, DEMO_VOICE_MODELS, DEMO_VOICE_REPLY, demoTranscription } from './talk.ts';
+import { demoStoryReply } from './story.ts';
 import { expiredKeyRefusal } from './tickets.ts';
 import { createDemoVideo } from './video.ts';
-import { createDemoSpeech, demoStoryReply, DEMO_SPEECH_MODELS } from './voice.ts';
+import { createDemoSpeech, demoStoryReply as bedtimeStoryReply, DEMO_SPEECH_MODELS } from './voice.ts';
 import { activityCsv, runway, sampleHistory, spendReport, spentWindows, type UsageEntry } from './usage.ts';
 import { COUNCIL_MERGED, DEMO_ANMO, DEMO_COIN_PAY, DEMO_LEADERBOARD, DEMO_MANIFEST, DEMO_MODELS, DEMO_PRICES, DEMO_ROUTER, DEMO_ROUTES, DEMO_VIDEO_MODELS, demoReply } from './fixtures.ts';
 import { sideBySideReply } from './sidebyside.ts';
@@ -418,13 +421,15 @@ export function createMockGateway(options: MockOptions = {}) {
 
     const requestId = `gen-${Math.floor(Date.now() / 1000)}-${randomHex(7)}`;
     const ts = new Date().toISOString();
+    const storyText = demoStoryReply(body.messages);
+    const memoryReply = demoMemoryReply(body.messages) ?? demoRememberedReply(body.messages);
 
     if (model === 'anonymo-council') {
       const mode = body.council?.mode === 'select' ? 'select' : 'merge';
       const picks = [DEMO_ROUTES[0], DEMO_ROUTES[3], DEMO_ROUTES[6]];
       const each = Math.ceil((tin * 450_000 + 60 * 1_800_000) / 1_000_000);
       const aggCost = Math.ceil((tin * 3 * p.in + 200 * p.out) / 1_000_000);
-      const text = mode === 'select' ? demoReply('anonymo-1') : COUNCIL_MERGED;
+      const text = storyText ?? memoryReply ?? (mode === 'select' ? demoReply('anonymo-1') : COUNCIL_MERGED);
       const routes = [
         ...picks.map((r) => routeEntry(r.id, 'proposer', each, { in: tin, out: 60 }, 'ok', false)),
         routeEntry(DEMO_ROUTES[1].id, mode === 'merge' ? 'aggregator' : 'judge', aggCost, { in: tin * 3, out: tokensOf(text) }, 'ok', false),
@@ -474,23 +479,23 @@ export function createMockGateway(options: MockOptions = {}) {
     // Hold at the maximum cost, settle to the actual cost when the stream ends.
     k.held += maxCost;
     const lastUser = [...body.messages].reverse().find((m) => m.role === 'user')?.content ?? '';
-    const rerouted = model === 'anonymo-1' && /\breroute\b/i.test(lastUser);
+    const rerouted = !storyText && model === 'anonymo-1' && /\breroute\b/i.test(lastUser);
     const servers = DEMO_ROUTES.filter((r) => (sealed ? r.attested && r.serves.includes('anonymo-sealed') : r.serves.includes(model) || r.model === model));
     const first = servers[0] ?? DEMO_ROUTES[0];
     const other = servers.find((r) => r.family !== first.family) ?? DEMO_ROUTES[2];
-    let text = demoReply(model);
+    let text = storyText ?? (lastUser === DEMO_TRANSCRIPT ? DEMO_VOICE_REPLY : demoReply(model));
     // Update "sidebyside": a direct model id answers in its own words, and a merge request gets a merged reply.
-    text = sideBySideReply(model, body.messages, text);
+    if (!storyText) text = sideBySideReply(model, body.messages, text);
     // Update "catchup": a recap request gets recap-shaped notes built from what the person said.
     if (typeof lastUser === 'string' && lastUser === RECAP_INSTRUCTION) {
       const said = body.messages.filter((m) => m.role === 'user' && m.content !== RECAP_INSTRUCTION).map((m) => (typeof m.content === 'string' ? m.content : ''));
       text = `Recap so far (demo: a real model writes this from the whole chat).\n\n${said.map((s) => `- ${s.replace(/\s+/g, ' ').slice(0, 140)}`).join('\n\n')}\n\nWhere it stands: the last point above. Keep the same tone and pick up from there.`;
-    } else {
+    } else if (!storyText) {
       // Update "faces": a look or scene sentence for those requests, and an in-character line in a character chat.
-      text = demoFaceReply(body.messages) ?? text;
+      text = memoryReply ?? demoFaceReply(body.messages) ?? text;
     }
     // Update "voice": the Night Call bedtime starter, and each "keep reading" after it, gets the next part of a story.
-    text = demoStoryReply(body.messages) ?? text;
+    text = bedtimeStoryReply(body.messages) ?? text; // Night Call's bedtime starter
     // Update "movein": a memory request (a running summary, or the facts) gets a memory-shaped answer.
     text = moveInReply(body.messages) ?? text;
     if (rerouted) text = `The first route refused this, so the router retried on a different model family (${other.family}) and billed the refused attempt nothing. ${text}`;
@@ -640,7 +645,7 @@ export function createMockGateway(options: MockOptions = {}) {
     if (method === 'GET' && path === API_PATHS.leaderboard) return json(DEMO_LEADERBOARD);
     if (method === 'GET' && path === API_PATHS.statusSlo) return json({ data: demoStatus(Date.now()) });
     if (method === 'GET' && path === API_PATHS.health) return json({ ok: true });
-    if (method === 'GET' && path === API_PATHS.mediaModels) return json({ object: 'list', data: [...DEMO_IMAGE_MODELS, ...DEMO_VIDEO_MODELS, ...DEMO_SPEECH_MODELS] });
+    if (method === 'GET' && path === API_PATHS.mediaModels) return json({ object: 'list', data: [...DEMO_IMAGE_MODELS, ...DEMO_VIDEO_MODELS, ...DEMO_SPEECH_MODELS, ...DEMO_VOICE_MODELS.filter((m) => m.kind === 'transcription')] });
     const receiptMatch = /^\/v1\/receipts\/([^/]+)(\/proof)?$/.exec(path);
     if (method === 'GET' && receiptMatch) {
       const id = decodeURIComponent(receiptMatch[1]);
@@ -678,7 +683,9 @@ export function createMockGateway(options: MockOptions = {}) {
     if (method === 'POST' && path === API_PATHS.withdraw) return withdraw(request, k);
     if (method === 'POST' && path === API_PATHS.chat) return chat(request, k);
     if (method === 'POST' && path === API_PATHS.images) return images(request, k);
+    // One stock speech model in the demo, as in production: Night Call's mock serves it for both voice updates.
     if (method === 'POST' && path === API_PATHS.speech) return speech.speak(request, k);
+    if (method === 'POST' && path === API_PATHS.transcriptions) return demoTranscription(request);
     if (method === 'POST' && path === API_PATHS.videos) return video.submit(request, k);
     if (method === 'GET' && path.startsWith(`${API_PATHS.videos}/`)) return video.status(path.slice(API_PATHS.videos.length + 1), k);
     if (method === 'PATCH' && path === API_PATHS.caps) return patchCaps(request, k);

@@ -195,6 +195,23 @@ export function videoOnlyMp4(bytes: Uint8Array): Uint8Array | null {
     return null;
   }
 }
+/** Validate a single audio track and put its index before media data for decoding over a pipe. */
+export function audioMp4ForPipe(bytes: Uint8Array): Uint8Array {
+  const top = boxes(bytes, 1024);
+  const moov = top.filter((x) => x.type === "moov");
+  const mdat = top.find((x) => x.type === "mdat");
+  if (!mp4.matches(bytes) || moov.length !== 1 || !mdat) throw new Error("invalid M4A");
+  const index = moov[0];
+  const body = inner(bytes, index);
+  const handler = child(child(child(body, "trak"), "mdia"), "hdlr");
+  if (ascii(handler, 8, 4) !== "soun") throw new Error("expected one audio track");
+  if (index.start < mdat.start) return bytes;
+  if (top.some((x) => x.type === "moof")) throw new Error("M4A fragments must follow the index");
+  const size = index.end - index.start;
+  const remapped = remapChunkOffsets(body, (offset) => offset >= mdat.start && offset < index.start ? offset + size : offset);
+  return concatBytes([bytes.subarray(0, mdat.start), bytes.subarray(index.start, index.start + index.header),
+    remapped, bytes.subarray(mdat.start, index.start), bytes.subarray(index.end)]);
+}
 const isC2paBox = (b: Uint8Array, x: Box) => x.type === "uuid" && C2PA_BMFF_UUID.every((v, i) => b[x.start + x.header + i] === v);
 const MP4_PURPOSE = te.encode("manifest\0");
 const mp4: Container = {

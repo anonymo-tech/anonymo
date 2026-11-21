@@ -1358,6 +1358,231 @@
         }
       }
     },
+    "/api/v1/audio/speech": {
+      "post": {
+        "operationId": "createSpeech",
+        "summary": "Generate speech",
+        "description": "Stock voices only. The hosted Kokoro model accepts up to 10,000 characters at a default price of $0.003 per 1,000 characters. GET /v1/media/models lists available models, voices and rates.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "model",
+                  "input"
+                ],
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "examples": [
+                      "kokoro/kokoro-82m"
+                    ]
+                  },
+                  "input": {
+                    "type": "string"
+                  },
+                  "voice": {
+                    "type": "string",
+                    "examples": [
+                      "af_alloy"
+                    ]
+                  },
+                  "speed": {
+                    "type": "number",
+                    "default": 1,
+                    "description": "Kokoro hosted range is 0.5–2; self-hosted range is 0.25–4."
+                  },
+                  "response_format": {
+                    "type": "string",
+                    "enum": [
+                      "wav"
+                    ],
+                    "default": "wav"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "WAV with signed C2PA provenance and an audio watermark",
+            "headers": {
+              "X-Anonymo-Cost-Usd": {
+                "schema": {
+                  "type": "number"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "audio/wav": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/ApiError"
+          },
+          "404": {
+            "$ref": "#/components/responses/ApiError"
+          },
+          "409": {
+            "$ref": "#/components/responses/ApiError"
+          },
+          "415": {
+            "$ref": "#/components/responses/ApiError"
+          },
+          "429": {
+            "$ref": "#/components/responses/ApiError"
+          },
+          "451": {
+            "$ref": "#/components/responses/ApiError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ApiError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/audio/transcriptions": {
+      "post": {
+        "operationId": "createTranscription",
+        "summary": "Transcribe audio",
+        "description": "Whisper is available when hosted audio is configured. Requests are limited to 4 MB including multipart overhead and 5 minutes of decoded audio. Default price is $0.001 per started minute.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file",
+                  "model"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "MP3, OGG, WAV, M4A or AAC audio."
+                  },
+                  "model": {
+                    "type": "string",
+                    "enum": [
+                      "openai/whisper-large-v3"
+                    ]
+                  },
+                  "language": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z]{2}$",
+                    "description": "Optional two-letter language code. Default is automatic detection."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Transcript",
+            "headers": {
+              "X-Anonymo-Cost-Usd": {
+                "schema": {
+                  "type": "number"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "text"
+                  ],
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/ApiError"
+          },
+          "404": {
+            "$ref": "#/components/responses/ApiError"
+          },
+          "409": {
+            "$ref": "#/components/responses/ApiError"
+          },
+          "413": {
+            "$ref": "#/components/responses/ApiError"
+          },
+          "415": {
+            "$ref": "#/components/responses/ApiError"
+          },
+          "429": {
+            "$ref": "#/components/responses/ApiError"
+          },
+          "451": {
+            "$ref": "#/components/responses/ApiError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ApiError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
     "/api/v1/chat/completions": {
       "post": {
         "tags": [

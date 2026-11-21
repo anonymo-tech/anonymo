@@ -47,3 +47,12 @@ export const mediaBodyReader: ExternalDoc["bodyReaders"][number] = {
   kept: "Only video job metadata in media_jobs and the usual ledger hold and settlement. No prompt, input text, upload or output is written to the database, Redis or logs. Rate limits use the existing per-key family; no caller-address reader.",
   evidence: [ev("src/anonymo/media/routes.ts", "const body = await readJson("), ev("src/anonymo/media/routes.ts", "raw.formData();"), ev("src/anonymo/media/routes.ts", "req.arrayBuffer())")],
 };
+
+export const transcriptionBodyReader: ExternalDoc["bodyReaders"][number] = {
+  file: "src/anonymo/media/transcription.ts",
+  carries: "prompt-or-answer",
+  reads: "One multipart audio upload, its model and an optional language code.",
+  then: "Decodes audio in memory to validate its duration. Sends the audio to NanoGPT and returns the transcript directly.",
+  kept: "The ledger hold and settlement contain only billing metadata. The upload, its filename and the transcript stay out of storage and logs.",
+  evidence: [ev("src/anonymo/media/transcription.ts", "req.formData()"), ev("src/anonymo/media/routes.ts", "s.transcription.transcribe(")],
+};

@@ -1,4 +1,5 @@
 import type { CouncilResult, Receipt } from '@/lib/anonymo/types';
+import type { MemoryCharge } from '@/lib/anonymo/memory-request';
 
 /** One question and its answer. Lives in memory only: the workspace never stores prompt or output text. */
 export type Turn = {
@@ -18,4 +19,5 @@ export type Turn = {
   aiReminder?: boolean; // show the 3-hourly “you’re talking to an AI” reminder above this turn
   crisis?: boolean; // the prompt mentioned suicide or self-harm: show crisis lines with the answer
   recap?: boolean; // update "catchup": this turn is a recap of an earlier chat, sent as context at the start of this one
+  memoryCharge?: MemoryCharge;
 };

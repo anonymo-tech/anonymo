@@ -52,6 +52,7 @@ const groups: { title: string; links: Destination[] }[] = [
     links: [
       overview,
       chat,
+      { href: '/dashboard/story', label: 'Story Studio', icon: BookOpen, feature: 'story' },
       { href: '/dashboard/call', label: 'Night Call', icon: Headphones, feature: 'voice' },
       { href: '/dashboard/side-by-side', label: 'Side by side', icon: Columns3, feature: 'sidebyside' },
       {

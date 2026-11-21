@@ -9,7 +9,8 @@ Drizzle. Spec: Overview §2 (media table) and §6, Backend §2 (media-gate, prov
 |---|---|
 | `POST /v1/images/generations` | `model`, `prompt`, `n` from 1 to the model's `max_images`, `size`, `response_format` `url` \| `b64_json`, `seed` |
 | `POST /v1/images/edits` | multipart `image` (or JSON `image` as a data URL), same fields. No masks. Image URLs are never fetched |
-| `POST /v1/audio/speech` | `model`, `input`, `voice` (stock only), `speed`. Returns WAV |
+| `POST /v1/audio/speech` | `model`, `input`, `voice` (stock only), `speed`. Returns WAV with provenance |
+| `POST /v1/audio/transcriptions` | Multipart `file`, `model`, optional `language`. Returns `{ "text": "…" }` |
 | `POST /v1/video/generations` | `model`, `prompt`, `seconds`, `size`, `seed`. Returns `202` with a job id |
 | `GET /v1/video/generations/{id}` | Polls the job. `queued` → `in_progress` → `completed` (with a signed `url`) or `failed` |
 | `GET /v1/media/{id}?expires=&sig=` | Short-lived signed download. No key needed, the signature is the credential |
@@ -38,6 +39,20 @@ Set `ANONYMO_NANOGPT_API_KEY` to list these models for text-to-image generation.
 Choose a `size` from the model's listed width × height presets. The default is `1024x1024`. For aspect-ratio models,
 these presets specify the shape and the provider determines the pixel dimensions. Grok Imagine Image 2.0 uses the
 1K tier at the listed price. [NanoGPT image API reference](https://docs.nano-gpt.com/api-reference/image-generation)
+
+## NanoGPT voice models
+
+With `ANONYMO_NANOGPT_API_KEY` and `ANONYMO_FEATURE_MEDIA` configured, `GET /v1/media/models` lists both voice models.
+
+- `kokoro/kokoro-82m` offers 33 stock voices, 10,000 characters per request, and speeds from 0.5 to 2. The default
+  rate is $0.003 per 1,000 input characters, configurable with `ANONYMO_NANOGPT_SPEECH_USD_KOKORO`.
+- `openai/whisper-large-v3` accepts MP3, OGG, WAV, M4A and AAC. The multipart body can be up to 4 MB and the audio
+  can be up to 5 minutes. The default rate is $0.001 per started minute, configurable with
+  `ANONYMO_NANOGPT_TRANSCRIPTION_USD_WHISPER`. FFmpeg counts decoded samples in memory before the gateway reserves credit.
+  The response contains only the transcript, which goes back to the caller without a floor check. When that text
+  is sent as a chat message, the normal chat floor check applies.
+
+Neither endpoint stores audio, input text or transcripts. [NanoGPT transcription API](https://docs.nano-gpt.com/api-reference/endpoint/audio-transcriptions)
 
 ## The order every request runs in
 

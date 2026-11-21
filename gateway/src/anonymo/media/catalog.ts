@@ -9,16 +9,19 @@
 
 import { NANOGPT_IMAGE_MODELS } from "./nanogpt-models.ts";
 
+import { KOKORO_ID, KOKORO_MAX_CHARS, NANOGPT_KOKORO_VOICES, WHISPER_ID } from "./voice-models.ts";
+
 export { NANOGPT_IMAGE_MODELS } from "./nanogpt-models.ts";
 
-export type MediaKind = "image" | "speech" | "video";
+export type MediaKind = "image" | "speech" | "video" | "transcription";
 export type Upstream = "venice" | "comfyui" | "tts" | "nanogpt";
 type Base = { id: string; upstream: Upstream; upstreamModel: string; family: string; license: string; name: string };
 export const DEFAULT_MAX_IMAGES = 4;
 export type ImageModel = Base & { kind: "image"; usdPerImage: string; edit: boolean; sizes: string[]; defaultSize: string; maxImages?: number };
 export type SpeechModel = Base & { kind: "speech"; usdPer1kChars: string; voices: string[]; maxChars: number };
 export type VideoModel = Base & { kind: "video"; usdPerSecond: string; seconds: [number, number]; allowedSeconds?: readonly number[]; defaultSeconds: number; sizes: string[]; defaultSize: string };
-export type MediaModel = ImageModel | SpeechModel | VideoModel;
+export type TranscriptionModel = Base & { kind: "transcription"; usdPerMinute: string };
+export type MediaModel = ImageModel | SpeechModel | VideoModel | TranscriptionModel;
 
 const SQUARE_AND_WIDE = ["1024x1024", "1152x896", "896x1152", "1216x832", "832x1216", "1344x768", "768x1344"];
 
@@ -57,7 +60,7 @@ export const BUILTIN_MODELS: MediaModel[] = [
 ];
 
 const FORBIDDEN = /flux.{0,10}\bdev\b/i; // FLUX.1 [dev], flux1-dev, FLUX.2 [dev], flux-dev …
-const SELF_HOSTED_LICENSES: Record<MediaKind, string[]> = { image: ["Apache-2.0"], video: ["Apache-2.0"], speech: ["Apache-2.0", "MIT"] };
+const SELF_HOSTED_LICENSES: Record<MediaKind, string[]> = { image: ["Apache-2.0"], video: ["Apache-2.0"], speech: ["Apache-2.0", "MIT"], transcription: ["MIT"] };
 
 /** Throws for a model the licensing rule forbids. Run over the whole catalog at startup and in tests. */
 export function assertLicensed(m: MediaModel) {
@@ -67,7 +70,10 @@ export function assertLicensed(m: MediaModel) {
     return;
   }
   if (m.upstream === "nanogpt") {
-    if (!(m.kind === "video" ? /^(alibaba|kling|bytedance|google|lightricks)\// : /^(google|openai|bfl|ideogram|recraft|krea|xai)\//).test(m.id))
+    if (!(m.kind === "video" ? /^(alibaba|kling|bytedance|google|lightricks)\//
+      : m.kind === "speech" ? /^kokoro\//
+      : m.kind === "transcription" ? /^openai\//
+      : /^(google|openai|bfl|ideogram|recraft|krea|xai)\//).test(m.id))
       throw new Error(`${m.id}: NanoGPT models keep their maker's prefix`);
     return;
   }
@@ -104,6 +110,10 @@ function nanogptModels(env: Record<string, string | undefined>): MediaModel[] {
     return usd;
   };
   return [
+    { kind: "speech", id: KOKORO_ID, name: "Kokoro", upstream: "nanogpt", upstreamModel: "Kokoro-82m", family: "kokoro",
+      license: "provider-terms", usdPer1kChars: price("ANONYMO_NANOGPT_SPEECH_USD_KOKORO", "0.003"), voices: NANOGPT_KOKORO_VOICES, maxChars: KOKORO_MAX_CHARS },
+    { kind: "transcription", id: WHISPER_ID, name: "Whisper Large V3", upstream: "nanogpt", upstreamModel: "Whisper-Large-V3", family: "whisper",
+      license: "provider-terms", usdPerMinute: price("ANONYMO_NANOGPT_TRANSCRIPTION_USD_WHISPER", "0.001") },
     ...NANOGPT_IMAGE_MODELS.map((m): ImageModel => ({
       kind: "image", id: m.id, name: m.name, upstream: "nanogpt", upstreamModel: m.upstreamModel, family: m.family,
       license: "provider-terms", usdPerImage: price(m.envUsd, m.usd), edit: false, sizes: m.sizes, defaultSize: "1024x1024", maxImages: m.maxImages,

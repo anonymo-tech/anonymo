@@ -1,4 +1,4 @@
-import { mediaBodyReader } from "../anonymo/media/inventory.ts"; // WS06 media
+import { mediaBodyReader, transcriptionBodyReader } from "../anonymo/media/inventory.ts"; // WS06 media
 import { anonymoMoneyAddressReader, anonymoMoneyBodyReaders } from "./anonymo-money.ts"; // WS05
 import { modelAlternativesReader } from "./model-alternatives.ts"; // B121
 import { abuseBodyReader } from "../anonymo/abuse/privacy.ts"; // Anonymo WS02
@@ -260,6 +260,7 @@ const addressReaders: Touchpoint[] = [
 const bodyReaders: ExternalDoc["bodyReaders"] = [
   ...anonymoMoneyBodyReaders, // WS05
   mediaBodyReader, // WS06 media
+  transcriptionBodyReader,
   modelAlternativesReader, // B121
   abuseBodyReader, // Anonymo WS02: takedown inbox
   refusalSettingReader, // Anonymo WS03

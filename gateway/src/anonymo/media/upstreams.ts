@@ -43,11 +43,11 @@ export interface VideoUpstream {
   poll(ref: string, model: string, signal: AbortSignal): Promise<VideoPoll>;
 }
 
-export async function readCapped(r: Response): Promise<Uint8Array> {
+export async function readCapped(r: Response, maxBytes = MAX_MEDIA_BYTES): Promise<Uint8Array> {
   const len = Number(r.headers.get("content-length") ?? 0);
-  if (len > MAX_MEDIA_BYTES) {
+  if (len > maxBytes) {
     await r.body?.cancel().catch(() => undefined);
-    throw new UpstreamError("upstream media exceeds 100 MB", 502);
+    throw new UpstreamError("upstream response too large", 502);
   }
   const reader = r.body?.getReader();
   if (!reader) return new Uint8Array();
@@ -58,7 +58,7 @@ export async function readCapped(r: Response): Promise<Uint8Array> {
       const { done, value } = await reader.read();
       if (done) return Buffer.concat(chunks, size);
       size += value.byteLength;
-      if (size > MAX_MEDIA_BYTES) throw new UpstreamError("upstream media exceeds 100 MB", 502);
+      if (size > maxBytes) throw new UpstreamError("upstream response too large", 502);
       chunks.push(value);
     }
   } finally {

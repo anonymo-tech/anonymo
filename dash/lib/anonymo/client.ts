@@ -5,6 +5,7 @@
 // The client never logs, stores or forwards prompt or output text. It holds the API key only in memory; persisting
 // it on the device is the caller's choice (lib/anonymo/key-store.ts).
 
+import { SPEECH_MODEL, TRANSCRIPTION_MODEL, type SpeechModel, type TranscriptionModel, type VoiceModels } from './talk.ts';
 import type {
   StatusSlo,
   CapsUpdate,
@@ -74,6 +75,7 @@ export const API_PATHS = {
   incidentsAtom: '/api/v1/status/incidents.atom',
   images: '/v1/images/generations',
   speech: '/v1/audio/speech',
+  transcriptions: '/v1/audio/transcriptions',
   videos: '/v1/video/generations',
   video: (id: string) => `/v1/video/generations/${encodeURIComponent(id)}`,
 } as const;
@@ -144,7 +146,7 @@ export function createAnonymoClient(options: ClientOptions) {
 
   async function request(path: string, init: RequestInit & { auth?: boolean } = {}): Promise<Response> {
     const headers = new Headers(init.headers);
-    if (init.body && !headers.has('content-type')) headers.set('content-type', 'application/json');
+    if (init.body && !(init.body instanceof FormData) && !headers.has('content-type')) headers.set('content-type', 'application/json');
     if (init.auth !== false) {
       if (!key) throw new AnonymoApiError(401, 'missing_key', 'Create or paste an API key first.');
       headers.set('authorization', `Bearer ${key}`);
@@ -204,6 +206,27 @@ export function createAnonymoClient(options: ClientOptions) {
     generateImages: (body: ImageRequest, signal?: AbortSignal) =>
       json<ImageGeneration>(API_PATHS.images, { method: 'POST', body: JSON.stringify({ ...body, response_format: 'b64_json' }), signal }),
 
+    async voiceModels(signal?: AbortSignal): Promise<VoiceModels> {
+      const list = await data<(SpeechModel | TranscriptionModel)[]>(API_PATHS.mediaModels, { auth: false, signal });
+      return {
+        // Kokoro when the gateway lists it, else the first stock speech model (the demo lists Night Call's).
+        speech: list.find((m): m is SpeechModel => m.id === SPEECH_MODEL && m.kind === 'speech')
+          ?? list.find((m): m is SpeechModel => m.kind === 'speech' && Array.isArray((m as SpeechModel).voices) && (m as SpeechModel).voices.length > 0),
+        transcription: list.find((m): m is TranscriptionModel => m.id === TRANSCRIPTION_MODEL && m.kind === 'transcription'),
+      };
+    },
+    async speak(input: string, voice: string, speed: number, signal?: AbortSignal, model: string = SPEECH_MODEL) {
+      const res = await request(API_PATHS.speech, {
+        method: 'POST', body: JSON.stringify({ model, input, voice, speed, response_format: 'wav' }), signal,
+      });
+      return res.arrayBuffer();
+    },
+    transcribe(file: File, signal?: AbortSignal) {
+      const body = new FormData();
+      body.set('file', file);
+      body.set('model', TRANSCRIPTION_MODEL);
+      return json<{ text: string }>(API_PATHS.transcriptions, { method: 'POST', body, signal });
+    },
     /** The speech models the gateway lists (`kind: "speech"`): none until a voice worker is configured. */
     async speechModels(signal?: AbortSignal): Promise<MediaSpeechModel[]> {
       const list = await data<(Partial<Omit<MediaSpeechModel, 'kind'>> & { kind: string })[]>(API_PATHS.mediaModels, { auth: false, signal });

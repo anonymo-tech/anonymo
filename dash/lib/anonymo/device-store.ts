@@ -75,6 +75,7 @@ export function wipeDevice(storages: Storage[]): number;
 export function wipeDevice(storages?: Storage[]) {
   if (storages) return removeDeviceKeys(storages);
   startVault();
+  // The vault wipe clears saved chats, stories and character memory (live and demo) with their legacy device keys.
   const moveIn = deleteArchiveDb(); // update "movein": what moved in lives in its own IndexedDB database
   return Promise.all([vault.wipe(() => removeDeviceKeys([localStorage, sessionStorage])), wipeFaces(), moveIn]).then(([removed]) => removed);
 }

@@ -10,6 +10,12 @@ import type { VaultDisk } from './vault-db.ts';
 
 export const historySlot = (demo: boolean) => demo ? 'anonymo.demo.history.v1' : 'anonymo.history.v1';
 const historySlots = [historySlot(false), historySlot(true)];
+export const storySlot = (demo: boolean) => demo ? 'anonymo.demo.stories.v1' : 'anonymo.stories.v1';
+export const memorySlot = (demo: boolean) => demo ? 'anonymo.demo.memory.v1' : 'anonymo.memory.v1';
+// Saved chats and stories live in localStorage while the vault is off (as before it existed); memory always lives
+// in the vault's IndexedDB store. Every record list is re-encrypted, unlocked and wiped together.
+const legacySlots = [...historySlots, storySlot(false), storySlot(true)];
+const recordSlots = [...legacySlots, memorySlot(false), memorySlot(true)];
 const configSlot = 'config';
 const imagePrefix = 'image:';
 const utf8 = new TextEncoder();
@@ -110,7 +116,7 @@ export function createVault({ disk, legacy, exclusive, announce }: Options) {
   }
 
   async function readChats(slot: string, withKey: CryptoKey | null, current: number) {
-    if (config === undefined) return readLegacy(slot);
+    if (config === undefined && legacySlots.includes(slot)) return readLegacy(slot);
     const records = (await disk.get(slot) ?? []) as StoredRecord[];
     assertCurrent(current);
     return unpackChats(slot, records, withKey);
@@ -121,7 +127,7 @@ export function createVault({ disk, legacy, exclusive, announce }: Options) {
       if (state.mode !== 'locked') emit('locked');
       return;
     }
-    const chats = await Promise.all(historySlots.map(async (slot) => [slot, await readChats(slot, key, current)] as const));
+    const chats = await Promise.all(recordSlots.map(async (slot) => [slot, await readChats(slot, key, current)] as const));
     assertCurrent(current);
     histories = new Map(chats);
     emit(config ? 'unlocked' : 'off');
@@ -129,19 +135,19 @@ export function createVault({ disk, legacy, exclusive, announce }: Options) {
 
   async function migrateLegacy(current: number) {
     if (config === undefined) {
-      const chats = await Promise.all(historySlots.map(async (slot): Promise<[string, unknown]> => [slot, await packChats(slot, readLegacy(slot), null)]));
+      const chats = await Promise.all(legacySlots.map(async (slot): Promise<[string, unknown]> => [slot, await packChats(slot, readLegacy(slot), null)]));
       assertCurrent(current);
       await disk.commit([[configSlot, null], ...chats]);
       config = null;
     }
     // Finish legacy cleanup before committing any enabled configuration. An interrupted import can be retried.
-    for (const slot of historySlots) legacy().removeItem(slot);
+    for (const slot of legacySlots) legacy().removeItem(slot);
   }
 
   async function reencrypt(current: number, previous: CryptoKey | null, next: CryptoKey | null, nextConfig: VaultConfig | null) {
     const puts: [string, unknown][] = [[configSlot, nextConfig]];
     const nextHistories = new Map<string, unknown[]>();
-    for (const slot of historySlots) {
+    for (const slot of recordSlots) {
       const chats = await readChats(slot, previous, current);
       puts.push([slot, await packChats(slot, chats, next)]);
       nextHistories.set(slot, chats);
@@ -162,6 +168,27 @@ export function createVault({ disk, legacy, exclusive, announce }: Options) {
     emit(nextConfig ? (key ? 'unlocked' : 'locked') : 'off');
   }
 
+  function updateList(slot: string, update: (previous: unknown[]) => unknown[]) {
+    return run(async (current) => {
+      current = await syncConfig(current);
+      if (config && !key) throw new VaultLocked();
+      const previous = await readChats(slot, key, current);
+      assertCurrent(current);
+      const list = update(previous);
+      if (list === previous && !legacySlots.includes(slot)) return;
+      if (config === undefined && legacySlots.includes(slot)) legacy().setItem(slot, JSON.stringify(list));
+      else {
+        const data = await packChats(slot, list, key);
+        assertCurrent(current);
+        await disk.commit([[slot, data]]);
+      }
+      assertCurrent(current);
+      histories.set(slot, list);
+      emit(config ? 'unlocked' : 'off');
+      announce?.('data');
+    });
+  }
+
   return {
     state: () => state,
     subscribe(listener: () => void) {
@@ -174,6 +201,9 @@ export function createVault({ disk, legacy, exclusive, announce }: Options) {
     },
     snapshotChats(demo: boolean) {
       return histories.get(historySlot(demo)) ?? [];
+    },
+    snapshotStories(demo: boolean) {
+      return histories.get(storySlot(demo)) ?? [];
     },
     refresh() {
       return run(async (current) => refresh(await syncConfig(current))).catch((error) => {
@@ -207,7 +237,7 @@ export function createVault({ disk, legacy, exclusive, announce }: Options) {
         const unlocked = await unlockVaultKey(passphrase, config);
         assertCurrent(current);
         // Authenticate and read every saved chat before publishing the key or the unlocked state.
-        const chats = await Promise.all(historySlots.map(async (slot) => [slot, await readChats(slot, unlocked, current)] as const));
+        const chats = await Promise.all(recordSlots.map(async (slot) => [slot, await readChats(slot, unlocked, current)] as const));
         assertCurrent(current);
         key = unlocked;
         histories = new Map(chats);
@@ -234,30 +264,23 @@ export function createVault({ disk, legacy, exclusive, announce }: Options) {
       });
     },
     updateChats(demo: boolean, update: (chats: unknown[]) => unknown[]) {
-      const slot = historySlot(demo);
-      return run(async (current) => {
-        current = await syncConfig(current);
-        if (config && !key) throw new VaultLocked();
-        const chats = update(await readChats(slot, key, current));
-        assertCurrent(current);
-        if (config === undefined) legacy().setItem(slot, JSON.stringify(chats));
-        else {
-          const data = await packChats(slot, chats, key);
-          assertCurrent(current);
-          await disk.commit([[slot, data]]);
-        }
-        assertCurrent(current);
-        histories.set(slot, chats);
-        emit(config ? 'unlocked' : 'off');
-        announce?.('data');
-      });
+      return updateList(historySlot(demo), update);
+    },
+    updateStories(demo: boolean, update: (stories: unknown[]) => unknown[]) {
+      return updateList(storySlot(demo), update);
+    },
+    snapshotMemory(demo: boolean) {
+      return histories.get(memorySlot(demo)) ?? [];
+    },
+    updateMemory(demo: boolean, update: (records: unknown[]) => unknown[]) {
+      return updateList(memorySlot(demo), update);
     },
     clearChats() {
       return run(async () => {
         // Clearing history needs no key and can finish even if the vault locks during the delete.
         for (const slot of historySlots) legacy().removeItem(slot);
         await disk.commit([], historySlots);
-        histories = new Map();
+        for (const slot of historySlots) histories.delete(slot);
         emit();
         announce?.('data');
       });

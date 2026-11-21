@@ -17,6 +17,7 @@ import {
 import { useRef, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
 import { FacePainter, FaceThumb } from './face-painter';
+import { MemoryPanel } from './memory-panel';
 import { PlushMaker } from './plush-maker';
 import type { Plush } from '@/lib/anonymo/plush';
 import {
@@ -48,6 +49,8 @@ export function CharactersPanel() {
   // Update "faces": the art inside a PNG card is kept as the character's face, and any character can be given painted
   // ones. `?face=<id>` (the chat's "Give them a face" link) opens that character's Face panel.
   const facesOn = ready && updateOn('faces', demo);
+  const memoryOn = ready && updateOn('memory', demo);
+  const [memoryFor, setMemoryFor] = useState<string | null>(null);
   const [art, setArt] = useState<Blob | null>(null);
   const [faceFor, setFaceFor] = useState<string | null>(
     useSearchParams().get('face'),
@@ -55,14 +58,10 @@ export function CharactersPanel() {
   const faceCharacter = facesOn
     ? (list.find((c) => c.id === faceFor) ?? null)
     : null;
-  const [view, setView] = useState<'studio' | 'collection' | 'import'>(
+  const [view, setView] = useState<'studio' | 'collection' | 'import' | 'memory'>(
     'studio',
   );
-  const active = facesOn
-    ? view
-    : view === 'collection'
-      ? 'collection'
-      : 'import';
+  const active = view === 'memory' && !memoryOn ? 'collection' : view === 'studio' && !facesOn ? 'import' : view;
   const go = (next: typeof view) => {
     setView(next);
     setError('');
@@ -172,7 +171,7 @@ export function CharactersPanel() {
             ? 'Character studio'
             : active === 'collection'
               ? 'Your collection'
-              : 'Import a character'}
+              : active === 'memory' ? 'Character memory' : 'Import a character'}
         </h1>
         <nav aria-label="Character workspace">
           {facesOn && (
@@ -198,6 +197,8 @@ export function CharactersPanel() {
           >
             <Upload size={16} /> Import
           </button>
+          {memoryOn && <button type="button" className="memory-tab" aria-current={active === 'memory' ? 'page' : undefined}
+            onClick={() => { setMemoryFor(null); go('memory'); }}>Memory</button>}
         </nav>
       </header>
       {note && <output className="notice notice-signal">{note}</output>}
@@ -407,6 +408,10 @@ export function CharactersPanel() {
                         <Paintbrush size={15} aria-hidden="true" /> Customize
                       </button>
                     )}
+                    {memoryOn && <button type="button" className="btn btn-small" onClick={() => {
+                      setMemoryFor(c.id);
+                      go('memory');
+                    }}>Memory</button>}
                     <details className="character-options">
                       <summary>Manage</summary>
                       <div>
@@ -442,6 +447,16 @@ export function CharactersPanel() {
             </ul>
           )}
         </section>
+      )}
+      {active === 'memory' && (
+        demo && list.length === 0 ? (
+          <div className="panel memory-panel">
+            <p className="muted">Try memory with the captain of the Lantern.</p>
+            <button type="button" className="btn btn-small" onClick={() => void keep(normalizeCard(SAMPLE_CARD), null).then(setMemoryFor)}>
+              <BookOpen size={15} aria-hidden="true" /> Add a sample character
+            </button>
+          </div>
+        ) : <MemoryPanel demo={demo} characters={list} initialId={memoryFor} />
       )}
     </div>
   );

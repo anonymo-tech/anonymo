@@ -1,6 +1,7 @@
 // WS06 · Media endpoints, OpenAI-shaped, ported from Anonyma's /v1 media routes (Express/SQLite) to Hono/Drizzle.
 //
 //   POST /v1/images/generations   POST /v1/images/edits        POST /v1/audio/speech
+//   POST /v1/audio/transcriptions uses the same caller and hold flow. No floor check or media storage.
 //   POST /v1/video/generations    GET  /v1/video/generations/{id}  (asynchronous jobs, polled)
 //   GET  /v1/media/{id}?expires&sig   short-lived signed download of an output
 //   GET  /v1/media/models   GET /v1/media/provenance/keys   POST /v1/media/provenance/verify
@@ -34,6 +35,8 @@ import { countryOf } from "./region.ts";
 import { mediaJobs } from "./schema.ts";
 import { mediaServices, regionRulesOf, type MediaServices } from "./services.ts";
 import { checkMediaSignature, signedMediaPath, StoreFullError } from "./store.ts";
+import { readTranscription, transcriptionMinutes } from "./transcription.ts";
+import { TRANSCRIPTION_FORMATS, TRANSCRIPTION_MAX_BYTES, TRANSCRIPTION_MAX_SECONDS } from "./voice-models.ts";
 import { UpstreamError, type Media } from "./upstreams.ts";
 
 const MAX_PROMPT = 4000;
@@ -43,6 +46,7 @@ const IMAGE_DEADLINE_MS = 240_000;
 const VIDEO_HOLD_MS = 60 * 60_000;
 // Fields that would carry a voice sample or a reference image into a model that only takes stock inputs.
 const CLONE_FIELDS = ["reference_audio", "speaker_wav", "voice_sample", "audio", "audio_prompt", "prompt_audio", "voice_url", "clone", "reference_text", "speaker_audio", "voice_file"];
+const SOUND_REFERENCE_FIELD = /reference|clone|speaker(?:id|wav|audio|file|sample)|(?:voice|audio)(?:url|file|sample|prompt|data|reference)/i;
 const VIDEO_UPLOAD_FIELD = /^(?:(?:input|reference|first|last|start|end|source)?(?:image|video|audio)s?(?:url|dataurl|attachmentid|file)?|inputreference|(?:first|last|start|end)frame|references?)$/i;
 
 class MediaBlocked extends Error {
@@ -276,7 +280,7 @@ async function runSpeech(ctx: Ctx, c: Context): Promise<Response> {
   if (!(c.req.header("content-type") ?? "application/json").startsWith("application/json")) fail(415, "Send a JSON body. Voice uploads are not accepted: stock voices only.", "unsupported_media_type");
   const body = await readJson(c);
   const model = modelOr404(s.catalog.get("speech", body.model), "speech");
-  if (CLONE_FIELDS.some((f) => body[f] != null) || (body.voice != null && typeof body.voice !== "string"))
+  if (Object.keys(body).some((f) => CLONE_FIELDS.includes(f) || SOUND_REFERENCE_FIELD.test(f.replace(/[_-]/g, ""))) || (body.voice != null && typeof body.voice !== "string"))
     fail(400, "Voice cloning is not available. Choose one of the model's stock voices.", "voice_clone_not_supported");
   const input = str(body.input);
   if (!input.trim() || input.length > model.maxChars) fail(400, `Enter text of 1–${model.maxChars.toLocaleString("en-US")} characters.`);
@@ -285,7 +289,13 @@ async function runSpeech(ctx: Ctx, c: Context): Promise<Response> {
   if (body.response_format != null && body.response_format !== "wav")
     fail(400, 'response_format must be "wav": provenance is embedded in WAV output. Other formats need the watermark sidecar and are not offered yet.', "unsupported_format");
   const speed = body.speed == null ? 1 : Number(body.speed);
-  if (!Number.isFinite(speed) || speed < 0.25 || speed > 4) fail(400, "speed must be 0.25–4.");
+  const hosted = model.upstream === "nanogpt";
+  const [minSpeed, maxSpeed] = hosted ? [0.5, 2] : [0.25, 4];
+  if (!Number.isFinite(speed) || speed < minSpeed || speed > maxSpeed) fail(400, `speed must be ${minSpeed}–${maxSpeed}.`);
+  if (hosted && c.req.header("x-anonymo-sealed")?.trim().toLowerCase() === "required")
+    fail(409, "An attested speech route is unavailable.", "sealed_unavailable");
+  const upstream = hosted ? s.nanogptSpeech : s.speech;
+  if (!upstream) fail(503, "The speech provider is unavailable.", "upstream_unavailable");
   await floorCheck(ctx, { text: input, modality: "audio", hasUpload: false });
   regionPolicy(ctx, c, s);
   const id = requestId();
@@ -293,7 +303,7 @@ async function runSpeech(ctx: Ctx, c: Context): Promise<Response> {
   await reserve(ctx.db, { id, accountId: key.accountId, keyHash: key.keyHash, amount: price, kind: "media_speech", ttlMs: 5 * 60_000 });
   try {
     const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(120_000)]);
-    const raw = await s.speech.speak({ model: model.upstreamModel, input, voice, speed }, signal);
+    const raw = await upstream.speak({ model: model.upstreamModel, input, voice, speed }, signal);
     const out = await finishOutput(s, raw, { requestId: id, model: model.id, prompt: input, visual: false });
     const charged = await charge(ctx, id, price, "media_speech", `Speech: ${model.name}`);
     const r = receipt(ctx, { requestId: id, model, units: input.length, unit: "character", charged, outputs: [out] });
@@ -304,6 +314,36 @@ async function runSpeech(ctx: Ctx, c: Context): Promise<Response> {
   } catch (e) {
     await release(ctx.db, id).catch(() => undefined);
     throw mediaError(e, "audio");
+  }
+}
+
+async function runTranscription(ctx: Ctx, c: Context): Promise<Response> {
+  const key = await caller(ctx, c);
+  const s = mediaServices(ctx);
+  if (c.req.header("x-anonymo-sealed")?.trim().toLowerCase() === "required")
+    fail(409, "An attested transcription route is unavailable.", "sealed_unavailable");
+  const input = await readTranscription(c);
+  const model = modelOr404(s.catalog.get("transcription", input.model), "transcription");
+  if (!s.transcription) fail(503, "The transcription provider is unavailable.", "upstream_unavailable");
+  regionPolicy(ctx, c, s);
+  const validationSignal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(15_000)]);
+  const minutes = await transcriptionMinutes(input.file, input.format, validationSignal).catch((e: unknown) => {
+    if (e instanceof ApiError) throw e;
+    if (c.req.raw.signal.aborted) fail(499, "Client closed the request.", "cancelled");
+    fail(503, "Audio validation is unavailable.", "audio_validation_unavailable");
+  });
+  const id = requestId();
+  const price = priceOf(model.usdPerMinute, minutes);
+  const kind = "media_transcription";
+  await reserve(ctx.db, { id, accountId: key.accountId, keyHash: key.keyHash, amount: price, kind, ttlMs: 5 * 60_000 });
+  try {
+    const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(120_000)]);
+    const text = await s.transcription.transcribe({ model: model.upstreamModel, file: input.file, language: input.language }, signal);
+    const charged = await charge(ctx, id, price, kind, `Transcription: ${model.name}`);
+    return c.json({ text }, 200, { "cache-control": "no-store", "x-anonymo-request-id": id, "x-anonymo-cost-usd": String(usd(charged)) });
+  } catch (e) {
+    await release(ctx.db, id).catch(() => undefined);
+    throw mediaError(e, "transcription");
   }
 }
 
@@ -487,6 +527,7 @@ function listModels(ctx: Ctx, c: Context) {
       upstream: m.upstream === "venice" || m.upstream === "nanogpt" ? m.upstream : "self-hosted",
       ...(m.kind === "image" ? { pricing: { usd_per_image: m.usdPerImage }, edit: m.edit, sizes: m.sizes, max_images: m.maxImages ?? DEFAULT_MAX_IMAGES } : {}),
       ...(m.kind === "speech" ? { pricing: { usd_per_1k_chars: m.usdPer1kChars }, voices: m.voices, max_chars: m.maxChars, response_formats: ["wav"] } : {}),
+      ...(m.kind === "transcription" ? { pricing: { usd_per_started_minute: m.usdPerMinute }, max_seconds: TRANSCRIPTION_MAX_SECONDS, max_request_bytes: TRANSCRIPTION_MAX_BYTES, formats: Object.keys(TRANSCRIPTION_FORMATS) } : {}),
       ...(m.kind === "video" ? { pricing: { usd_per_second: m.usdPerSecond }, seconds: { min: m.seconds[0], max: m.seconds[1], default: m.defaultSeconds, ...(m.allowedSeconds ? { allowed: m.allowedSeconds } : {}) }, sizes: m.sizes } : {}),
     })),
   });
@@ -528,6 +569,7 @@ export function mediaRoutes(app: Hono, ctx: Ctx) {
     return runImages(ctx, c, key, s, await readEditRequest(s, c));
   });
   both("post", "/audio/speech", (c) => runSpeech(ctx, c));
+  both("post", "/audio/transcriptions", (c) => runTranscription(ctx, c));
   both("post", "/video/generations", (c) => submitVideo(ctx, c));
   both("get", "/video/generations/:id", (c) => getVideo(ctx, c));
   both("get", "/media/models", (c) => listModels(ctx, c));

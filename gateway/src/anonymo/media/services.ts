@@ -29,6 +29,7 @@ import { MediaCatalog, type Upstream } from "./catalog.ts";
 import { provenanceKeyFromSeed } from "./c2pa.ts";
 import { createMediaGate, httpClassifier, unconfiguredClassifier, type MediaClassifier, type MediaOutputGate } from "./gate.ts";
 import { hostedClassifier } from "./hosted-classifier.ts";
+import { nanogptSpeechAdapter, type TranscriptionUpstream } from "./nanogpt-speech.ts";
 import { nanogptVideoAdapter } from "./nanogpt-video.ts";
 import { createProvenance, type MediaProvenance } from "./provenance.ts";
 import { promptCheckFromEnv, type MediaPromptCheck } from "./prompt-check.ts";
@@ -52,6 +53,8 @@ export type MediaServices = {
   images: Partial<Record<Upstream, ImageUpstream>>;
   video: Partial<Record<Upstream, VideoUpstream>>;
   speech: SpeechUpstream;
+  nanogptSpeech?: SpeechUpstream;
+  transcription?: TranscriptionUpstream;
   ttlMs: number;
   /** Milliseconds between upstream polls of one video job. */
   pollIntervalMs: number;
@@ -98,6 +101,7 @@ export function buildMediaServices(ctx: Pick<Ctx, "cfg">, env: Env = process.env
   const nanogpt = nanogptKey
     ? nanogptAdapter({ base: nanogptBase(env), apiKey: nanogptKey })
     : unconfigured("NanoGPT");
+  const voice = nanogptKey ? nanogptSpeechAdapter({ base: nanogptBase(env), apiKey: nanogptKey }) : undefined;
   const venice = env.ANONYMO_VENICE_API_KEY ? veniceAdapter({ base: env.ANONYMO_VENICE_BASE ?? "https://api.venice.ai/api/v1", apiKey: env.ANONYMO_VENICE_API_KEY }) : unconfigured("Venice");
   const comfy = env.ANONYMO_COMFY_URL ? comfyAdapter({ base: env.ANONYMO_COMFY_URL, token: env.ANONYMO_COMFY_TOKEN, workflows: workflowSet(env.ANONYMO_COMFY_WORKFLOWS_DIR) }) : unconfigured("The ComfyUI worker pool");
   return {
@@ -120,6 +124,8 @@ export function buildMediaServices(ctx: Pick<Ctx, "cfg">, env: Env = process.env
     images: { venice, comfyui: comfy, nanogpt },
     video: { venice, comfyui: comfy, ...(nanogptKey ? { nanogpt: nanogptVideoAdapter({ base: nanogptBase(env), apiKey: nanogptKey }) } : {}) },
     speech: env.ANONYMO_TTS_URL ? ttsAdapter({ base: env.ANONYMO_TTS_URL, token: env.ANONYMO_TTS_TOKEN }) : unconfigured("The TTS worker pool"),
+    nanogptSpeech: voice,
+    transcription: voice,
     ttlMs: Math.min(86_400, Math.max(60, num(env.ANONYMO_MEDIA_TTL_S, 3600))) * 1000,
     pollIntervalMs: 2000,
   };

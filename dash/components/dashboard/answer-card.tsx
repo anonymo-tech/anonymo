@@ -9,7 +9,9 @@ import { Columns3, ReceiptText } from 'lucide-react';
 import { Fragment, useState, type ReactNode } from 'react';
 import { CopyButton } from '../copy-button';
 import { formatUsdAmount } from '@/lib/anonymo/money';
+import { VoiceReply } from './chat-voice';
 import type { Turn } from './chat-types';
+import { MemoryCost } from './memory-cost';
 
 /** Paragraphs and fenced code only; everything renders as text, never as HTML. */
 export function AnswerText({ text, streaming = false }: { text: string; streaming?: boolean }) {
@@ -57,6 +59,7 @@ function Footer({ turn }: { turn: Turn }) {
   return (
     <div className="answer-foot">
       {turn.status === 'done' && <CopyButton text={turn.content} />}
+      <VoiceReply turn={turn} />
       <PrivacyChip turn={turn} />
       {r && refusedRoutes.length > 0 && !r.refused && (
         <span className="chip chip-amber" title={`Refused on ${refusedRoutes.map((x) => x.route).join(', ')}`}>
@@ -65,6 +68,7 @@ function Footer({ turn }: { turn: Turn }) {
       )}
       {r?.refused && <span className="chip chip-amber">Refused twice · billed $0</span>}
       {r && <span className="mono">{formatUsdAmount(r.cost)}</span>}
+      {turn.memoryCharge && <MemoryCost charge={turn.memoryCharge} />}
       {r && (
         <span className="faint">
           {r.tokens.in.toLocaleString()} in · {r.tokens.out.toLocaleString()} out

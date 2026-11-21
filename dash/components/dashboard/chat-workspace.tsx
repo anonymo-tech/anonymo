@@ -8,11 +8,14 @@ import { useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { isLiveModel, useAnonymo } from '../anonymo-provider';
 import { AnswerCard } from './answer-card';
+import { ChatVoiceContext, VoiceSettings, useChatVoice } from './chat-voice';
+import { VoiceMic } from './voice-mic';
 import { FaceAvatar, TurnFace, hasFace, useFaces } from './face';
 import { Stage, StageTools } from './stage';
 import { ChatBar, ChatHistoryPanel } from './chat-history';
 import type { Turn } from './chat-types';
 import { ModelPicker } from './model-picker';
+import { MemorySuggestions, useChatMemory } from './memory-chat';
 import { PaperTrail } from './paper-trail';
 import { useContentGuard } from './use-content-guard';
 import { createPortal } from 'react-dom';
@@ -49,6 +52,8 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const [councilMode, setCouncilMode] = useState<'merge' | 'select'>('merge');
   const [refusalCatch, setRefusalCatch] = useState(true);
   const [text, setText] = useState('');
+  const voiceOn = ready && updateOn('talk', demo);
+  const voice = useChatVoice({ enabled: voiceOn && !!key, client, chatId, turns, refreshBalance });
   const [paper, setPaper] = useState<PaperSource | null>(null);
   const characters = useDeviceStore(charactersStore);
   const [characterId, setCharacterId] = useState<string | null>(requestedCharacter);
@@ -62,6 +67,8 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const streaming = turns.some((t) => t.status === 'streaming');
   // A character card is only a system prompt, so it works with any model, not just anonymo-rp.
   const character = characters.find((c) => c.id === characterId) ?? null;
+  const memoryOn = ready && updateOn('memory', demo);
+  const memory = useChatMemory(memoryOn ? character : null);
   // Update "faces": the chosen character's faces from this device, and the Stage (the same thread shown as a scene).
   const facesOn = ready && updateOn('faces', demo);
   const faces = useFaces(demo, facesOn && character ? character.id : null);
@@ -130,12 +137,17 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   async function send(promptText: string) {
     const prompt = promptText.trim();
     if (!prompt || streaming || controller.current || !key) return;
+    if (model !== 'anonymo-sealed') voice.prepare();
     setGuardNote(null);
     const content = paper ? paperPrompt(prompt, paper) : prompt;
     let messages: ChatMessage[] = [...history(), { role: 'user', content }];
     if (character) {
       const built = buildCharacterMessages(character.card, messages, { memory: memoryFor(demo, character.id) });
       messages = built.messages.map((m) => ({ role: m.role as ChatMessage['role'], content: typeof m.content === 'string' ? m.content : '' }));
+      if (memoryOn) {
+        const recent = turns.filter((turn) => !turn.attachment && turn.status === 'done').slice(-2);
+        messages = memory.addToPrompt(messages, [prompt, ...recent.flatMap((turn) => [turn.prompt, turn.content.slice(-800)])]);
+      }
     }
     const id = crypto.randomUUID();
     const aiReminder = reminderDue(noticedAt.current);
@@ -185,6 +197,8 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       receiptId = result.receiptId;
       haveReceipt = result.receipt !== null;
       update(id, { status: 'done', content: result.content, council: result.council, receiptId, receipt: result.receipt });
+      if (!turn.recap && !turn.attachment && !abort.signal.aborted)
+        void memory.afterReply(id, model, turn.prompt, result);
     } catch (error) {
       const stopped = abort.signal.aborted;
       update(id, { status: stopped ? 'stopped' : 'error', error: stopped ? null : describeError(error), needsFunds: !stopped && isOutOfCredit(error) });
@@ -237,6 +251,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   async function submit() {
     const prompt = text.trim();
     if (!prompt || streaming || !key) return;
+    if (model !== 'anonymo-sealed') voice.prepare();
     const request = ++pendingScan.current;
     const result = await scan(prompt);
     if (request !== pendingScan.current) return;
@@ -292,6 +307,14 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
           }}
         />
         <ModelPicker value={model} onChange={chooseModel} live={liveModels} />
+        {voiceOn && voice.transcription && model !== 'anonymo-sealed' && (
+          <VoiceMic key={chatId} model={voice.transcription} client={client} demo={demo} disabled={streaming}
+            beforeRecord={voice.stop} onCharge={refreshBalance} onText={(transcript) => {
+              setText((draft) => draft ? `${draft.trimEnd()} ${transcript}` : transcript);
+              setGuardNote(null);
+              input.current?.focus();
+            }} />
+        )}
         {streaming ? (
           <button type="button" className="send send-stop" aria-label="Stop" onClick={() => controller.current?.abort()}>
             <Square size={14} fill="currentColor" aria-hidden="true" />
@@ -302,6 +325,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
           </button>
         )}
       </form>
+      {memoryOn && character && <MemorySuggestions {...memory} />}
       <div className="dock-tools">
         <PaperTrail value={paper} onChange={setPaper} />
         {model === 'anonymo-council' && (
@@ -335,6 +359,11 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
           </label>
         )}
         {facesOn && character && <StageTools on={stage} onToggle={() => setStage((s) => !s)} character={character} faces={faces} />}
+        {memoryOn && character && memory.memory?.enabled && (
+          <button type="button" className="tool" aria-pressed={memory.extractionOn} disabled={memory.busy}
+            title="Use a separate paid chat request to suggest facts after replies."
+            onClick={memory.toggleExtraction}>Memory suggestions: {memory.extractionOn ? 'on' : 'off'}</button>
+        )}
         <button
           type="button"
           className="tool"
@@ -345,6 +374,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
           Refusal catch: {refusalCatch ? 'on' : 'off'}
         </button>
       </div>
+      {voiceOn && <VoiceSettings sealed={model === 'anonymo-sealed'} />}
       <p className="ai-notice">{AI_NOTICE}</p>
       <div className="dock-meta">
         <span>Enter to send · Shift+Enter for a new line</span>
@@ -468,7 +498,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       )}
     </>
   );
-  return <>{threadHost && createPortal(thread, threadHost)}{key && composerHost && createPortal(composer, composerHost)}</>;
+  return <ChatVoiceContext.Provider value={voiceOn ? voice : null}>{threadHost && createPortal(thread, threadHost)}{key && composerHost && createPortal(composer, composerHost)}</ChatVoiceContext.Provider>;
 }
 
 /** Shown with any message that mentions suicide or self-harm. It never blocks the chat. */

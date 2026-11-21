@@ -13,10 +13,18 @@
 //   status    the public status page
 //   vanish    disappearing saved chats and the Escape panic key
 //   vault     passphrase protection for saved chats and the local image library
+//   talk      in chat: hold to talk (transcribed by Anonymo) and read replies aloud with a stock voice
+//   story     long-form writing with chapters and a story bible
+//   memory    device-only character facts and suggestions after replies
+//   faces     Character Studio: customizable plush characters and expressive portraits
+//   voice     Night Call: a voice call page with a sleep timer (speech in stays on the device)
+//   movein    bring characters and chats from other apps, read in the browser
+//   sidebyside one question answered by three models at once, then merged
+//   tickets   hand someone a funded key as a link, a QR code or a printed ticket
 //
 // Demo mode (?demo=1) shows every update, so each can be tried and filmed without a key or a deploy that has it on.
 
-export const UPDATE_IDS = ['history', 'images', 'usage', 'catchup', 'status', 'compare', 'vanish', 'vault', 'video', 'faces', 'voice', 'movein', 'sidebyside', 'tickets'] as const;
+export const UPDATE_IDS = ['history', 'images', 'usage', 'catchup', 'status', 'compare', 'vanish', 'vault', 'video', 'faces', 'talk', 'story', 'memory', 'voice', 'movein', 'sidebyside', 'tickets'] as const;
 export type UpdateId = (typeof UPDATE_IDS)[number];
 
 export function parseUpdates(raw: string | undefined): ReadonlySet<UpdateId> {

@@ -10,6 +10,7 @@ import { updateOn } from './updates.ts';
 import { chatTiming, hasExpired, sweepExpired } from './vanish.ts';
 import { loadVanishPrefs } from './vanish-prefs.ts';
 import { vault } from './vault-browser.ts';
+import type { MemoryCharge } from './memory-request.ts';
 export { DEVICE_PREFIX, wipeDevice } from './device-store.ts';
 
 export type SavedTurn = {
@@ -24,6 +25,7 @@ export type SavedTurn = {
   receiptId: string | null;
   councilMode: 'merge' | 'select' | null;
   recap?: boolean;
+  memoryCharge?: MemoryCharge;
 };
 export type SavedChat = { id: string; title: string; createdAt: string; updatedAt: string; model: string; turns: SavedTurn[]; expiresAt?: number };
 
@@ -62,6 +64,7 @@ export function toSaved(turns: TurnLike[]): SavedTurn[] {
       receiptId: t.receiptId,
       councilMode: t.councilMode,
       ...(t.recap ? { recap: true } : {}),
+      ...(t.memoryCharge ? { memoryCharge: t.memoryCharge } : {}),
     });
   }
   return out;
