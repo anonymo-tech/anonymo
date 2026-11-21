@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { concatBytes, te, u32be } from "../../src/anonymo/media/bytes.ts";
 import { MediaCatalog } from "../../src/anonymo/media/catalog.ts";
+import { isSilentMp4 } from "../../src/anonymo/media/containers.ts";
 import { nanogptVideoAdapter } from "../../src/anonymo/media/nanogpt-video.ts";
 import { buildMediaServices } from "../../src/anonymo/media/services.ts";
 
@@ -83,17 +85,22 @@ test("NanoGPT polling maps queue, completion, cancellation and content blocks an
   expect(await poll()).toMatchObject({ state: "failed", blocked: true });
 });
 
-test("NanoGPT rejects insecure download URLs, non-MP4 bytes and clips with an audio track", async () => {
+test("NanoGPT rejects insecure download URLs and non-MP4 bytes, and drops an audio track it was not asked for", async () => {
   const responses = [
     completed("http://storage.example/clip.mp4"),
     completed(), new Response("not a clip"),
-    completed(), new Response(Buffer.from(videoBytes(true))),
+    completed(), new Response(readFileSync(new URL("../fixtures/av-faststart.mp4", import.meta.url))),
   ];
   const fake = (async (url) => {
     expect(String(url)).toStartWith("https://");
     return responses.shift()!;
   }) as typeof fetch;
   const adapter = nanogptVideoAdapter({ base, apiKey: key, fetch: fake });
-  for (let i = 0; i < 3; i++) expect(await adapter.poll(ref, "veo3-1-lite-video", signal)).toMatchObject({ state: "failed" });
+  for (let i = 0; i < 2; i++) expect(await adapter.poll(ref, "veo3-1-lite-video", signal)).toMatchObject({ state: "failed" });
+  const done = await adapter.poll(ref, "veo3-1-lite-video", signal);
+  expect(done.state).toBe("done");
+  if (done.state !== "done") return;
+  expect(isSilentMp4(done.media.bytes)).toBe(true);
+  expect(Buffer.from(done.media.bytes).includes(Buffer.from("soun"))).toBe(false);
   expect(responses).toHaveLength(0);
 });

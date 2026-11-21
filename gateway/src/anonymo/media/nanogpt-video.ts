@@ -1,6 +1,6 @@
 import { boundedJson, providerFetch } from "../../providers/network.ts";
 import { NANOGPT_VIDEO_MODELS } from "./catalog.ts";
-import { isSilentMp4 } from "./containers.ts";
+import { isSilentMp4, videoOnlyMp4 } from "./containers.ts";
 import { MAX_MEDIA_BYTES, readCapped, UpstreamError, type VideoPoll, type VideoUpstream } from "./upstreams.ts";
 
 const RUN_ID = /^vid_[A-Za-z0-9_-]{1,128}$/;
@@ -74,8 +74,10 @@ export function nanogptVideoAdapter(o: { base: string; apiKey: string; fetch?: t
         if (e instanceof UpstreamError) return failed();
         throw e;
       }
-      if (!isSilentMp4(bytes)) return failed();
-      return { state: "done", media: { bytes, mime: "video/mp4" } };
+      // Some models (Veo) add a soundtrack even with audio off. Keep only the picture track the gate reviews.
+      const silent = videoOnlyMp4(bytes);
+      if (!silent || !isSilentMp4(silent)) return failed();
+      return { state: "done", media: { bytes: silent, mime: "video/mp4" } };
     },
   };
 }
