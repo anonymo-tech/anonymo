@@ -182,7 +182,9 @@ export function DocsView() {
           <ul>
             <li>
               <code>x-anonymo-refusal-catch: off</code> turns off the refusal catch, which holds back the first tokens to catch a
-              refusal and reroute it. Off streams sooner.
+              refusal and reroute it. Off streams sooner. A real one, from production:{' '}
+              <Link href="/verify?r=gen-1795224820-Vfcw47tjO8Q7zw">this receipt</Link> shows Hunyuan refusing a legal adult
+              request, the attempt refunded and the call billed $0.
             </li>
             <li>
               <code>x-anonymo-sealed: required</code> sends the request only to hardware-attested routes, or fails with 409.
