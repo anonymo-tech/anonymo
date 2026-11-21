@@ -8,6 +8,8 @@ import { useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { isLiveModel, useAnonymo } from '../anonymo-provider';
 import { AnswerCard } from './answer-card';
+import { FaceAvatar, TurnFace, hasFace, useFaces } from './face';
+import { Stage, StageTools } from './stage';
 import { ChatBar, ChatHistoryPanel } from './chat-history';
 import type { Turn } from './chat-types';
 import { ModelPicker } from './model-picker';
@@ -59,6 +61,10 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const streaming = turns.some((t) => t.status === 'streaming');
   // A character card is only a system prompt, so it works with any model, not just anonymo-rp.
   const character = characters.find((c) => c.id === characterId) ?? null;
+  // Update "faces": the chosen character's faces from this device, and the Stage (the same thread shown as a scene).
+  const facesOn = ready && updateOn('faces', demo);
+  const faces = useFaces(demo, facesOn && character ? character.id : null);
+  const [stage, setStage] = useState(false);
 
   // Update "history": finished turns are saved in this browser when the person has turned keeping on.
   const historyOn = ready && updateOn('history', demo);
@@ -327,6 +333,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
             </select>
           </label>
         )}
+        {facesOn && character && <StageTools on={stage} onToggle={() => setStage((s) => !s)} character={character} faces={faces} />}
         <button
           type="button"
           className="tool"
@@ -345,6 +352,18 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     </div>
   );
 
+  // What the thread shows with a turn besides its answer. The Stage shows the same, so neither notice can be missed there.
+  const notices = (turn: Turn) => (
+    <>
+      {turn.aiReminder && (
+        <p className="ai-reminder" role="note">
+          {AI_REMINDER}
+        </p>
+      )}
+      {turn.crisis && <CrisisNotice />}
+    </>
+  );
+
   const thread = (
     <>
       {(historyOn || catchupOn) && (
@@ -358,16 +377,18 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
           {historyOn && <ChatHistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />}
         </>
       )}
-      {compact && !turns.length ? (
+      {facesOn && stage && character ? (
+        <Stage character={character} faces={faces} turns={turns} streaming={streaming} notices={notices} onLog={() => setStage(false)} />
+      ) : compact && !turns.length ? (
         <div className="mascot-welcome">
-          <MascotSprite mood="greet" />
+          {hasFace(faces) ? <FaceAvatar faces={faces} /> : <MascotSprite mood="greet" />}
           <h3>{character?.card.data.name ?? 'What’s on your mind?'}</h3>
           {key ? <p>Start a conversation here.</p> : <Link className="btn btn-primary btn-small" href="/dashboard/key">Create a key to chat</Link>}
         </div>
       ) : turns.length === 0 ? (
         <section className="empty chat-col">
           <div className="empty-hero">
-            <Photo src="/mascot/avatar.jpg" alt="" width={256} height={256} />
+            {hasFace(faces) ? <FaceAvatar faces={faces} /> : <Photo src="/mascot/avatar.jpg" alt="" width={256} height={256} />}
             <div>
               <h1>{character ? character.card.data.name : 'Start a conversation'}</h1>
               <p className="muted">
@@ -436,7 +457,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
               )}
               {turn.crisis && <CrisisNotice />}
               <div className="ai-row">
-                <Photo src="/mascot/avatar.jpg" alt="" width={52} height={52} />
+                <TurnFace faces={character && turn.character === character.card.data.name ? faces : null} turn={turn} />
                 <AnswerCard turn={turn} />
               </div>
             </article>

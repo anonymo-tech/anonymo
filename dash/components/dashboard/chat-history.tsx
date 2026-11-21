@@ -426,7 +426,7 @@ export function WipeDevice() {
                   <h2 id="wipe-title">Wipe this device?</h2>
                   <p id="wipe-text">
                     This removes everything Anonymo keeps in this browser: your
-                    API key, saved chats, library images, vault, characters, receipt list and settings.
+                    API key, saved chats, library images, vault, characters and their faces, receipt list and settings.
                     It can’t be undone.{' '}
                     <strong>
                       If your key has credit, copy it somewhere safe first
