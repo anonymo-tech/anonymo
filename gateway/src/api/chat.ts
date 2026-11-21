@@ -12,6 +12,7 @@ import { ApiError, fail, isApiError } from "../lib/errors.ts";
 import { floorInputOf } from "../anonymo/services.ts";
 import { floorErrorReason } from "../anonymo/floor/guard-client.ts";
 import { checksReplies, floorReplyCheck, replyFloorError, replyTextOf, StreamReplyGate } from "../anonymo/floor/reply.ts";
+import { refuseConfidentialOutsideEnclave } from "../anonymo/floor/confidential.ts";
 import { type Pico, maxPico, picoToUsd, picoToUsdString, usdToPico } from "../lib/money.ts";
 import { canonical, canonicalJson, decrypt, genId, log, sha256 } from "../lib/util.ts";
 import { reserve, release, settle } from "../ledger/ledger.ts";
@@ -249,7 +250,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   let key: KeyRow | null = null;
   let wallet: { accountId: string; wallet: string; exists: boolean } | null = null;
   if (batchLine || secret) {
-    key = batchLine ? await batchKey(ctx, batchLine.keyHash) : await resolveKey(ctx, secret!);
+    key = batchLine ? await batchKey(ctx, batchLine, body.model) : await resolveKey(ctx, secret!);
     if (!key) fail(401, "Unknown API key. Create one (POST /api/v1/keys) or deposit USDG to its key hash first.", "invalid_key");
     await requireRole(ctx, key, ["owner", "admin", "member"]);
     await limitOrThrow(ctx, `k:${key.keyHash}`, 1, key.rpm ?? ctx.cfg.limits.defaultRpm, "requests");
@@ -287,7 +288,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   // Lane "unlinkable" is refused (501) before anything is priced or spent (router/request-lane.ts).
   const { disclosure: _wantDisclosure, lane: _wantLane, lane_downgrade: _wantDowngrade, ...basePrefs } = (body.provider ?? {}) as ProviderPrefs & { lane_downgrade?: unknown };
   // Sealed (WS09): `anonymo-sealed`, `x-anonymo-sealed: required` or a sealed_only key runs on the attested lane only.
-  const sealed = sealedForRequest(ctx, c, key, body);
+  const sealed = await sealedForRequest(ctx, c, key, body);
   const disc = sealedLane(sealed, requestLane(c, (body.provider ?? {}) as Record<string, unknown>));
   // Private-lane traffic (and `:private`, stored as private) is published only through noisy hourly counters.
   noteLane(c.req.raw, disc.lane !== "public" ? disc.lane : (body.provider as ProviderPrefs | undefined)?.private === true || String(body.model ?? "").includes(":private") ? "attested" : "public");
@@ -297,6 +298,8 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   // Anonymo floor gate (WS02): after auth and preset/character assembly (so it reads the whole prompt), and before
   // every dispatch: council, dual verification, the cache, billing, the hold and routing. A blocked prompt is never
   // served, charged, sent to any provider or rerouted. A gate that cannot answer fails closed.
+  // Sealed, attested-lane and `:private` requests are never read by the hosted guards (GHSA-rch8-pxr3-p8gc).
+  refuseConfidentialOutsideEnclave(ctx.anonymo.floor, disc.lane !== "public" || requiresAttestedUpstream(body, disc));
   await floorCheck(ctx, body);
 
   if (batchLine && (stream || body.verify != null || (ctx.cfg.features.council && body.model === COUNCIL_MODEL)))
@@ -908,10 +911,27 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
       let providerUsage: any = null;
       let cancelled = false;
       let midError: string | null = null;
+      // A served refusal is billed 0: everything it streams, on every channel, shares one REFUSED_MAX_CHARS budget,
+      // trimmed before it is counted or relayed (GHSA-j499-32cc-f5w4).
+      const servedRefusal = r.refusal?.served === "refused";
+      let refusedLeft = REFUSED_MAX_CHARS;
+      let refusedCut = false;
       const emit = (ev: any) => {
         if (ev?.usage) providerUsage = ev.usage;
         const choices = Array.isArray(ev?.choices) ? ev.choices : [];
         for (const ch of choices) {
+          if (servedRefusal) {
+            if (ch?.delta) {
+              const c = capRefusedChannels(ch.delta, refusedLeft);
+              refusedLeft = c.left;
+              refusedCut ||= c.cut;
+            }
+            if (typeof ch?.text === "string") {
+              const c = capRefusedChannels(ch, refusedLeft);
+              refusedLeft = c.left;
+              refusedCut ||= c.cut;
+            }
+          }
           const d = ch?.delta ?? {};
           if (typeof d.content === "string") text += d.content;
           if (typeof ch?.text === "string") text += ch.text;
@@ -930,8 +950,9 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
       try {
         for (const ev of r.buffered) emit(ev);
         for await (const ev of r.rest) {
-          // A served refusal is billed 0, so it is cut off where no real refusal goes on (see REFUSED_MAX_CHARS).
-          if (r.refusal?.served === "refused" && text.length >= REFUSED_MAX_CHARS) {
+          // A served refusal is billed 0, so it is cut off where no real refusal goes on (see REFUSED_MAX_CHARS),
+          // counting every channel, not just the text.
+          if (servedRefusal && (refusedCut || refusedLeft <= 0)) {
             r.abort();
             finish = "length";
             break;
@@ -947,6 +968,7 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
             break;
           }
         }
+        if (servedRefusal && refusedCut) finish = "length";
       } catch (e) {
         if (p.abort.signal.aborted) cancelled = true;
         else {
@@ -1073,9 +1095,10 @@ export { canonical };
 
 /** Anonymo floor gate: 451 with the category and no text on a block, 503 when the gate cannot answer. Never rerouted. */
 async function floorCheck(ctx: Ctx, body: Record<string, unknown>) {
+  const input = floorInputOf(body);
   let verdict;
   try {
-    verdict = await ctx.anonymo.floor.check(floorInputOf(body));
+    verdict = await ctx.anonymo.floor.check(input);
   } catch (e) {
     log.warn("floor check unavailable", { reason: floorErrorReason(e) });
     throw new ApiError(503, "The safety check is unavailable. Nothing was sent or charged; try again shortly.", "floor_unavailable");
@@ -1116,15 +1139,66 @@ export function refusalPromptOf(body: Record<string, unknown>, kind: Kind): stri
   return textOf(lastUser?.content ?? msgs.at(-1)?.content).slice(-4000);
 }
 
+/**
+ * The budget a served refusal may deliver, across every output channel of one choice (GHSA-j499-32cc-f5w4): the
+ * text, then reasoning, then tool-call names and arguments, together at most REFUSED_MAX_CHARS. Channels a refusal
+ * never needs (images, audio, annotations, function_call) are dropped. Mutates `holder` (a message or a stream
+ * delta) and returns the budget left. Capping only `content` let a caller take a whole answer through `reasoning` or
+ * `tool_calls` for $0.
+ */
+export function capRefusedChannels(holder: any, budget: number): { left: number; cut: boolean } {
+  if (!holder || typeof holder !== "object") return { left: budget, cut: false };
+  let left = Math.max(0, budget);
+  let cut = false;
+  const take = (s: string) => {
+    if (s.length <= left) {
+      left -= s.length;
+      return s;
+    }
+    cut = true;
+    const kept = s.slice(0, left);
+    left = 0;
+    return kept;
+  };
+  for (const field of ["content", "text", "refusal", "reasoning", "reasoning_content"] as const)
+    if (typeof holder[field] === "string") holder[field] = take(holder[field]);
+  if (Array.isArray(holder.reasoning_details)) {
+    cut ||= holder.reasoning_details.length > 0;
+    delete holder.reasoning_details;
+  }
+  if (Array.isArray(holder.tool_calls)) {
+    const kept: any[] = [];
+    for (const tc of holder.tool_calls) {
+      if (left <= 0) {
+        cut = true;
+        break;
+      }
+      const fn = tc?.function ?? {};
+      const name = typeof fn.name === "string" ? take(fn.name) : fn.name;
+      const args = typeof fn.arguments === "string" ? take(fn.arguments) : fn.arguments;
+      kept.push({ ...tc, function: { ...fn, ...(name !== undefined ? { name } : {}), ...(args !== undefined ? { arguments: args } : {}) } });
+    }
+    holder.tool_calls = kept;
+    if (!kept.length) delete holder.tool_calls;
+  }
+  for (const field of ["images", "audio", "annotations", "function_call"] as const)
+    if (holder[field] != null) {
+      cut = true;
+      delete holder[field];
+    }
+  return { left, cut };
+}
+
 function capRefusedJson(json: any) {
   for (const ch of json?.choices ?? []) {
-    if (typeof ch?.message?.content === "string" && ch.message.content.length > REFUSED_MAX_CHARS) {
-      ch.message.content = ch.message.content.slice(0, REFUSED_MAX_CHARS);
-      ch.finish_reason = "length";
-    } else if (typeof ch?.text === "string" && ch.text.length > REFUSED_MAX_CHARS) {
-      ch.text = ch.text.slice(0, REFUSED_MAX_CHARS);
-      ch.finish_reason = "length";
+    let budget = REFUSED_MAX_CHARS;
+    let cut = false;
+    if (ch?.message) ({ left: budget, cut } = capRefusedChannels(ch.message, budget));
+    if (typeof ch?.text === "string") {
+      const r = capRefusedChannels(ch, budget);
+      cut ||= r.cut;
     }
+    if (cut) ch.finish_reason = "length";
   }
 }
 

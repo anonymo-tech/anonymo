@@ -1,5 +1,6 @@
 import { describeAbuse } from "../anonymo/abuse/privacy.ts"; // Anonymo WS02
 import { mediaTables } from "../anonymo/media/inventory.ts"; // WS06 media
+import { ventureBodyReader, ventureStores, ventureTables } from "../anonymo/ventures/inventory.ts"; // WS11 Ventures
 import { webhookTables } from "./webhooks.ts"; // V86: retained webhook configuration and attempt metadata.
 import { facilitatorTables } from "./facilitator.ts"; // v6 F: hosted x402 facilitator.
 import { x402RecoveryTables } from "./x402-recovery.ts";
@@ -28,7 +29,7 @@ import { CATEGORIES, CATEGORY_INFO, type AboutRequest, type ColumnDoc, type Exte
 
 export const INVENTORY_FORMAT = "anonymo.data-inventory/1";
 
-export const TABLE_DOCS: Record<string, TableDoc> = { ...webhookTables, ...requestTables, ...billingTables, ...receiptTables, ...keyTables, ...providerTables, ...chainTables, ...operationTables, ...characterTables, ...x402RecoveryTables, ...facilitatorTables, ...refusalTables, ...mediaTables, ...anonymoReceiptTables };
+export const TABLE_DOCS: Record<string, TableDoc> = { ...webhookTables, ...requestTables, ...billingTables, ...receiptTables, ...keyTables, ...providerTables, ...chainTables, ...operationTables, ...characterTables, ...x402RecoveryTables, ...facilitatorTables, ...refusalTables, ...mediaTables, ...anonymoReceiptTables, ...ventureTables };
 describeAnonymoMoney(TABLE_DOCS); // WS05: keys, deposits, withdrawals
 describeAbuse(TABLE_DOCS); // Anonymo WS02: abuse inbox, hash blocks, preservation vault
 export { EXTERNAL };
@@ -155,7 +156,7 @@ const n = (x: number) => x.toLocaleString("en-US");
  * column has the verdict holds-request-text; "no table holds a network address" only when no column has the verdict
  * network-address and none has a network type. Everything that keeps something is listed as a caveat in exact terms.
  */
-export function summarize(tables: TableOut[], ext: ExternalDoc): Summary {
+export function summarize(tables: TableOut[], ext: ExternalDoc, schemaLabel = "database schema"): Summary {
   const cols = tables.flatMap((t) => t.columns.map((c) => ({ table: t, col: c, id: `${t.name}.${c.name}` })));
   const verdict = (v: string) => cols.filter((c) => c.col.review?.verdict === v);
   const holdsText = verdict("holds-request-text");
@@ -177,7 +178,7 @@ export function summarize(tables: TableOut[], ext: ExternalDoc): Summary {
 
   const facts: string[] = [];
   facts.push(
-    `Every one of the ${n(tables.length)} tables and ${n(cols.length)} columns in the database schema is described on this page, and the build fails if a table or column is added without one.`,
+    `Every one of the ${n(tables.length)} tables and ${n(cols.length)} columns in the ${schemaLabel} is described on this page, and the build fails if a table or column is added without one.`,
   );
   if (!holdsText.length && generations)
     facts.push(
@@ -241,7 +242,7 @@ export function summarize(tables: TableOut[], ext: ExternalDoc): Summary {
  * The inventory as a document. Throws when the schema and the descriptions disagree, so a router or a build never publishes
  * a description that is stale.
  */
-export function buildInventory(schema: SchemaTable[] = schemaTables(), docs: Record<string, TableDoc> = TABLE_DOCS, ext: ExternalDoc = EXTERNAL): InventoryDocument {
+export function buildInventory(schema: SchemaTable[] = schemaTables(), docs: Record<string, TableDoc> = TABLE_DOCS, ext: ExternalDoc = EXTERNAL, schemaLabel?: string): InventoryDocument {
   const problems = checkInventory(schema, docs);
   if (problems.length) throw new Error(`The data inventory does not match the schema:\n- ${problems.join("\n- ")}`);
   const order = (c: string) => CATEGORIES.indexOf(c as (typeof CATEGORIES)[number]);
@@ -274,11 +275,27 @@ export function buildInventory(schema: SchemaTable[] = schemaTables(), docs: Rec
     .sort((a, b) => order(a.category) - order(b.category) || (a.name < b.name ? -1 : 1));
   return {
     format: INVENTORY_FORMAT,
-    summary: summarize(tables, ext),
+    summary: summarize(tables, ext, schemaLabel),
     categories: CATEGORIES.map((id) => ({ id, ...CATEGORY_INFO[id] })),
     postgres: { tables },
     outside_postgres: snake(ext),
   };
+}
+
+/** The deployed inventory describes the schema and stores used by enabled routes. The build still audits every table. */
+export function deployedInventory(venturesEnabled: boolean): InventoryDocument {
+  if (venturesEnabled) return buildInventory();
+  const active = (name: string) => !Object.hasOwn(ventureTables, name);
+  return buildInventory(
+    schemaTables().filter((table) => active(table.name)),
+    Object.fromEntries(Object.entries(TABLE_DOCS).filter(([name]) => active(name))),
+    {
+      ...EXTERNAL,
+      bodyReaders: EXTERNAL.bodyReaders.filter((reader) => reader !== ventureBodyReader),
+      otherStores: EXTERNAL.otherStores.filter((store) => !ventureStores.includes(store)),
+    },
+    "active gateway schema",
+  );
 }
 
 /** The exact bytes served at /keep/inventory.json and hashed for the transparency log: canonical JSON, keys sorted, no whitespace. */

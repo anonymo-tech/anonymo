@@ -14,7 +14,7 @@ import { webhookRoutes } from "./webhooks/routes.ts"; // V86: signed destination
 import { activityRoutes } from "./api/activity.ts";
 import { EXPOSED_RESPONSE_HEADERS } from "./api/common.ts";
 import { kv } from "./db/schema.ts";
-import { inventoryJson } from "./privacy/inventory.ts";
+import { deployedInventory, inventoryJson } from "./privacy/inventory.ts";
 import { Hono } from "hono";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -39,6 +39,7 @@ import { keyPolicyMiddleware } from "./anonymo/deposits/index.ts";
 import { regionMiddleware } from "./anonymo/region/middleware.ts";
 import { regionRulesFromEnv } from "./anonymo/region/rules.ts";
 import { anonymoRoutes } from "./anonymo/routes.ts";
+import { swarmMiddleware } from "./anonymo/ventures/routes.ts";
 import { createAnonymoServices, type AnonymoServices } from "./anonymo/services.ts";
 import { modelsRoutes } from "./api/models.ts";
 import { generationRoutes } from "./api/generation.ts";
@@ -144,6 +145,7 @@ export async function createApp(opts: AppOptions = {}) {
   firstCallRoutes(app, cfg.developerFirstCallEnabled, cfg.siteUrl); // ON2: the public site address, not the router host
   app.use("*", regionMiddleware(regionRulesFromEnv(env))); // WS02: 451 for blocked regions, before chat and media.
   app.use("*", keyPolicyMiddleware(ctx)); // WS05: ip_allow, sealed_only and spend windows on inference calls.
+  if (cfg.features.ventures) for (const p of ["/v1/chat/completions", "/api/v1/chat/completions"]) app.use(p, swarmMiddleware(ctx, app)); // WS11: model anonymo-swarm starts a Ventures run
   chatRoutes(app, ctx);
   anonymoRoutes(app, ctx); // Anonymo: every workstream mounts its routes in src/anonymo/routes.ts
   batchesRoutes(app, ctx);
@@ -181,7 +183,7 @@ export async function createApp(opts: AppOptions = {}) {
   // Public documents that used to ship inside the website: the OpenAPI description and the data inventory ("what we keep").
   const openapi = readFileSync(resolve(import.meta.dir, "../docs/openapi.json"), "utf8");
   app.get("/openapi.json", (c) => c.body(openapi, 200, { "content-type": "application/json; charset=utf-8", "cache-control": "public, max-age=300" }));
-  const inventory = inventoryJson();
+  const inventory = inventoryJson(deployedInventory(cfg.features.ventures));
   app.get("/keep/inventory.json", (c) => c.body(inventory, 200, { "content-type": "application/json; charset=utf-8", "cache-control": "public, max-age=300" }));
   siteRoutes(app, ctx); // a small built-in page that lists models and rankings
 

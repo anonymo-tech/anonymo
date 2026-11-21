@@ -10,7 +10,7 @@ import { decimalProductToPico, picoToStableRaw, stableRawToPico } from "../../sr
 import { ipAllowed, parseCidr } from "../../src/anonymo/keys/ip.ts";
 import { capsVerdict, isSealedRequest } from "../../src/anonymo/keys/caps.ts";
 import { normalizeAddress, parseSdnXmlAll } from "../../src/anonymo/deposits/sanctions.ts";
-import { paidUsdPico, refundTarget, verifyBtcpaySignature } from "../../src/anonymo/deposits/btcpay.ts";
+import { refundTarget, settledUsdPico, verifyBtcpaySignature } from "../../src/anonymo/deposits/btcpay.ts";
 import { loadDepositsConfig } from "../../src/anonymo/deposits/config.ts";
 import { KEY_RE } from "../../src/chain/keys.ts";
 import { usdToPico } from "../../src/lib/money.ts";
@@ -73,7 +73,13 @@ describe("conversions", () => {
   test("BTC paid × BTCPay rate is exact", () => {
     expect(decimalProductToPico("0.00123456", "65432.10")).toBe(usdToPico("80.779853376", "floor"));
     expect(decimalProductToPico("1", "0.000000000001")).toBe(1n);
-    expect(paidUsdPico([{ rate: "60000", paymentMethodPaid: "0.001" }, { rate: "60000", paymentMethodPaid: "0.0005" }, { rate: "60000", paymentMethodPaid: "0" }])).toBe(usdToPico("90"));
+  });
+  test("BTCPay sums settled values before rounding at each method's rate", () => {
+    expect(settledUsdPico([
+      { rate: "60000.0000006", payments: [{ status: "Settled", value: "0.000001" }, { status: "Settled", value: "0.0000010" }] },
+      { rate: "50000", payments: [{ status: "Settled", value: "0.0005" }] },
+      { rate: "60000", paymentMethodPaid: "0.001", totalPaid: "0.001" },
+    ])).toBe(usdToPico("25.120000000001"));
   });
 });
 

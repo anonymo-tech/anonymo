@@ -65,6 +65,11 @@ export class AnonymoFloorGate implements FloorGate {
     return this.opts.classifier !== null || (this.opts.also?.length ?? 0) > 0;
   }
 
+  /** The guard model and the moderation checks are hosted services; the pre-filter alone runs in this process. */
+  get sendsTextOutside() {
+    return this.opts.classifier !== null || (this.opts.also?.length ?? 0) > 0;
+  }
+
   async check(input: FloorInput, signal?: AbortSignal): Promise<FloorVerdict> {
     if (!input.text.trim()) return { ok: true }; // nothing to judge; uploads go through the upload rule
     // A reply is read with the pre-filter's content rules only: its request rules match requests, not what a model wrote.

@@ -1,0 +1,2 @@
+invoice_number,customer,amount,currency,status,issued_at,due_date
+INV-0001,Sample Studio,420.00,USD,paid,2026-09-01,2026-09-15

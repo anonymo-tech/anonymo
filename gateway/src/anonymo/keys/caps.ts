@@ -2,9 +2,9 @@
 // sealed_only and expiry. Where Anonymo keys already had the control we reuse it, so the existing request path enforces
 // it today: the model allowlist is keys.allowed_models (api/chat.ts), expiry is keys.expires_at (api/auth.ts), and the
 // shortest spend window is mirrored into keys.budget/budget_reset, which ledger.reserve() checks against in-flight holds.
-// The rest (all three windows at once, ip_allow, sealed_only) is enforced by keyPolicyMiddleware below.
+// Inference middleware and batch processing share the remaining spend, address and sealed checks.
 
-import { and, eq, lt, ne, sql } from "drizzle-orm";
+import { and, eq, gte, lt, ne, sql } from "drizzle-orm";
 import type { MiddlewareHandler } from "hono";
 import { z } from "zod";
 import type { Ctx } from "../../context.ts";
@@ -39,8 +39,13 @@ export type CapsInput = z.infer<typeof capsInput>;
 
 export type KeyCaps = { dailyCap: Pico | null; monthlyCap: Pico | null; lifetimeCap: Pico | null; ipAllow: string[] | null; sealedOnly: boolean; models: string[] | null; expiresAt: Date | null };
 
+export async function readKeyPolicy(db: Db, keyHash: string): Promise<typeof anonymoKeys.$inferSelect | undefined> {
+  const [row] = await db.select().from(anonymoKeys).where(eq(anonymoKeys.keyHash, keyHash));
+  return row;
+}
+
 export async function readCaps(db: Db, keyHash: string): Promise<KeyCaps & { wallet: string | null }> {
-  const [a] = await db.select().from(anonymoKeys).where(eq(anonymoKeys.keyHash, keyHash));
+  const a = await readKeyPolicy(db, keyHash);
   const [k] = await db.select({ models: keys.allowedModels, expiresAt: keys.expiresAt }).from(keys).where(eq(keys.keyHash, keyHash));
   return {
     dailyCap: a?.dailyCap ?? null,
@@ -66,29 +71,33 @@ export const capsJson = (c: KeyCaps & { wallet?: string | null }) => ({
 });
 
 /** Merge `input` into the key's caps (absent fields keep their value; null clears) and mirror what Anonymo enforces. */
-export async function writeCaps(db: Db, keyHash: string, input: CapsInput, wallet?: string | null) {
-  const cur = await readCaps(db, keyHash);
-  const pick = <T>(v: T | undefined, old: T) => (v === undefined ? old : v);
-  const next: KeyCaps = {
-    dailyCap: pick(input.daily_usd, cur.dailyCap),
-    monthlyCap: pick(input.monthly_usd, cur.monthlyCap),
-    lifetimeCap: pick(input.lifetime_usd, cur.lifetimeCap),
-    ipAllow: pick(input.ip_allow, cur.ipAllow),
-    sealedOnly: pick(input.sealed_only, cur.sealedOnly),
-    models: pick(input.models, cur.models),
-    expiresAt: input.expires_at === undefined ? cur.expiresAt : input.expires_at === null ? null : new Date(input.expires_at),
-  };
-  // The shortest window becomes the Anonymo key budget, checked against in-flight holds in ledger.reserve().
-  const budget = next.dailyCap !== null ? { budget: next.dailyCap, budgetReset: "daily" } : next.monthlyCap !== null ? { budget: next.monthlyCap, budgetReset: "monthly" } : next.lifetimeCap !== null ? { budget: next.lifetimeCap, budgetReset: null } : { budget: null, budgetReset: null };
-  await db.transaction(async (tx) => {
+export async function writeCaps(db: Db, keyHash: string, input: CapsInput, source: { wallet: string | null } | { callerIp: string }) {
+  return db.transaction(async (tx) => {
+    // Serialize cap changes, including the address check, against the current allowlist.
+    await tx.select({ keyHash: keys.keyHash }).from(keys).where(eq(keys.keyHash, keyHash)).for("update");
+    const cur = await readCaps(tx, keyHash);
+    if ("callerIp" in source) assertIpAllowed(cur.ipAllow, source.callerIp);
+    const wallet = "wallet" in source ? source.wallet : cur.wallet;
+    const pick = <T>(v: T | undefined, old: T) => (v === undefined ? old : v);
+    const next: KeyCaps = {
+      dailyCap: pick(input.daily_usd, cur.dailyCap),
+      monthlyCap: pick(input.monthly_usd, cur.monthlyCap),
+      lifetimeCap: pick(input.lifetime_usd, cur.lifetimeCap),
+      ipAllow: pick(input.ip_allow, cur.ipAllow),
+      sealedOnly: pick(input.sealed_only, cur.sealedOnly),
+      models: pick(input.models, cur.models),
+      expiresAt: input.expires_at === undefined ? cur.expiresAt : input.expires_at === null ? null : new Date(input.expires_at),
+    };
+    // The shortest window becomes the Anonymo key budget, checked against in-flight holds in ledger.reserve().
+    const budget = next.dailyCap !== null ? { budget: next.dailyCap, budgetReset: "daily" } : next.monthlyCap !== null ? { budget: next.monthlyCap, budgetReset: "monthly" } : next.lifetimeCap !== null ? { budget: next.lifetimeCap, budgetReset: null } : { budget: null, budgetReset: null };
     const row = { dailyCap: next.dailyCap, monthlyCap: next.monthlyCap, lifetimeCap: next.lifetimeCap, ipAllow: next.ipAllow?.length ? next.ipAllow : null, sealedOnly: next.sealedOnly };
     await tx
       .insert(anonymoKeys)
-      .values({ keyHash, wallet: wallet ?? null, ...row })
+      .values({ keyHash, wallet, ...row })
       .onConflictDoUpdate({ target: anonymoKeys.keyHash, set: row });
     await tx.update(keys).set({ allowedModels: next.models?.length ? next.models : null, expiresAt: next.expiresAt, ...budget }).where(eq(keys.keyHash, keyHash));
+    return { ...next, wallet };
   });
-  return next;
 }
 
 export type Spent = { day: Pico; month: Pico; life: Pico };
@@ -99,8 +108,8 @@ export async function spentByKey(db: Db, keyHash: string, now = new Date()): Pro
   const month = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   const [r] = await db
     .select({
-      day: sql<string>`coalesce(sum(case when ${ledger.createdAt} >= ${day} then -${ledger.amount} else 0 end), 0)`,
-      month: sql<string>`coalesce(sum(case when ${ledger.createdAt} >= ${month} then -${ledger.amount} else 0 end), 0)`,
+      day: sql<string>`coalesce(sum(case when ${gte(ledger.createdAt, day)} then -${ledger.amount} else 0 end), 0)`,
+      month: sql<string>`coalesce(sum(case when ${gte(ledger.createdAt, month)} then -${ledger.amount} else 0 end), 0)`,
       life: sql<string>`coalesce(sum(-${ledger.amount}), 0)`,
     })
     .from(ledger)
@@ -108,13 +117,24 @@ export async function spentByKey(db: Db, keyHash: string, now = new Date()): Pro
   return { day: BigInt(r?.day ?? 0), month: BigInt(r?.month ?? 0), life: BigInt(r?.life ?? 0) };
 }
 
-export type CapRequest = { ip: string | null; model: string | null; sealed: boolean };
+export type CapRequest = { ip: string | null; sealed: boolean };
 export type CapRefusal = { status: 402 | 403; code: string; message: string };
+
+function ipRefusal(allow: string[] | null, ip: string | null): CapRefusal | null {
+  if (allow?.length && !ipAllowed(ip, allow)) return { status: 403, code: "ip_not_allowed", message: "This key does not accept calls from this network address." };
+  return null;
+}
+
+export function assertIpAllowed(allow: string[] | null, ip: string | null) {
+  const refusal = ipRefusal(allow, ip);
+  if (refusal) throw new ApiError(refusal.status, refusal.message, refusal.code);
+}
 
 /** Pure decision: may a call with these properties go ahead under these caps and this spend? */
 export function capsVerdict(caps: Pick<KeyCaps, "dailyCap" | "monthlyCap" | "lifetimeCap" | "ipAllow" | "sealedOnly">, spent: Spent, req: CapRequest): CapRefusal | null {
-  if (caps.ipAllow?.length && !ipAllowed(req.ip, caps.ipAllow)) return { status: 403, code: "ip_not_allowed", message: "This key does not accept calls from this network address." };
-  if (caps.sealedOnly && !req.sealed) return { status: 403, code: "sealed_only", message: "This key is sealed-only: use model anonymo-sealed (or send x-anonymo-sealed: required)." };
+  const addressRefusal = ipRefusal(caps.ipAllow, req.ip);
+  if (addressRefusal) return addressRefusal;
+  if (caps.sealedOnly && !req.sealed) return { status: 403, code: "sealed_only", message: "This key requires sealed inference. Use model anonymo-sealed." };
   const windows: [Pico | null, Pico, string][] = [
     [caps.dailyCap, spent.day, "daily"],
     [caps.monthlyCap, spent.month, "monthly"],
@@ -125,8 +145,17 @@ export function capsVerdict(caps: Pick<KeyCaps, "dailyCap" | "monthlyCap" | "lif
   return null;
 }
 
-const INFERENCE_PATH = /^\/(?:api\/)?v1\/(?:chat\/completions|completions|messages|responses|embeddings|images\/|audio\/|video\/)/;
+const INFERENCE_PATH = /^\/(?:api\/)?v1\/(?:chat\/completions|completions|messages|responses|embeddings|images\/|audio\/|video\/|characters\/[^/]+\/chat$)/;
 export const isSealedRequest = (model: unknown, header: string | undefined) => model === "anonymo-sealed" || header?.trim().toLowerCase() === "required";
+
+export async function assertKeyPolicy(db: Db, row: Awaited<ReturnType<typeof readKeyPolicy>>, req: CapRequest) {
+  if (!row) return;
+  const spent = row.dailyCap !== null || row.monthlyCap !== null || row.lifetimeCap !== null
+    ? await spentByKey(db, row.keyHash)
+    : { day: 0n, month: 0n, life: 0n };
+  const refusal = capsVerdict(row, spent, req);
+  if (refusal) throw new ApiError(refusal.status, refusal.message, refusal.code);
+}
 
 /**
  * Enforces ip_allow, sealed_only and every spend window for Anonymo keys on inference routes. A key without Anonymo caps
@@ -137,17 +166,14 @@ export function keyPolicyMiddleware(ctx: Ctx): MiddlewareHandler {
     if (c.req.method !== "POST" || !INFERENCE_PATH.test(c.req.path)) return next();
     const secret = bearer(c.req.header("authorization")) ?? c.req.header("x-api-key")?.trim();
     if (!secret) return next();
-    const keyHash = sha256(secret);
-    const [row] = await ctx.db.select().from(anonymoKeys).where(eq(anonymoKeys.keyHash, keyHash));
+    const row = await readKeyPolicy(ctx.db, sha256(secret));
     if (!row) return next();
     let model: string | null = null;
     if (row.sealedOnly) {
       const body = (await c.req.json().catch(() => ({}))) as { model?: unknown };
       model = typeof body?.model === "string" ? body.model : null;
     }
-    const spent = row.dailyCap !== null || row.monthlyCap !== null || row.lifetimeCap !== null ? await spentByKey(ctx.db, keyHash) : { day: 0n, month: 0n, life: 0n };
-    const refusal = capsVerdict(row, spent, { ip: row.ipAllow?.length ? clientIp(c, ctx.cfg.trustProxy) : null, model, sealed: isSealedRequest(model, c.req.header("x-anonymo-sealed")) });
-    if (refusal) throw new ApiError(refusal.status, refusal.message, refusal.code);
+    await assertKeyPolicy(ctx.db, row, { ip: row.ipAllow?.length ? clientIp(c, ctx.cfg.trustProxy) : null, sealed: isSealedRequest(model, c.req.header("x-anonymo-sealed")) });
     return next();
   };
 }

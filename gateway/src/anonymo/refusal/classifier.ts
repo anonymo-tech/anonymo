@@ -18,7 +18,8 @@ const DECLINE = String.raw`(?:can(?:'|’|no)?t|won(?:'|’)?t|will not|must not
 const ACTS = String.raw`(?:help(?!\s+(?:but|myself|thinking|feeling|wondering|noticing|it))|assist|provide (?:that|this|any|you with|information|instructions|content|guidance|details)|create (?:that|this|content|explicit|sexual|violent)|write (?:that|this|content|explicit|sexual|violent|a story|an? (?:essay|article|story|poem) (?:that|about|on|which))|generate|produce (?:that|this|content)|comply|fulfil|fulfill|engage (?:in|with)|participate in|do (?:that|this)|support (?:that|this)|continue (?:with )?(?:this|that) (?:conversation|request|roleplay|role-play|story|scenario)|role-?play (?:that|this)|answer (?:that|this))`;
 const REFUSAL_RULES: RegExp[] = [
   new RegExp(String.raw`\bI(?:'m| am)? ?(?:so |very |really |truly )?sorry,? (?:but )?(?:I|we) (?:${DECLINE}|must decline|have to decline)\b`, "i"),
-  new RegExp(String.raw`\bI ${DECLINE} ${ACTS}`, "i"),
+  // "I ?": the contracted forms ("I'm unable to", "I'm not able to") have no space after "I".
+  new RegExp(String.raw`\bI ?${DECLINE} ${ACTS}`, "i"),
   /\bI (?:must|have to|need to|will have to|'ll have to) (?:respectfully |politely )?(?:decline|refuse)\b/i,
   /\bI(?:'m| am) (?:not permitted|not allowed) to (?:help|assist|provide|create|write|generate|comply|engage|do|continue|discuss)\b/i,
   /\bI(?:'d| would) (?:rather|prefer) not (?:help|assist|write|create|engage|continue|provide)\b/i,
@@ -50,6 +51,8 @@ const PLAIN_REFUSALS: RegExp[] = [
   /^\W*(?:I(?:'m| am) )?(?:so |very |really )?sorry,? (?:but )?I (?:can(?:'|no)?t|cannot|won'?t) (?:help|assist|provide|comply|do that|fulfil|fulfill|create|write)\b/i,
   /^\W*I (?:can(?:'|no)?t|cannot|won'?t) (?:help|assist) with (?:that|this)\b/i,
   /^\W*I(?:'m| am) (?:not able|unable) to (?:help|assist|provide|comply) with (?:that|this)\b/i,
+  // "I'm not able to write sexually explicit content…" (qwen/qwen4-max, receipt gen-1795224826-Nqic8uhhctKqow).
+  /^\W*I(?:'m|’m| am) (?:not able|unable|not going) to (?:write|create|generate|produce) (?:that|this|it|sexually|explicit|sexual|graphic|the (?:scene|story|content))\b/i,
 ];
 
 export const phraseRules = {

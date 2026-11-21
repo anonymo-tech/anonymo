@@ -13,7 +13,7 @@
     "lint": "oxlint",
     "format": "oxfmt",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test scripts/check-anonymo-client.mjs scripts/check-wallet.mjs scripts/check-copy.mjs scripts/check-solana.mjs scripts/check-guards.mjs scripts/check-safety.mjs scripts/check-history.mjs scripts/check-usage.mjs scripts/check-catchup.mjs scripts/check-status.mjs scripts/check-coin.mjs scripts/check-workspace.mjs scripts/check-compare.mjs scripts/check-vanish.mjs scripts/check-vault.mjs scripts/check-image-models.mjs scripts/check-video.mjs scripts/check-faces.mjs scripts/check-talk.mjs scripts/check-story.mjs scripts/check-memory.mjs scripts/check-voice.mjs scripts/check-movein.mjs scripts/check-sidebyside.mjs scripts/check-tickets.mjs",
+    "test": "node --experimental-strip-types --test scripts/check-anonymo-client.mjs scripts/check-wallet.mjs scripts/check-copy.mjs scripts/check-solana.mjs scripts/check-guards.mjs scripts/check-safety.mjs scripts/check-history.mjs scripts/check-usage.mjs scripts/check-catchup.mjs scripts/check-status.mjs scripts/check-coin.mjs scripts/check-workspace.mjs scripts/check-compare.mjs scripts/check-vanish.mjs scripts/check-vault.mjs scripts/check-image-models.mjs scripts/check-video.mjs scripts/check-faces.mjs scripts/check-talk.mjs scripts/check-story.mjs scripts/check-memory.mjs scripts/check-voice.mjs scripts/check-movein.mjs scripts/check-sidebyside.mjs scripts/check-tickets.mjs scripts/check-ventures.mjs",
     "test:mascot": "node --test scripts/check-mascot-browser.mjs",
     "test:workspace-browser": "node --test scripts/check-workspace-browser.mjs",
     "test:client": "node --experimental-strip-types --test scripts/check-anonymo-client.mjs",
@@ -30,7 +30,8 @@
     "test:voice": "node --experimental-strip-types --test scripts/check-voice.mjs",
     "test:movein": "node --experimental-strip-types --test scripts/check-movein.mjs",
     "test:sidebyside": "node --experimental-strip-types --test scripts/check-sidebyside.mjs",
-    "test:tickets": "node --experimental-strip-types --test scripts/check-tickets.mjs"
+    "test:tickets": "node --experimental-strip-types --test scripts/check-tickets.mjs",
+    "test:ventures": "node --experimental-strip-types --test scripts/check-ventures.mjs"
   },
   "dependencies": {
     "@fontsource-variable/space-grotesk": "5.3.0",

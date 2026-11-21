@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Publish guard for a public repo. Blocks commits and pushes that carry:
-#   - any author, committer or co-author other than the pinned Anonymo Contributor identity
+#   - any author, committer or co-author other than the pinned Anonymo identity
 #   - an author/committer date that is not UTC (+0000): the offset reveals where you are
 #   - files that must stay local (.env*, keys, .data/, and any regex in .git/info/publish-denypaths)
 #   - secrets (provider/GitHub/AWS tokens, PEM keys, 32-byte hex not in public-hex-allowlist.txt)
@@ -14,6 +14,7 @@ gitdir=$(git rev-parse --git-common-dir)
 denylist="$gitdir/info/publish-denylist"
 denypaths="$gitdir/info/publish-denypaths"
 hex_allow="$root/.githooks/public-hex-allowlist.txt"
+if [ -f "$root/gateway/.githooks/public-hex-allowlist.txt" ]; then hex_allow="$root/gateway/.githooks/public-hex-allowlist.txt"; fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
@@ -25,8 +26,8 @@ grep -vE '^\s*(#|$)' "$denylist" 2>/dev/null > "$tmp/deny" || true
 
 # This repository publishes one project identity. Local configuration or CI environment
 # must not broaden the allowlist to an account-linked noreply address.
-allowed='contributor@anonymo.invalid'
-allowed_name='Anonymo Contributor'
+allowed='noreply@anonymo.tech'
+allowed_name='Anonymo'
 check_ident() { # <label> <name> <email>
   [ "$2" = "$allowed_name" ] || err "$1 name is not the project publishing identity"
   [ "$3" = "$allowed" ] || err "$1 email is not the project publishing identity"
@@ -61,8 +62,7 @@ check_lines() {
   cat > "$tmp/lines"
   # GitHub also credits Co-authored-by trailers; reject any alternate identity.
   grep -iE $'^commit message\t[[:space:]]*Co-authored-by[[:space:]]*:' "$tmp/lines" | while IFS= read -r line; do
-    trailer=${line#*$'\t'}
-    [ "$trailer" = "Co-authored-by: $allowed_name <$allowed>" ] || err "alternate or malformed co-author trailer"
+    err "co-author trailers are not permitted"
   done || true
   grep -nE -- "$token_re" "$tmp/lines" | cut -f1 | sort -u | while IFS= read -r hit; do
     echo "publish-guard: secret-like token in ${hit#*:}" >&2
@@ -70,7 +70,7 @@ check_lines() {
   if grep -qE -- "$token_re" "$tmp/lines"; then : > "$tmp/failed"; fi
 
   # Vendored libraries (contracts/lib/) carry public curve constants and fixtures.
-  grep -v '^contracts/lib/' "$tmp/lines" > "$tmp/own" || true
+  grep -vE '^(gateway/)?contracts/lib/' "$tmp/lines" > "$tmp/own" || true
   grep -oE '0x[0-9a-fA-F]{64}' "$tmp/own" | tr 'A-F' 'a-f' | sort -u > "$tmp/hex" || true
   if [ -s "$tmp/hex" ]; then
     grep -vxF -f <(grep -v '^#' "$hex_allow") "$tmp/hex" > "$tmp/hex_bad" || true

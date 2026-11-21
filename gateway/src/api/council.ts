@@ -45,8 +45,9 @@ import { outputModalities } from "../catalog/catalog.ts";
 import { trustConfig } from "../anonymo/trust/config.ts";
 import { familyOf } from "../anonymo/trust/families.ts";
 import { weightsHashFor } from "../anonymo/trust/stats.ts";
-import { SEALED_HEADER, assertSealedSeats, candidateState, sealedFilter, sealedRequired, sealedUnavailable, type SealedClock } from "../anonymo/trust/sealed.ts";
+import { SEALED_HEADER, assertSealedSeats, candidateState, keySealedOnly, sealedFilter, sealedRequired, sealedUnavailable, type SealedClock } from "../anonymo/trust/sealed.ts";
 import { floorInputOf } from "../anonymo/services.ts";
+import { refuseConfidentialOutsideEnclave } from "../anonymo/floor/confidential.ts";
 import { floorErrorReason } from "../anonymo/floor/guard-client.ts";
 import { floorReplyCheck, replyTextOf } from "../anonymo/floor/reply.ts";
 import { RECEIPT_HEADER, buildAnonymoReceipt, issueAnonymoReceipt, receiptRoute, type ReceiptRoute } from "../receipts/anonymo.ts";
@@ -434,9 +435,10 @@ function refuseRetiredCouncil(body: Record<string, unknown>) {
 
 /** The same check and error shapes as the chat floor hook: 451 floor_blocked, 503 floor_unavailable, nothing sent or charged. */
 async function councilFloorCheck(ctx: Ctx, body: Record<string, unknown>) {
+  const input = floorInputOf(body); // an unreadable prompt shape is a 400, not a floor outage
   let verdict;
   try {
-    verdict = await ctx.anonymo.floor.check(floorInputOf(body));
+    verdict = await ctx.anonymo.floor.check(input);
   } catch (e) {
     log.warn("floor check unavailable", { reason: floorErrorReason(e) });
     throw new ApiError(503, "The safety check is unavailable. Nothing was sent or charged; try again shortly.", "floor_unavailable");
@@ -489,7 +491,9 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
   validateMulti(ctx, kind, body);
   const spec = parseAnonymoSpec(body.council);
   const mode: AnonymoCouncilMode = parseCouncilMode(c.req.header(COUNCIL_MODE_HEADER), spec.mode, "merge");
-  const sealed = sealedRequired({ header: c.req.header(SEALED_HEADER), key, councilSealed: spec.sealed }) || disc.lane === "attested";
+  const sealed = sealedRequired({ header: c.req.header(SEALED_HEADER), councilSealed: spec.sealed }) || disc.lane === "attested" || await keySealedOnly(ctx.db, key?.keyHash);
+  // A sealed or attested council is never read by the hosted guards (GHSA-rch8-pxr3-p8gc).
+  refuseConfidentialOutsideEnclave(ctx.anonymo.floor, sealed || disc.lane !== "public" || String(body.model ?? "").includes(":private") || (body.provider as { private?: unknown } | undefined)?.private === true);
   // The floor gate first: a blocked prompt is never priced, held, sent or rerouted.
   await councilFloorCheck(ctx, body);
   if (sealed && disc.lane === "public") {

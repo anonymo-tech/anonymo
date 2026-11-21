@@ -41,6 +41,8 @@ import { createDemoSpeech, demoStoryReply as bedtimeStoryReply, DEMO_SPEECH_MODE
 import { activityCsv, runway, sampleHistory, spendReport, spentWindows, type UsageEntry } from './usage.ts';
 import { COUNCIL_MERGED, DEMO_ANMO, DEMO_COIN_PAY, DEMO_LEADERBOARD, DEMO_MANIFEST, DEMO_MODELS, DEMO_PRICES, DEMO_ROUTER, DEMO_ROUTES, DEMO_VIDEO_MODELS, demoReply } from './fixtures.ts';
 import { sideBySideReply } from './sidebyside.ts';
+import { updateOn } from '../updates.ts';
+import { createDemoVentures } from './ventures.ts';
 
 type Row = DepositRow & { musd: number };
 type KeyState = {
@@ -74,6 +76,10 @@ export type MockOptions = {
   videoNow?: () => number;
   /** How long a demo speech clip takes, in ms. */
   speechDelayMs?: number;
+  /** Clock for the demo Ventures crew, and how long one run takes (ms; about 25 s by default). */
+  venturesEnabled?: boolean;
+  venturesNow?: () => number;
+  ventureRunMs?: number;
 };
 
 const STORAGE_KEY = 'anonymo.demo.state.v2';
@@ -251,6 +257,18 @@ export function createMockGateway(options: MockOptions = {}) {
     check: (k, cost) => k.balance - k.held < cost ? fail(402, 'insufficient_balance', 'Not enough credit for this request.') : capRefusal(k),
     charge: (k, cost, model, requestId) => { spend(k, cost, { model, kind: 'call', requestId }); persist(); },
   });
+
+  // Update "ventures": the demo crew (mock/ventures.ts). A run's price is checked and charged up front, like the
+  // gateway funding the run's own crew key.
+  const venturesEnabled = options.venturesEnabled ?? updateOn('ventures', true);
+  const ventures = venturesEnabled ? createDemoVentures<KeyState>({
+    json, fail, now: options.venturesNow ?? Date.now, runMs: options.ventureRunMs, storage, keyId: (k) => k.keyHash,
+    check: (k, price) => {
+      const available = k.balance - k.held;
+      return available < usdToMusd(price) ? fail(402, 'insufficient_balance', `This run costs $${price}; the key has $${usd(Math.max(0, available))} available.`) : capRefusal(k);
+    },
+    charge: (k, price, ref) => { spend(k, usdToMusd(price), { model: 'anonymo-ventures', kind: 'call', requestId: ref }); persist(); },
+  }) : null;
 
   /** Sample history plus what the key really spent, for the usage reports. */
   const usageOf = (k: KeyState) => [...sampleHistory(k.keyHash, Date.now()), ...(k.usage ?? [])];
@@ -657,6 +675,7 @@ export function createMockGateway(options: MockOptions = {}) {
       return json({ data: { ...r.view, anchor } });
     }
     if (method === 'POST' && path === API_PATHS.keys) return createKey(request);
+    if (ventures && method === 'GET' && path === API_PATHS.recipes) return (await ventures.handle(request, path, null))!;
 
     const k = await keyState(request);
     if (k instanceof Response) return k;
@@ -689,6 +708,7 @@ export function createMockGateway(options: MockOptions = {}) {
     if (method === 'POST' && path === API_PATHS.videos) return video.submit(request, k);
     if (method === 'GET' && path.startsWith(`${API_PATHS.videos}/`)) return video.status(path.slice(API_PATHS.videos.length + 1), k);
     if (method === 'PATCH' && path === API_PATHS.caps) return patchCaps(request, k);
+    if (ventures && path.startsWith(API_PATHS.ventures)) return (await ventures.handle(request, path, k))!;
     if (method === 'GET' && path === API_PATHS.spend) {
       const period = url.searchParams.get('period') ?? '30d';
       const group = url.searchParams.get('group_by') ?? 'day';

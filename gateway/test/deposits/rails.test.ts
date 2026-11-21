@@ -16,7 +16,7 @@ import { scanSolana, TOKEN_PROGRAM, type SolanaReader } from "../../src/anonymo/
 import { scanTron, type Trc20Transfer, type TronReader } from "../../src/anonymo/deposits/tron.ts";
 import { createDepositSink, rescreenHeld } from "../../src/anonymo/deposits/sink.ts";
 import { dbSanctionsScreen, staticSanctionsScreen } from "../../src/anonymo/deposits/sanctions.ts";
-import type { BtcpayClient } from "../../src/anonymo/deposits/btcpay.ts";
+import type { BtcpayClient, BtcpayPaymentMethod } from "../../src/anonymo/deposits/btcpay.ts";
 import type { EvmChainConfig, SolanaConfig, TronConfig } from "../../src/anonymo/deposits/config.ts";
 import { moneyHarness, SANCTIONED_EVM, type MoneyHarness } from "./harness.ts";
 
@@ -28,7 +28,7 @@ const balanceOfKey = async (keyHash: string) => {
 };
 const b58 = () => base58Encode(randomBytes(32));
 
-const btcInvoices = new Map<string, { status: string; additionalStatus?: string; methods: { paymentMethodId: string; rate: string; paymentMethodPaid: string }[] }>();
+const btcInvoices = new Map<string, { status: string; additionalStatus?: string; methods: BtcpayPaymentMethod[] }>();
 const btcpay: BtcpayClient = {
   createInvoice: async () => {
     const id = `inv_${btcInvoices.size + 1}`;
@@ -262,7 +262,10 @@ describe("BTCPay", () => {
     expect(inv.refund).toEqual({ chain: "ln", address: "sample-user@wallet.example" });
     // Not paid yet: nothing credited.
     expect((await (await hook({ type: "InvoiceReceivedPayment", invoiceId: inv.invoice_id })).json()).status).toBe("pending");
-    btcInvoices.set(inv.invoice_id, { status: "Settled", methods: [{ paymentMethodId: "BTC-LN", rate: "62500.5", paymentMethodPaid: "0.0016" }] });
+    btcInvoices.set(inv.invoice_id, { status: "Settled", methods: [
+      { paymentMethodId: "BTC-LN", rate: "62500.5", paymentMethodPaid: "0.0016", payments: [{ status: "Settled", value: "0.0016" }] },
+      { paymentMethodId: "BTC-CHAIN", rate: "62500.5", paymentMethodPaid: "0.0001", payments: [{ status: "Processing", value: "0.0001" }] },
+    ] });
     expect((await hook({ type: "InvoiceSettled", invoiceId: inv.invoice_id }, "sha256=" + "0".repeat(64))).status).toBe(401);
     expect(await balanceOfKey(k.keyHash)).toBe(0n);
     const ok = await hook({ type: "InvoiceSettled", invoiceId: inv.invoice_id });
@@ -275,13 +278,24 @@ describe("BTCPay", () => {
     expect(row.sourceAddr).toBe("sample-user@wallet.example");
   });
 
-  test("a partially paid, expired invoice is credited for what was paid", async () => {
-    const k = await m.newKey();
-    const inv = await (await m.req("/deposits/btcpay", { headers: k.auth, json: { amount_usd: 50, refund_address: "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq" } })).json();
-    btcInvoices.set(inv.invoice_id, { status: "Expired", additionalStatus: "PaidPartial", methods: [{ paymentMethodId: "BTC", rate: "60000", paymentMethodPaid: "0.0005" }] });
-    expect((await (await hook({ type: "InvoiceExpired", invoiceId: inv.invoice_id })).json()).status).toBe("credited");
-    expect(await balanceOfKey(k.keyHash)).toBe(usdToPico("30"));
-  });
+  for (const status of ["Expired", "Invalid"]) {
+    test(`a partially paid invoice marked ${status} is credited only for settled payments`, async () => {
+      const k = await m.newKey();
+      const inv = await (await m.req("/deposits/btcpay", { headers: k.auth, json: { amount_usd: 50, refund_address: "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq" } })).json();
+      const payments = ["0.00025", "0.00025", "0.0002"].map((value) => ({ status: "Processing", value }));
+      btcInvoices.set(inv.invoice_id, { status, additionalStatus: "PaidPartial", methods: [{ paymentMethodId: "BTC-CHAIN", rate: "60000", paymentMethodPaid: "0.0007", payments }] });
+      expect((await (await hook({ type: `Invoice${status}`, invoiceId: inv.invoice_id })).json()).status).toBe("pending");
+      expect(await balanceOfKey(k.keyHash)).toBe(0n);
+
+      payments[0].status = payments[1].status = "Settled";
+      expect((await (await hook({ type: "InvoicePaymentSettled", invoiceId: inv.invoice_id })).json()).status).toBe("credited");
+      expect(await balanceOfKey(k.keyHash)).toBe(usdToPico("30"));
+
+      payments[2].status = "Settled";
+      expect((await (await hook({ type: "InvoicePaymentSettled", invoiceId: inv.invoice_id })).json()).status).toBe("duplicate");
+      expect(await balanceOfKey(k.keyHash)).toBe(usdToPico("30"));
+    });
+  }
 
   test("bad refund addresses and unknown invoices", async () => {
     const k = await m.newKey();

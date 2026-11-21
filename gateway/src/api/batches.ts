@@ -1,7 +1,7 @@
 import type { Context, Hono } from "hono";
 import type { Ctx } from "../context.ts";
 import { requireKey, requireRole } from "./auth.ts";
-import { readJson } from "./common.ts";
+import { clientIp, readJson } from "./common.ts";
 import { batchFor, batchJson, batchResults, cancelBatch, createBatch, listBatches } from "../services/batches.ts";
 
 // OpenAI-compatible Batch API (services/batches.ts). A prepaid key submits up to BATCH_MAX_LINES chat requests
@@ -23,7 +23,7 @@ export function batchesRoutes(app: Hono, ctx: Ctx) {
     app.post(base, async (c) => {
       const key = await caller(c);
       const body = await readJson(c); // the lines are sealed out of Postgres at once (services/batches.ts)
-      return c.json(batchJson(await createBatch(ctx, key, body)));
+      return c.json(batchJson(await createBatch(ctx, key, body, clientIp(c, ctx.cfg.trustProxy))));
     });
     app.get(base, async (c) => {
       const key = await caller(c);

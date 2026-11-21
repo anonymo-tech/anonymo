@@ -218,6 +218,9 @@ const schema = z.object({
   // Images, voice and video (WS06). Off by default: the routes do not exist until an operator turns them on, and a
   // production router refuses to start with them on unless the media classifier is configured.
   ANONYMO_FEATURE_MEDIA: bool.default(false),
+  // Anonymo Ventures (WS11): the crew of Mos, model "anonymo-swarm" and /v1/ventures. Off by default: the routes and the
+  // anonymo-swarm hook do not exist until an operator turns this on.
+  ANONYMO_FEATURE_VENTURES: bool.default(false),
   ANONYMO_COUNCIL_MODELS: opt, // comma list of 2-5 model ids used when a council request names none
   ANONYMO_COUNCIL_JUDGE: opt, // model id of the judge used when a council request names none
   ANONYMO_COUNCIL_MODE: z.enum(["judge", "fuse"]).default("judge"),
@@ -477,7 +480,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     anthropic: { modelMap: parseModelMap(e.ANTHROPIC_MODEL_MAP) },
     // Off unless enabled. Council members and the judge are billed and receipted like any other call.
     structuredOutputCheckEnabled: e.STRUCTURED_OUTPUT_CHECK_ENABLED, // V83
-    features: { council: e.ANONYMO_FEATURE_COUNCIL, media: e.ANONYMO_FEATURE_MEDIA },
+    features: { council: e.ANONYMO_FEATURE_COUNCIL, media: e.ANONYMO_FEATURE_MEDIA, ventures: e.ANONYMO_FEATURE_VENTURES },
     council: { models: councilModels, judge: e.ANONYMO_COUNCIL_JUDGE ?? null, mode: e.ANONYMO_COUNCIL_MODE },
     batch: {
       discountBps: e.BATCH_DISCOUNT_BPS,

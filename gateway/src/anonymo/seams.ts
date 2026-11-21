@@ -14,11 +14,18 @@ export interface FloorGate {
   check(input: FloorInput, signal?: AbortSignal): Promise<FloorVerdict>;
   /** False when the gate cannot judge a reply (no guard model), so replies are not held back for nothing. */
   readonly checksReplies?: boolean;
+  /** Whether the gate sends the text it checks to a service outside this process (a hosted guard model or
+   *  moderation API). Sealed, attested-lane and `:private` requests may only be checked by a gate that does not, or
+   *  one that runs inside the enclave (`inEnclave`). A gate that leaves this unset is assumed to send text out. */
+  readonly sendsTextOutside?: boolean;
+  /** Set by a gate that runs inside the attestation boundary. */
+  readonly inEnclave?: boolean;
 }
 /** Placeholder that passes everything. With `required` (ANONYMO_FLOOR_REQUIRED=1, which every real deployment sets)
  *  it fails CLOSED instead, so nothing can serve traffic without WS02's real gate. */
 export const floorGateStub = (required: boolean): FloorGate => ({
   checksReplies: required, // a required stub fails replies closed too; the pass-everything stub has nothing to check
+  sendsTextOutside: false, // it sends nothing anywhere
   async check() {
     if (required) throw new Error("floor gate not configured");
     return { ok: true };

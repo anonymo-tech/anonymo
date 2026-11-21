@@ -20,6 +20,7 @@ import {
   PackageOpen,
   Plug,
   ReceiptText,
+  Rocket,
   Ticket,
   Trophy,
   Video,
@@ -65,6 +66,7 @@ const groups: { title: string; links: Destination[] }[] = [
       { href: '/dashboard/library', label: 'Library', icon: Images, feature: 'vault' },
       { href: '/dashboard/characters', label: 'Characters', icon: Drama },
       { href: '/dashboard/move-in', label: 'Move in', icon: PackageOpen, feature: 'movein' },
+      { href: '/dashboard/ventures', label: 'Ventures', icon: Rocket, feature: 'ventures' },
     ],
   },
   {

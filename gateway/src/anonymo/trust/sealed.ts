@@ -9,7 +9,9 @@
 // default) and clears `attested` on a failure, which takes the route out of this filter at once.
 
 import { createHash } from "node:crypto";
+import type { Db } from "../../db/client.ts";
 import { ApiError, fail } from "../../lib/errors.ts";
+import { readKeyPolicy } from "../keys/caps.ts";
 
 export const SEALED_MODEL = "anonymo-sealed";
 export const SEALED_HEADER = "x-anonymo-sealed";
@@ -74,24 +76,19 @@ export function candidateState(c: { status?: string | null; provider: { status?:
   };
 }
 
-type KeyLike = object | null | undefined;
-
-/** Whether the key carries `sealed_only` (WS05 keeps it on the key row or in its caps). Absent means no. */
-export function keySealedOnly(key: KeyLike): boolean {
-  if (!key) return false;
-  const k = key as Record<string, unknown>;
-  const caps = (k.caps && typeof k.caps === "object" ? k.caps : {}) as Record<string, unknown>;
-  return k.sealedOnly === true || k.sealed_only === true || caps.sealed_only === true || caps.sealedOnly === true;
+/** The sealed-only flag belongs to anonymo_keys. Legacy keys may have no policy row. */
+export async function keySealedOnly(db: Db, keyHash?: string): Promise<boolean> {
+  return keyHash ? (await readKeyPolicy(db, keyHash))?.sealedOnly === true : false;
 }
 
 /**
  * Whether this request must be sealed. The header accepts only "required" (any other value is a 400, so a typo never
  * silently runs unsealed).
  */
-export function sealedRequired(o: { model?: unknown; header?: string | null; key?: KeyLike; councilSealed?: unknown }): boolean {
+export function sealedRequired(o: { model?: unknown; header?: string | null; keySealed?: boolean; councilSealed?: unknown }): boolean {
   const h = o.header?.trim().toLowerCase();
   if (h && h !== "required") fail(400, `\`${SEALED_HEADER}\` accepts only "required".`, "invalid_request");
-  return o.model === SEALED_MODEL || h === "required" || keySealedOnly(o.key) || o.councilSealed === true;
+  return o.model === SEALED_MODEL || h === "required" || o.keySealed === true || o.councilSealed === true;
 }
 
 /**

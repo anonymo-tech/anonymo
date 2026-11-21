@@ -1,0 +1,11 @@
+{
+  "headers": [{ "tool_name": "scancode-toolkit", "tool_version": "32.2.0" }],
+  "files": [
+    { "path": "repo", "type": "directory" },
+    { "path": "repo/LICENSE", "type": "file", "detected_license_expression_spdx": "MIT", "license_detections": [{ "license_expression_spdx": "MIT" }], "copyrights": [{ "copyright": "Copyright (c) 2024 Sample Org", "start_line": 3 }] },
+    { "path": "repo/package.json", "type": "file", "detected_license_expression_spdx": "MIT", "copyrights": [] },
+    { "path": "repo/vendor/zlibby/LICENSE", "type": "file", "detected_license_expression_spdx": null, "license_detections": [{ "license_expression_spdx": "Zlib" }], "copyrights": [{ "copyright": "Copyright (c) 2019 Example Zlib Authors" }] },
+    { "path": "repo/vendor/zlibby/z.c", "type": "file", "licenses": [{ "spdx_license_key": "Zlib" }], "copyrights": [] },
+    { "path": "repo/src/odd.js", "type": "file", "detected_license_expression_spdx": "LicenseRef-scancode-proprietary-license", "copyrights": [] }
+  ]
+}

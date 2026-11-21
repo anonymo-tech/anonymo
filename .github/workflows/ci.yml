@@ -26,6 +26,13 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version: '22' }
       - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
+      - name: Install the gateway audio decoder
+        run: |
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install --yes --no-install-recommends ffmpeg
+          fi
+          ffmpeg -version >/dev/null
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run typecheck
       # Bun 1.3.14 does not apply test/setup.ts's 20 s default in CI; pass it explicitly (as Anonymo's CI did).

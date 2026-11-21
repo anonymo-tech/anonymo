@@ -23,9 +23,21 @@ function parseDecimal(s: string): { n: bigint; scale: number } {
 
 /** a × b, both non-negative decimal strings (e.g. BTC paid × USD/BTC rate), as pico-USD rounded down. */
 export function decimalProductToPico(a: string, b: string): Pico {
-  const x = parseDecimal(a);
-  const y = parseDecimal(b);
-  const scale = x.scale + y.scale;
-  const product = x.n * y.n; // value = product / 10^scale USD
+  return decimalSumProductToPico([a], b);
+}
+
+/** Sum the amounts at full precision, apply the quoted rate, then round down to pico-USD. */
+export function decimalSumProductToPico(amounts: readonly string[], rate: string): Pico {
+  let sum = 0n;
+  let amountScale = 0;
+  for (const amount of amounts) {
+    const parsed = parseDecimal(amount);
+    const scale = Math.max(amountScale, parsed.scale);
+    sum = sum * 10n ** BigInt(scale - amountScale) + parsed.n * 10n ** BigInt(scale - parsed.scale);
+    amountScale = scale;
+  }
+  const quote = parseDecimal(rate);
+  const scale = amountScale + quote.scale;
+  const product = sum * quote.n;
   return scale <= 12 ? product * 10n ** BigInt(12 - scale) : product / 10n ** BigInt(scale - 12);
 }

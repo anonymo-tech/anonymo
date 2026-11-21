@@ -46,6 +46,18 @@ import type {
   Withdrawal,
 } from './types.ts';
 import type { VideoJob, VideoModel, VideoRequest } from './video.ts';
+import type {
+  ArtifactInfo,
+  CreateVentureBody,
+  CreatedVenture,
+  Recipe,
+  RecipeBody,
+  RunModeBody,
+  TierInfo,
+  VentureReceipt,
+  VentureSnapshot,
+  VentureSummary,
+} from './ventures.ts';
 import { usdToMusd } from './money.ts';
 
 /** Every path the dashboard calls, in one place. */
@@ -78,6 +90,19 @@ export const API_PATHS = {
   transcriptions: '/v1/audio/transcriptions',
   videos: '/v1/video/generations',
   video: (id: string) => `/v1/video/generations/${encodeURIComponent(id)}`,
+  // Update "ventures" (gateway/src/anonymo/ventures/routes.ts).
+  ventures: '/v1/ventures',
+  venturesTier: '/v1/ventures/tier',
+  venture: (id: string) => `/v1/ventures/${encodeURIComponent(id)}`,
+  ventureEvents: (id: string) => `/v1/ventures/${encodeURIComponent(id)}/events`,
+  ventureArtifacts: (id: string) => `/v1/ventures/${encodeURIComponent(id)}/artifacts`,
+  ventureArtifact: (id: string, sha: string) => `/v1/ventures/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(sha)}`,
+  ventureReceipt: (id: string) => `/v1/ventures/${encodeURIComponent(id)}/receipt`,
+  ventureExport: (id: string) => `/v1/ventures/${encodeURIComponent(id)}/export`,
+  ventureCancel: (id: string) => `/v1/ventures/${encodeURIComponent(id)}/cancel`,
+  ventureRunMode: (id: string) => `/v1/ventures/${encodeURIComponent(id)}/run-mode`,
+  ventureRecipe: (id: string) => `/v1/ventures/${encodeURIComponent(id)}/recipe`,
+  recipes: '/v1/recipes',
 } as const;
 
 /** `anonymo-council` answers as one JSON body; the gateway refuses `stream: true` for it. */
@@ -261,6 +286,33 @@ export function createAnonymoClient(options: ClientOptions) {
       json<VideoJob>(API_PATHS.videos, { method: 'POST', body: JSON.stringify(body), signal }),
     videoStatus: (id: string, signal?: AbortSignal) => json<VideoJob>(API_PATHS.video(id), { signal, cache: 'no-store' }),
     videoMediaUrl: (url: string) => url.startsWith('/v1/media/') ? `${base}${url}` : url,
+
+    // Update "ventures": the crew's runs. Every call but the Recipe list carries the key.
+    ventureTier: (signal?: AbortSignal) => data<TierInfo>(API_PATHS.venturesTier, { signal }),
+    ventures: (signal?: AbortSignal) => data<VentureSummary[]>(API_PATHS.ventures, { signal, cache: 'no-store' }),
+    startVenture: (body: CreateVentureBody) => data<CreatedVenture>(API_PATHS.ventures, { method: 'POST', body: JSON.stringify(body) }),
+    venture: (id: string, signal?: AbortSignal) => data<VentureSnapshot>(API_PATHS.venture(id), { signal, cache: 'no-store' }),
+    /** The run's events as an SSE stream. `after` is the last event id seen, sent as Last-Event-ID to resume. */
+    async ventureEvents(id: string, after: number, signal?: AbortSignal): Promise<ReadableStream<Uint8Array>> {
+      const headers: Record<string, string> = { accept: 'text/event-stream' };
+      if (after > 0) headers['last-event-id'] = String(after);
+      const response = await request(API_PATHS.ventureEvents(id), { headers, signal, cache: 'no-store' });
+      if (!response.body) throw new AnonymoApiError(502, 'no_stream', 'The gateway sent no event stream.');
+      return response.body;
+    },
+    ventureArtifacts: (id: string, signal?: AbortSignal) => data<ArtifactInfo[]>(API_PATHS.ventureArtifacts(id), { signal, cache: 'no-store' }),
+    /** A CLEAN artifact's body as text (HTML pages and JSON reports). SCOUT ones answer 403 by design. */
+    ventureArtifact: async (id: string, sha: string, signal?: AbortSignal) => (await request(API_PATHS.ventureArtifact(id, sha), { signal })).text(),
+    ventureReceipt: (id: string, signal?: AbortSignal) => data<VentureReceipt>(API_PATHS.ventureReceipt(id), { signal }),
+    /** The run's repo as a .tar.gz. */
+    ventureExport: async (id: string) => (await request(API_PATHS.ventureExport(id))).blob(),
+    cancelVenture: (id: string) => data<{ id: string; cancelling: boolean }>(API_PATHS.ventureCancel(id), { method: 'POST', body: '{}' }),
+    startRunMode: (id: string, body: RunModeBody) =>
+      data<{ id: string; tasks: string[]; available_tasks: string[] }>(API_PATHS.ventureRunMode(id), { method: 'POST', body: JSON.stringify(body) }),
+    /** Turns Run Mode off. `id` is the Run Mode venture (the one POST …/run-mode returned). */
+    stopRunMode: (id: string) => data<{ id: string; enabled: false }>(API_PATHS.ventureRunMode(id), { method: 'DELETE' }),
+    saveRecipe: (id: string, body: RecipeBody) => data<{ id: string; recipeHash: string }>(API_PATHS.ventureRecipe(id), { method: 'POST', body: JSON.stringify(body) }),
+    recipes: (signal?: AbortSignal) => data<Recipe[]>(API_PATHS.recipes, { auth: false, signal }),
 
     importCharacter: (body: CharacterImportRequest) =>
       json<CharacterImportResponse>(API_PATHS.characters, { method: 'POST', body: JSON.stringify(body) }),

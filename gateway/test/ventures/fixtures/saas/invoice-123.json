@@ -1,0 +1,1 @@
+{"id":"123","number":"INV-0123","customerId":"c_77","amountCents":4200,"currency":"USD","status":"open","issuedAt":"2026-10-01","dueDate":"2026-10-31","paid":false,"lines":[{"description":"Design work","quantity":1,"unitCents":4200}]}

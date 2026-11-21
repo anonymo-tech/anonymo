@@ -2,6 +2,7 @@ export * from "../anonymo/abuse/schema.ts"; // Anonymo WS02: abuse inbox, hash b
 export * from "../anonymo/media/schema.ts"; // WS06 media_jobs
 export * from "../anonymo/refusal/schema.ts"; // Anonymo WS03: refusal_stats, refusal_key_settings
 export * from "./anonymo-receipts.ts"; // WS09: Anonymo receipts and hourly roots
+export * from "../anonymo/ventures/store/schema.ts"; // WS11: Anonymo Ventures
 import { sql } from "drizzle-orm";
 import {
   pgTable,

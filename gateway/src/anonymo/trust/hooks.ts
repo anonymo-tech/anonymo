@@ -6,13 +6,13 @@ import { isApiError } from "../../lib/errors.ts";
 import type { Pico } from "../../lib/money.ts";
 import { attestationFresh } from "../../router/select.ts";
 import { RECEIPT_HEADER, buildAnonymoReceipt, issueAnonymoReceipt, receiptRoute, type RouteRole, type RouteStatus } from "../../receipts/anonymo.ts";
-import { SEALED_HEADER, assertSealedSeats, candidateState, sealedFilter, sealedRequired, sealedUnavailable, type SealedClock } from "./sealed.ts";
+import { SEALED_HEADER, assertSealedSeats, candidateState, keySealedOnly, sealedFilter, sealedRequired, sealedUnavailable, type SealedClock } from "./sealed.ts";
 import { weightsHashFor } from "./stats.ts";
 
 // Hooks for the single-call path in api/chat.ts and router/execute.ts (WS03 owns both). WS09 cannot edit them, so each
 // hook is one call the owner adds; the council path (api/council.ts) already uses the same pieces.
 //
-//   1. Before selection:      const sealed = sealedForRequest(ctx, c, key, body);
+//   1. Before selection:      const sealed = await sealedForRequest(ctx, c, key, body);
 //                             then, when sealed, route with prefs.lane = "attested" (as the council does).
 //   2. After selectTargets:   if (sealed) targets = sealedTargets(ctx, targets);           // 409 sealed_unavailable
 //      and map a lane refusal: catch (e) { throw sealed ? asSealedError(e) : e }
@@ -23,8 +23,9 @@ export { RECEIPT_HEADER, SEALED_HEADER };
 const clockOf = (ctx: Ctx): SealedClock => ({ now: Date.now(), maxAgeMs: ctx.cfg.attestation.intervalMs * 3, production: ctx.cfg.production });
 
 /** Whether this request is sealed: model `anonymo-sealed`, `x-anonymo-sealed: required`, or a `sealed_only` key. */
-export function sealedForRequest(_ctx: Ctx, c: Context, key: object | null, body: Record<string, unknown>): boolean {
-  return sealedRequired({ model: body.model, header: c.req.header(SEALED_HEADER), key });
+export async function sealedForRequest(ctx: Ctx, c: Context, key: { keyHash: string } | null, body: Record<string, unknown>): Promise<boolean> {
+  const explicit = sealedRequired({ model: body.model, header: c.req.header(SEALED_HEADER) });
+  return explicit || await keySealedOnly(ctx.db, key?.keyHash);
 }
 
 /** Keep only attested, fresh routes; 409 sealed_unavailable when none is left. Never adds a route. */

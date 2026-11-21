@@ -428,6 +428,13 @@
       "when": 1791400062000,
       "tag": "0062_rename_stake_column",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1791400063000,
+      "tag": "0063_ventures",
+      "breakpoints": true
     }
   ]
 }

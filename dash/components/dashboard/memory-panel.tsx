@@ -9,6 +9,8 @@ import {
 } from '@/lib/anonymo/memory';
 import { editMemory, memorySession } from '@/lib/anonymo/memory-store';
 import { useCharacterMemory } from './memory-state';
+import { useDeviceStore } from '@/lib/anonymo/device-store';
+import { chatsStore } from '@/lib/anonymo/history';
 
 export function MemoryPanel({ demo, characters, initialId }: {
   demo: boolean;
@@ -41,6 +43,9 @@ export function MemoryPanel({ demo, characters, initialId }: {
 }
 
 function MemoryEditor({ demo, memory }: { demo: boolean; memory: CharacterMemory }) {
+  // A fact's source chat by its title when the chat is saved on this device; unsaved chats leave no trace to name.
+  const savedChats = useDeviceStore(chatsStore(demo));
+  const chatTitle = (id: string) => savedChats.find((chat) => chat.id === id)?.title ?? null;
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [confirm, setConfirm] = useState(false);
@@ -133,8 +138,8 @@ function MemoryEditor({ demo, memory }: { demo: boolean; memory: CharacterMemory
               <div>
                 <p>{fact.text}</p>
                 <small className="faint">
-                  {fact.chatId ? <span title={fact.chatId}>Chat {fact.chatId.slice(0, 12)}</span> : 'Added by you'}
-                  {' · '}<time dateTime={fact.at}>{fact.at.slice(0, 10)}</time>
+                  {fact.chatId ? (chatTitle(fact.chatId) ? `From “${chatTitle(fact.chatId)}”` : 'From a chat') : 'Added by you'}
+                  {' · '}<time dateTime={fact.at}>{new Date(fact.at).toLocaleDateString()}</time>
                 </small>
               </div>
               <div className="row">

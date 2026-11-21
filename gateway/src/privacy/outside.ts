@@ -1,4 +1,5 @@
 import { mediaBodyReader, transcriptionBodyReader } from "../anonymo/media/inventory.ts"; // WS06 media
+import { ventureBodyReader, ventureStores } from "../anonymo/ventures/inventory.ts"; // WS11 Ventures
 import { anonymoMoneyAddressReader, anonymoMoneyBodyReaders } from "./anonymo-money.ts"; // WS05
 import { modelAlternativesReader } from "./model-alternatives.ts"; // B121
 import { abuseBodyReader } from "../anonymo/abuse/privacy.ts"; // Anonymo WS02
@@ -179,12 +180,12 @@ const redisFamilies: RedisFamily[] = [
   {
     key: "batch:<batch id>:in and batch:<batch id>:out",
     purpose:
-      "The Batch API (POST /api/v1/batches). A batch's requests (:in) and its answers (:out), one field per line, each sealed with AES-256-GCM under a key derived from the router's APP_SECRET, the batch id and the hash of the key that sent it, so only that key's batch can read them back. They are kept here, never in the database, so the worker can run the lines and the key can fetch the results.",
-    holds: "nothing-personal",
+      "The Batch API (POST /api/v1/batches). The input hash holds one field per request and, only for a key with an IP allowlist, the submitting address for that check. The output hash holds one field per result. Each value is sealed with AES-256-GCM under a key derived from the router's APP_SECRET, the batch id and the hash of the key that sent it. The worker reads them from this store.",
+    holds: "address",
     requestText: "request-and-answer-text",
     ttl: "The sealed requests are deleted when the batch finishes; the sealed answers BATCH_RESULTS_TTL after that (86,400 seconds, 24 hours, unless the operator changed it). A batch that never finishes ends when its 24-hour completion window closes, so nothing outlives the window plus that time.",
     evidence: [
-      ev("src/services/batches.ts", "saveInputs = (b: BatchRow, lines: LineInput[], ttlMs: number) => this.hset(`batch:${b.id}:in`"),
+      ev("src/services/batches.ts", "await this.hset(`batch:${b.id}:in`, entries, ttlMs);"),
       ev("src/services/batches.ts", "private seal = (b: Pick<BatchRow, \"id\" | \"keyHash\">, v: unknown) => encrypt(this.scope(b), JSON.stringify(v));"),
       ev("src/services/batches.ts", "await this.del(`batch:${b.id}:in`);"),
       ev("src/services/batches.ts", "await batchStore(ctx).purge(b);"),
@@ -204,6 +205,20 @@ const addressReaders: Touchpoint[] = [
   anonymoMoneyAddressReader, // WS05: an Anonymo key's IP allowlist
   ...hardeningAddresses, // HD1
   facilitatorAddressReader, // v6 F
+  {
+    file: "src/api/batches.ts",
+    reads: "The submitting caller's address from the shared ingress helper; kept only when the key has an IP allowlist.",
+    then: "Checked against the key's allowlist at submission and again when each line runs.",
+    kept: "Encrypted with the batch inputs in Redis or worker memory until the inputs are deleted.",
+    evidence: [ev("src/api/batches.ts", "clientIp(c, ctx.cfg.trustProxy)"), ev("src/services/batches.ts", 'entries.push(["submitter_ip", this.seal(b, submitterIp)]);')],
+  },
+  {
+    file: "src/anonymo/keys/routes.ts",
+    reads: "The caller's address at PATCH /keys/caps.",
+    then: "Compared with the current allowlist before changing the key policy.",
+    kept: "Nothing.",
+    evidence: [ev("src/anonymo/keys/routes.ts", "const callerIp = clientIp(c, ctx.cfg.trustProxy);")],
+  },
 
   {
     file: "src/api/common.ts",
@@ -261,9 +276,19 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
   ...anonymoMoneyBodyReaders, // WS05
   mediaBodyReader, // WS06 media
   transcriptionBodyReader,
+  ventureBodyReader, // WS11 Ventures
   modelAlternativesReader, // B121
   abuseBodyReader, // Anonymo WS02: takedown inbox
   refusalSettingReader, // Anonymo WS03
+  {
+    // GHSA-rch8-pxr3-p8gc: the floor's guards are hosted outside any enclave, so they read public-lane text only.
+    file: "src/anonymo/floor/gate.ts",
+    carries: "prompt-or-answer",
+    reads: "On the public lane only: the request's text, and the reply's text, sent to the floor's guard model (ANONYMO_FLOOR_URL, its fallback) and the optional Llama Guard / OpenAI moderation checks. Sealed, attested-lane and `:private` requests are refused before this check while no in-enclave floor exists, so their text is never sent.",
+    then: "The guard answers a category or nothing; a blocked request or reply is refused (451) and never served, charged or rerouted.",
+    kept: "Nothing: the text is not written to Postgres, Redis or a log. Each guard provider's own retention applies to what it is sent.",
+    evidence: [ev("src/anonymo/floor/gate.ts", "c.classify(input.text, signal)"), ev("src/anonymo/floor/confidential.ts", "refuseConfidentialOutsideEnclave")],
+  },
   ...hardeningBodies, // HD1
  // V98
   provisioningBodyReader, inferenceModelReader, // ZK6
@@ -286,7 +311,7 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
     reads: "The JSON body of a batch: up to BATCH_MAX_LINES chat or embeddings requests (requests or input_jsonl).",
     then: "Checked line by line, then sealed at once and kept in Redis (or memory) for the worker, which runs each line through the chat or embeddings handler as the key that sent the batch.",
     kept: "Not in the database: the database gets counts, statuses, costs and generation ids. The sealed requests are deleted when the batch finishes and the sealed answers when its results expire (see the Redis section).",
-    evidence: [ev("src/api/batches.ts", "const body = await readJson(c);"), ev("src/services/batches.ts", "await batchStore(ctx).saveInputs(row, lines, storeTtl(ctx, row));")],
+    evidence: [ev("src/api/batches.ts", "const body = await readJson(c);"), ev("src/services/batches.ts", "await batchStore(ctx).saveInputs(row, lines, storeTtl(ctx, row), Array.isArray(ipAllow) && ipAllow.length ? submitterIp : null);")],
   },
   {
     file: "src/api/anthropic.ts",
@@ -482,12 +507,13 @@ export const EXTERNAL: ExternalDoc = {
     ...statementStores, // V87
     ...laneReportStores, // Lane report
     ...insightsStores, // V88: spend insights.
+    ...ventureStores, // WS11 Ventures artifact store
 
     {
       id: "batch-memory",
       name: "Batch requests and answers in the router's memory, without Redis",
       purpose: "Without Redis (a single router in development), the Batch API keeps the same sealed requests and answers in the router process's memory instead.",
-      holds: "The same sealed requests and answers as the Redis keys batch:<batch id>:in and :out.",
+      holds: "The same sealed address, requests and answers as the Redis keys batch:<batch id>:in and :out.",
       ttl: "The sealed requests are deleted when the batch finishes; the sealed answers BATCH_RESULTS_TTL after that (86,400 seconds, 24 hours, unless the operator changed it). A batch that never finishes ends when its 24-hour completion window closes, so nothing outlives the window plus that time. A restart loses them.",
       requestText: "request-and-answer-text",
       evidence: [ev("src/services/batches.ts", "private mem = new Map<string, { fields: Map<string, string>; expires: number }>();")],

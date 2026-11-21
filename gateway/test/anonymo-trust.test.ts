@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { generateKeyPairSync, sign as edSign } from "node:crypto";
 import { keccak256, type Hex } from "viem";
 import { deriveFamily, familyOf, weightsHashOf } from "../src/anonymo/trust/families.ts";
-import { attestationQuoteHash, keySealedOnly, sealedRequired } from "../src/anonymo/trust/sealed.ts";
+import { attestationQuoteHash, sealedRequired } from "../src/anonymo/trust/sealed.ts";
 import { clampMultiplier, trustConfigFromEnv } from "../src/anonymo/trust/config.ts";
 import { awaitQuorum, councilPremium, mergeMessages, parseCouncilMode, pickProposers } from "../src/router/council.ts";
 import { anonymoLeaf, buildAnonymoReceipt, parseReceiptHeader, receiptHeader, signAnonymoReceipt, type ReceiptRoute } from "../src/receipts/anonymo.ts";
@@ -44,11 +44,9 @@ describe("sealed requests", () => {
     expect(sealedRequired({ model: "anonymo-sealed" })).toBe(true);
     expect(sealedRequired({ header: "required" })).toBe(true);
     expect(sealedRequired({ header: " Required " })).toBe(true);
-    expect(sealedRequired({ key: { sealedOnly: true } })).toBe(true);
-    expect(sealedRequired({ key: { caps: { sealed_only: true } } })).toBe(true);
+    expect(sealedRequired({ keySealed: true })).toBe(true);
     expect(sealedRequired({ councilSealed: true })).toBe(true);
-    expect(sealedRequired({ model: "anonymo-1", header: null, key: { caps: { sealed_only: false } } })).toBe(false);
-    expect(keySealedOnly(null)).toBe(false);
+    expect(sealedRequired({ model: "anonymo-1", header: null, keySealed: false })).toBe(false);
   });
   test("any other header value is refused rather than ignored", () => {
     for (const v of ["yes", "true", "1", "optional"]) expect(() => sealedRequired({ header: v })).toThrow(expect.objectContaining({ status: 400 }));

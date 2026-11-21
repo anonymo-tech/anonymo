@@ -1,5 +1,9 @@
 import { randomBytes } from "node:crypto";
+import { isIP } from "node:net";
 import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { assertBatchSubmissionPolicy } from "../anonymo/keys/batch-policy.ts";
+import { readKeyPolicy } from "../anonymo/keys/caps.ts";
+import type { KeyRow } from "../api/auth.ts";
 import type { Ctx } from "../context.ts";
 import { COUNCIL_MODEL, RETIRED_COUNCIL_MODEL } from "../router/council.ts";
 import { batchLines, batches, generations } from "../db/schema.ts";
@@ -15,7 +19,7 @@ import { BATCH_LINE, type BatchLine } from "../router/batch-line.ts";
 // Postgres keeps only statuses, counts, costs and generation ids (batches, batch_lines). The lines' requests and answers are
 // sealed with AES-256-GCM under a key derived from APP_SECRET, the batch id and the submitting key's hash, and kept in Redis
 // (or the router's memory without Redis): the requests until the batch finishes, the answers until BATCH_RESULTS_TTL after
-// that. Then both, and the line rows, are deleted.
+// that. The submitting address is sealed with the inputs and deleted when they are.
 
 export type BatchRow = typeof batches.$inferSelect;
 export type BatchApi = "chat";
@@ -45,8 +49,13 @@ export class BatchStore {
 
   private async hset(key: string, entries: [string, string][], ttlMs: number) {
     if (this.redis) {
-      for (let i = 0; i < entries.length; i += 500) await this.redis.hset(key, Object.fromEntries(entries.slice(i, i + 500)));
-      await this.redis.pexpire(key, Math.max(1, ttlMs));
+      // Commit the fields and their expiry together, including the encrypted submitter address.
+      const write = this.redis.multi();
+      for (let i = 0; i < entries.length; i += 500) write.hset(key, Object.fromEntries(entries.slice(i, i + 500)));
+      write.pexpire(key, Math.max(1, ttlMs));
+      const replies = await write.exec();
+      if (!replies) throw new Error("Batch data was not saved.");
+      for (const [error] of replies) if (error) throw error;
       return;
     }
     const cur = this.mem.get(key);
@@ -75,7 +84,15 @@ export class BatchStore {
     for (const [k, v] of this.mem) if (v.expires <= Date.now()) this.mem.delete(k); // sweep entries that outlived their batch
   }
 
-  saveInputs = (b: BatchRow, lines: LineInput[], ttlMs: number) => this.hset(`batch:${b.id}:in`, lines.map((l, i) => [String(i), this.seal(b, l)]), ttlMs);
+  async saveInputs(b: BatchRow, lines: LineInput[], ttlMs: number, submitterIp: string | null) {
+    const entries: [string, string][] = lines.map((line, i) => [String(i), this.seal(b, line)]);
+    if (submitterIp !== null) entries.push(["submitter_ip", this.seal(b, submitterIp)]);
+    await this.hset(`batch:${b.id}:in`, entries, ttlMs);
+  }
+  async submitterIp(b: BatchRow): Promise<string | null> {
+    const raw = await this.hget(`batch:${b.id}:in`, "submitter_ip");
+    return raw ? this.open<string>(b, raw) : null;
+  }
   async input(b: BatchRow, idx: number): Promise<LineInput | null> {
     const raw = await this.hget(`batch:${b.id}:in`, String(idx));
     return raw ? this.open<LineInput>(b, raw) : null;
@@ -166,8 +183,10 @@ export function parseSubmission(ctx: Ctx, body: Record<string, unknown>): { api:
   return { api: api!, lines };
 }
 
-export async function createBatch(ctx: Ctx, key: { keyHash: string; accountId: string }, body: Record<string, unknown>) {
+export async function createBatch(ctx: Ctx, key: KeyRow, body: Record<string, unknown>, callerIp: string) {
   const { api, lines } = parseSubmission(ctx, body);
+  const submitterIp = isIP(callerIp) ? callerIp : null;
+  await assertBatchSubmissionPolicy(ctx, key, submitterIp, lines);
   const [{ n }] = await ctx.db.select({ n: sql<number>`count(*)::int` }).from(batches).where(and(eq(batches.keyHash, key.keyHash), inArray(batches.status, ACTIVE)));
   if (n >= ctx.cfg.batch.maxActive)
     fail(429, `This key already has ${n} unfinished batch${n === 1 ? "" : "es"} (at most ${ctx.cfg.batch.maxActive}). Wait for one to finish or cancel one.`, "batch_limit");
@@ -192,7 +211,9 @@ export async function createBatch(ctx: Ctx, key: { keyHash: string; accountId: s
     resultsExpireAt: null,
     purgedAt: null,
   };
-  await batchStore(ctx).saveInputs(row, lines, storeTtl(ctx, row));
+  // The caller's address is kept (sealed with the inputs) only when the key has an IP allowlist to check it against.
+  const ipAllow = (await readKeyPolicy(ctx.db, key.keyHash))?.ipAllow;
+  await batchStore(ctx).saveInputs(row, lines, storeTtl(ctx, row), Array.isArray(ipAllow) && ipAllow.length ? submitterIp : null);
   await ctx.db.transaction(async (tx) => {
     await tx.insert(batches).values(row);
     for (let i = 0; i < lines.length; i += 500)
@@ -398,11 +419,12 @@ export async function runBatches(ctx: Ctx, dispatch: Dispatch) {
         await recordLine(ctx, b.id, l.idx, { status: "failed", statusCode: null, generationId: null, code: "input_unavailable", message: "The request for this line is no longer available. It was not run or billed.", body: null });
         continue;
       }
-      const marker: BatchLine = { batchId: b.id, idx: l.idx, keyHash: b.keyHash, discountBps: b.discountBps, generationId: l.generationId };
       let status = 0;
       let json: any = null;
       let retryAfter = 0;
       try {
+        const submitterIp = await batchStore(ctx).submitterIp(b);
+        const marker: BatchLine = { batchId: b.id, idx: l.idx, keyHash: b.keyHash, discountBps: b.discountBps, generationId: l.generationId, submitterIp };
         const res = await dispatch(PATH[b.api as BatchApi], { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input.body) }, { [BATCH_LINE]: marker });
         status = res.status;
         retryAfter = Number(res.headers.get("retry-after") ?? 0);

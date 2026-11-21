@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 const guard = resolve(import.meta.dir, "../.githooks/publish-guard.sh");
 test("publication guard pins both identities and rejects co-author attribution and merged history", () => {
   const dir = mkdtempSync(join(tmpdir(), "anonymo-identity-"));
-  const env = { PATH: process.env.PATH!, HOME: process.env.HOME!, TZ: "UTC", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_AUTHOR_NAME: "Anonymo Contributor", GIT_AUTHOR_EMAIL: "contributor@anonymo.invalid", GIT_COMMITTER_NAME: "Anonymo Contributor", GIT_COMMITTER_EMAIL: "contributor@anonymo.invalid" };
+  const env = { PATH: process.env.PATH!, HOME: process.env.HOME!, TZ: "UTC", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_AUTHOR_NAME: "Anonymo", GIT_AUTHOR_EMAIL: "noreply@anonymo.tech", GIT_COMMITTER_NAME: "Anonymo", GIT_COMMITTER_EMAIL: "noreply@anonymo.tech" };
   const run = (cmd: string[], overrides = {}) => Bun.spawnSync(cmd, { cwd: dir, env: { ...env, ...overrides }, stdout: "pipe", stderr: "pipe" }).exitCode;
   try {
     expect(run(["git", "init", "-q"])).toBe(0);
@@ -31,7 +31,7 @@ test("publication guard pins both identities and rejects co-author attribution a
 for (const kind of ["private-path", "private-content"]) {
   test(`publication guard rejects ${kind} introduced only by a merge resolution`, () => {
     const dir = mkdtempSync(join(tmpdir(), "anonymo-merge-guard-"));
-    const env = { PATH: process.env.PATH!, HOME: process.env.HOME!, TZ: "UTC", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_AUTHOR_NAME: "Anonymo Contributor", GIT_AUTHOR_EMAIL: "contributor@anonymo.invalid", GIT_COMMITTER_NAME: "Anonymo Contributor", GIT_COMMITTER_EMAIL: "contributor@anonymo.invalid" };
+    const env = { PATH: process.env.PATH!, HOME: process.env.HOME!, TZ: "UTC", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_AUTHOR_NAME: "Anonymo", GIT_AUTHOR_EMAIL: "noreply@anonymo.tech", GIT_COMMITTER_NAME: "Anonymo", GIT_COMMITTER_EMAIL: "noreply@anonymo.tech" };
     const run = (cmd: string[]) => Bun.spawnSync(cmd, { cwd: dir, env, stdout: "pipe", stderr: "pipe" }).exitCode;
     try {
       expect(run(["git", "init", "-q", "-b", "main"])).toBe(0);

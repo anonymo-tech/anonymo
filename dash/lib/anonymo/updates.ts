@@ -13,6 +13,7 @@
 //   status    the public status page
 //   vanish    disappearing saved chats and the Escape panic key
 //   vault     passphrase protection for saved chats and the local image library
+//   ventures  Anonymo Ventures: the crew of Mos builds a business, live (needs the gateway's /v1/ventures routes)
 //   talk      in chat: hold to talk (transcribed by Anonymo) and read replies aloud with a stock voice
 //   story     long-form writing with chapters and a story bible
 //   memory    device-only character facts and suggestions after replies
@@ -22,9 +23,9 @@
 //   sidebyside one question answered by three models at once, then merged
 //   tickets   hand someone a funded key as a link, a QR code or a printed ticket
 //
-// Demo mode (?demo=1) shows every update, so each can be tried and filmed without a key or a deploy that has it on.
+// Ventures requires an explicit build opt-in. Demo mode shows the other updates, so each can be tried and filmed without a key or a deploy that has it on.
 
-export const UPDATE_IDS = ['history', 'images', 'usage', 'catchup', 'status', 'compare', 'vanish', 'vault', 'video', 'faces', 'talk', 'story', 'memory', 'voice', 'movein', 'sidebyside', 'tickets'] as const;
+export const UPDATE_IDS = ['history', 'images', 'usage', 'catchup', 'status', 'compare', 'vanish', 'vault', 'video', 'faces', 'talk', 'story', 'memory', 'voice', 'movein', 'sidebyside', 'tickets', 'ventures'] as const;
 export type UpdateId = (typeof UPDATE_IDS)[number];
 
 export function parseUpdates(raw: string | undefined): ReadonlySet<UpdateId> {
@@ -32,8 +33,8 @@ export function parseUpdates(raw: string | undefined): ReadonlySet<UpdateId> {
     .split(',')
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
-  if (parts.includes('all')) return new Set(UPDATE_IDS);
-  return new Set(UPDATE_IDS.filter((id) => parts.includes(id)));
+  const all = parts.includes('all');
+  return new Set(UPDATE_IDS.filter((id) => parts.includes(id) || (all && id !== 'ventures')));
 }
 
 export const BUILT_WITH = parseUpdates(process.env.NEXT_PUBLIC_ANONYMO_UPDATES);
@@ -42,4 +43,4 @@ export const BUILT_WITH = parseUpdates(process.env.NEXT_PUBLIC_ANONYMO_UPDATES);
 export const RELEASED: ReadonlySet<UpdateId> = new Set(['faces', 'voice', 'movein', 'sidebyside', 'tickets']);
 
 /** Whether an update is on: released, built with it, or this tab is in demo mode. */
-export const updateOn = (id: UpdateId, demo: boolean) => RELEASED.has(id) || demo || BUILT_WITH.has(id);
+export const updateOn = (id: UpdateId, demo: boolean) => RELEASED.has(id) || BUILT_WITH.has(id) || (demo && id !== 'ventures');

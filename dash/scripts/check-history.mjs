@@ -67,11 +67,11 @@ test('wiping the device removes every anonymo entry and nothing else', () => {
   assert.equal(session.length, 0);
 });
 
-test('updates are off unless listed; "all" turns every one on', () => {
+test('updates are off unless listed; "all" enables updates without an explicit opt-in', () => {
   assert.equal(parseUpdates(undefined).size, 0);
   assert.equal(parseUpdates('').size, 0);
   assert.deepEqual([...parseUpdates(' History, usage ,nope')].sort(), ['history', 'usage']);
-  assert.deepEqual([...parseUpdates('all')], [...UPDATE_IDS]);
+  assert.deepEqual([...parseUpdates('all')], UPDATE_IDS.filter((id) => id !== 'ventures'));
 });
 
 test('switching sessions restores tab-only turns without mixing in saved history', async () => {

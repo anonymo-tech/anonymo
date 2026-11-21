@@ -17,7 +17,7 @@ export function describeAnonymoMoney(docs: Record<string, TableDoc>) {
       daily_cap: "Spend cap since UTC midnight, pico-USD; null for none.",
       monthly_cap: "Spend cap since the 1st of the UTC month, pico-USD; null for none.",
       lifetime_cap: "Spend cap over the key's life, pico-USD; null for none.",
-      ip_allow: { purpose: "Addresses or CIDR ranges the key owner allows calls from, written by the owner. The caller's own address is compared in memory and never stored.", review: rv(["name:network"], "config", "Owner-written allowlist validated as IP/CIDR syntax; it is configuration, not a record of any caller's address.") },
+      ip_allow: { purpose: "Addresses or CIDR ranges the key owner allows for inference and cap changes.", review: rv(["name:network"], "config", "Owner-written allowlist validated as IP/CIDR syntax; it is configuration, not a record of any caller's address.") },
       sealed_only: "Whether the key may call only anonymo-sealed.",
       created_at: CREATED,
     },
@@ -127,7 +127,7 @@ export const anonymoMoneyBodyReaders: ExternalDoc["bodyReaders"] = [
 
 export const anonymoMoneyAddressReader: Touchpoint = {
   file: "src/anonymo/keys/caps.ts",
-  reads: "The caller's address from the shared ingress helper, only for an Anonymo key that has an IP allowlist.",
+  reads: "The caller's address from the shared ingress helper for inference with an IP allowlist.",
   then: "Compared in memory with the owner's CIDR list to allow or refuse the call.",
   kept: "Nothing: not written to Postgres, Redis or a log.",
   evidence: [ev("src/anonymo/keys/caps.ts", "clientIp(c, ctx.cfg.trustProxy)")],

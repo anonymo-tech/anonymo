@@ -49,7 +49,7 @@ describe("POST /keys", () => {
     expect(a.monthlyCap).toBe(usdToPico("20"));
     expect(a.ipAllow).toEqual(["10.0.0.0/8"]);
     // Clearing the daily cap moves the mirror to the monthly window.
-    const r = await m.req("/keys/caps", { method: "PATCH", headers: { ...k.auth, "content-type": "application/json" }, body: JSON.stringify({ daily_usd: null }) });
+    const r = await m.app.request("/keys/caps", { method: "PATCH", headers: { ...k.auth, "content-type": "application/json" }, body: JSON.stringify({ daily_usd: null }) }, { requestIP: () => ({ address: "10.0.0.1" }) });
     expect(r.status).toBe(200);
     const [after] = await m.h.ctx.db.select().from(keys).where(eq(keys.keyHash, k.keyHash));
     expect(after.budget).toBe(usdToPico("20"));

@@ -9,8 +9,8 @@ behavioral fix. See [Run it locally](README.md#run-it-locally) for local setup.
 This repository publishes commits through the shared project identity:
 
 ```bash
-git config --local user.name "Anonymo Contributor"
-git config --local user.email contributor@anonymo.invalid
+git config --local user.name "Anonymo"
+git config --local user.email noreply@anonymo.tech
 git config --local user.useConfigOnly true
 bash scripts/install-hooks.sh
 ```

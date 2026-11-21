@@ -11,11 +11,11 @@ import { z } from "zod";
 import type { Ctx } from "../../context.ts";
 import { ANONYMO_KEY_PREFIX } from "../../chain/keys.ts";
 import { registerRootKey, requireKey } from "../../api/auth.ts";
-import { readJson } from "../../api/common.ts";
+import { clientIp, readJson } from "../../api/common.ts";
 import { fail } from "../../lib/errors.ts";
 import type { MoneyDeps } from "../deposits/services.ts";
 import { depositInstructions } from "../deposits/instructions.ts";
-import { capsInput, capsJson, readCaps, writeCaps } from "./caps.ts";
+import { assertIpAllowed, capsInput, capsJson, readCaps, readKeyPolicy, writeCaps } from "./caps.ts";
 import { issueSiweNonce, verifySiwe } from "./siwe.ts";
 
 export const generateAnonymoKey = () => ANONYMO_KEY_PREFIX + randomBytes(32).toString("hex");
@@ -26,7 +26,7 @@ const siweBody = z.object({ message: z.string().max(4096), signature: z.string()
 async function mint(ctx: Ctx, deps: MoneyDeps, o: { caps?: z.infer<typeof capsInput>; wallet?: string }) {
   const secret = generateAnonymoKey();
   const row = await registerRootKey(ctx, secret);
-  const caps = await writeCaps(ctx.db, row.keyHash, o.caps ?? {}, o.wallet ?? null);
+  const caps = await writeCaps(ctx.db, row.keyHash, o.caps ?? {}, { wallet: o.wallet ?? null });
   return {
     key: secret, // shown once; the router keeps only sha256(key)
     key_hash: row.keyHash,
@@ -68,9 +68,11 @@ export function keysRoutes(app: Hono, ctx: Ctx, deps: MoneyDeps) {
   app.patch("/keys/caps", async (c) => {
     const key = await requireKey(ctx, c.req.header("authorization"));
     if (key.scope === "inference") fail(403, "An inference-only key cannot change caps.", "inference_only");
+    // A cap change must come from an address allowed by the current policy, including when it clears the allowlist.
+    const callerIp = clientIp(c, ctx.cfg.trustProxy);
+    assertIpAllowed((await readKeyPolicy(ctx.db, key.keyHash))?.ipAllow ?? null, callerIp);
     const caps = capsInput.parse(await readJson(c));
-    const cur = await readCaps(ctx.db, key.keyHash);
-    const next = await writeCaps(ctx.db, key.keyHash, caps, cur.wallet);
-    return c.json({ key_hash: key.keyHash, caps: capsJson({ ...next, wallet: cur.wallet }) });
+    const next = await writeCaps(ctx.db, key.keyHash, caps, { callerIp });
+    return c.json({ key_hash: key.keyHash, caps: capsJson(next) });
   });
 }

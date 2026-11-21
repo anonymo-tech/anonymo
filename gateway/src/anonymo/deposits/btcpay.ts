@@ -1,7 +1,7 @@
 // BTC and Lightning through a BTCPay Server store (Greenfield API). A key asks for an invoice in USD and names its refund
 // address (a BTC address or a Lightning address); BTCPay quotes the BTC price. When BTCPay calls the webhook, we check the
 // BTCPay-Sig HMAC over the raw body, then read the invoice back from BTCPay (never trusting the webhook body for amounts)
-// and credit what was actually paid × BTCPay's rate for that payment method, i.e. at the BTCPay quote.
+// and credit settled payments at BTCPay's quoted rate for each payment method.
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -10,10 +10,17 @@ import { log } from "../../lib/util.ts";
 import type { BtcpayConfig } from "./config.ts";
 import { anonymoBtcpayInvoices } from "./schema.ts";
 import type { AnonymoDepositSink } from "./sink.ts";
-import { decimalProductToPico } from "./units.ts";
+import { decimalSumProductToPico } from "./units.ts";
 
 export type BtcpayInvoice = { id: string; status: string; additionalStatus?: string; checkoutLink?: string; metadata?: Record<string, unknown> };
-export type BtcpayPaymentMethod = { paymentMethodId?: string; paymentMethod?: string; rate: string; paymentMethodPaid?: string; totalPaid?: string };
+export type BtcpayPaymentMethod = {
+  paymentMethodId?: string;
+  paymentMethod?: string;
+  rate: string;
+  paymentMethodPaid?: string;
+  totalPaid?: string;
+  payments?: { value: string; status: string }[];
+};
 
 export type BtcpayClient = {
   createInvoice(o: { amountUsd: string; orderId: string }): Promise<BtcpayInvoice>;
@@ -44,13 +51,12 @@ export function verifyBtcpaySignature(secret: string, rawBody: string | Uint8Arr
   return got.length === want.length && timingSafeEqual(got, want);
 }
 
-/** USD value of what was paid on an invoice, at BTCPay's rate per payment method. */
-export function paidUsdPico(methods: BtcpayPaymentMethod[]) {
+/** Greenfield's aggregate paid fields include processing payments. Credit only settled payment values. */
+export function settledUsdPico(methods: BtcpayPaymentMethod[]) {
   let total = 0n;
-  for (const m of methods) {
-    const paid = m.paymentMethodPaid ?? m.totalPaid ?? "0";
-    if (/^0*(\.0*)?$/.test(paid)) continue;
-    total += decimalProductToPico(paid, m.rate);
+  for (const method of methods) {
+    const amounts = method.payments?.filter((payment) => payment.status === "Settled").map((payment) => payment.value) ?? [];
+    if (amounts.length) total += decimalSumProductToPico(amounts, method.rate);
   }
   return total;
 }
@@ -67,8 +73,9 @@ export async function handleBtcpayEvent(db: Db, client: BtcpayClient, sink: Anon
     if (fresh.status === "Expired" || fresh.status === "Invalid") await db.update(anonymoBtcpayInvoices).set({ status: "expired" }).where(eq(anonymoBtcpayInvoices.invoiceId, inv.invoiceId));
     return { status: "pending" as const, invoice: fresh.status };
   }
-  const amount = paidUsdPico(await client.getPaymentMethods(inv.invoiceId));
+  const amount = settledUsdPico(await client.getPaymentMethods(inv.invoiceId));
   if (amount <= 0n) return { status: "pending" as const, invoice: fresh.status };
+  // The invoice ref allows one credit. Later settlements require reconciliation until the sink can atomically post a delta.
   const r = await sink.creditWith(
     { keyHash: inv.keyHash, chain: inv.refundChain as "btc" | "ln", amount, ref: `btcpay:${inv.invoiceId}`, sourceAddr: inv.refundAddr },
     { token: "BTC" },
