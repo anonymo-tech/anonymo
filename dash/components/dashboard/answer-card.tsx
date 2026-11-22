@@ -1,5 +1,6 @@
 'use client';
 
+import { isAnonymoModel } from '@/lib/anonymo/chat-models';
 import { characterDestination, setupHref } from '@/lib/anonymo/setup-return';
 
 // One answer in the thread, kept from Conclave's answer card: a model tab bar, the answer body, and a footer with what
@@ -48,7 +49,7 @@ export function AnswerText({ text, streaming = false }: { text: string; streamin
 }
 
 function PrivacyChip({ turn }: { turn: Turn }) {
-  // "Fully private" only for anonymo-sealed with its attestation; every other route is "zero retention" (§10).
+  if (!isAnonymoModel(turn.model)) return <span className="chip" title="The selected provider’s data policy applies.">Regular Chat</span>;
   if (turn.model === 'anonymo-sealed' && turn.receipt?.attestation_quote_hash)
     return <span className="chip chip-signal">Fully private · attested enclave</span>;
   if (turn.model === 'anonymo-sealed') return <span className="chip">Sealed · waiting for attestation</span>;

@@ -2,6 +2,7 @@
 // Secrets (BTCPay API key and webhook secret, TronGrid key) live only in memory and are never logged or returned.
 
 import { z } from "zod";
+import { NYMO_CURVE_MARKET } from "./nymo-curve.ts";
 
 const flag = z.union([z.boolean(), z.string()]).transform((v) => (typeof v === "boolean" ? v : ["1", "true", "yes", "on"].includes(v.toLowerCase())));
 const evmAddress = z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((s) => s.toLowerCase() as `0x${string}`);
@@ -68,7 +69,9 @@ const btcpaySchema = z.object({
 });
 export type BtcpayConfig = z.infer<typeof btcpaySchema>;
 
-/** Pons V2 on Robinhood Chain: every graduated launch pool is a Uniswap v4 pool with this fee, spacing and hook. */
+export const NYMO_TOKEN = NYMO_CURVE_MARKET.token;
+export const RHC_USDG = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
+/** Graduated Pons V2 launch pools on Robinhood Chain use this fee, spacing and hook. */
 export const PONS_V4 = { stateView: "0xf3334192d15450cdd385c8b70e03f9a6bd9e673b", fee: 0, tickSpacing: 200, hooks: "0xe5e702641ea86f4ae6cc3cdaed2b886f976be044" } as const;
 
 /**
@@ -77,6 +80,8 @@ export const PONS_V4 = { stateView: "0xf3334192d15450cdd385c8b70e03f9a6bd9e673b"
  * `pool` (a Uniswap v3 pool address) is for chains without Pons, such as testnet.
  */
 const coinSchema = z.object({
+  /** NYMO graduates into a native-ETH pool; Chainlink converts ETH to USD. */
+  market: z.literal("nymo-native-chainlink").optional(),
   rpcUrl: z.string().url(),
   chainId: z.number().int().positive().default(4663),
   /** CoinPay: emits Paid(keyCommit, payer, amount) after burning the coins. */
@@ -107,7 +112,13 @@ const coinSchema = z.object({
   confirmations: z.number().int().min(0).max(10_000).default(12),
   startBlock: z.number().int().min(0).default(0),
   maxRange: z.number().int().min(1).max(100_000).default(2_000),
-});
+}).refine((c) => !c.market || (c.chainId === 4663 && c.token.address === NYMO_TOKEN &&
+  c.token.symbol === "NYMO" && c.token.decimals === 18 && c.quote.address === RHC_USDG &&
+  c.quote.symbol === "USDG" && c.quote.decimals === 6 && !c.pool &&
+  c.v4.stateView === PONS_V4.stateView && c.v4.fee === PONS_V4.fee &&
+  c.v4.tickSpacing === PONS_V4.tickSpacing && c.v4.hooks === PONS_V4.hooks &&
+  c.confirmations > 0 && c.twapSeconds >= 1800 && Number(c.maxUsdPerPayment) > 0),
+  "NYMO needs the pinned Robinhood mainnet market, confirmations, and at least a 30-minute price window");
 export type CoinConfig = z.infer<typeof coinSchema>;
 
 export const depositsEnv = z.object({

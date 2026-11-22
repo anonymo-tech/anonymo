@@ -1,85 +1,100 @@
 'use client';
 
-import { ChevronDown, ShieldCheck } from 'lucide-react';
+import { Box, Check, ChevronDown, Search, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import type { AnonymoModelId } from '@/lib/anonymo/types';
+import { createPortal } from 'react-dom';
+import { chatModelName, publishedPpqChat, searchChatModels, uncensoredChatModel } from '@/lib/anonymo/chat-models';
+import type { AnonymoModelId, ModelInfo } from '@/lib/anonymo/types';
+import './model-picker.css';
 
-export const MODEL_CHOICES: { id: AnonymoModelId; summary: string }[] = [
-  {
-    id: 'anonymo-1',
-    summary: 'The best uncensored route for the request. Refusals reroute to another model family and are refunded.',
-  },
-  { id: 'anonymo-rp', summary: 'Cheap long-context roleplay with character cards and lorebooks.' },
-  {
-    id: 'anonymo-council',
-    summary: 'Three model families answer and check each other, then merge into one reply. Slower, priced at 4–5×.',
-  },
-  {
-    id: 'anonymo-sealed',
-    summary: 'Hardware-attested enclaves only. Fails instead of downgrading; the receipt carries the attestation.',
-  },
+export const MODEL_CHOICES: { id: AnonymoModelId; name: string; summary: string }[] = [
+  { id: 'anonymo-1', name: 'Anonymo 1', summary: 'Automatic routing for everyday chat.' },
+  { id: 'anonymo-rp', name: 'Anonymo RP', summary: 'Long-context roleplay with character cards and lorebooks.' },
+  { id: 'anonymo-council', name: 'Anonymo Council', summary: 'Three model families compare answers. Priced at 4–5×.' },
+  { id: 'anonymo-sealed', name: 'Anonymo Sealed', summary: 'Requires a hardware-attested route.' },
 ];
 
-export function ModelPicker({
-  value,
-  onChange,
-  live,
-}: {
-  value: AnonymoModelId;
-  onChange: (id: AnonymoModelId) => void;
+const familyLogos: [RegExp, string][] = [
+  [/\bdeepseek/i, 'deepseek.svg'], [/\bgemma/i, 'gemma.svg'], [/\bglm(?:[-\s\d]|$)|^~?z-ai\//i, 'glm.svg'],
+  [/\bqwen/i, 'qwen.svg'], [/\bclaude|^~?anthropic\//i, 'claude.svg'], [/\bgemini/i, 'gemini.svg'],
+  [/^~?openai\//i, 'openai.svg'], [/\bmistral|\bmixtral/i, 'mistral.svg'], [/\bllama|^~?meta-llama\//i, 'meta.svg'],
+];
+
+function directLogo(model: ModelInfo) {
+  const name = chatModelName(model);
+  if (/^venice(?:\s|:)/i.test(name)) return '/model-logos/venice.svg';
+  const family = familyLogos.find(([pattern]) => pattern.test(`${model.id} ${name}`));
+  return family ? `/model-logos/${family[1]}` : null;
+}
+
+function ModelLogo({ src }: { src: string | null }) {
+  return <span className="model-logo" aria-hidden="true">{src ? <img src={src} width="24" height="24" alt="" /> : <Box size={20} />}</span>;
+}
+
+type Props = {
+  value: string;
+  onChange: (id: string) => void;
   live: ReadonlySet<string> | null;
-}) {
+  models: readonly ModelInfo[];
+  catalogError: boolean;
+  onRefresh: () => void;
+};
+
+export function ModelPicker({ value, onChange, live, models, catalogError, onRefresh }: Props) {
   const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
+  const [search, setSearch] = useState('');
+  const [uncensoredOnly, setUncensoredOnly] = useState(false);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!open) return;
-    const close = (event: MouseEvent | KeyboardEvent) => {
-      if (event instanceof KeyboardEvent ? event.key === 'Escape' : !root.current?.contains(event.target as Node))
-        setOpen(false);
-    };
-    document.addEventListener('mousedown', close);
-    document.addEventListener('keydown', close);
-    return () => {
-      document.removeEventListener('mousedown', close);
-      document.removeEventListener('keydown', close);
-    };
+    const panel = dialog.current;
+    panel?.showModal();
+    panel?.focus();
+    return () => { panel?.close(); trigger.current?.focus(); };
   }, [open]);
-  return (
-    <div className="picker" ref={root}>
-      <button type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        {value === 'anonymo-sealed' && <ShieldCheck size={14} aria-hidden="true" />}
-        AI · {value}
-        <ChevronDown size={14} aria-hidden="true" />
-      </button>
-      {open && (
-        <div className="picker-menu" role="menu" aria-label="Model">
-          {MODEL_CHOICES.map((m) => {
-            const off = live !== null && !live.has(m.id);
-            return (
-            <button
-              key={m.id}
-              type="button"
-              role="menuitemradio"
-              aria-checked={m.id === value}
-              aria-disabled={off || undefined}
-              disabled={off}
-              onClick={() => {
-                onChange(m.id);
-                setOpen(false);
-              }}
-            >
-              <span className="name">
-                <span className="id">{m.id}</span>
-                {m.id === 'anonymo-sealed' && <span className="chip chip-signal">attested</span>}
-                {m.id === 'anonymo-council' && <span className="chip">4–5×</span>}
-                {off && <span className="chip">not live yet</span>}
-              </span>
-              <span className="desc">{m.summary}</span>
-            </button>
-            );
-          })}
+
+  const direct = models.find(m => m.id === value);
+  const preset = MODEL_CHOICES.find(m => m.id === value);
+  const selectedName = direct ? chatModelName(direct) : preset?.name ?? value;
+  const selectedLogo = direct ? directLogo(direct) : preset ? '/favicon.svg' : null;
+  const featured = models.filter(m => uncensoredChatModel(m) && m.availability !== 'temporarily_unavailable');
+  const visible = searchChatModels(uncensoredOnly ? featured : models, search);
+  const aliases = uncensoredOnly ? [] : MODEL_CHOICES.filter(m => `${m.id} ${m.name} ${m.summary}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const select = (id: string) => { onChange(id); setOpen(false); };
+  const option = (id: string, name: string, logo: string | null, disabled: boolean, context: string) => <li key={id}>
+    <button type="button" className="model-option" title={`${id} · ${context}`} aria-description={`${id}. ${context}`} aria-pressed={id === value} disabled={disabled} onClick={() => select(id)}>
+      <ModelLogo src={logo} />
+      <span className="model-name">{name}</span>
+      {id === value && <Check className="model-check" size={16} aria-hidden="true" />}
+    </button>
+  </li>;
+  return <div className="picker model-picker">
+    <button ref={trigger} type="button" aria-haspopup="dialog" aria-expanded={open} title={value} aria-label={`Choose model: ${selectedName}`}
+      onClick={() => { setOpen(true); setSearch(''); setUncensoredOnly(false); }}>
+      <ModelLogo src={selectedLogo} /><span>{selectedName}</span><ChevronDown size={14} aria-hidden="true" />
+    </button>
+    {open && createPortal(<dialog className="chat-model-dialog" aria-label="Choose a model" tabIndex={-1} ref={dialog}
+      onCancel={() => setOpen(false)} onClick={event => { if (event.target === dialog.current) setOpen(false); }}>
+      <div className="chat-model-panel">
+        <header><h2>Choose a model</h2><button type="button" aria-label="Close model picker" onClick={() => setOpen(false)}><X size={20} /></button></header>
+        <label className="model-search"><Search size={17} aria-hidden="true" /><input type="search" placeholder="Search models" aria-label="Search models" value={search} onChange={event => setSearch(event.target.value)} /></label>
+        <div className="model-filters" aria-label="Model filters" role="group">
+          <button type="button" aria-pressed={!uncensoredOnly} onClick={() => setUncensoredOnly(false)}>All text models</button>
+          <button type="button" aria-pressed={uncensoredOnly} onClick={() => setUncensoredOnly(true)}>Uncensored</button>
         </div>
-      )}
-    </div>
-  );
+        <div className="model-results">
+          {aliases.length > 0 && <ul aria-label="Anonymo models">{aliases.map(m => option(m.id, m.name, '/favicon.svg', live !== null && !live.has(m.id), m.summary))}</ul>}
+          {visible.length > 0 && <ul aria-label="Direct models">{visible.map(m => {
+            const logo = directLogo(m);
+            const context = publishedPpqChat(m) || m.ppq_uncensored === true ? 'Regular Chat via PPQ. Provider data policy applies.' : 'Regular Chat. Provider data policy applies.';
+            return option(m.id, chatModelName(m), logo, m.availability === 'temporarily_unavailable', context);
+          })}</ul>}
+          {catalogError && <p role="status">The live model list is unavailable. <button type="button" onClick={onRefresh}>Retry</button></p>}
+          {!catalogError && live === null && <p role="status">Loading live models…</p>}
+          {live && !aliases.length && !visible.length && <p role="status">{uncensoredOnly && !featured.length ? 'No verified uncensored direct models are available right now.' : 'No matching text models.'}</p>}
+        </div>
+      </div>
+    </dialog>, document.body)}
+  </div>;
 }

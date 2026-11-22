@@ -8,6 +8,7 @@ import { and, eq } from "drizzle-orm";
 import type { Ctx } from "../context.ts";
 import { apps, byokKeys, generations, savedRoutes } from "../db/schema.ts";
 import type { Candidate, ModelRow, Modifier } from "../catalog/catalog.ts";
+import { ppqChatModel } from "../providers/ppq-chat.ts";
 import { ApiError, fail, isApiError } from "../lib/errors.ts";
 import { floorInputOf } from "../anonymo/services.ts";
 import { floorErrorReason } from "../anonymo/floor/guard-client.ts";
@@ -18,6 +19,7 @@ import { type Pico, maxPico, picoToUsd, picoToUsdString, usdToPico } from "../li
 import { canonical, canonicalJson, decrypt, genId, log, sha256 } from "../lib/util.ts";
 import { reserve, release, settle } from "../ledger/ledger.ts";
 import { reserveFirstChat, startFirstChat, finishFirstChat } from "../anonymo/keys/first-chat.ts";
+import { offerLane } from "../router/regular-ppq.ts";
 import { selectProviders, type ProviderPrefs } from "../router/select.ts";
 import { isAnonymoRoute } from "../anonymo/models.ts";
 import { isRestricted } from "../router/lane.ts";
@@ -145,7 +147,7 @@ export function reasoningLast<T extends Pick<Candidate, "tier" | "supportedParam
 
 function selectTargets(
   ctx: Ctx,
-  o: { resolved: { model: ModelRow; modifiers: Set<Modifier> }[]; prefs: ProviderPrefs; params: string[]; promptTokens: number; byok: Map<string, string>; disc: DisclosureRequest; maxOut?: number | null },
+  o: { resolved: { model: ModelRow; modifiers: Set<Modifier> }[]; prefs: ProviderPrefs; params: string[]; promptTokens: number; byok: Map<string, string>; disc: DisclosureRequest; maxOut?: number | null; regularTextChat?: boolean },
 ) {
   const { resolved, prefs, params, promptTokens, byok, disc } = o;
   const strict = disc.max !== "any";
@@ -165,6 +167,7 @@ function selectTargets(
       attestationMaxAgeMs: ctx.cfg.attestation.intervalMs * 3,
       disclosure: (id) => profileOf(ctx.catalog.disclosure.get(id)),
       modelLane: ctx.catalog.laneOf(r.model),
+      regularTextChat: o.regularTextChat ?? true,
       attestedBonus: ctx.cfg.routing.attestedBonus,
       rand: ctx.rand,
     });
@@ -207,8 +210,10 @@ const FIRST_CHAT_FIELDS = new Set(["model", "messages", "stream", "max_tokens", 
 const FIRST_CHAT_MAX_ATTEMPTS = 2; // allow the normal refusal retry on another family
 const FIRST_CHAT_ROUTE_BUDGET = usdToPico("0.005"); // at most one cent across both attempts
 
-function firstChatInputBound(body: Record<string, unknown>): number | null {
-  if (body.model !== "anonymo-1" || Object.keys(body).some((field) => !FIRST_CHAT_FIELDS.has(field))) return null;
+export function firstChatInputBound(body: Record<string, unknown>): number | null {
+  const model = body.model;
+  if (typeof model !== "string" || (model !== "anonymo-1" && !ppqChatModel(model))) return null;
+  if (Object.keys(body).some((field) => !FIRST_CHAT_FIELDS.has(field))) return null;
   const messages = body.messages;
   if (!Array.isArray(messages) || messages.length > 16) return null;
   let userMessages = 0;
@@ -401,7 +406,10 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   // The response cache keeps prompts and answers in the router, and a hit is served without any provider, so a
   // request with a disclosure ceiling never reads or writes it. Nor does a restricted variant (abliterated,
   // native_low_refusal): those are served only under attested retention, and the router must not keep their prompts.
-  const cacheMode: CacheMode | null = !strict && !resolved.some((r) => isRestricted(ctx.catalog.laneOf(r.model).variant)) && (cacheSpec?.mode === "exact" || cacheSpec?.mode === "semantic") ? cacheSpec.mode : null;
+  const cacheMode: CacheMode | null = !strict && !resolved.some((r) => {
+    const lane = ctx.catalog.laneOf(r.model);
+    return isRestricted(lane.variant) || ctx.catalog.offers(r.model.id).some((offer) => isRestricted(offerLane(lane, offer.weightLane).variant));
+  }) && (cacheSpec?.mode === "exact" || cacheSpec?.mode === "semantic") ? cacheSpec.mode : null;
   // `user` is forwarded to the provider as the end-user identity; a response made for one end user
   // must never be replayed to another behind the same key (exact or semantic).
   const cacheScope = billing ? `${billing.accountId}:policy-v3:${sha256(canonicalJson({ key: key?.keyHash ?? null, user: body.user ?? null, guardrails: guardCfg, provider: prefs, kind, models: resolved.map((r) => ({ id: r.model.id, modifiers: [...r.modifiers].sort() })), ...(savedRoute ? { route: savedRoute } : {}), ...(presetMeta ? { preset: presetMeta } : {}) }))}` : "";
@@ -417,8 +425,8 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   const alternatives = { resolved, prefs, params, promptTokens, byok, body, allowed }; // B121
   // Sealed: only attested, fresh routes; otherwise 409 sealed_unavailable before any hold or provider call (WS09).
   let { targets, excluded } = sealed
-    ? sealedSelection(ctx, true, () => selectTargets(ctx, { resolved, prefs, params, promptTokens, byok, disc, maxOut: outputBudgetOf(body) }))
-    : selectWithSuggestions(() => selectTargets(ctx, { resolved, prefs, params, promptTokens, byok, disc, maxOut: outputBudgetOf(body) }), ctx, alternatives); // B121
+    ? sealedSelection(ctx, true, () => selectTargets(ctx, { resolved, prefs, params, promptTokens, byok, disc, maxOut: outputBudgetOf(body), regularTextChat: kind === "chat" }))
+    : selectWithSuggestions(() => selectTargets(ctx, { resolved, prefs, params, promptTokens, byok, disc, maxOut: outputBudgetOf(body), regularTextChat: kind === "chat" }), ctx, alternatives); // B121
   if (!targets.length)
     throw addSuggestions(new ApiError(404, "No providers match this request's model and routing preferences.", "no_providers", { excluded: excluded.slice(0, 50) }), ctx, alternatives); // B121
 
@@ -450,7 +458,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
     if (!isApiError(e) || e.type !== "insufficient_credits") throw e;
     if (paywithNote) e.metadata = { ...e.metadata, pay_with: paywithNote };
     if (!firstChatRequested || billing.mode !== "prepaid" || batchLine || alias || savedRoute || preset || character ||
-        sealed || strict || disc.lane !== "public" || cacheSpec || resolved.length !== 1 || primary.id !== "anonymo-1" ||
+        sealed || strict || disc.lane !== "public" || cacheSpec || resolved.length !== 1 || primary.id !== body.model ||
         c.req.header("x-wallet-auth") || paymentHeaderOf(c)) throw e;
     const inputBound = firstChatInputBound(body);
     if (inputBound === null) throw e;
@@ -462,6 +470,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
     const eligible = targets.map((target) => ({
       ...target,
       ordered: reasoningLast(target.ordered.filter((cand) =>
+        (primary.id === "anonymo-1" || cand.providerModelId === primary.id) &&
         !byok.has(cand.providerId) && (cand.ctx ?? target.model.ctx) >= inputBound + maxOutput &&
         priceUsage({ ...cand, pricePrompt: maxPico(cand.pricePrompt, cand.priceCacheWrite ?? 0n, cand.priceCacheRead ?? 0n),
           priceCompletion: maxPico(cand.priceCompletion, cand.priceReasoning) }, target.model, boundedUsage, "prepaid", fees, false).total <= FIRST_CHAT_ROUTE_BUDGET,

@@ -11,9 +11,17 @@ import { parseLane, type Lane } from "../router/disclosure.ts";
 import { VARIANTS, isVariant, type Variant } from "../router/lane.ts";
 import { servedDisclosure, servedPolicyHash } from "./disclosure.ts";
 import type { DisclosureClass } from "../router/disclosure.ts";
+import { ordinaryPpqTransport, regularPpqOffer } from "../router/regular-ppq.ts";
 import { laneJson, offerEligible } from "./lane.ts";
 import { latestAttempts, summarizeAttestation } from "./provider-attestation.ts";
 import { anonymoModelFields, refusalStats30d } from "../anonymo/trust/stats.ts"; // WS09
+
+function regularChatMetadata(ctx: Ctx, m: ModelRow, offers: Candidate[]) {
+  const match = offers.find(o => o.providerModelId === m.id && regularPpqOffer(o) &&
+    !modelAvailability(ctx, [o]).availability && !ctx.health.outage(m.id, o.providerId));
+  const reviewed = match && regularPpqOffer(match);
+  return reviewed ? { anonymo_chat: { name: reviewed.name, category: "uncensored", source: "ppq", standard_chat: true, privacy_level: reviewed.privacyLevel } } : {};
+}
 
 export function offerPricing(o: Candidate) {
   return {
@@ -164,8 +172,8 @@ export function modelJson(ctx: Ctx, m: ModelRow) {
     per_request_limits: null,
     supported_parameters: supported,
     data_policy: {
-      zdr_available: policies.some((p) => p.zdr),
-      no_training_available: policies.some((p) => !p.training),
+      zdr_available: offers.some((o, i) => policies[i].zdr && ordinaryPpqTransport(o)?.privacyLevel !== "anon"),
+      no_training_available: policies.some((p, i) => !p.training && ordinaryPpqTransport(offers[i])?.privacyLevel !== "anon"),
       providers: offers.length,
     },
     quantization: [...new Set(offers.map((o) => o.quant))],
@@ -180,6 +188,7 @@ export function modelJson(ctx: Ctx, m: ModelRow) {
     datacenter_region: datacenterRegion(offers),
     creator: m.creator ?? null,
     royalty_bps: m.creator ? m.royaltyBps : 0,
+    ...regularChatMetadata(ctx, m, offers),
     ...laneJson(ctx, m),
     ...capabilityJson(ctx, m, offers),
     ...available, // ON5: only present when every eligible endpoint has exhausted its account.
@@ -252,7 +261,7 @@ export function modelsRoutes(app: Hono, ctx: Ctx) {
         quality_score: Number(h.quality.toFixed(3)),
         latency_last_30m: h.stats?.latency ?? null,
         throughput_last_30m: h.stats?.throughput ?? null,
-        data_policy: o.provider.dataPolicy,
+        data_policy: ordinaryPpqTransport(o)?.privacyLevel === "anon" ? { zdr: false } : o.provider.dataPolicy,
         attested: attestationFresh(o, ctx.cfg.attestation.intervalMs * 3, ctx.cfg.production),
         attestation_hash: o.provider.attestationHash ?? null,
         // True only while the attestation is fresh and it reported the in-enclave classifier as enabled.

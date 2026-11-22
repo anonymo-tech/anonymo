@@ -4,8 +4,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import fc from 'fast-check';
 import { decodeFunctionData, domainSeparator, toFunctionSelector, toHex } from 'viem';
+import { readNymoQuote, sameNymoQuote } from '../lib/anonymo/nymo-quote.ts';
 import { DepositRouterAbi } from '../../gateway/src/chain/abis.ts';
-import { COIN_PAY_ABI, DEPOSIT_ROUTER_ABI, depositStablecoin, describeWalletError, ensureChain, formatUnits, permitDomain, quoteCoins, rowForTx, stableUnits } from '../lib/anonymo/wallet.ts';
+import { COIN_PAY_ABI, DEPOSIT_ROUTER_ABI, depositStablecoin, describeWalletError, ensureChain, formatUnits, payWithCoin, permitDomain, quoteCoins, rowForTx, stableUnits } from '../lib/anonymo/wallet.ts';
 
 const COIN = { price_usd: '0.0125', max_usd_per_payment: '250', token: { decimals: 18 } };
 
@@ -122,7 +123,7 @@ void test('the deposit row for a transaction is found by its hash in the ref', (
 });
 
 // Phones: no browser wallet, so Funds opens /pay inside a wallet app. The link names the key only by its keyCommit.
-import { isMobileBrowser, parsePayLink, payUrl, walletAppLinks } from '../lib/anonymo/wallet-links.ts';
+import { availableNymoRail, isMobileBrowser, parsePayLink, payUrl, walletAppLinks } from '../lib/anonymo/wallet-links.ts';
 
 void test('pay links: round trip, only the keyCommit, wallet app links wrap the whole URL, and phones are detected', async () => {
   const keyCommit = `0x${'ab'.repeat(32)}`;
@@ -206,4 +207,106 @@ void test('stablecoin payment sends the selected units and commitment to the rou
     ...options, provider: { request: async () => { throw Object.assign(new Error('User rejected'), { code: 4001 }); } },
   }), (error) => /declined/.test(describeWalletError(error)));
   assert.deepEqual(events, ['connecting']);
+});
+
+const NYMO = '0xafe293638b064d7786c5326a071520358c3f3198';
+const publicCoinRail = {
+  chain: 'rhc', chain_id: 4663, token: { address: NYMO, symbol: 'NYMO', decimals: 18 },
+  coin_pay: `0x${'cc'.repeat(20)}`, confirmations: 12, price_usd: '0.0125', max_usd_per_payment: '250',
+};
+
+void test('NYMO wallet links carry only the key commitment, chain, symbol and chosen USD amount', () => {
+  const keyCommit = `0x${'ab'.repeat(32)}`;
+  const handoff = { keyCommit, chain: 'rhc', token: 'NYMO', amount: '25.50' };
+  const url = new URL(payUrl('https://anonymo.example', handoff));
+  assert.deepEqual([...url.searchParams.keys()], ['k', 'chain', 'token', 'amount']);
+  for (const key of ['coin_pay', 'token_address', 'price_usd', 'quote', 'chain_id', 'key_commit', 'understood']) {
+    url.searchParams.set(key, 'untrusted');
+  }
+  assert.deepEqual(parsePayLink(url.search), handoff);
+  for (const chain of ['base', 'arbitrum']) {
+    assert.equal(payUrl('https://anonymo.example', { ...handoff, chain }), '');
+    url.searchParams.set('chain', chain);
+    assert.equal(parsePayLink(url.search), null);
+  }
+});
+
+void test('only a correctly configured NYMO payment contract and a usable gateway quote authorize payment', () => {
+  assert.equal(availableNymoRail(publicCoinRail), true);
+  for (const bad of [null, undefined,
+    ...[{ chain: 'base' }, { chain_id: 46630 }, { coin_pay: NYMO }, { coin_pay: '' },
+      { coin_pay: `0x${'0'.repeat(40)}` }, { coin_pay: `0x${'0'.repeat(36)}dead` },
+      { max_usd_per_payment: 'bad' }].map(fields => ({ ...publicCoinRail, ...fields })),
+    ...[{ address: `0x${'11'.repeat(20)}` }, { decimals: 6 }, { symbol: 'ANMO' }]
+      .map(fields => ({ ...publicCoinRail, token: { ...publicCoinRail.token, ...fields } })),
+  ]) assert.equal(availableNymoRail(bad), false);
+  assert.equal(quoteCoins(10_000_000, { ...publicCoinRail, price_usd: null }).ok, false);
+  assert.equal(quoteCoins(999_000_000, publicCoinRail).ok, false);
+});
+
+void test('an executable NYMO quote binds the exact burn, contract, chain and credit terms', async () => {
+  const quote = { ...publicCoinRail, amount_raw: '1999999999999999997', estimated_credit_usd: '1.2345', price_usd: '0.61725' };
+  const read = response => readNymoQuote({ nymoQuote: async target => {
+    assert.equal(target, '1.2345');
+    return response;
+  } }, publicCoinRail, 1_234_500);
+  assert.deepEqual(await read(quote), quote);
+  assert.equal(sameNymoQuote(quote, { ...quote, block: 123, estimated_credit_usd: '1.234500' }), true);
+  for (const terms of [{ amount_raw: '2' }, { estimated_credit_usd: '1.2' }, { coin_pay: `0x${'ce'.repeat(20)}` }, { confirmations: 13 }]) {
+    assert.equal(sameNymoQuote(quote, { ...quote, ...terms }), false);
+  }
+  for (const invalid of [{ amount_raw: '0' }, { amount_raw: String(2n ** 256n) }, { amount_raw: '1.2' },
+    { chain_id: 1 }, { token: null }, { coin_pay: NYMO }, { coin_pay: `0x${'ce'.repeat(20)}` },
+    { confirmations: 0 }, { estimated_credit_usd: '0' }, { price_usd: '0x5' }]) {
+    await assert.rejects(read({ ...quote, ...invalid }));
+  }
+});
+
+void test('NYMO wallet signs the quoted burn for the configured CoinPay, and rejection sends no payment', async () => {
+  const amount = 78_012_345_678_901_234_567n;
+  const hash = `0x${'dd'.repeat(32)}`;
+  const keyCommit = `0x${'ab'.repeat(32)}`;
+  const from = `0x${'12'.repeat(20)}`;
+  const broadcast = [];
+  const requests = [];
+  let declined = true;
+  const provider = {
+    async request({ method, params }) {
+      if (method === 'eth_requestAccounts') return [from];
+      if (method === 'eth_chainId') return '0x1237';
+      if (method === 'eth_getCode') return '0x6000';
+      if (method === 'eth_call') {
+        assert.equal(params[0].to.toLowerCase(), NYMO);
+        assert.ok(['balanceOf(address)', 'allowance(address,address)'].some(fn => toFunctionSelector(fn) === params[0].data.slice(0, 10)));
+        return toHex(amount, { size: 32 });
+      }
+      if (method === 'eth_sendTransaction') {
+        requests.push(params[0]);
+        if (declined) throw Object.assign(new Error('User rejected request'), { code: 4001 });
+        return hash;
+      }
+      if (method === 'eth_getTransactionReceipt') return { status: '0x1', logs: [], transactionHash: hash };
+      throw new Error(`Unexpected wallet RPC ${method}`);
+    },
+  };
+  const options = { provider, token: publicCoinRail.token, coinPay: publicCoinRail.coin_pay, amount, keyCommit,
+    beforeBurn: async () => {},
+    network: { chainId: 4663, name: 'Robinhood Chain', rpcUrl: '', explorer: null, nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 } },
+    onBroadcast: value => broadcast.push(value),
+  };
+  await assert.rejects(payWithCoin({ ...options, beforeBurn: async () => { throw new Error('Quote changed'); } }), /Quote changed/);
+  assert.deepEqual(requests, []);
+  await assert.rejects(payWithCoin(options), error => /declined/.test(describeWalletError(error)));
+  assert.deepEqual(broadcast, []);
+  declined = false;
+  const result = await payWithCoin(options);
+  assert.equal(result.hash, hash);
+  assert.deepEqual(broadcast, [hash]);
+  assert.equal(requests.length, 2);
+  for (const request of requests) {
+    assert.equal(request.to.toLowerCase(), publicCoinRail.coin_pay);
+    const call = decodeFunctionData({ abi: COIN_PAY_ABI, data: request.data });
+    assert.equal(call.functionName, 'pay');
+    assert.deepEqual(call.args, [amount, keyCommit]);
+  }
 });

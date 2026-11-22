@@ -78,7 +78,7 @@ test('a visitor can connect a key, fund it, chat and inspect the receipt from mo
       .getByRole('heading', { name: 'Start your first chat' })
       .waitFor();
     await page.getByRole('link', { name: 'Open chat', exact: true }).click();
-    await page.getByRole('button', { name: 'AI · anonymo-1', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Choose model: Anonymo 1', exact: true }).waitFor();
     assert.equal(await page.locator('.dock-composer .ai-notice').count(), 0);
     await page.locator('#composer').fill('Give me a short greeting.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();

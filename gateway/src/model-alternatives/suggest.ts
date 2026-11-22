@@ -40,6 +40,7 @@ function select(ctx: Ctx, model: ModelRow, input: SuggestionInput, modifiers = i
   return selectProviders({ modelId: model.id, offers: ctx.catalog.offers(model.id).map(o => ignoreAvailability ? { ...o, status: "live", provider: { ...o.provider, status: "live" } } : o), prefs: input.prefs, modifiers,
     requestParams: input.params, estimatedTokens: input.promptTokens, byokProviders: new Set(input.byok.keys()),
     health: ignoreAvailability ? { outage: () => false, uptime30d: (m, p) => ctx.health.uptime30d(m, p), quality: (m, p) => ctx.health.quality(m, p), stats: (m, p) => ctx.health.stats(m, p) } : ctx.health, production: ctx.cfg.production, attestationMaxAgeMs: ctx.cfg.attestation.intervalMs * 3,
+    regularTextChat: Array.isArray(input.body.messages),
     disclosure: id => profileOf(ctx.catalog.disclosure.get(id)), modelLane: ctx.catalog.laneOf(model), rand: () => 0.5 });
 }
 

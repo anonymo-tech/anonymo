@@ -67,11 +67,13 @@ test('a phone user sets up Funds, opens a private payment link and sees confirme
     await main.getByText('Deposits and withdrawals will appear here.').waitFor();
     await main.getByRole('button', { name: 'Add funds', exact: true }).tap();
 
-    await main.getByText('Change payment method', { exact: true }).tap();
     const method = main.getByRole('combobox', { name: 'Payment method' });
+    await main.getByRole('button', { name: 'NYMO', exact: true }).tap();
+    await main.getByText('800 NYMO', { exact: true }).waitFor();
+    await main.getByText('This preview uses a simulated coin payment.').waitFor();
+    assert.equal(await main.getByRole('link', { name: /Review NYMO payment/ }).count(), 0);
     await method.selectOption('btc');
     await main.getByRole('button', { name: 'Get invoice' }).waitFor();
-    await main.getByText('Change payment method', { exact: true }).tap();
     await method.selectOption('evm');
     const amount = main.getByLabel('Amount (USD)', { exact: true });
     await main.getByRole('button', { name: '$25', exact: true }).tap();

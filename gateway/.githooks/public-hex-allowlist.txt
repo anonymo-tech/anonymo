@@ -57,3 +57,6 @@
 0xc902d0d6e7fedbd39c4828626bc6d979c6bdc2d070ad25d8197fc603b87ac19a
 # First 32 bytes of the published ERC-1577 IPFS contenthash example.
 0xe3010170122029f2d17be6139079dc48696d1f582a8530eb9805b561eda517e2
+
+# Public Uniswap v4 pool ID derived from the canonical NYMO/native ETH Pons pool key on chain 4663.
+0x050246a0bd54dd6af3d9fef4043d12f634884c38a9e46591cebb941fde311a60

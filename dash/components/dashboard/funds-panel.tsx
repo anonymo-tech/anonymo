@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
 import { CopyButton } from '../copy-button';
 import { CoinWalletPay, EvmWalletPay } from './wallet-pay';
+import { availableNymoRail } from '@/lib/anonymo/wallet-links';
 import { chainName, shortAddress } from '@/lib/anonymo/chains';
 import { describeError, newIdempotencyKey } from '@/lib/anonymo/client';
 import { formatUsd, formatUsdAmount, musdToUsdString, parseUsd, usdToMusd } from '@/lib/anonymo/money';
@@ -157,11 +158,12 @@ function KeyFunds({ keySuffix, target }: { keySuffix: string; target: Target }) 
 }
 
 type Rail = 'evm' | 'coin' | 'solana' | 'tron' | 'btc';
-const RAIL_LABEL: Record<Rail, string> = { evm: 'Stablecoin wallet', coin: 'Pay with the coin', solana: 'Solana', tron: 'Tron', btc: 'Bitcoin / Lightning' };
+const RAIL_LABEL: Record<Rail, string> = { evm: 'Stablecoin wallet', coin: 'NYMO', solana: 'Solana', tron: 'Tron', btc: 'Bitcoin / Lightning' };
 const coinOf = (i?: DepositInstructions) => (i && !i.paused ? (i.coin ?? null) : null);
 const railLabel = (r: Rail, i: DepositInstructions) => {
   const coin = coinOf(i);
-  if (r === 'coin' && coin) return `${coin.token.symbol}${coin.price_usd === null ? ' · quote unavailable' : ' · usage credit'}`;
+  if (r === 'coin') return availableNymoRail(coin) && coin.price_usd ? 'NYMO · usage credit' : 'NYMO · unavailable';
+  if (r === 'evm' && !i.paused) return i.evm?.chains.flatMap(c => c.tokens.map(t => t.symbol)).filter((s, n, tokens) => tokens.indexOf(s) === n).join(' / ') || 'Stablecoin wallet';
   return RAIL_LABEL[r];
 };
 
@@ -173,12 +175,25 @@ function Deposits({ instructions, onCredited, onWalletOpen }: { instructions: De
     if (instructions.solana?.tokens.length) rails.push('solana');
     if (instructions.tron?.tokens.length && instructions.tron.address) rails.push('tron');
     if (instructions.btc) rails.push('btc');
-    if (instructions.coin) rails.push('coin');
+    if (instructions.coin || instructions.evm?.chains.some(c => c.chain === 'rhc')) rails.push('coin');
   }
+  const [paymentLocked, setPaymentLocked] = useState(false);
   const [rail, setRail] = useState<Rail | null>(null);
+  const [amount, setAmount] = useState('10');
   const active = rail && rails.includes(rail) ? rail : (rails[0] ?? null);
   const [note, setNote] = useState('');
   const credited = useCallback(() => onCredited(), [onCredited]);
+
+  const coin = coinOf(instructions);
+  const primaryCurrencies = rails.includes('evm') && rails.includes('coin');
+  const methodPicker = rails.length > (primaryCurrencies ? 2 : 1) ? (
+    <label className="funds-rail-choice">
+      Change <ChevronDown size={14} aria-hidden="true" />
+      <select aria-label="Payment method" disabled={paymentLocked} value={active ?? ''} onChange={event => setRail(event.target.value as Rail)}>
+        {rails.map(r => <option key={r} value={r}>{railLabel(r, instructions)}</option>)}
+      </select>
+    </label>
+  ) : null;
 
   return (
     <div className="funds-deposit">
@@ -188,8 +203,23 @@ function Deposits({ instructions, onCredited, onWalletOpen }: { instructions: De
         <p className="lede">Deposits are unavailable. Check back for payment options.</p>
       ) : (
         <>
-          {active === 'evm' && instructions.evm && <EvmWalletPay evm={instructions.evm} onCredited={credited} onWalletOpen={onWalletOpen} />}
-          {active === 'coin' && instructions.coin && <CoinWalletPay coin={instructions.coin} onCredited={credited} />}
+          {primaryCurrencies && <fieldset className="funds-currencies">
+            <legend>Pay with</legend>
+            <button type="button" disabled={paymentLocked} aria-pressed={active === 'evm'} onClick={() => setRail('evm')}>
+              {railLabel('evm', instructions).includes('/') ? 'Stablecoin' : railLabel('evm', instructions)}
+            </button>
+            <button type="button" disabled={paymentLocked} aria-pressed={active === 'coin'} onClick={() => setRail('coin')}>NYMO</button>
+          </fieldset>}
+          {active && active !== 'evm' && (active !== 'coin' || methodPicker) && <div className="funds-alt-method">
+            <strong>{RAIL_LABEL[active]}</strong>{methodPicker}
+          </div>}
+          {active === 'evm' && instructions.evm && <EvmWalletPay setPaymentLocked={setPaymentLocked} amount={amount} setAmount={setAmount} evm={instructions.evm} methodPicker={methodPicker} onCredited={credited} onWalletOpen={onWalletOpen} />}
+          {active === 'coin' && (availableNymoRail(coin) && coin.price_usd
+            ? <CoinWalletPay amount={amount} setAmount={setAmount} coin={coin} onWalletOpen={onWalletOpen} />
+            : <div className="panel-stack">
+                <p role="status">NYMO payments are currently unavailable. A verified dollar price is needed to calculate your credit.</p>
+                {rails.includes('evm') && <button type="button" className="btn btn-primary" onClick={() => setRail('evm')}>Pay with {railLabel('evm', instructions)}</button>}
+              </div>)}
           {active === 'solana' && instructions.solana && (
             <div className="address-box">
               <span className="faint">
@@ -224,19 +254,7 @@ function Deposits({ instructions, onCredited, onWalletOpen }: { instructions: De
             </div>
           )}
           {active === 'btc' && <BtcpayForm onCheckout={onWalletOpen} />}
-          {rails.length > 1 && <details className="funds-method">
-            <summary>Change payment method <ChevronDown size={15} aria-hidden="true" /></summary>
-            <label className="field">Payment method
-              <select className="select" value={active ?? ''} onChange={event => {
-                setRail(event.target.value as Rail);
-                const details = event.currentTarget.closest('details');
-                if (details) details.open = false;
-                document.getElementById('funds-title')?.focus();
-              }}>
-                {rails.map(r => <option key={r} value={r}>{railLabel(r, instructions)}</option>)}
-              </select>
-            </label>
-          </details>}
+
         </>
       )}
       {demo && mock && key && (
@@ -258,11 +276,11 @@ function Deposits({ instructions, onCredited, onWalletOpen }: { instructions: De
             className="btn btn-small"
             onClick={async () => {
               await mock.simulateCoinPayment(key, 5_000_000);
-              setNote('$5.00 of ANMO burned for usage-only credit.');
+              setNote('$5.00 of NYMO burned for usage-only credit.');
               onCredited();
             }}
           >
-            Burn test ANMO
+            Burn test NYMO
           </button>
         </div>
       )}

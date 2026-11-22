@@ -34,6 +34,18 @@ void test('POST /keys returns an anm_live_ key once, its caps and the deposit in
   assert.ok(!maskKey(created.key).includes(created.key.slice(14, -4)));
 });
 
+void test('NYMO exact quote is keyless and fails closed on invalid, oversized or unavailable amounts', async () => {
+  const clientFor = options => createAnonymoClient({ baseUrl: 'https://api.anonymo.example', fetch: createMockGateway(options).fetch });
+  const client = clientFor({ delayMs: 0 });
+  const quote = await client.nymoQuote('10');
+  assert.equal(quote.amount_raw, String(800n * 10n ** 18n));
+  assert.equal(quote.estimated_credit_usd, '10');
+  assert.equal(quote.token.symbol, 'NYMO');
+  await assert.rejects(client.nymoQuote('0'), error => error.status === 400);
+  await assert.rejects(client.nymoQuote('250.01'), error => error.status === 422);
+  await assert.rejects(clientFor({ coinPriceUsd: null, delayMs: 0 }).nymoQuote('1'), error => error.status === 503);
+});
+
 void test('the visitor path: deposit → balance → streamed chat → receipt → verified proof → withdraw to source', async () => {
   const { mock, client, created } = await funded();
   await mock.simulateDeposit(created.key, 'rhc', 'USDG', 20_000_000);

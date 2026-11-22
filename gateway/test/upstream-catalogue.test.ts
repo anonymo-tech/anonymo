@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { isPerMillionCatalogue, normalizePerMillionCatalogue } from "../src/providers/per-million.ts";
-import { parseProviderModels } from "../src/services/registry.ts";
+import { parseProviderModels, slugFor } from "../src/services/registry.ts";
+import { PPQ_CHAT_MODELS, ppqChatModel } from "../src/providers/ppq-chat.ts";
 import { usdToPico, tokenCost } from "../src/lib/money.ts";
 import { openDatabase } from "../src/db/client.ts";
 import { offers, providers } from "../src/db/schema.ts";
@@ -80,4 +81,27 @@ test("upstream catalogue provisioning rolls back atomically on transaction failu
     expect(rows[0].priceCompletion).toBe(633000n);
     expect(rows[0].status).toBe("live");
   } finally { await handle.close(); }
+});
+
+test("source-qualified PPQ Regular Chat models retain the canonical ID and paid offer through discovery", () => {
+  const rows = PPQ_CHAT_MODELS.map((approved) => ({ ...model, ...approved }));
+  const { ok, errors } = parse(rows);
+  expect(errors).toEqual([]);
+  expect(new Set(ok.map(slugFor)).size).toBe(12);
+  for (const offer of ok) {
+    expect(ppqChatModel(slugFor(offer))).toMatchObject({ id: offer.id, name: offer.name });
+    expect(offer.pricing.prompt).toBe("0.00000015825");
+    expect(offer.pricing.completion).toBe("0.000000633");
+    expect(ppqChatModel(offer.name!)).toBeUndefined();
+  }
+  expect(ppqChatModel("cognitivecomputations/dolphin-mistral-24b-venice-edition")?.name).toBe("Venice: Uncensored");
+  expect(ppqChatModel("venice/e2ee-gemma-4-26b-a4b-uncensored-p")).toBeDefined();
+  expect(ppqChatModel("venice/e2ee-deepseek-v4-1-flash-1017-abliterated")).toBeDefined();
+  expect(ppqChatModel("venice/olafangensan-glm-4.7-flash-heretic")).toBeDefined();
+  expect(PPQ_CHAT_MODELS.filter((r) => r.privacyLevel === "anon").map((r) => r.id).sort()).toEqual([
+    "venice/abliteration-abliterated-model-large-flash", "venice/abliteration-abliterated-model-large-v2",
+  ]);
+  for (const id of ["private/gpt-oss-120b", "other/venice-uncensored-1-2", "venice/new-uncensored", "anonymo-1"])
+    expect(ppqChatModel(id)).toBeUndefined();
+  expect(parse(rows.map((row) => ({ ...row, privacyLevel: "e2e" }))).ok).toEqual([]);
 });

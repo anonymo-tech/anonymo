@@ -1,3 +1,4 @@
+import { ordinaryPpqTransport, regularPpqOffer, offerLane } from "./regular-ppq.ts";
 import type { Candidate, Modifier } from "../catalog/catalog.ts";
 import { usdToPico } from "../lib/money.ts";
 import { NOT_SERVABLE_REASON, isRestricted, restrictedExclusion, type ModelLane } from "./lane.ts";
@@ -70,6 +71,8 @@ export type SelectInput = {
    * Left out, the model is treated as mainstream.
    */
   modelLane: ModelLane;
+  /** Only a regular text chat can use the explicitly reviewed PPQ routes. */
+  regularTextChat?: boolean;
   /**
    * Weight multiplier for an endpoint served under the attested class, by lane (config ATTESTED_BONUS_*). Left out,
    * DEFAULT_ATTESTED_BONUS applies. Values below 1 are read as 1: attestation never lowers a weight.
@@ -107,6 +110,7 @@ export function blendedPrice(c: Candidate): number {
 }
 
 export function attestationFresh(c: Pick<Candidate, "provider">, maxAgeMs: number, production: boolean) {
+  if (ordinaryPpqTransport(c)) return false;
   const p = c.provider;
   if (!p.attested || !p.attestationHash || !p.attestedAt || !p.teeKind) return false;
   if (production && p.teeKind === "dev") return false;
@@ -116,6 +120,7 @@ export function attestationFresh(c: Pick<Candidate, "provider">, maxAgeMs: numbe
 
 /** The disclosure class this candidate's provider is served under right now. */
 export function candidateDisclosure(c: Candidate, profile: DisclosureProfile | undefined, maxAgeMs: number, production: boolean): DisclosureClass {
+  if (ordinaryPpqTransport(c)?.privacyLevel === "anon") return "vendor-forwarded";
   return disclosureClass(profile ?? UNDECLARED, attestationFresh(c, maxAgeMs, production));
 }
 
@@ -178,8 +183,7 @@ export function selectProviders(input: SelectInput): Selection {
   const maxRequest = prefs.max_price?.request != null ? usdToPico(prefs.max_price.request) : null;
   const byok = input.byokProviders ?? new Set<string>();
   const { max: disclosureMax, lane } = disclosureCeiling(prefs);
-  const restricted = isRestricted(input.modelLane?.variant);
-  const servable = input.modelLane?.servable !== false;
+
   const bonus = input.attestedBonus?.[lane] ?? DEFAULT_ATTESTED_BONUS[lane];
   // The class each passing candidate is served under, when a rule or the weight needs it (computed once per candidate).
   const classes = new Map<Candidate, DisclosureClass>();
@@ -187,12 +191,15 @@ export function selectProviders(input: SelectInput): Selection {
   const pass: Candidate[] = [];
   for (const c of input.offers) {
     const id = c.providerId.toLowerCase();
+    const effective = offerLane(input.modelLane ?? { variant: "mainstream", servable: true }, c.weightLane);
+    const restricted = isRestricted(effective.variant);
+    const regular = input.regularTextChat && lane === "public" && !wantPrivate && input.modelId !== ANONYMO_SEALED && regularPpqOffer(c);
     const policy = (c.provider.dataPolicy ?? {}) as { training?: boolean; retains_prompts?: boolean; zdr?: boolean };
     const isFree = c.pricePrompt === 0n && c.priceCompletion === 0n && c.priceRequest === 0n;
     const cls = disclosureMax === "any" && !restricted && bonus === 1 ? null : candidateDisclosure(c, input.disclosure?.(c.providerId), input.attestationMaxAgeMs, input.production);
     if (cls) classes.set(c, cls);
     // Lane rules apply before the outage check, so an outage is only ever reported for a provider that could serve.
-    const laneReason = !servable ? NOT_SERVABLE_REASON : restricted ? restrictedExclusion(cls ?? "vendor-forwarded", c.provider.classifierEnabled) : null;
+    const laneReason = !effective.servable ? NOT_SERVABLE_REASON : restricted && !regular ? restrictedExclusion(cls ?? "vendor-forwarded", c.provider.classifierEnabled) : null;
     // WS04: anonymo-sealed never touches a route without a fresh attestation, whatever the request's lane says.
     const sealedReason = input.modelId === ANONYMO_SEALED && !attestationFresh(c, input.attestationMaxAgeMs, input.production) ? "anonymo-sealed requires a fresh TEE attestation" : null;
     const reason = sealedReason ??
@@ -208,9 +215,9 @@ export function selectProviders(input: SelectInput): Selection {
                 ? "not free"
                 : !wantFree && isFree && !byok.has(c.providerId) && input.offers.some((o) => o.pricePrompt > 0n || o.priceCompletion > 0n)
                   ? "free tier requires :free"
-                  : prefs.data_collection === "deny" && (policy.training || policy.retains_prompts)
+                  : prefs.data_collection === "deny" && (policy.training || policy.retains_prompts || ordinaryPpqTransport(c)?.privacyLevel === "anon")
                     ? "data_collection=deny"
-                    : prefs.zdr && !policy.zdr
+                    : prefs.zdr && (!policy.zdr || ordinaryPpqTransport(c)?.privacyLevel === "anon")
                       ? "zdr required"
                       : quants && !quants.has((c.quant || "unknown").toLowerCase())
                         ? `quantization ${c.quant} not allowed`

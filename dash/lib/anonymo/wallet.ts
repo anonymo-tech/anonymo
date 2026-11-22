@@ -421,16 +421,21 @@ export function payWithCoin(o: {
   token: { address: Address; symbol: string; decimals: number };
   keyCommit: Hex;
   amount: bigint;
+  beforeBurn: () => Promise<void>;
   onStep?: (step: PayStep) => void;
   onBroadcast?: (hash: Hex) => void;
 }): Promise<PayResult> {
   return pay({
     ...o,
     spender: o.coinPay,
-    plain: (_pub, wallet, account) =>
-      wallet.writeContract({ account, chain: wallet.chain, address: o.coinPay, abi: COIN_PAY_ABI, functionName: 'pay', args: [o.amount, o.keyCommit] }),
-    withPermit: (wallet, account, deadline, s) =>
-      wallet.writeContract({ account, chain: wallet.chain, address: o.coinPay, abi: COIN_PAY_ABI, functionName: 'payWithPermit', args: [o.amount, o.keyCommit, deadline, s.v, s.r, s.s] }),
+    plain: async (_pub, wallet, account) => {
+      await o.beforeBurn();
+      return wallet.writeContract({ account, chain: wallet.chain, address: o.coinPay, abi: COIN_PAY_ABI, functionName: 'pay', args: [o.amount, o.keyCommit] });
+    },
+    withPermit: async (wallet, account, deadline, s) => {
+      await o.beforeBurn();
+      return wallet.writeContract({ account, chain: wallet.chain, address: o.coinPay, abi: COIN_PAY_ABI, functionName: 'payWithPermit', args: [o.amount, o.keyCommit, deadline, s.v, s.r, s.s] });
+    },
   });
 }
 

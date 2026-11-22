@@ -4,6 +4,8 @@ import { eq } from "drizzle-orm";
 import { startRouter, type Harness } from "./helpers.ts";
 import { reserveFirstChat, issueFirstChat } from "../src/anonymo/keys/first-chat.ts";
 import { accounts, generations, holds, keys } from "../src/db/schema.ts";
+import { firstChatInputBound } from "../src/api/chat.ts";
+import { PPQ_CHAT_MODELS } from "../src/providers/ppq-chat.ts";
 import { usdToPico } from "../src/lib/money.ts";
 
 let h: Harness;
@@ -30,6 +32,19 @@ async function eligibleKey() {
 function chat(auth: Record<string, string>, fields: Record<string, unknown> = {}) {
   return h.request("/v1/chat/completions", { method: "POST", headers: auth, json: { model: "anonymo-1", messages, dashboard_chat: true, ...fields } });
 }
+
+test("a first message can name any approved PPQ Regular Chat model at its exact ID", () => {
+  const bound = firstChatInputBound({ model: "anonymo-1", messages });
+  expect(bound).toBeGreaterThan(0);
+  for (const { id } of PPQ_CHAT_MODELS) {
+    expect(firstChatInputBound({ model: id, messages })).toBe(bound);
+    expect(firstChatInputBound({ model: id + ":floor", messages })).toBeNull();
+    expect(firstChatInputBound({ model: id, messages, models: ["anonymo-1"] })).toBeNull();
+  }
+  for (const id of ["anonymo-sealed", "anonymo-council", "private/sample", "other/sample"]) {
+    expect(firstChatInputBound({ model: id, messages })).toBeNull();
+  }
+});
 
 for (const stream of [false, true]) {
   test(`one real bounded reply with a zero charge, including Character Studio context, stream=${stream}`, async () => {

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { KeyRound } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { availableNymoRail } from '@/lib/anonymo/wallet-links';
 import { setupHref, setupReturn } from '@/lib/anonymo/setup-return';
 import { useEffect, useState } from 'react';
 import { chainName } from '@/lib/anonymo/chains';
@@ -280,5 +281,6 @@ function WalletFundingMethods() {
   const options = contracts.chains.filter(c => c.tokens.length).map(c =>
     `${c.tokens.map(t => t.symbol).join(' or ')} on ${chainName(c.chain)}`,
   );
+  if (availableNymoRail(contracts.coin) && contracts.coin.price_usd) options.push('NYMO on Robinhood Chain for usage credit');
   return options.length ? <p className="faint">Wallet funding supports {options.join(' · ')}.</p> : null;
 }

@@ -4,7 +4,7 @@
 // CoinPay. After the transaction confirms, GET /deposits is polled until the gateway records the deposit.
 
 import { ArrowLeft, ArrowRight, Coins, Wallet } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useAnonymo } from '../anonymo-provider';
 import { CopyButton } from '../copy-button';
 import { OpenInWalletApp, useWalletAccess, useWalletPayment, WalletProgress } from '../pay-in-wallet';
@@ -15,12 +15,12 @@ import {
   depositStablecoin,
   formatUnits,
   injectedProvider,
-  payWithCoin,
-  quoteCoins,
   rowForTx,
   stableUnits,
   type PayResult,
 } from '@/lib/anonymo/wallet';
+import { nymoCreditText } from '@/lib/anonymo/nymo-quote';
+import { useNymoQuote } from '../use-nymo-quote';
 import { payUrl } from '@/lib/anonymo/wallet-links';
 
 const POLL_MS = 5_000;
@@ -61,7 +61,7 @@ function useCreditWatch(hash: string | null, onCredited: () => void) {
   return { row, gaveUp };
 }
 
-function PaymentStatus({ result, confirmations, coin, onCredited }: { result: PayResult; confirmations: number; coin: boolean; onCredited: () => void }) {
+function PaymentStatus({ result, confirmations, onCredited }: { result: PayResult; confirmations: number; onCredited: () => void }) {
   const { row, gaveUp } = useCreditWatch(result.hash, onCredited);
   return (
     <output className="notice notice-signal panel-stack" aria-live="polite">
@@ -77,8 +77,7 @@ function PaymentStatus({ result, confirmations, coin, onCredited }: { result: Pa
       )}
       {row?.status === 'credited' && (
         <strong>
-          Credited {formatUsdAmount(row.amount_usd)}
-          {coin ? ' as usage-only credit.' : '. The sending wallet is now a withdrawal address for it.'}
+          Credited {formatUsdAmount(row.amount_usd)}. The sending wallet is now a withdrawal address for it.
         </strong>
       )}
       {row?.status === 'held' && (
@@ -92,24 +91,48 @@ function PaymentStatus({ result, confirmations, coin, onCredited }: { result: Pa
 }
 
 /** Stablecoin deposit through the DepositRouter on an EVM chain. */
-type EvmWalletProps = { evm: EvmInstructions; onCredited: () => void; onWalletOpen?: () => void };
+type FundingAmount = { amount: string; setAmount: (amount: string) => void };
+type EvmWalletProps = FundingAmount & { evm: EvmInstructions; onCredited: () => void; onWalletOpen?: () => void; methodPicker?: ReactNode; setPaymentLocked: (locked: boolean) => void };
 export function EvmWalletPay({ evm, ...events }: EvmWalletProps) {
   const chains = evm.chains.filter((entry) => entry.tokens.length > 0);
   if (!chains.length) return <p className="muted">Stablecoin deposits are unavailable on this network.</p>;
   return <StablecoinPayment evm={{ ...evm, chains }} {...events} />;
 }
 
-function StablecoinPayment({ evm, onCredited, onWalletOpen }: EvmWalletProps) {
+function AmountChooser({ amount, setAmount, busy = false }: FundingAmount & { busy?: boolean }) {
+  const [custom, setCustom] = useState(!['5', '10', '25'].includes(amount));
+  const amountInput = useRef<HTMLInputElement>(null);
+  return (
+    <div className="wallet-amount-section">
+    <label htmlFor="wallet-topup-amount">Amount to add</label>
+    <div className="wallet-amount-display">
+      <span aria-hidden="true">$</span>
+      <input ref={amountInput} id="wallet-topup-amount" aria-label="Amount (USD)" inputMode="decimal" autoComplete="off"
+        size={Math.max(1, Math.min(16, amount.length))} value={amount} placeholder="0" disabled={busy}
+        style={{ width: `${Math.max(1, Math.min(16, amount.length))}ch`, fontSize: amount.length > 8 ? '0.58em' : undefined }}
+        onChange={event => { setCustom(true); setAmount(event.target.value); }} />
+    </div>
+    <div className="wallet-amount-options" role="group" aria-label="Choose an amount">
+      {['5', '10', '25'].map(value => (
+        <button key={value} type="button" disabled={busy} aria-pressed={!custom && amount === value}
+          onClick={() => { setAmount(value); setCustom(false); }}>${value}</button>
+      ))}
+      <button type="button" disabled={busy} aria-pressed={custom} onClick={() => {
+        setCustom(true); amountInput.current?.focus(); amountInput.current?.select();
+      }}>Custom</button>
+    </div>
+  </div>
+  );
+}
+
+function StablecoinPayment({ evm, onCredited, onWalletOpen, methodPicker, amount, setAmount, setPaymentLocked }: EvmWalletProps) {
   const preferred = evm.chains.find((c) => c.chain === 'rhc') ?? evm.chains[0];
   const [chain, setChain] = useState<EvmChain>(preferred.chain);
   const entry = evm.chains.find((c) => c.chain === chain) ?? preferred;
   const [symbol, setSymbol] = useState(entry.tokens.find((t) => t.symbol === 'USDG')?.symbol ?? entry.tokens[0]?.symbol);
   const token = entry.tokens.find((t) => t.symbol === symbol) ?? entry.tokens[0];
   const network = useMemo(() => evmNetwork(entry.chain, entry), [entry]);
-  const [amount, setAmount] = useState('10');
   const [review, setReview] = useState(false);
-  const [custom, setCustom] = useState(false);
-  const amountInput = useRef<HTMLInputElement>(null);
   const reviewHeading = useRef<HTMLHeadingElement>(null);
   const continueButton = useRef<HTMLButtonElement>(null);
   useEffect(() => { if (review) reviewHeading.current?.focus(); }, [review]);
@@ -117,6 +140,7 @@ function StablecoinPayment({ evm, onCredited, onWalletOpen }: EvmWalletProps) {
   const payment = useWalletPayment();
   const { step, hash, result, setError } = payment;
   const busy = !!step || !!hash;
+  useEffect(() => { setPaymentLocked(busy); return () => setPaymentLocked(false); }, [busy, setPaymentLocked]);
   const access = useWalletAccess();
   const hasWallet = access === 'injected';
   const useWalletApp = access === 'app';
@@ -145,28 +169,11 @@ function StablecoinPayment({ evm, onCredited, onWalletOpen }: EvmWalletProps) {
           if (hasWallet) pay();
           else setReview(true);
         }}>
-          <div className="wallet-amount-section">
-            <label htmlFor="wallet-topup-amount">Amount to add</label>
-            <div className="wallet-amount-display">
-              <span aria-hidden="true">$</span>
-              <input ref={amountInput} id="wallet-topup-amount" aria-label="Amount (USD)" inputMode="decimal" autoComplete="off"
-                size={Math.max(1, Math.min(16, amount.length))} value={amount} placeholder="0" disabled={busy}
-                style={{ width: `${Math.max(1, Math.min(16, amount.length))}ch`, fontSize: amount.length > 8 ? '0.58em' : undefined }}
-                onChange={event => { setCustom(true); setAmount(event.target.value); setError(''); }} />
-            </div>
-            <div className="wallet-amount-options" role="group" aria-label="Choose an amount">
-              {['5', '10', '25'].map(value => (
-                <button key={value} type="button" disabled={busy} aria-pressed={!custom && amount === value}
-                  onClick={() => { setAmount(value); setCustom(false); setError(''); }}>${value}</button>
-              ))}
-              <button type="button" disabled={busy} aria-pressed={custom} onClick={() => {
-                setCustom(true); amountInput.current?.focus(); amountInput.current?.select();
-              }}>Custom</button>
-            </div>
-          </div>
+          <AmountChooser amount={amount} setAmount={value => { setAmount(value); setError(''); }} busy={busy} />
           <div className="wallet-pay-method">
             <div className="wallet-pay-token"><Coins size={21} aria-hidden="true" /></div>
-            <div><span>Pay with</span><strong>{token.symbol} <small>on {network.name}</small></strong></div>
+            <div><span>Payment network</span><strong>{token.symbol} <small>on {network.name}</small></strong></div>
+            {methodPicker}
           </div>
           {(evm.chains.length > 1 || entry.tokens.length > 1) && (
             <details className="wallet-network-options">
@@ -205,7 +212,7 @@ function StablecoinPayment({ evm, onCredited, onWalletOpen }: EvmWalletProps) {
         </div>
       )}
       <WalletProgress payment={payment} />
-      {result && <PaymentStatus key={result.hash} result={result} confirmations={entry.confirmations} coin={false} onCredited={onCredited} />}
+      {result && <PaymentStatus key={result.hash} result={result} confirmations={entry.confirmations} onCredited={onCredited} />}
       {hash && !step && <button type="button" className="btn wallet-new-payment" onClick={() => { setReview(false); payment.startAnother(); }}>Start another payment</button>}
       <details className="wallet-payment-details">
         <summary className="muted" style={{ cursor: 'pointer' }}>
@@ -247,85 +254,25 @@ function StablecoinPayment({ evm, onCredited, onWalletOpen }: EvmWalletProps) {
 }
 
 /** Pay with the coin (launched on Pons) through CoinPay. The coins go to the dead address; the credit is usage-only. */
-export function CoinWalletPay({ coin, onCredited }: { coin: CoinInstructions; onCredited: () => void }) {
-  const network = useMemo(() => evmNetwork('rhc', { chain_id: coin.chain_id }), [coin.chain_id]);
-  const [amount, setAmount] = useState('10');
-  const payment = useWalletPayment();
-  const { step, hash, result, setError } = payment;
-  const [understood, setUnderstood] = useState(false);
-  const busy = !!step || !!hash;
+export function CoinWalletPay({ coin, onWalletOpen, amount, setAmount }: FundingAmount & { coin: CoinInstructions; onWalletOpen: () => void }) {
+  const { client, demo } = useAnonymo();
+  const [review, setReview] = useState(false);
+  const access = useWalletAccess();
   const musd = parseUsd(amount);
-  const quote = musd ? quoteCoins(musd, coin) : null;
-  const unavailable = coin.price_usd === null;
-  const sym = coin.token.symbol;
-
-  const hasWallet = useWalletAccess() === 'injected';
-  function pay() {
-    if (!quote?.ok || !understood) return;
-    const provider = injectedProvider();
-    if (!provider) return setError('Open Funds in a browser with a connected wallet to pay with this coin.');
-    void payment.submit((callbacks) => payWithCoin({
-      provider, network, coinPay: coin.coin_pay, token: coin.token,
-      keyCommit: coin.key_commit, amount: quote.coins, ...callbacks,
-    }));
-  }
+  const { quote, message, failed, retry } = useNymoQuote(client, coin, musd);
+  const paymentUrl = !demo && quote && typeof window !== 'undefined'
+    ? payUrl(window.location.origin, { keyCommit: coin.key_commit, chain: 'rhc', token: 'NYMO', amount }) : '';
 
   return (
-    <div className="panel-stack">
-      <p className="notice notice-amber">
-        <strong>Paying with {sym} burns the coins.</strong> They go to the dead address, where nobody can ever move them, not to us.
-        This key is credited the USD value at the time of crediting, which may differ slightly from the estimate below. {sym} credit is{' '}
-        <strong>usage only</strong>: it pays for requests and can never be withdrawn.
-      </p>
-      {unavailable ? (
-        <p className="notice">
-          {sym} payments open once the coin has graduated on Pons and its pool has about 15 minutes of price history. Until then, pay
-          with a stablecoin.
-        </p>
-      ) : (
-        <form
-          className="row"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void pay();
-          }}
-        >
-          <label className="field" style={{ flex: '0 1 160px' }}>
-            Amount (USD)
-            <input className="input" inputMode="decimal" value={amount} disabled={busy} onChange={(e) => setAmount(e.target.value)} />
-          </label>
-          {hasWallet && !hash && <button type="submit" className="btn btn-primary" style={{ alignSelf: 'flex-end' }} disabled={busy || !understood || !quote?.ok}>
-            <Wallet size={16} aria-hidden="true" />
-            {busy ? 'Payment in progress' : `Burn ${sym} and pay`}
-          </button>}
-        </form>
-      )}
-      {!unavailable && (
-        <p className="faint">
-          {quote?.ok ? (
-            <>
-              About <strong className="mono">{formatUnits(quote.coins, coin.token.decimals)} {sym}</strong> at ${coin.price_usd} per {sym}
-              (rounded up). At most {formatUsd(quote.maxMusd)} per payment.
-            </>
-          ) : quote && quote.reason === 'over_max' && quote.maxMusd !== null ? (
-            <span className="error-text">The most one payment can be is {formatUsd(quote.maxMusd)}. Split it into smaller payments.</span>
-          ) : (
-            'Enter an amount in USD.'
-          )}{' '}
-          Credited after {coin.confirmations} confirmations on {network.name}.
-        </p>
-      )}
-      {!unavailable && !hasWallet && <p className="notice">Coin payments require a connected browser wallet. Open Funds in a browser with your wallet connected.</p>}
-      {!unavailable && hasWallet && (
-        <label className="checkbox">
-          <input type="checkbox" disabled={busy} checked={understood} onChange={(e) => setUnderstood(e.target.checked)} />
-          I understand the coins are burned and the credit is usage only, never withdrawable
-        </label>
-      )}
-      <WalletProgress payment={payment} />
-      {hash && !step && <button type="button" className="btn wallet-new-payment" onClick={() => { setUnderstood(false); payment.startAnother(); }}>Start another payment</button>}
-      {result && <PaymentStatus key={result.hash} result={result} confirmations={coin.confirmations} coin onCredited={onCredited} />}
+    <div className="wallet-checkout">
+      <p>Pay with NYMO on Robinhood Chain for chat credit. The payment burns your coins. This credit can only be spent on Anonymo.</p>
+      <AmountChooser amount={amount} setAmount={value => { setAmount(value); setReview(false); }} />
+      {quote && musd ? <p><strong>{formatUnits(BigInt(quote.amount_raw), coin.token.decimals, coin.token.decimals)} NYMO</strong>. {nymoCreditText(quote, musd)} The final credit uses the price at confirmation.</p>
+        : <p role="status">{message} {failed && <button type="button" className="btn" onClick={retry}>Retry quote</button>}</p>}
+      {demo ? <p className="muted">This preview uses a simulated coin payment.</p>
+        : access === 'injected' && paymentUrl ? <a className="wallet-primary btn btn-primary" href={paymentUrl} target="_blank" rel="noopener noreferrer" onClick={onWalletOpen}>Review NYMO payment <ArrowRight size={17} aria-hidden="true" /></a>
+        : review && paymentUrl ? <OpenInWalletApp url={paymentUrl} showApps={access === 'app'} onWalletOpen={onWalletOpen} />
+        : <button type="button" className="wallet-primary btn btn-primary" disabled={!paymentUrl} onClick={() => setReview(true)}>Continue to wallet <ArrowRight size={17} aria-hidden="true" /></button>}
     </div>
   );
 }
-

@@ -29,7 +29,7 @@ export const DEMO_RECEIPT_ROOTS = '0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd';
 /** Sample contract addresses for the demo deposit instructions. Not deployed anywhere. */
 export const DEMO_ROUTER = '0xabababababababababababababababababababab';
 export const DEMO_COIN_PAY = '0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd';
-export const DEMO_ANMO = '0xefefefefefefefefefefefefefefefefefefefef';
+export { COIN_ADDRESS as DEMO_NYMO } from '../coin.ts';
 
 type RouteFixture = {
   id: string;
@@ -100,6 +100,7 @@ export const DEMO_MODELS: ModelInfo[] = [...Object.keys(MODEL_INFO), ...DIRECT_I
   const rows = servers(id);
   return {
     id,
+    architecture: { input_modalities: ['text'], output_modalities: ['text'] },
     ...MODEL_INFO[id],
     family: shared(rows.map((r) => r.family)) ?? rows[0]?.family ?? null,
     quant: shared(rows.map((r) => r.quant)),

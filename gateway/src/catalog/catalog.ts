@@ -5,7 +5,8 @@ import { laneCandidates, measurements, models, modelsLane, offers, providerDiscl
 import { loadTlsPin, loadTlsPins, type TlsPin } from "../providers/tls-pin.ts";
 import { loadAciGateway, loadAciGateways, loadGpuAttested, type AciGateway, type GpuAttestedRecord } from "../providers/aci.ts";
 import { loadAttestedPolicies, loadAttestedPolicy, type AttestedPolicy } from "../providers/attested-policy.ts";
-import { laneOf } from "../router/lane.ts";
+import { ppqChatModel } from "../providers/ppq-chat.ts";
+import { inferredVariant, laneOf, type ModelLane } from "../router/lane.ts";
 
 export type ModelRow = typeof models.$inferSelect;
 export type OfferRow = typeof offers.$inferSelect;
@@ -20,7 +21,7 @@ export type ProviderRow = typeof providers.$inferSelect & { tlsPin?: TlsPin | nu
 export type ManifestRef = { rekor_entry: string | null; registry_tx: string | null };
 export type DisclosureRow = typeof providerDisclosure.$inferSelect;
 export type ModelLaneRow = typeof modelsLane.$inferSelect;
-export type Candidate = OfferRow & { provider: ProviderRow };
+export type Candidate = OfferRow & { provider: ProviderRow; weightLane?: ModelLane };
 
 // Routing suffixes: `author/model:nitro` (fastest), `:floor` (cheapest), `:free` (free offers
 // only), `:private` (attested TEE providers only). Other suffixes are part of the model id.
@@ -100,6 +101,18 @@ export class Catalog {
         this.disclosure = new Map(d.map((x) => [x.providerId, x]));
         this.lane = new Map(l.map((x) => [x.modelId, x]));
         this.candidates = new Map(cand.map((x) => [x.hfRepo.toLowerCase(), { variant: x.variant, status: x.status }]));
+        for (const group of byModel.values()) {
+          for (const offer of group) {
+            if (!ppqChatModel(offer.providerModelId)) continue;
+            const weight = this.models.get(offer.providerModelId);
+            const id = offer.providerModelId;
+            const candidate = this.candidates.get((weight?.hfRepo || id).toLowerCase());
+            const identity = weight ?? { id };
+            const lane = laneOf(identity, this.lane.get(id), candidate);
+            // A generic legacy classification cannot turn the reviewed weights into an ordinary offer elsewhere.
+            offer.weightLane = { servable: lane.servable, variant: lane.variant === "mainstream" ? inferredVariant(identity) : lane.variant };
+          }
+        }
         this.offersByModel = byModel;
         this.gpuAttested = gpu;
         this.manifests = manifests;

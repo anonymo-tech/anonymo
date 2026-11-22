@@ -1,7 +1,8 @@
-// Paying with the coin (ANMO) through CoinPay on Robinhood Chain. CoinPay burns the coins and emits
+// Paying with the coin through CoinPay on Robinhood Chain. CoinPay burns the coins and emits
 // Paid(bytes32 keyCommit, address payer, uint256 amount). Usage is priced in USD, so a payment is credited at the coin's
 // USD value when the watcher sees it confirmed:
-//   price = min(spot, time-weighted average over `twapSeconds`) from the coin's pool against a USD stablecoin
+//   A direct stablecoin pool uses the lower of spot and TWAP. The canonical NYMO launch uses confirmed Pons curve
+//   or pool prices with sell-depth checks, a full same-phase history and the verified RHC Chainlink ETH/USD round.
 // The coin launches on Pons, whose graduated pools are Uniswap v4: v4 keeps no price history, so each watcher run samples
 // the pool's tick into the database and the average is taken over those samples. A Uniswap v3 pool (testnet) averages
 // on-chain through `observe`.
@@ -11,15 +12,16 @@
 // `maxUsdPerPayment` is recorded as held for an operator. Coin credit is usage only: withdraw.ts never pays it out.
 // The key commitment is the same per-key EVM commitment the DepositRouter uses (addresses.ts).
 
-import { createPublicClient, encodeAbiParameters, http, keccak256, parseAbi, parseAbiItem, type Hex } from "viem";
+import { createPublicClient, encodeAbiParameters, http, keccak256, parseAbi, parseAbiItem, zeroAddress, type PublicClient, type Hex } from "viem";
 import { eq } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
 import { kv } from "../../db/schema.ts";
 import { usdToPico, type Pico } from "../../lib/money.ts";
 import { log } from "../../lib/util.ts";
 import { keyForDepositAddress } from "./addresses.ts";
-import type { CoinConfig } from "./config.ts";
-import type { AnonymoDepositSink } from "./sink.ts";
+import { NYMO_CURVE_MARKET, readNymoCurveSnapshot, nymoCurveQuote, type NymoCurveSnapshot } from "./nymo-curve.ts";
+import { NYMO_TOKEN, PONS_V4, type CoinConfig } from "./config.ts";
+import { nymoRemaining, type AnonymoDepositSink } from "./sink.ts";
 
 export const PAID_EVENT = parseAbiItem("event Paid(bytes32 indexed keyCommit, address indexed payer, uint256 amount)");
 
@@ -61,7 +63,18 @@ export function v4PoolId(a: Hex, b: Hex, fee: number, tickSpacing: number, hooks
 /** What the pool says: its two tokens, in-range liquidity, the spot tick and the average tick over the window. */
 export type PoolState = { token0: Hex; token1: Hex; liquidity: bigint; spotTick: number; twapTick: number };
 
+const PAYMENT_ABI = parseAbi([
+  "function coin() view returns (address)",
+  "function DEAD() view returns (address)",
+  "function symbol() view returns (string)",
+  "function decimals() view returns (uint8)",
+]);
+
 export type CoinReader = {
+  paymentBinding(coinPay: Hex, token: Hex): Promise<{ chainId: number; coin: Hex; dead: Hex; symbol: string; decimals: number }>;
+  /** All NYMO pool, depth, graduation and Chainlink reads use the same confirmed mainnet block. */
+  nymoObservation?(cfg: CoinConfig): Promise<NymoObservation | null>;
+  nymoPhaseAt?(block: bigint): Promise<"curve" | "pool" | "transition">;
   getBlockNumber(): Promise<bigint>;
   getPaidLogs(o: { address: Hex; fromBlock: bigint; toBlock: bigint }): Promise<PaidLog[]>;
   /** v3: null when the pool cannot answer (no pool, or not enough observation history for the window). */
@@ -73,7 +86,28 @@ export type CoinReader = {
 export function rpcCoinReader(rpcUrl: string): CoinReader {
   const client = createPublicClient({ transport: http(rpcUrl, { retryCount: 1, timeout: 20_000 }) });
   return {
+    paymentBinding: async (coinPay, token) => {
+      const [chainId, coin, dead, symbol, decimals] = await Promise.all([
+        client.getChainId(),
+        client.readContract({ address: coinPay, abi: PAYMENT_ABI, functionName: "coin" }),
+        client.readContract({ address: coinPay, abi: PAYMENT_ABI, functionName: "DEAD" }),
+        client.readContract({ address: token, abi: PAYMENT_ABI, functionName: "symbol" }),
+        client.readContract({ address: token, abi: PAYMENT_ABI, functionName: "decimals" }),
+      ]);
+      return { chainId, coin, dead, symbol, decimals };
+    },
     getBlockNumber: () => client.getBlockNumber({ cacheTime: 0 }),
+    nymoObservation: (cfg) => readNymoMarket(client, cfg),
+    nymoPhaseAt: async blockNumber => {
+      const opts = { address: NYMO_MARKET.curve, abi: NYMO_ABI, blockNumber };
+      const [prev, graduated, ready] = await Promise.all([
+        client.readContract({ ...opts, blockNumber: blockNumber - 1n, functionName: "graduated" }),
+        client.readContract({ ...opts, functionName: "graduated" }),
+        client.readContract({ ...opts, functionName: "readyToGraduate" }),
+      ]);
+      if (prev !== graduated || (!graduated && ready)) return "transition";
+      return graduated ? "pool" : "curve";
+    },
     getPaidLogs: ({ address, fromBlock, toBlock }) => client.getLogs({ address, event: PAID_EVENT, fromBlock, toBlock, strict: false }) as Promise<PaidLog[]>,
     poolState: async (pool, twapSeconds) => {
       try {
@@ -102,6 +136,220 @@ export function rpcCoinReader(rpcUrl: string): CoinReader {
   };
 }
 
+const POOL_KEY = { currency0: zeroAddress, currency1: NYMO_TOKEN, fee: PONS_V4.fee, tickSpacing: PONS_V4.tickSpacing, hooks: PONS_V4.hooks } as const;
+export const NYMO_MARKET = {
+  token: NYMO_TOKEN, native: zeroAddress, curve: NYMO_CURVE_MARKET.curve,
+  ethUsdFeed: "0x78f3556b67e17df817d51ef5a990cdaf09e8d3a9",
+  quoter: "0x8dc178efb8111bb0973dd9d722ebeff267c98f94",
+  poolId: v4PoolId(zeroAddress, NYMO_TOKEN, PONS_V4.fee, PONS_V4.tickSpacing, PONS_V4.hooks),
+} as const;
+
+const NYMO_ABI = parseAbi([
+  "function graduated() view returns (bool)",
+  "function readyToGraduate() view returns (bool)",
+  "function latestRoundData() view returns (uint80 round, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)",
+  "function quoteExactInputSingle(((address currency0,address currency1,uint24 fee,int24 tickSpacing,address hooks) poolKey,bool zeroForOne,uint128 exactAmount,bytes hookData) params) returns(uint256 amountOut,uint256 gasEstimate)",
+]);
+const MAX_GAP_SECONDS = 60;
+const PRICE_SCALE = 10n ** 64n;
+const Q192 = 1n << 192n;
+type NymoObservation = { t: number; updated: number } & (
+  | { phase: "pool"; tick: number; liquidity: bigint; ethUsdPico: bigint; executablePico: bigint; depthRaw: bigint }
+  | { phase: "curve"; snapshot: NymoCurveSnapshot }
+);
+
+/** Both NYMO and native ETH have 18 decimals. Work in their raw-unit ratio until the final rounding to pico-USD.
+ * Fixed-point exponentiation rounds down at every multiplication, including the reciprocal for negative ticks. */
+export function nativeTickValue(tick: number, ethUsdPico: bigint): bigint {
+  if (!Number.isInteger(tick) || Math.abs(tick) > 887273 || ethUsdPico <= 0n) return 0n;
+  let power = tick < 0 ? PRICE_SCALE * 10_000n / 10_001n : PRICE_SCALE * 10_001n / 10_000n;
+  let ratio = PRICE_SCALE;
+  for (let n = Math.abs(tick); n; n = Math.floor(n / 2)) {
+    if (n % 2) ratio = ratio * power / PRICE_SCALE;
+    power = power * power / PRICE_SCALE;
+  }
+  return ratio * ethUsdPico / PRICE_SCALE;
+}
+
+export function ethUsdRoundPico(decimals: number, data: readonly [bigint, bigint, bigint, bigint, bigint], timestamp: bigint): bigint | null {
+  const [round, answer, start, updated, answeredIn] = data;
+  if (decimals !== 8 || round <= 0n || answer <= 0n || answeredIn < round || start <= 0n ||
+      updated < start || updated > timestamp || timestamp - updated > 86_400n) return null;
+  return answer * 10_000n;
+}
+
+/** All calls, including the sell-depth simulation, read one confirmed block. No transaction is submitted. */
+async function readNymoMarket(client: PublicClient, cfg: CoinConfig): Promise<NymoObservation | null> {
+  const [chainId, head] = await Promise.all([client.getChainId(), client.getBlockNumber({ cacheTime: 0 })]);
+  const blockNumber = head - BigInt(cfg.confirmations);
+  if (chainId !== 4663 || blockNumber < 0n) return null;
+  const [block, graduated, decimals, round, bound, dead] = await Promise.all([
+    client.getBlock({ blockNumber }),
+    client.readContract({ blockNumber, address: NYMO_MARKET.curve, abi: NYMO_ABI, functionName: "graduated" }),
+    client.readContract({ blockNumber, address: NYMO_MARKET.ethUsdFeed, abi: PAYMENT_ABI, functionName: "decimals" }),
+    client.readContract({ blockNumber, address: NYMO_MARKET.ethUsdFeed, abi: NYMO_ABI, functionName: "latestRoundData" }),
+    client.readContract({ blockNumber, address: cfg.coinPay, abi: PAYMENT_ABI, functionName: "coin" }),
+    client.readContract({ blockNumber, address: cfg.coinPay, abi: PAYMENT_ABI, functionName: "DEAD" }),
+  ]);
+  const usd = ethUsdRoundPico(decimals, round, block.timestamp);
+  if (!usd || bound.toLowerCase() !== NYMO_TOKEN || dead.toLowerCase() !== "0x000000000000000000000000000000000000dead") return null;
+
+  const time = { t: Number(block.timestamp), updated: Number(round[3]) };
+  if (!graduated) {
+    const snapshot = await readNymoCurveSnapshot(client, blockNumber, usd);
+    return snapshot ? { ...time, phase: "curve", snapshot } : null;
+  }
+  const [slot, liquidity] = await Promise.all([
+    client.readContract({ blockNumber, address: PONS_V4.stateView, abi: STATE_VIEW_ABI, functionName: "getSlot0", args: [NYMO_MARKET.poolId] }),
+    client.readContract({ blockNumber, address: PONS_V4.stateView, abi: STATE_VIEW_ABI, functionName: "getLiquidity", args: [NYMO_MARKET.poolId] }),
+  ]);
+  const [sqrt, tick] = slot;
+  if (sqrt <= 0n || liquidity <= 0n || liquidity < BigInt(cfg.minLiquidity)) return null;
+
+  // Prove executable sell depth at least as large as the largest allowed payment or $100, whichever is greater.
+  // Native is currency0. sqrt² / Q192 converts native units to NYMO units, the inverse of the credit direction.
+  const cap = usdToPico(cfg.maxUsdPerPayment);
+  const probeUsd = cap > 100_000_000_000_000n ? cap : 100_000_000_000_000n;
+  const tokens = (probeUsd * (10n ** 18n) * sqrt * sqrt + usd * Q192 - 1n) / (usd * Q192);
+  if (tokens <= 0n || tokens >= 1n << 128n) return null;
+  const { result: [native] } = await client.simulateContract({
+    blockNumber, address: NYMO_MARKET.quoter, abi: NYMO_ABI, functionName: "quoteExactInputSingle",
+    args: [{ poolKey: POOL_KEY, zeroForOne: false, exactAmount: tokens, hookData: "0x" }],
+  });
+  if (native <= 0n || native * sqrt * sqrt * 100n < tokens * Q192 * 95n) return null;
+  return { ...time, phase: "pool", tick, liquidity, ethUsdPico: usd, executablePico: native * usd / tokens, depthRaw: tokens };
+}
+
+async function freshNymoObservation(cfg: CoinConfig, reader: CoinReader, now?: number) {
+  const obs = await reader.nymoObservation?.(cfg).catch(() => null);
+  const seconds = Math.floor((now ?? Date.now()) / 1000);
+  if (!obs || !Number.isInteger(obs.t) || obs.t > seconds || seconds - obs.t > MAX_GAP_SECONDS ||
+      obs.updated <= 0 || obs.updated > obs.t || seconds - obs.updated > 86_400) return null;
+  if (obs.phase === "curve") return obs;
+  return Number.isInteger(obs.tick) && Math.abs(obs.tick) <= 887272 && obs.liquidity > 0n && obs.liquidity >= BigInt(cfg.minLiquidity) &&
+    obs.ethUsdPico > 0n && obs.executablePico > 0n && obs.depthRaw > 0n ? obs : null;
+}
+
+type NymoSample = { t: number } & (
+  | { phase: "pool"; tick: number; depthRaw: string; executablePico: string }
+  | { phase: "curve"; snapshot: NymoCurveSnapshot }
+);
+type NymoHistory = { policy: string; samples: NymoSample[] };
+const historyKey = "anonymo:coin:nymo-native-chainlink:v1";
+const policyFor = (cfg: CoinConfig) => [cfg.coinPay.toLowerCase(), cfg.confirmations, cfg.minLiquidity, cfg.maxUsdPerPayment, cfg.twapSeconds].join(":");
+const storedObservation = (o: NymoObservation): NymoSample => o.phase === "curve"
+  ? { t: o.t, phase: "curve", snapshot: o.snapshot }
+  : { t: o.t, phase: "pool", tick: o.tick, depthRaw: String(o.depthRaw), executablePico: String(o.executablePico) };
+
+async function storeNymoObservation(db: Db, cfg: CoinConfig, obs: NymoObservation | null, now: number) {
+  const policy = policyFor(cfg);
+  await db.transaction(async tx => {
+    await tx.insert(kv).values({ key: historyKey, value: { policy, samples: [] } }).onConflictDoNothing();
+    const [row] = await tx.select({ value: kv.value }).from(kv).where(eq(kv.key, historyKey)).for("update");
+    const history = row.value as NymoHistory;
+    const samples = history.policy === policy && obs ? history.samples.filter(s => s.t >= obs.t - cfg.twapSeconds - MAX_GAP_SECONDS) : [];
+    if (obs) {
+      const previous = samples.at(-1);
+      if (previous && obs.t < previous.t) return; // a slower overlapping read finished after a newer one
+      if (previous && (previous.phase !== obs.phase || obs.t - previous.t > MAX_GAP_SECONDS)) samples.length = 0;
+      if (samples.length && previous && obs.t - previous.t < 5) return;
+      samples.push(storedObservation(obs));
+    }
+    await tx.update(kv).set({ value: { policy, samples }, updatedAt: new Date(now) }).where(eq(kv.key, historyKey));
+  });
+}
+
+const smallest = (a: bigint, b: bigint) => a < b ? a : b;
+const WHOLE_NYMO = 10n ** 18n;
+type AmountQuote = { valuePico: bigint; withinLimit: boolean };
+type PreparedQuote = {
+  phase: "pool" | "curve"; unitPico: bigint; maxRaw: bigint; maxPico: bigint;
+  valueForRaw: (amount: bigint) => AmountQuote | null;
+};
+
+/** Require a complete window of confirmed observations of the same phase, and independently re-read the market.
+ * An interrupted history or graduation always needs a fresh window. Prepare once for all amount calculations. */
+async function marketWindow(db: Db, cfg: CoinConfig, reader: CoinReader, now?: number): Promise<PreparedQuote | null> {
+  if (!cfg.market) return null;
+  const obs = await freshNymoObservation(cfg, reader, now);
+  if (!obs) return null;
+  const [row] = await db.select({ value: kv.value }).from(kv).where(eq(kv.key, historyKey));
+  const history = row?.value as NymoHistory | undefined;
+  if (!history || history.policy !== policyFor(cfg)) return null;
+  const start = obs.t - cfg.twapSeconds;
+  const anchor = history.samples.findLastIndex(s => s.t <= start);
+  if (anchor < 0) return null;
+  const samples = [...history.samples.slice(anchor), storedObservation(obs)];
+  const curves: NymoCurveSnapshot[] = [];
+  let weightedTick = 0;
+  const cap = usdToPico(cfg.maxUsdPerPayment);
+  let maxRaw = (1n << 128n) - 1n;
+  let maxPico = cap;
+  let unitPico = (1n << 256n) - 1n;
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i];
+    const until = samples[i + 1]?.t ?? obs.t;
+    if (s.phase !== obs.phase || until < s.t || until - s.t > MAX_GAP_SECONDS) return null;
+    if (s.phase === "pool") {
+      // Native ETH is currency0, so -(tick+1) rounds the inverse NYMO price down.
+      weightedTick += -(s.tick + 1) * (until - Math.max(start, s.t));
+      maxRaw = smallest(maxRaw, BigInt(s.depthRaw));
+      unitPico = smallest(unitPico, BigInt(s.executablePico));
+    } else {
+      const limits = nymoCurveQuote(s.snapshot, WHOLE_NYMO, cap);
+      if (!limits || limits.maxAmountRaw <= 0n) return null;
+      const depth = nymoCurveQuote(s.snapshot, limits.maxAmountRaw, cap);
+      if (!depth || depth.valuePico <= 0n) return null;
+      // The rate at maximum permitted size bounds the sum of credits from smaller burns.
+      unitPico = smallest(unitPico, depth.valuePico * WHOLE_NYMO / limits.maxAmountRaw);
+      maxPico = smallest(maxPico, limits.depthBudgetPico);
+      maxRaw = smallest(maxRaw, limits.maxAmountRaw);
+      curves.push(s.snapshot);
+    }
+  }
+  if (obs.phase === "pool") {
+    const tick = Math.min(-(obs.tick + 1), Math.floor(weightedTick / cfg.twapSeconds));
+    unitPico = smallest(unitPico, nativeTickValue(tick, obs.ethUsdPico));
+  }
+  if (unitPico <= 0n) return null;
+  maxRaw = smallest(maxRaw, maxPico * WHOLE_NYMO / unitPico);
+  maxPico = smallest(maxPico, maxRaw * unitPico / WHOLE_NYMO);
+  const valueForRaw = (amount: bigint): AmountQuote | null => {
+    const clock = Math.floor((now ?? Date.now()) / 1000);
+    if (amount <= 0n || clock - obs.t > MAX_GAP_SECONDS || clock - obs.updated > 86_400) return null;
+    let valuePico = amount * unitPico / WHOLE_NYMO;
+    let withinLimit = amount <= maxRaw && valuePico <= maxPico;
+    for (const curve of curves) {
+      const exact = nymoCurveQuote(curve, amount, cap);
+      if (!exact) return null;
+      valuePico = smallest(valuePico, exact.valuePico);
+      withinLimit &&= exact.withinLimit;
+    }
+    // Held deposits retain the actual raw amount and a value bounded to depth proven for this window.
+    return { valuePico: smallest(valuePico, maxPico), withinLimit };
+  };
+  return { phase: obs.phase, unitPico, maxPico, maxRaw, valueForRaw };
+}
+
+/** Public quotes include the shared capacity still available. The sink enforces it again under a database lock. */
+export async function prepareNymoQuote(db: Db, cfg: CoinConfig, reader: CoinReader, now?: number): Promise<PreparedQuote | null> {
+  const q = await marketWindow(db, cfg, reader, now);
+  if (!q) return null;
+  const room = await nymoRemaining(db, { seconds: cfg.twapSeconds, maxRaw: q.maxRaw, maxPico: q.maxPico });
+  const maxRaw = smallest(room.maxRaw, room.maxPico * WHOLE_NYMO / q.unitPico);
+  const maxPico = smallest(room.maxPico, maxRaw * q.unitPico / WHOLE_NYMO);
+  return { ...q, maxRaw, maxPico, valueForRaw(amount) {
+    const result = q.valueForRaw(amount);
+    return result && { valuePico: result.valuePico, withinLimit: result.withinLimit && amount <= maxRaw && result.valuePico <= maxPico };
+  } };
+}
+
+export async function nymoPaymentQuote(db: Db, cfg: CoinConfig, reader: CoinReader, amount: bigint, now?: number) {
+  const q = await marketWindow(db, cfg, reader, now);
+  const amountQuote = q?.valueForRaw(amount);
+  return q && amountQuote ? { ...q, ...amountQuote } : null;
+}
+
 // ---- v4 price samples (v4 pools keep no history) -------------------------------------------------------------------
 type Sample = { t: number; tick: number };
 const samplesKey = "anonymo:coin:samples";
@@ -113,6 +361,11 @@ async function readSamples(db: Db): Promise<Sample[]> {
 
 /** Record the pool's current tick (one sample per run, at most every 5 s), keeping two windows of history. */
 export async function sampleCoinPrice(db: Db, cfg: CoinConfig, reader: CoinReader, now = Date.now()): Promise<V4Slot | null> {
+  if (cfg.market) {
+    const obs = await freshNymoObservation(cfg, reader, now);
+    await storeNymoObservation(db, cfg, obs, now);
+    return obs?.phase === "pool" ? { tick: obs.tick, liquidity: obs.liquidity } : null;
+  }
   if (cfg.pool) return null; // v3 averages on-chain
   const slot = await reader.v4Slot(cfg.v4.stateView, v4PoolId(cfg.token.address, cfg.quote.address, cfg.v4.fee, cfg.v4.tickSpacing, cfg.v4.hooks));
   if (!slot) return null;
@@ -165,6 +418,8 @@ export function picoPerCoinAtTick(tick: number, coinIsToken0: boolean, coinDecim
 
 /** The price credits use: the lower of spot and the window average, or null when the pool cannot be trusted. */
 export async function coinPicoPerCoin(cfg: CoinConfig, reader: CoinReader, db?: Db, now = Date.now()): Promise<Pico | null> {
+  if (cfg.market) return db ? (await prepareNymoQuote(db, cfg, reader, now))?.unitPico ?? null : null;
+  if (cfg.chainId === 4663 && cfg.token.address.toLowerCase() === NYMO_TOKEN) return null;
   if (!cfg.pool) return v4PicoPerCoin(cfg, reader, db, now);
   const s = await reader.poolState(cfg.pool, cfg.twapSeconds);
   if (!s) return null;
@@ -176,7 +431,7 @@ export async function coinPicoPerCoin(cfg: CoinConfig, reader: CoinReader, db?: 
     log.warn("anonymo coin pool does not pair the coin with the quote stablecoin", { pool: cfg.pool });
     return null;
   }
-  if (s.liquidity < BigInt(cfg.minLiquidity)) return null;
+  if (s.liquidity === 0n || s.liquidity < BigInt(cfg.minLiquidity)) return null;
   const isToken0 = t0 === coin;
   const spot = picoPerCoinAtTick(s.spotTick, isToken0, cfg.token.decimals, cfg.quote.decimals);
   const twap = picoPerCoinAtTick(s.twapTick, isToken0, cfg.token.decimals, cfg.quote.decimals);
@@ -188,7 +443,7 @@ async function v4PicoPerCoin(cfg: CoinConfig, reader: CoinReader, db: Db | undef
   if (!db) return null;
   const poolId = v4PoolId(cfg.token.address, cfg.quote.address, cfg.v4.fee, cfg.v4.tickSpacing, cfg.v4.hooks);
   const slot = await reader.v4Slot(cfg.v4.stateView, poolId).catch(() => null);
-  if (!slot || slot.liquidity < BigInt(cfg.minLiquidity)) return null;
+  if (!slot || slot.liquidity === 0n || slot.liquidity < BigInt(cfg.minLiquidity)) return null;
   const avg = averageTick(await readSamples(db), cfg.twapSeconds, now);
   if (avg === null) return null; // still collecting samples
   const isToken0 = cfg.token.address.toLowerCase() < cfg.quote.address.toLowerCase();
@@ -241,7 +496,9 @@ export async function scanCoinPayments(db: Db, cfg: CoinConfig, reader: CoinRead
         out.skipped++;
         continue;
       }
-      if (price === undefined) price = await coinPicoPerCoin(cfg, reader, db);
+      const market = cfg.market ? await nymoPaymentQuote(db, cfg, reader, amount) : null;
+      if (cfg.market) price = market?.unitPico ?? null;
+      else if (price === undefined) price = await coinPicoPerCoin(cfg, reader, db);
       if (price === null) {
         // Leave the cursor before this range: the burned coins are credited once the pool gives a price again.
         out.waiting = true;
@@ -249,14 +506,21 @@ export async function scanCoinPayments(db: Db, cfg: CoinConfig, reader: CoinRead
         return out;
       }
       out.picoPerCoin = price.toString();
-      const value = coinValuePico(amount, price, cfg.token.decimals);
+      const value = market?.valuePico ?? coinValuePico(amount, price, cfg.token.decimals);
       if (value <= 0n) {
         out.skipped++;
         continue;
       }
+      let holdReason = value > maxPico || (market && !market.withinLimit) ? "over_cap" : undefined;
+      if (market) {
+        const phase = l.blockNumber && await reader.nymoPhaseAt?.(l.blockNumber).catch(() => null);
+        if (!phase) { out.waiting = true; return out; }
+        if (phase !== market.phase) holdReason = "market_transition";
+      }
       const r = await sink.creditWith(
         { keyHash, chain: "coin", amount: value, ref: `coin:${l.transactionHash.toLowerCase()}:${l.logIndex}`, sourceAddr: payer.toLowerCase() },
-        { token: cfg.token.symbol, amountRaw: amount, holdReason: value > maxPico ? "over_cap" : undefined },
+        { token: cfg.token.symbol, amountRaw: amount, holdReason,
+          ...(market ? { nymoWindowLimit: { seconds: cfg.twapSeconds, maxRaw: market.maxRaw, maxPico: market.maxPico } } : {}) },
       );
       if (r.credited) out.credited++;
       else if (r.held) out.held++;

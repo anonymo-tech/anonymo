@@ -98,14 +98,14 @@ export type TronInstructions = { address: string; confirmations: number; tokens:
 export type BtcInstructions = { invoice: string; credited_at: string };
 
 /**
- * Pay with ANMO on Robinhood Chain: `CoinPay.pay(amount, keyCommit)` burns the coins and the key is credited the USD
+ * Pay with NYMO on Robinhood Chain: `CoinPay.pay(amount, keyCommit)` burns the coins and the key is credited the USD
  * value at the time of crediting, as usage-only credit (never withdrawable). `price_usd: null` = unavailable now.
  */
 export type CoinInstructions = {
   chain: 'rhc';
   chain_id: number;
   coin_pay: Hex;
-  token: { symbol: 'ANMO'; address: Hex; decimals: number };
+  token: { symbol: 'NYMO'; address: Hex; decimals: number };
   price_usd: string | null;
   max_usd_per_payment: string;
   confirmations: number;
@@ -143,7 +143,15 @@ export type DepositRow = {
 /** `GET /deposits`. */
 export type Deposits = { instructions: DepositInstructions; data: DepositRow[] };
 /** `GET /deposits/contracts`: the DepositRouter and tokens per EVM chain, the same for every key. No key needed. */
-export type DepositContracts = { paused: true } | { paused: false; chains: EvmInstructions['chains'] };
+/** Keyless, amount-specific NYMO burn quote from GET /deposits/coin/quote. */
+export type NymoQuote = Pick<CoinInstructions, 'chain_id' | 'coin_pay' | 'token' | 'confirmations'> & {
+  amount_raw: string;
+  estimated_credit_usd: string;
+  price_usd: string;
+};
+
+export type PublicCoinInstructions = Omit<CoinInstructions, 'key_commit'>;
+export type DepositContracts = { paused: true } | { paused: false; chains: EvmInstructions['chains']; coin?: PublicCoinInstructions | null };
 
 /** `POST /deposits/btcpay`: BTC on-chain or Lightning through BTCPay, credited at the BTCPay quote. */
 export type BtcpayInvoiceRequest = { amount_usd: string; refund_address: string };
@@ -185,6 +193,11 @@ export type ModelInfo = {
   name?: string;
   description?: string;
   context_length?: number;
+  architecture?: { input_modalities?: string[]; output_modalities?: string[] };
+  availability?: 'temporarily_unavailable';
+  ppq_uncensored?: boolean;
+  anonymo_chat?: { source: 'ppq'; standard_chat: true; category: 'uncensored'; name: string };
+  variant?: 'mainstream' | 'abliterated' | 'native_low_refusal';
   family: string | null;
   quant: string | null;
   weights_hash: string | null;

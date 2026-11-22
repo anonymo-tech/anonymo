@@ -4,7 +4,7 @@
 // verifies) but the signature is a placeholder. It never sends anything over the network.
 
 import { API_PATHS } from '../client.ts';
-import { musdToUsdString, usdToMusd } from '../money.ts';
+import { musdToUsdString, parseUsd, usdToMusd } from '../money.ts';
 import { hashPair, keccakHex } from '../proof.ts';
 import type {
   Balance,
@@ -39,7 +39,7 @@ import { expiredKeyRefusal } from './tickets.ts';
 import { createDemoVideo } from './video.ts';
 import { createDemoSpeech, demoStoryReply as bedtimeStoryReply, DEMO_SPEECH_MODELS } from './voice.ts';
 import { activityCsv, runway, sampleHistory, spendReport, spentWindows, type UsageEntry } from './usage.ts';
-import { COUNCIL_MERGED, DEMO_ANMO, DEMO_COIN_PAY, DEMO_LEADERBOARD, DEMO_MANIFEST, DEMO_MODELS, DEMO_PRICES, DEMO_ROUTER, DEMO_ROUTES, DEMO_VIDEO_MODELS, demoReply } from './fixtures.ts';
+import { COUNCIL_MERGED, DEMO_NYMO, DEMO_COIN_PAY, DEMO_LEADERBOARD, DEMO_MANIFEST, DEMO_MODELS, DEMO_PRICES, DEMO_ROUTER, DEMO_ROUTES, DEMO_VIDEO_MODELS, demoReply } from './fixtures.ts';
 import { sideBySideReply } from './sidebyside.ts';
 import { updateOn } from '../updates.ts';
 import { createDemoVentures } from './ventures.ts';
@@ -59,7 +59,7 @@ type KeyState = {
   keyCommit: string;
   balance: number; // micro-USD
   held: number;
-  usageOnly: number; // ANMO credit: spendable on usage, never withdrawable
+  usageOnly: number; // NYMO credit: spendable on usage, never withdrawable
   deposits: Row[];
   withdrawals: (Withdrawal & { musd: number; idem: string })[];
   characters: string[];
@@ -76,7 +76,7 @@ export type MockOptions = {
   delayMs?: number;
   /** When false, anonymo-sealed answers 409 sealed_unavailable (no attested route is up). */
   sealedAvailable?: boolean;
-  /** The ANMO price in USD for the coin rail; null = coin payments unavailable; undefined = the demo price. */
+  /** The NYMO price in USD for the coin rail; null = coin payments unavailable; undefined = the demo price. */
   coinPriceUsd?: string | null;
   /** How long an image takes, in ms (the real models take 10–40 s). */
   imageDelayMs?: number;
@@ -170,19 +170,22 @@ export function createMockGateway(options: MockOptions = {}) {
     return found ?? fail(401, 'unauthorized', 'Unknown API key.');
   }
 
-  function instructions(k: KeyState): DepositInstructions {
-    const coin: CoinInstructions = {
+  function publicCoin(): Omit<CoinInstructions, 'key_commit'> {
+    return {
       chain: 'rhc',
       chain_id: 4663,
       coin_pay: DEMO_COIN_PAY,
-      token: { symbol: 'ANMO', address: DEMO_ANMO, decimals: 18 },
+      token: { symbol: 'NYMO', address: DEMO_NYMO, decimals: 18 },
       price_usd: coinPrice,
       max_usd_per_payment: '250',
       confirmations: 3,
-      key_commit: k.keyCommit as `0x${string}`,
       method: 'pay(uint256 amount, bytes32 keyCommit)',
       credited_at: 'the USD value at the time of crediting',
     };
+  }
+
+  function instructions(k: KeyState): DepositInstructions {
+    const coin: CoinInstructions = { ...publicCoin(), key_commit: k.keyCommit as `0x${string}` };
     return {
       paused: false,
       evm: {
@@ -299,7 +302,7 @@ export function createMockGateway(options: MockOptions = {}) {
     return ref;
   }
 
-  /** Demo-only: credit an ANMO payment (usage-only). Above the per-payment cap it is held, as the gateway does. */
+  /** Demo-only: credit an NYMO payment (usage-only). Above the per-payment cap it is held, as the gateway does. */
   async function simulateCoinPayment(key: string, amountMusd: number) {
     const k = state.keys[await sha256Hex(key)];
     if (!k) throw new Error('Unknown key.');
@@ -308,7 +311,7 @@ export function createMockGateway(options: MockOptions = {}) {
     k.deposits.unshift({
       ref,
       chain: 'coin',
-      token: 'ANMO',
+      token: 'NYMO',
       amount_usd: usd(amountMusd),
       musd: amountMusd,
       from: walletFor('rhc'),
@@ -685,7 +688,18 @@ export function createMockGateway(options: MockOptions = {}) {
       const { id: _id, rooted: _r, posted: _p, verify: _v, ...anchor } = proof!;
       return json({ data: { ...r.view, anchor } });
     }
-    if (method === 'GET' && path === API_PATHS.depositContracts) return json({ paused: false, chains: DEMO_EVM_CHAINS });
+    if (method === 'GET' && path === API_PATHS.nymoQuote) {
+      const amount = parseUsd(url.searchParams.get('amount_usd') ?? '');
+      if (!amount) return fail(400, 'invalid_amount_usd', 'Enter a positive USD amount.');
+      const price = coinPrice && parseUsd(coinPrice);
+      if (!price) return fail(503, 'coin_quote_unavailable', 'NYMO quotes are currently unavailable.');
+      if (amount > 250_000_000) return fail(422, 'coin_quote_limit', 'This amount exceeds the demo payment limit.');
+      const coin = publicCoin();
+      const units = (BigInt(amount) * 10n ** 18n + BigInt(price) - 1n) / BigInt(price);
+      return json({ amount_raw: String(units), estimated_credit_usd: musdToUsdString(amount), price_usd: coinPrice,
+        chain_id: coin.chain_id, coin_pay: coin.coin_pay, token: coin.token, confirmations: coin.confirmations });
+    }
+    if (method === 'GET' && path === API_PATHS.depositContracts) return json({ paused: false, chains: DEMO_EVM_CHAINS, coin: publicCoin() });
     if (method === 'POST' && path === API_PATHS.keys) return createKey(request);
     if (ventures && method === 'GET' && path === API_PATHS.recipes) return (await ventures.handle(request, path, null))!;
 

@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import type { Hex } from "viem";
 import { usdToPico } from "../../src/lib/money.ts";
-import { anonymoDeposits } from "../../src/anonymo/deposits/schema.ts";
+import { anonymoDepositAddresses, anonymoDeposits } from "../../src/anonymo/deposits/schema.ts";
 import { ensureDepositAddress } from "../../src/anonymo/deposits/addresses.ts";
 import { averageTick, coinPicoPerCoin, coinValuePico, picoPerCoinAtTick, sampleCoinPrice, scanCoinPayments, twapTickOf, v4PoolId, type CoinReader, type PaidLog, type PoolState, type V4Slot } from "../../src/anonymo/deposits/coin.ts";
 import { loadDepositsConfig, type CoinConfig } from "../../src/anonymo/deposits/config.ts";
@@ -21,6 +21,7 @@ const TICK_10C = Math.round(Math.log(0.1 / 1e12) / Math.log(1.0001));
 
 const chain = { head: 100n, logs: [] as (PaidLog & { blockNumber: bigint })[], pool: null as PoolState | null };
 const reader: CoinReader = {
+  paymentBinding: async () => ({ chainId: 46630, coin: COIN, dead: "0x000000000000000000000000000000000000dead", symbol: "ANMO", decimals: 18 }),
   getBlockNumber: async () => chain.head,
   getPaidLogs: async ({ fromBlock, toBlock }) => chain.logs.filter((l) => l.blockNumber >= fromBlock && l.blockNumber <= toBlock),
   poolState: async () => chain.pool,
@@ -30,7 +31,7 @@ let tx = 0;
 const pay = (block: bigint, keyCommit: Hex, amount: bigint) =>
   chain.logs.push({ args: { keyCommit, payer: PAYER, amount }, transactionHash: `0x${(++tx).toString(16).padStart(64, "c")}` as Hex, logIndex: 0, blockNumber: block });
 
-const env = { ANONYMO_COIN: JSON.stringify({ rpcUrl: "http://127.0.0.1:9", coinPay: PAY, token: { address: COIN }, pool: POOL, quote: { address: USDG }, confirmations: 2, startBlock: 100, maxUsdPerPayment: "50" }) };
+const env = { ANONYMO_COIN: JSON.stringify({ rpcUrl: "http://127.0.0.1:9", chainId: 46630, coinPay: PAY, token: { address: COIN, symbol: "ANMO" }, pool: POOL, quote: { address: USDG }, confirmations: 2, startBlock: 100, maxUsdPerPayment: "50" }) };
 const cfg = loadDepositsConfig(env).coin as CoinConfig;
 let m: MoneyHarness;
 beforeAll(async () => {
@@ -128,9 +129,72 @@ describe("coin payments", () => {
     expect(Number(d.coin.price_usd)).toBeCloseTo(0.1, 3);
     expect(d.coin.max_usd_per_payment).toBe("50");
     expect(d.coin.key_commit).toMatch(/^0x[0-9a-f]{64}$/);
+    const addresses = () => m.h.ctx.db.select({ address: anonymoDepositAddresses.address }).from(anonymoDepositAddresses);
+    const before = await addresses();
+    const r = await m.req("/deposits/contracts");
+    expect(r.headers.get("cache-control")).toBe("no-store");
+    const publicCoin = (await r.json()).coin;
+    const { key_commit, ...metadata } = d.coin;
+    expect(publicCoin).toEqual(metadata);
+    expect(await addresses()).toEqual(before);
     chain.pool = null;
+    expect((await (await m.req("/deposits/contracts")).json()).coin.price_usd).toBeNull();
     expect((await (await m.req("/deposits", { headers: k.auth })).json()).instructions.coin.price_usd).toBeNull();
   });
+});
+
+test("invalid receiver bindings fail closed while stablecoin contracts remain available", async () => {
+  const stable = { chain: "rhc", rpcUrl: "http://127.0.0.1:9", router: PAYER, tokens: [{ symbol: "USDG", address: USDG, decimals: 6 }] };
+  const h = await moneyHarness({ router: m.h, env: { ...env, ANONYMO_EVM_CHAINS: JSON.stringify([stable]) } });
+  const valid = await reader.paymentBinding(PAY, COIN);
+  const invalid = [
+    { ...valid, chainId: 1 }, { ...valid, coin: USDG }, { ...valid, symbol: "OTHER" },
+    { ...valid, decimals: 6 }, { ...valid, dead: PAYER },
+  ];
+  for (const binding of invalid) {
+    h.deps.readers.coin = { ...reader, paymentBinding: async () => binding };
+    const body = await (await h.req("/deposits/contracts")).json();
+    expect(body.coin).toBeNull();
+    expect(body.chains[0].router).toBe(PAYER);
+  }
+  h.deps.readers.coin = { ...reader, paymentBinding: async () => { throw new Error("RPC unavailable"); } };
+  expect((await (await h.req("/deposits/contracts")).json()).coin).toBeNull();
+  h.deps.readers.coin = reader;
+  h.deps.config.coin = { ...cfg, chainId: 4663 };
+  expect((await (await h.req("/deposits/contracts")).json()).coin).toBeNull();
+});
+
+test("mainnet exposes only canonical NYMO with its verified CoinPay receiver", async () => {
+  const nymo = "0xafe293638b064d7786c5326a071520358c3f3198";
+  const usdg = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
+  const mainnet = { ...cfg, chainId: 4663, token: { address: nymo, symbol: "NYMO", decimals: 18 }, quote: { address: usdg, symbol: "USDG", decimals: 6 } } as CoinConfig;
+  const h = await moneyHarness({ router: m.h, config: { coin: mainnet } });
+  const binding = { ...await reader.paymentBinding(PAY, COIN), chainId: 4663, coin: mainnet.token.address, symbol: "NYMO" };
+  h.deps.readers.coin = { ...reader, paymentBinding: async () => binding, poolState: async () => null };
+  const getCoin = async () => (await (await h.req("/deposits/contracts")).json()).coin;
+  expect(await getCoin()).toMatchObject({ coin_pay: PAY, token: mainnet.token, price_usd: null });
+  for (const broken of [
+    { ...mainnet, token: { ...mainnet.token, address: COIN } }, { ...mainnet, token: { ...mainnet.token, symbol: "ANMO" } },
+    { ...mainnet, quote: { ...mainnet.quote, address: USDG } }, { ...mainnet, coinPay: mainnet.token.address },
+  ]) {
+    h.deps.config.coin = broken;
+    expect(await getCoin()).toBeNull();
+  }
+});
+
+test("a stalled coin lookup leaves USDG available and concurrent callers share the RPC", async () => {
+  const stable = { chain: "rhc", rpcUrl: "http://127.0.0.1:9", router: PAYER, tokens: [{ symbol: "USDG", address: USDG, decimals: 6 }] };
+  const h = await moneyHarness({ router: m.h, env: { ...env, ANONYMO_EVM_CHAINS: JSON.stringify([stable]) } });
+  let calls = 0;
+  const stalled = Promise.withResolvers<Awaited<ReturnType<CoinReader["paymentBinding"]>>>();
+  h.deps.readers.coin = { ...reader, paymentBinding: () => { calls++; return stalled.promise; } };
+  try {
+    const results = await Promise.all([h.req("/deposits/contracts"), h.req("/deposits/contracts")]);
+    for (const result of results) expect(await result.json()).toMatchObject({ coin: null, chains: [{ router: PAYER }] });
+    expect(calls).toBe(1);
+  } finally {
+    stalled.resolve(await reader.paymentBinding(PAY, COIN));
+  }
 });
 
 describe("Pons coins: Uniswap v4 pool price", () => {
@@ -153,7 +217,7 @@ describe("Pons coins: Uniswap v4 pool price", () => {
   });
 
   test("before graduation there is no pool and no price; after it, sampled spot and average decide", async () => {
-    const cfgV4 = loadDepositsConfig({ ANONYMO_COIN: JSON.stringify({ rpcUrl: "http://127.0.0.1:9", coinPay: PAY, token: { address: COIN }, quote: { address: USDG }, twapSeconds: 60 }) }).coin as CoinConfig;
+    const cfgV4 = loadDepositsConfig({ ANONYMO_COIN: JSON.stringify({ rpcUrl: "http://127.0.0.1:9", chainId: 46630, coinPay: PAY, token: { address: COIN, symbol: "ANMO" }, quote: { address: USDG }, twapSeconds: 60 }) }).coin as CoinConfig;
     expect(cfgV4.pool).toBeUndefined();
     expect(cfgV4.v4.tickSpacing).toBe(200);
     let slot: V4Slot | null = null;

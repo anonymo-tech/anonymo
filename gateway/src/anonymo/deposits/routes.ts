@@ -5,6 +5,7 @@
 //   GET  /deposits           → deposit instructions and this key's recent deposits
 //   GET  /deposits/contracts → the DepositRouter and tokens per EVM chain, no key (a wallet app's browser pays from it)
 //   POST /deposits/btcpay    → a BTCPay invoice (BTC or Lightning) for an amount in USD
+//   GET  /deposits/coin/quote → raw NYMO needed for a USD target, from the confirmed market window (no key)
 //   POST /webhooks/btcpay    → BTCPay's signed webhook
 
 import { desc, eq } from "drizzle-orm";
@@ -20,7 +21,9 @@ import { picoToUsd, usdToPico } from "../../lib/money.ts";
 import { uid } from "../../lib/util.ts";
 import { keysRoutes } from "../keys/routes.ts";
 import { handleBtcpayEvent, refundTarget, verifyBtcpaySignature } from "./btcpay.ts";
-import { depositInstructions, evmContracts } from "./instructions.ts";
+import { prepareNymoQuote } from "./coin.ts";
+import { coinTargetRoute } from "./coin-target.ts";
+import { depositInstructions, evmContracts, publicCoinContract } from "./instructions.ts";
 import { anonymoBtcpayInvoices, anonymoDeposits, anonymoWithdrawals } from "./schema.ts";
 import { registerMoneyJobs, type MoneyDeps } from "./services.ts";
 import { attemptPayout, coinCreditPico, recentBitcoinCreditPico, requestWithdrawal, withdrawalJson, withdrawDestinations } from "./withdraw.ts";
@@ -41,6 +44,7 @@ export function moneyRoutes(app: Hono, ctx: Ctx, deps: MoneyDeps, o: { jobs?: bo
   for (const p of ["/keys", "/keys/*", "/balance", "/withdraw", "/withdrawals", "/deposits", "/deposits/*"]) app.use(p, apiCors);
 
   keysRoutes(app, ctx, deps);
+  coinTargetRoute(app, ctx, deps, (cfg, reader) => prepareNymoQuote(ctx.db, cfg, reader));
 
   app.get("/balance", async (c) => {
     const key = await requireKey(ctx, c.req.header("authorization"));
@@ -89,9 +93,10 @@ export function moneyRoutes(app: Hono, ctx: Ctx, deps: MoneyDeps, o: { jobs?: bo
 
   // No key: a phone wallet's own browser opens /pay with only the key's public keyCommit, and reads the contracts here,
   // so a link can never point a payment at another contract.
-  app.get("/deposits/contracts", (c) => {
+  app.get("/deposits/contracts", async (c) => {
+    c.header("Cache-Control", "no-store");
     if (deps.config.depositsPaused) return c.json({ paused: true });
-    return c.json({ paused: false, chains: evmContracts(deps) });
+    return c.json({ paused: false, chains: evmContracts(deps), coin: await publicCoinContract(ctx, deps) });
   });
 
   app.post("/deposits/btcpay", async (c) => {

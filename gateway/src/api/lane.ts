@@ -8,6 +8,7 @@ import { safeEqual } from "../lib/util.ts";
 import { LANE_STATUSES, VARIANTS, isRestricted, restrictedExclusion, type ModelLane } from "../router/lane.ts";
 import { bearer } from "./auth.ts";
 import { readJson } from "./common.ts";
+import { offerLane, regularPpqOffer } from "../router/regular-ppq.ts";
 import { servedDisclosure } from "./disclosure.ts";
 
 // The Lane: catalog variants.
@@ -37,12 +38,14 @@ export function laneJson(ctx: Ctx, m: ModelRow) {
 
 /**
  * Whether a live offer may serve this model right now: a restricted variant only through an attested provider whose
- * attestation reports the classifier as enabled, and no model at all until it is approved for serving. The same
+ * attestation reports the classifier as enabled, or through its explicitly reviewed ordinary PPQ route. A model
+ * held as a candidate remains unavailable through either route. The same
  * rule selectProviders applies to a request, so a listing never advertises an endpoint routing would refuse.
  */
 export function offerEligible(ctx: Ctx, lane: ModelLane, o: Candidate): boolean {
-  if (!lane.servable) return false;
-  return !isRestricted(lane.variant) || restrictedExclusion(servedDisclosure(ctx, o).class, o.provider.classifierEnabled) === null;
+  const effective = offerLane(lane, o.weightLane);
+  if (!effective.servable) return false;
+  return !isRestricted(effective.variant) || !!regularPpqOffer(o) || restrictedExclusion(servedDisclosure(ctx, o).class, o.provider.classifierEnabled) === null;
 }
 
 // ---- Operator writes ----------------------------------------------------------------------------------------

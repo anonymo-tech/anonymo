@@ -17,6 +17,7 @@
     "test:mascot": "node --test scripts/check-mascot-browser.mjs",
     "test:workspace-browser": "node --test --test-concurrency=1 scripts/check-workspace-browser.mjs scripts/check-public-mobile.mjs scripts/check-mobile-navigation.mjs scripts/check-setup-browser.mjs scripts/check-funds-browser.mjs scripts/check-first-chat-browser.mjs",
     "test:client": "node --experimental-strip-types --test scripts/check-anonymo-client.mjs",
+    "test:nymo-wallet-browser": "node --experimental-strip-types --test scripts/check-nymo-pay-browser.mjs",
     "test:wallet": "node --experimental-strip-types --test scripts/check-wallet.mjs",
     "test:live": "node --experimental-strip-types --test scripts/check-gateway-live.mjs",
     "test:copy": "node --experimental-strip-types --test scripts/check-copy.mjs",

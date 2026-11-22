@@ -1,3 +1,4 @@
+import { ppqChatModel } from "../providers/ppq-chat.ts";
 import type { DisclosureClass } from "./disclosure.ts";
 
 // Catalog variants and the rule that keeps low-refusal weights off public routes.
@@ -7,14 +8,15 @@ import type { DisclosureClass } from "./disclosure.ts";
 //   native_low_refusal  trained to refuse little; restricted
 //   abliterated         refusal behaviour removed from the weights after training; restricted
 //
-// A restricted model is served only when ALL of these hold for the provider at the moment of the request:
+// The restricted-weight policy requires all of the following at the moment of the request:
 //   1. the provider is served under the "attested" disclosure class (declared attested retention AND a fresh,
 //      verified attestation; a development report never counts in production), and
 //   2. the provider's attestation reported the in-enclave hard-block classifier as enabled
 //      (providers.classifier_enabled, written only by the attestor; unknown is false), and
 //   3. the model's status is "servable" (an operator approved it).
 // Nothing here is a request option: a caller cannot relax it, and it applies whichever lane the request asked
-// for. A restricted model is never sent to a public or vendor-forwarded provider.
+// for. Regular text chat additionally permits the reviewed PPQ weights at their own ordinary PPQ destination
+// (regular-ppq.ts). Restricted weights at any other destination still require the policy above.
 
 export const VARIANTS = ["mainstream", "native_low_refusal", "abliterated"] as const;
 export type Variant = (typeof VARIANTS)[number];
@@ -40,6 +42,7 @@ export const isRestricted = (v: Variant | null | undefined): boolean => v === "a
 const REFUSAL_REMOVED = /abliterat|uncensor|decensor|unfilter|lorablat|refusal[-_ ]?(?:free|removed|ablated)/i;
 
 export function inferredVariant(model: { id: string; name?: string | null; hfRepo?: string | null }): Variant {
+  if (ppqChatModel(model.id) && !REFUSAL_REMOVED.test(model.id)) return "native_low_refusal";
   return REFUSAL_REMOVED.test(`${model.id} ${model.name ?? ""} ${model.hfRepo ?? ""}`) ? "abliterated" : "mainstream";
 }
 

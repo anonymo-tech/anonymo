@@ -7,7 +7,7 @@ import { Photo } from '@/components/photo';
 import Link from 'next/link';
 import { ArrowUp, Drama, Square } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { isLiveModel, useAnonymo } from '../anonymo-provider';
 import { AnswerCard } from './answer-card';
 import { ChatVoiceContext, VoiceSettings, useChatVoice } from './chat-voice';
@@ -26,8 +26,9 @@ import { charactersStore } from '@/lib/anonymo/characters-store';
 import { memoryFor } from '@/lib/anonymo/movein/store';
 import { describeError, isOutOfCredit } from '@/lib/anonymo/client';
 import { useDeviceStore } from '@/lib/anonymo/device-store';
-import { modelStore, setStoredModel } from '@/lib/anonymo/prefs';
-import type { AnonymoModelId, ChatMessage } from '@/lib/anonymo/types';
+import { chatModels, isAnonymoModel, publishedPpqChat } from '@/lib/anonymo/chat-models';
+import { chatModelStore, setChatModel } from '@/lib/anonymo/prefs';
+import type { ChatMessage } from '@/lib/anonymo/types';
 import { paperPrompt, type PaperSource } from '@/lib/paper-trail';
 import { AI_REMINDER, CRISIS_LINES, mentionsSelfHarm, reminderDue } from '@/lib/anonymo/safety';
 import { keepStore, saveChat } from '@/lib/anonymo/history';
@@ -44,10 +45,12 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   threadHost: HTMLDivElement | null;
   composerHost: HTMLDivElement | null;
 }) {
-  const { ready, demo, key, client, turns, setTurns, chatId, openChat, rememberReceipt, refreshBalance, liveModels } = useAnonymo();
-  const stored = useDeviceStore(modelStore);
-  // A saved model that has no routes right now (not in /v1/models) falls back to anonymo-1 instead of failing on send.
-  const model: AnonymoModelId = isLiveModel(liveModels, stored) ? stored : 'anonymo-1';
+  const { ready, demo, key, client, turns, setTurns, chatId, openChat, rememberReceipt, refreshBalance, liveModels, catalog, catalogError, refreshCatalog } = useAnonymo();
+  const stored = useDeviceStore(chatModelStore);
+  const directModels = useMemo(() => chatModels(catalog ?? []), [catalog]);
+  const branded = isAnonymoModel(stored);
+  const model = branded && !isLiveModel(liveModels, stored) ? 'anonymo-1' : stored;
+  const modelReady = branded ? isLiveModel(liveModels, model) : directModels.some(m => m.id === model && m.availability !== 'temporarily_unavailable');
   const requestedCharacter = useSearchParams().get('character');
   const [councilMode, setCouncilMode] = useState<'merge' | 'select'>('merge');
   const [refusalCatch, setRefusalCatch] = useState(true);
@@ -117,7 +120,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     if (compact && threadHost && followReply.current) threadHost.scrollTop = threadHost.scrollHeight;
   }, [turns, compact, threadHost]);
 
-  const chooseModel = (id: AnonymoModelId) => setStoredModel(id);
+  const chooseModel = (id: string) => setChatModel(id);
 
   const update = (id: string, patch: Partial<Turn> | ((t: Turn) => Partial<Turn>)) =>
     setTurns((list) => list.map((t) => (t.id === id ? { ...t, ...(typeof patch === 'function' ? patch(t) : patch) } : t)));
@@ -139,7 +142,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
 
   async function send(promptText: string) {
     const prompt = promptText.trim();
-    if (!prompt || streaming || controller.current || !key) return;
+    if (!prompt || streaming || controller.current || !key || !modelReady) return;
     if (model !== 'anonymo-sealed') voice.prepare();
     setGuardNote(null);
     const content = paper ? paperPrompt(prompt, paper) : prompt;
@@ -180,6 +183,8 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   /** Streams one turn's reply into it, then settles its receipt and the balance. */
   async function run(turn: Turn, messages: ChatMessage[]) {
     const { id, model } = turn;
+    const listed = directModels.find(m => m.id === model);
+    const plainChat = model === 'anonymo-1' || !!(listed && (publishedPpqChat(listed) || listed.ppq_uncensored === true));
     const councilMode = turn.councilMode ?? 'merge';
     const abort = new AbortController();
     controller.current = abort;
@@ -187,11 +192,11 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     let haveReceipt = false;
     try {
       const result = await client.chat(
-        { model, messages, ...(model === 'anonymo-1' && !turn.attachment && !turn.recap ? { dashboard_chat: true as const } : {}) },
+        { model, messages, ...(plainChat && !turn.attachment && !turn.recap ? { dashboard_chat: true as const } : {}) },
         {
           signal: abort.signal,
           headers: {
-            refusalCatch: refusalCatch ? 'on' : 'off',
+            ...(isAnonymoModel(model) ? { refusalCatch: refusalCatch ? 'on' : 'off' } : {}),
             ...(model === 'anonymo-council' ? { councilMode } : {}),
           },
           onDelta: (delta) => update(id, (t) => ({ content: t.content + delta })),
@@ -224,14 +229,14 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   // Update "catchup": a long thread becomes a recap that starts a fresh chat (the old one stays saved, if kept).
   const catchupOn = ready && updateOn('catchup', demo);
   async function catchUp() {
-    if (streaming || !key || !canRecap(turns)) return;
+    if (streaming || !key || !modelReady || !canRecap(turns)) return;
     let messages = recapRequest(history());
     if (character) {
       const built = buildCharacterMessages(character.card, messages, { memory: memoryFor(demo, character.id) });
       messages = built.messages.map((m) => ({ role: m.role as ChatMessage['role'], content: typeof m.content === 'string' ? m.content : '' }));
     }
     // The council answers by committee; a recap only needs one model, so it goes to anonymo-1.
-    const recapModel: AnonymoModelId = model === 'anonymo-council' ? 'anonymo-1' : model;
+    const recapModel = model === 'anonymo-council' ? 'anonymo-1' : model;
     const first = turns.find((t) => !t.recap)?.prompt ?? 'our chat';
     const title = first.replace(/\s+/g, ' ').trim().slice(0, 48);
     const turn: Turn = {
@@ -311,7 +316,8 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
             }
           }}
         />
-        <ModelPicker value={model} onChange={chooseModel} live={liveModels} />
+        <ModelPicker value={model} onChange={chooseModel} live={liveModels} models={directModels}
+          catalogError={catalogError} onRefresh={refreshCatalog} />
         {voiceOn && voice.transcription && model !== 'anonymo-sealed' && (
           <VoiceMic key={chatId} model={voice.transcription} client={client} demo={demo} disabled={streaming}
             beforeRecord={voice.stop} onCharge={refreshBalance} onText={(transcript) => {
@@ -325,11 +331,12 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
             <Square size={14} fill="currentColor" aria-hidden="true" />
           </button>
         ) : (
-          <button type="submit" className="send" aria-label="Send" disabled={!key || !text.trim()}>
+          <button type="submit" className="send" aria-label="Send" disabled={!key || !modelReady || !text.trim()}>
             <ArrowUp size={18} aria-hidden="true" />
           </button>
         )}
       </form>
+      {!modelReady && <p className="notice" role="status">{!catalog && !catalogError ? 'Checking your selected model…' : 'Your selected model is unavailable. Choose another model to send.'}</p>}
       {memoryOn && character && <MemorySuggestions {...memory} />}
       <div className="dock-tools">
         <PaperTrail value={paper} onChange={setPaper} />
@@ -369,7 +376,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
             title="Use a separate paid chat request to suggest facts after replies."
             onClick={memory.toggleExtraction}>Memory suggestions: {memory.extractionOn ? 'on' : 'off'}</button>
         )}
-        <button
+        {branded && <button
           type="button"
           className="tool"
           aria-pressed={!refusalCatch}
@@ -377,12 +384,12 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
           onClick={() => setRefusalCatch((r) => !r)}
         >
           Refusal catch: {refusalCatch ? 'on' : 'off'}
-        </button>
+        </button>}
       </div>
       {voiceOn && <VoiceSettings sealed={model === 'anonymo-sealed'} />}
       <div className="dock-meta">
         <span>Enter to send · Shift+Enter for a new line</span>
-        <span>{historyOn && keep ? 'Chats are saved in this browser only, never on Anonymo.' : 'Conversations stay in this tab and are never stored.'}</span>
+        <span>{historyOn && keep ? 'Chat history is saved on this device.' : 'Chat history is off on this device.'}</span>
       </div>
     </div>
   );

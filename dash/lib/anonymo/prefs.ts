@@ -11,9 +11,18 @@ export const modelStore = deviceStore<AnonymoModelId>(() => {
   const saved = readJson<string>(MODEL, 'anonymo-1');
   return (ANONYMO_MODEL_IDS as readonly string[]).includes(saved) ? (saved as AnonymoModelId) : 'anonymo-1';
 }, 'anonymo-1');
-export function setStoredModel(id: AnonymoModelId) {
+// Chat accepts direct catalog IDs. Workspaces designed around the four Anonymo aliases keep their existing store.
+export const chatModelStore = deviceStore<string>(() => {
+  const saved = readJson<unknown>(MODEL, 'anonymo-1');
+  return typeof saved === 'string' && /^[\w~][\w~./:-]{0,199}$/.test(saved) ? saved : 'anonymo-1';
+}, 'anonymo-1');
+export function setChatModel(id: string) {
   writeJson(MODEL, id);
   modelStore.changed();
+  chatModelStore.changed();
+}
+export function setStoredModel(id: AnonymoModelId) {
+  setChatModel(id);
 }
 
 export type SeenReceipt = { id: string; model: string; at: string };

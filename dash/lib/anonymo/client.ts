@@ -8,6 +8,7 @@
 import { SPEECH_MODEL, TRANSCRIPTION_MODEL, type SpeechModel, type TranscriptionModel, type VoiceModels } from './talk.ts';
 import type {
   DepositContracts,
+  NymoQuote,
   StatusSlo,
   CapsUpdate,
   KeyCapsInput,
@@ -71,6 +72,7 @@ export const API_PATHS = {
   deposits: '/deposits',
   btcpayInvoice: '/deposits/btcpay',
   depositContracts: '/deposits/contracts',
+  nymoQuote: '/deposits/coin/quote',
   chat: '/v1/chat/completions',
   models: '/v1/models',
   receipt: (id: string) => `/v1/receipts/${encodeURIComponent(id)}`,
@@ -198,7 +200,9 @@ export function createAnonymoClient(options: ClientOptions) {
     balance: (signal?: AbortSignal) => json<Balance>(API_PATHS.balance, { signal }),
     deposits: (signal?: AbortSignal) => json<Deposits>(API_PATHS.deposits, { signal }),
     /** No key: the /pay page in a wallet app's browser reads the contracts from here, never from its link. */
-    depositContracts: (signal?: AbortSignal) => json<DepositContracts>(API_PATHS.depositContracts, { signal, auth: false }),
+    depositContracts: (signal?: AbortSignal) => json<DepositContracts>(API_PATHS.depositContracts, { signal, auth: false, cache: 'no-store' }),
+    nymoQuote: (amountUsd: string, signal?: AbortSignal) =>
+      json<NymoQuote>(`${API_PATHS.nymoQuote}?${new URLSearchParams({ amount_usd: amountUsd })}`, { signal, auth: false, cache: 'no-store' }),
     btcpayInvoice: (body: BtcpayInvoiceRequest) =>
       json<BtcpayInvoice>(API_PATHS.btcpayInvoice, { method: 'POST', body: JSON.stringify(body) }),
     /** `idempotencyKey` must be reused when retrying the same withdrawal, so a retry never pays twice. */
@@ -206,7 +210,7 @@ export function createAnonymoClient(options: ClientOptions) {
       json<WithdrawResponse>(API_PATHS.withdraw, { method: 'POST', body: JSON.stringify(body), headers: { 'idempotency-key': idempotencyKey } }),
     withdrawals: () => data<Withdrawal[]>(API_PATHS.withdrawals),
 
-    models: () => json<ModelList>(API_PATHS.models, { auth: false }),
+    models: (signal?: AbortSignal) => json<ModelList>(API_PATHS.models, { auth: false, cache: 'no-store', signal }),
     receipt: (id: string) => data<ReceiptView>(API_PATHS.receipt(id), { auth: false }),
     receiptProof: (id: string) => data<ProofView>(API_PATHS.receiptProof(id), { auth: false }),
     manifest: () => json<Manifest>(API_PATHS.manifest, { auth: false, headers: { accept: 'application/json' } }),

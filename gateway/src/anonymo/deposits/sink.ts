@@ -3,8 +3,8 @@
 // transaction. A sanctioned sender, or a screen that cannot run, is recorded as `held` and never credited.
 // Idempotent on `ref`: the deposit row's primary key and the ledger's unique `ref` (`dep:<ref>`) both guard it.
 
-import { and, eq } from "drizzle-orm";
-import type { Db } from "../../db/client.ts";
+import { and, eq, sql } from "drizzle-orm";
+import type { Db, Tx } from "../../db/client.ts";
 import { keys } from "../../db/schema.ts";
 import { ensureAccount, post } from "../../ledger/ledger.ts";
 import { log } from "../../lib/util.ts";
@@ -12,13 +12,31 @@ import type { ConfirmedDeposit, DepositSink, SanctionsScreen } from "../seams.ts
 import { anonymoDeposits } from "./schema.ts";
 
 /** `holdReason` records the deposit as held for an operator instead of crediting it (e.g. a coin payment over the cap). */
-export type DepositExtra = { token?: string; amountRaw?: bigint; holdReason?: string };
+export type DepositExtra = {
+  token?: string; amountRaw?: bigint; holdReason?: string;
+  /** Market-wide executable NYMO depth over one trailing pricing window. */
+  nymoWindowLimit?: { seconds: number; maxRaw: bigint; maxPico: bigint };
+};
 export type AnonymoDepositSink = DepositSink & {
   /** Same as credit(), with the token and raw amount kept for the record. */
   creditWith(d: ConfirmedDeposit, extra: DepositExtra): Promise<{ credited: boolean; held?: string }>;
 };
 
 export const ledgerRefOf = (depositRef: string) => `dep:${depositRef}`;
+
+/** Includes funds awaiting sanctions screening because they may later be released without another price decision. */
+export async function nymoRemaining(db: Db | Tx, limit: NonNullable<DepositExtra["nymoWindowLimit"]>) {
+  const d = anonymoDeposits;
+  const [used] = await db.select({
+    raw: sql<string>`coalesce(sum(${d.amountRaw}), 0)::text`,
+    pico: sql<string>`coalesce(sum(${d.amountPico}), 0)::text`,
+  }).from(d).where(and(eq(d.chain, "coin"), eq(d.token, "NYMO"),
+    sql`${d.createdAt} > now() - ${limit.seconds} * interval '1 second'`,
+    sql`(${d.status} = 'credited' or ${d.reason} = 'screening_unavailable')`));
+  const raw = limit.maxRaw - BigInt(used.raw);
+  const pico = limit.maxPico - BigInt(used.pico);
+  return { maxRaw: raw > 0n ? raw : 0n, maxPico: pico > 0n ? pico : 0n };
+}
 
 export function createDepositSink(db: Db, screen: SanctionsScreen): AnonymoDepositSink {
   const creditWith = async (d: ConfirmedDeposit, extra: DepositExtra) => {
@@ -35,18 +53,31 @@ export function createDepositSink(db: Db, screen: SanctionsScreen): AnonymoDepos
     } catch {
       held = "screening_unavailable";
     }
-    if (held) {
-      await db.insert(anonymoDeposits).values({ ...row, status: "held", reason: held }).onConflictDoNothing();
-      log.warn("anonymo deposit held", { chain: d.chain, ref: d.ref, reason: held });
-      return { credited: false, held };
-    }
-    const credited = await db.transaction(async (tx) => {
+    return db.transaction(async tx => {
+      const limit = extra.nymoWindowLimit;
+      if (limit) {
+        // Serialize every NYMO payer on this database. A deposit held for screening reserves
+        // capacity at intake so the normal rescreen path can never release unbudgeted credit.
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended('anonymo:deposit:nymo-depth', 0))`);
+        const [prior] = await tx.select({ ref: anonymoDeposits.ref }).from(anonymoDeposits).where(eq(anonymoDeposits.ref, d.ref));
+        if (prior) return { credited: false };
+        if (!held || held === "screening_unavailable") {
+          const remaining = await nymoRemaining(tx, limit);
+          if (!extra.amountRaw || extra.amountRaw > remaining.maxRaw || d.amount > remaining.maxPico)
+            held = "market_depth";
+        }
+      }
+      if (held) {
+        const saved = await tx.insert(anonymoDeposits).values({ ...row, status: "held", reason: held }).onConflictDoNothing().returning({ ref: anonymoDeposits.ref });
+        if (!saved.length) return { credited: false };
+        log.warn("anonymo deposit held", { chain: d.chain, ref: d.ref, reason: held });
+        return { credited: false, held };
+      }
       const inserted = await tx.insert(anonymoDeposits).values({ ...row, status: "credited", creditedAt: new Date() }).onConflictDoNothing().returning({ ref: anonymoDeposits.ref });
-      if (!inserted.length) return false;
+      if (!inserted.length) return { credited: false };
       await ensureAccount(tx, key.accountId);
-      return post(tx, { accountId: key.accountId, keyHash: d.keyHash, amount: d.amount, kind: "deposit", ref: ledgerRefOf(d.ref), description: `Deposit on ${d.chain}` });
+      return { credited: await post(tx, { accountId: key.accountId, keyHash: d.keyHash, amount: d.amount, kind: "deposit", ref: ledgerRefOf(d.ref), description: `Deposit on ${d.chain}` }) };
     });
-    return { credited };
   };
   return { credit: (d) => creditWith(d, {}), creditWith };
 }

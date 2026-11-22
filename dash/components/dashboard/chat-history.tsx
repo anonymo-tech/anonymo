@@ -34,7 +34,7 @@ import {
 import { charactersStore } from '@/lib/anonymo/characters-store';
 import { tokenLabel } from '@/lib/anonymo/catchup';
 import { keyStore } from '@/lib/anonymo/key-store';
-import { adultStore, modelStore, receiptsStore } from '@/lib/anonymo/prefs';
+import { adultStore, chatModelStore, modelStore, receiptsStore } from '@/lib/anonymo/prefs';
 import { updateOn } from '@/lib/anonymo/updates';
 import { vanishStore } from '@/lib/anonymo/vanish-prefs';
 import { ChatExpiry, VanishBadge, VanishSettings } from './vanish-controls';
@@ -459,6 +459,7 @@ export function WipeDevice() {
                           charactersStore,
                           receiptsStore,
                           modelStore,
+                          chatModelStore,
                           adultStore,
                           vanishStore,
                         ])

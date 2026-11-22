@@ -1,6 +1,6 @@
 'use client';
 
-// /pay: a stablecoin deposit for one key, opened inside a wallet app's own browser (phones have no browser wallet). The
+// /pay: a wallet payment for one key, opened inside a wallet app's own browser (phones have no browser wallet). The
 // link names the key only by its keyCommit; the router and token come from the gateway, never from the link, so a
 // link cannot send a payment to another contract. No key is stored or needed here, so the credit is shown on the
 // dashboard, not on this page.
@@ -10,11 +10,13 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { useAnonymo } from './anonymo-provider';
 import './wallet-payment.css';
 import { chainName, evmNetwork, shortAddress } from '@/lib/anonymo/chains';
-import { describeError } from '@/lib/anonymo/client';
+import { describeError, type AnonymoClient } from '@/lib/anonymo/client';
 import { parseUsd } from '@/lib/anonymo/money';
-import type { DepositContracts, Hex } from '@/lib/anonymo/types';
-import { depositStablecoin, describeWalletError, injectedProvider, stableUnits, type PayResult, type PayStep } from '@/lib/anonymo/wallet';
-import { isMobileBrowser, parsePayLink, payUrl, walletAppLinks, type PayLink } from '@/lib/anonymo/wallet-links';
+import type { DepositContracts, Hex, NymoQuote, PublicCoinInstructions } from '@/lib/anonymo/types';
+import { depositStablecoin, describeWalletError, formatUnits, injectedProvider, payWithCoin, stableUnits, type PayResult, type PayStep } from '@/lib/anonymo/wallet';
+import { nymoCreditText, readNymoQuote, sameNymoQuote } from '@/lib/anonymo/nymo-quote';
+import { nymoQuoteError, useNymoQuote } from './use-nymo-quote';
+import { availableNymoRail, isMobileBrowser, parsePayLink, payUrl, walletAppLinks, type PayLink } from '@/lib/anonymo/wallet-links';
 
 const STEP_TEXT: Record<PayStep, string> = {
   connecting: 'Connect your wallet…',
@@ -106,7 +108,7 @@ export function useWalletAccess() {
 }
 
 export function PayInWallet() {
-  const { ready, client } = useAnonymo();
+  const { ready, client, demo } = useAnonymo();
   const [link, setLink] = useState<PayLink | null | undefined>(undefined);
   const [contracts, setContracts] = useState<DepositContracts | null>(null);
   const [loadError, setLoadError] = useState('');
@@ -147,6 +149,12 @@ export function PayInWallet() {
   if (loadError) return <p className="error-text" role="alert">{loadError}</p>;
   if (!contracts) return <p className="muted">Loading the deposit contract…</p>;
   if (contracts.paused) return <p className="notice notice-amber">New deposits are paused right now. Nothing was sent.</p>;
+  if (link.token === 'NYMO') {
+    if (demo) return <p className="notice">Open Funds in live mode to pay with NYMO.</p>;
+    if (!availableNymoRail(contracts.coin))
+      return <p className="notice notice-amber">NYMO payments are unavailable on Robinhood Chain. Return to Funds to choose another payment method.</p>;
+    return <CoinPayInWallet client={client} coin={contracts.coin} link={link} onRefresh={setContracts} />;
+  }
   if (!entry || !token || !network)
     return (
       <p className="notice notice-amber">
@@ -199,6 +207,119 @@ export function PayInWallet() {
         <summary>Payment details</summary>
         <p>Credit goes to the key with this commitment after {entry.confirmations} confirmations. Compare it with the keyCommit in Funds before paying.</p>
         <code>{link.keyCommit}</code>
+      </details>
+    </div>
+  );
+}
+
+function CoinPayInWallet({ client, coin, link, onRefresh }: {
+  client: AnonymoClient;
+  coin: PublicCoinInstructions;
+  link: PayLink;
+  onRefresh: (contracts: DepositContracts) => void;
+}) {
+  const [amount, setAmount] = useState(link.amount ?? '10');
+  const [consent, setConsent] = useState<NymoQuote | null>(null);
+  const access = useWalletAccess();
+  const payment = useWalletPayment();
+  const { step, hash, result } = payment;
+  const busy = !!step || !!hash;
+  const musd = parseUsd(amount);
+  const review = useNymoQuote(client, coin, musd);
+  const quote = review.quote;
+  const understood = !!consent && !!quote && sameNymoQuote(consent, quote);
+  const units = quote ? formatUnits(BigInt(quote.amount_raw), coin.token.decimals, coin.token.decimals) : '';
+  const [checking, setChecking] = useState(false);
+
+  function pay() {
+    const provider = injectedProvider();
+    if (!provider || !musd || !quote || !understood) return;
+    void payment.submit(async callbacks => {
+      const verify = async (afterApproval: boolean) => {
+        setChecking(true);
+        const allowanceNote = afterApproval ? ' A token allowance may already exist in your wallet.' : '';
+        let latest: DepositContracts;
+        let next: NymoQuote;
+        try {
+          latest = await client.depositContracts();
+          const fresh = latest.paused ? null : latest.coin;
+          if (!availableNymoRail(fresh)) {
+            onRefresh(latest);
+            throw new Error('NYMO payments are currently unavailable.');
+          }
+          next = await readNymoQuote(client, fresh, musd);
+        } catch (error) {
+          setConsent(null);
+          const message = nymoQuoteError(error);
+          review.replace({ message });
+          throw new Error(message + allowanceNote);
+        } finally {
+          setChecking(false);
+        }
+        if (!sameNymoQuote(quote, next)) {
+          setConsent(null);
+          onRefresh(latest);
+          review.replace({ quote: next });
+          const change = quote.coin_pay.toLowerCase() !== next.coin_pay.toLowerCase()
+            ? `The payment contract changed to ${next.coin_pay}. Review the new recipient before confirming.`
+            : 'The quote changed. Review the burn amount and estimated credit before confirming.';
+          throw new Error(change + allowanceNote);
+        }
+        return next;
+      };
+      const fresh = await verify(false);
+      return payWithCoin({
+        provider, network: evmNetwork('rhc', { chain_id: fresh.chain_id }), coinPay: fresh.coin_pay,
+        token: fresh.token, keyCommit: link.keyCommit, amount: BigInt(fresh.amount_raw), beforeBurn: async () => { await verify(true); }, ...callbacks,
+      });
+    });
+  }
+
+  return (
+    <div className="panel panel-stack">
+      <p className="wallet-network">NYMO on Robinhood Chain</p>
+      {result ? (
+        <output className="notice notice-signal" aria-live="polite">
+          Transaction <span className="mono">{shortAddress(result.hash, 8)}</span> is mined. Return to the original Funds tab to see your usage credit after {coin.confirmations} confirmations.
+        </output>
+      ) : (
+        <>
+          <p>Paying burns NYMO permanently. Your key receives usage-only credit at the confirmed market price. You can spend that credit on requests and cannot withdraw it.</p>
+          <label className="field">
+            Amount (USD)
+            <input className="input" inputMode="decimal" value={amount} disabled={busy || checking}
+              onChange={(e) => { setAmount(e.target.value); setConsent(null); }} />
+          </label>
+          {quote && musd ? (
+            <>
+              <p><strong>{units} NYMO</strong>. {nymoCreditText(quote, musd)} Credit is posted after {quote.confirmations} confirmations.</p>
+              {access === 'injected' && !hash ? (
+                <>
+                  <label className="checkbox">
+                    <input type="checkbox" checked={understood} disabled={busy || checking} onChange={e => setConsent(e.target.checked ? quote : null)} />
+                    I understand this burns {units} NYMO for usage-only credit.
+                  </label>
+                  <button type="button" className="btn btn-primary" disabled={!understood || busy || checking} onClick={pay}>
+                    <Wallet size={16} aria-hidden="true" />
+                    {checking ? 'Checking current quote…' : busy ? 'Payment in progress' : 'Confirm NYMO burn in wallet'}
+                  </button>
+                </>
+              ) : !hash && <OpenInWalletApp url={payUrl(window.location.origin, { ...link, amount })} showApps={access === 'app'} />}
+            </>
+          ) : (
+            <p className="notice" role="status">
+              {review.message} {review.failed && <button type="button" className="btn" onClick={review.retry}>Retry quote</button>}
+            </p>
+          )}
+          <WalletProgress payment={payment} />
+          {hash && !step && <button type="button" className="btn" onClick={() => { setConsent(null); payment.startAnother(); }}>Start another payment</button>}
+        </>
+      )}
+      <details className="wallet-payment-details">
+        <summary>Payment details</summary>
+        <p>Compare this key commitment with the one in your original Funds tab.</p><code>{link.keyCommit}</code>
+        <p>NYMO token</p><code>{coin.token.address}</code>
+        <p>CoinPay contract</p><code>{coin.coin_pay}</code>
       </details>
     </div>
   );

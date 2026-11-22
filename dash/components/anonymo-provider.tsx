@@ -15,6 +15,7 @@ import { forgetReceipts, receiptsStore, rememberReceipt, type SeenReceipt } from
 import { keepStore } from '@/lib/anonymo/history';
 import { freshTabChats, switchTabChat, type TabChat } from '@/lib/anonymo/tab-chats';
 import { updateOn } from '@/lib/anonymo/updates';
+import type { ModelInfo } from '@/lib/anonymo/types';
 import type { Turn } from './dashboard/chat-types';
 
 const DEMO_BASE = 'https://demo.anonymo.invalid';
@@ -45,6 +46,9 @@ type AnonymoState = {
   refreshBalance: () => void;
   /** Model IDs `GET /v1/models` lists right now, or null until known (then every ID is offered). */
   liveModels: ReadonlySet<string> | null;
+  catalog: readonly ModelInfo[] | null;
+  catalogError: boolean;
+  refreshCatalog: () => void;
 };
 
 const Context = createContext<AnonymoState | null>(null);
@@ -90,21 +94,44 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
     [demo, key, mock],
   );
 
-  // Which model IDs have routes right now. A model with none (anonymo-rp before self-hosted routes exist, anonymo-sealed
-  // before an attested route) is left out of /v1/models, so the UI marks it "not live yet" instead of failing on send.
-  const [liveModels, setLiveModels] = useState<ReadonlySet<string> | null>(null);
+  const [catalog, setCatalog] = useState<ModelInfo[] | null>(null);
+  const [catalogError, setCatalogError] = useState(false);
+  const [catalogVersion, setCatalogVersion] = useState(0);
+  const refreshCatalog = useCallback(() => setCatalogVersion(v => v + 1), []);
+  const liveModels = useMemo(() => catalog && new Set(catalog.filter(m => m.availability !== 'temporarily_unavailable').map(m => m.id)), [catalog]);
   useEffect(() => {
     if (!ready) return;
-    let stale = false;
-    // A keyless client: the model list is public and the same for every key, so it is fetched once per mode.
-    createAnonymoClient({ baseUrl: demo ? DEMO_BASE : API_BASE, fetch: mock?.fetch }).models().then(
-      (list) => !stale && setLiveModels(new Set(list.data.map((m) => m.id))),
-      () => undefined, // unknown: keep offering every model and let the gateway answer
-    );
+    const controller = new AbortController();
+    const publicClient = createAnonymoClient({ baseUrl: demo ? DEMO_BASE : API_BASE, fetch: mock?.fetch });
+    let fetching = false;
+    let checked = 0;
+    async function load() {
+      if (fetching || document.visibilityState === 'hidden' || Date.now() - checked < 60_000) return;
+      fetching = true;
+      try {
+        const response = await publicClient.models(controller.signal);
+        if (!controller.signal.aborted) {
+          setCatalog(response.data);
+          setCatalogError(false);
+        }
+      } catch {
+        if (!controller.signal.aborted) { setCatalog(null); setCatalogError(true); }
+      } finally {
+        checked = Date.now();
+        fetching = false;
+      }
+    }
+    void load();
+    const timer = window.setInterval(() => void load(), 65_000);
+    window.addEventListener('focus', load);
+    document.addEventListener('visibilitychange', load);
     return () => {
-      stale = true;
+      controller.abort();
+      clearInterval(timer);
+      window.removeEventListener('focus', load);
+      document.removeEventListener('visibilitychange', load);
     };
-  }, [ready, demo, mock]);
+  }, [ready, demo, mock, catalogVersion]);
 
   const setKey = useCallback(
     (value: string, remember: boolean) => {
@@ -147,9 +174,9 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
       forgetReceipts,
       balanceVersion,
       refreshBalance,
-      liveModels,
+      liveModels, catalog, catalogError, refreshCatalog,
     }),
-    [ready, demo, key, client, mock, setKey, clearKey, turns, setTurns, chatId, chats.recent, resetChats, openChat, receipts, balanceVersion, refreshBalance, liveModels],
+    [ready, demo, key, client, mock, setKey, clearKey, turns, setTurns, chatId, chats.recent, resetChats, openChat, receipts, balanceVersion, refreshBalance, liveModels, catalog, catalogError, refreshCatalog],
   );
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
