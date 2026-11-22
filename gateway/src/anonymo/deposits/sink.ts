@@ -7,6 +7,7 @@ import { and, eq, sql } from "drizzle-orm";
 import type { Db, Tx } from "../../db/client.ts";
 import { keys } from "../../db/schema.ts";
 import { ensureAccount, post } from "../../ledger/ledger.ts";
+import { usdToPico, type Pico } from "../../lib/money.ts";
 import { log } from "../../lib/util.ts";
 import type { ConfirmedDeposit, DepositSink, SanctionsScreen } from "../seams.ts";
 import { anonymoDeposits } from "./schema.ts";
@@ -16,6 +17,12 @@ export type DepositExtra = {
   token?: string; amountRaw?: bigint; holdReason?: string;
   /** Market-wide executable NYMO depth over one trailing pricing window. */
   nymoWindowLimit?: { seconds: number; maxRaw: bigint; maxPico: bigint };
+  /**
+   * The most every deposit whose ref starts with `scope` may credit in total (a BTCPay invoice's amount). Checked under
+   * a lock in the credit transaction: the part of this deposit over what is left is held as `<ref>:excess`
+   * (`over_invoice`) for an operator, never credited.
+   */
+  cap?: { scope: string; maxPico: Pico };
 };
 export type AnonymoDepositSink = DepositSink & {
   /** Same as credit(), with the token and raw amount kept for the record. */
@@ -36,6 +43,18 @@ export async function nymoRemaining(db: Db | Tx, limit: NonNullable<DepositExtra
   const raw = limit.maxRaw - BigInt(used.raw);
   const pico = limit.maxPico - BigInt(used.pico);
   return { maxRaw: raw > 0n ? raw : 0n, maxPico: pico > 0n ? pico : 0n };
+}
+
+/** An excess under a cent (BTCPay rounds the amount due up to whole satoshis) is not worth an operator's review. */
+const CAP_DUST_PICO = usdToPico("0.01");
+
+/** What a cap scope may still credit: its max less what is credited, or held only for screening (it may be released). */
+async function capRoom(tx: Tx, cap: NonNullable<DepositExtra["cap"]>): Promise<Pico> {
+  const d = anonymoDeposits;
+  const [used] = await tx.select({ pico: sql<string>`coalesce(sum(${d.amountPico}), 0)::text` }).from(d).where(and(
+    sql`left(${d.ref}, ${cap.scope.length}) = ${cap.scope}`,
+    sql`(${d.status} = 'credited' or ${d.reason} = 'screening_unavailable')`));
+  return cap.maxPico - BigInt(used.pico);
 }
 
 export function createDepositSink(db: Db, screen: SanctionsScreen): AnonymoDepositSink {
@@ -67,6 +86,26 @@ export function createDepositSink(db: Db, screen: SanctionsScreen): AnonymoDepos
             held = "market_depth";
         }
       }
+      let excess = 0n;
+      if (extra.cap) {
+        // Serialize the deposits of one cap scope, so concurrent deliveries cannot each see the same room left.
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`anonymo:deposit:cap:${extra.cap.scope}`}, 0))`);
+        const [prior] = await tx.select({ ref: anonymoDeposits.ref }).from(anonymoDeposits).where(eq(anonymoDeposits.ref, d.ref));
+        if (prior) return { credited: false };
+        if (!held || held === "screening_unavailable") {
+          const room = await capRoom(tx, extra.cap);
+          if (room <= 0n) held = "over_invoice";
+          else if (row.amountPico > room) {
+            excess = row.amountPico - room;
+            row.amountPico = room;
+          }
+        }
+      }
+      if (excess >= CAP_DUST_PICO) {
+        await tx.insert(anonymoDeposits).values({ ...row, ref: `${d.ref}:excess`, amountRaw: null, amountPico: excess, status: "held", reason: "over_invoice" }).onConflictDoNothing();
+        log.warn("anonymo deposit held", { chain: d.chain, ref: `${d.ref}:excess`, reason: "over_invoice" });
+      }
+      const excessHeld = excess >= CAP_DUST_PICO ? { held: "over_invoice" } : {};
       if (held) {
         const saved = await tx.insert(anonymoDeposits).values({ ...row, status: "held", reason: held }).onConflictDoNothing().returning({ ref: anonymoDeposits.ref });
         if (!saved.length) return { credited: false };
@@ -76,7 +115,7 @@ export function createDepositSink(db: Db, screen: SanctionsScreen): AnonymoDepos
       const inserted = await tx.insert(anonymoDeposits).values({ ...row, status: "credited", creditedAt: new Date() }).onConflictDoNothing().returning({ ref: anonymoDeposits.ref });
       if (!inserted.length) return { credited: false };
       await ensureAccount(tx, key.accountId);
-      return { credited: await post(tx, { accountId: key.accountId, keyHash: d.keyHash, amount: d.amount, kind: "deposit", ref: ledgerRefOf(d.ref), description: `Deposit on ${d.chain}` }) };
+      return { credited: await post(tx, { accountId: key.accountId, keyHash: d.keyHash, amount: row.amountPico, kind: "deposit", ref: ledgerRefOf(d.ref), description: `Deposit on ${d.chain}` }), ...excessHeld };
     });
   };
   return { credit: (d) => creditWith(d, {}), creditWith };

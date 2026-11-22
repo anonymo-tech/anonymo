@@ -28,11 +28,16 @@ const balanceOfKey = async (keyHash: string) => {
 };
 const b58 = () => base58Encode(randomBytes(32));
 
-const btcInvoices = new Map<string, { status: string; additionalStatus?: string; methods: BtcpayPaymentMethod[] }>();
+type MockInvoice = { status: string; additionalStatus?: string; amount?: string; currency?: string; expirationTime?: number; methods: BtcpayPaymentMethod[] };
+const btcInvoices = new Map<string, MockInvoice>();
+/** Every mock invoice expires at EXPIRES; payments in these tests were received at RECEIVED, before it. */
+const EXPIRES = 1_900_000_000;
+const RECEIVED = EXPIRES - 300;
+const setInvoice = (id: string, o: Omit<MockInvoice, "amount" | "currency" | "expirationTime">) => btcInvoices.set(id, { ...btcInvoices.get(id)!, ...o });
 const btcpay: BtcpayClient = {
-  createInvoice: async () => {
+  createInvoice: async ({ amountUsd }) => {
     const id = `inv_${btcInvoices.size + 1}`;
-    btcInvoices.set(id, { status: "New", methods: [] });
+    btcInvoices.set(id, { status: "New", amount: amountUsd, currency: "USD", expirationTime: EXPIRES, methods: [] });
     return { id, status: "New", checkoutLink: `https://btcpay.test/i/${id}` };
   },
   getInvoice: async (id) => ({ id, ...btcInvoices.get(id)! }),
@@ -262,17 +267,19 @@ describe("BTCPay", () => {
     expect(inv.refund).toEqual({ chain: "ln", address: "sample-user@wallet.example" });
     // Not paid yet: nothing credited.
     expect((await (await hook({ type: "InvoiceReceivedPayment", invoiceId: inv.invoice_id })).json()).status).toBe("pending");
-    btcInvoices.set(inv.invoice_id, { status: "Settled", methods: [
-      { paymentMethodId: "BTC-LN", rate: "62500.5", paymentMethodPaid: "0.0016", payments: [{ id: "ln-1", status: "Settled", value: "0.0016" }] },
-      { paymentMethodId: "BTC-CHAIN", rate: "62500.5", paymentMethodPaid: "0.0001", payments: [{ id: "chain-1", status: "Processing", value: "0.0001" }] },
+    setInvoice(inv.invoice_id, { status: "Settled", methods: [
+      { paymentMethodId: "BTC-LN", rate: "62500.5", paymentMethodPaid: "0.0016", payments: [{ id: "ln-1", status: "Settled", value: "0.0016", receivedDate: RECEIVED }] },
+      { paymentMethodId: "BTC-CHAIN", rate: "62500.5", paymentMethodPaid: "0.0001", payments: [{ id: "chain-1", status: "Processing", value: "0.0001", receivedDate: RECEIVED }] },
     ] });
     expect((await hook({ type: "InvoiceSettled", invoiceId: inv.invoice_id }, "sha256=" + "0".repeat(64))).status).toBe(401);
     expect(await balanceOfKey(k.keyHash)).toBe(0n);
     const ok = await hook({ type: "InvoiceSettled", invoiceId: inv.invoice_id });
     expect((await ok.json()).status).toBe("credited");
-    expect(await balanceOfKey(k.keyHash)).toBe(usdToPico("100.0008"));
+    // Paid $100.0008 on a $100 invoice: credited up to the invoice amount; the sub-cent rounding is not held for review.
+    expect(await balanceOfKey(k.keyHash)).toBe(usdToPico("100"));
     expect((await (await hook({ type: "InvoiceSettled", invoiceId: inv.invoice_id })).json()).status).toBe("duplicate");
-    expect(await balanceOfKey(k.keyHash)).toBe(usdToPico("100.0008"));
+    expect(await balanceOfKey(k.keyHash)).toBe(usdToPico("100"));
+    expect(await m.h.ctx.db.select().from(anonymoDeposits).where(eq(anonymoDeposits.ref, `btcpay:${inv.invoice_id}:ln-1:excess`))).toEqual([]);
     // One deposit per settled payment, keyed by its BTCPay payment id.
     const [row] = await m.h.ctx.db.select().from(anonymoDeposits).where(eq(anonymoDeposits.ref, `btcpay:${inv.invoice_id}:ln-1`));
     expect(row.chain).toBe("ln");
@@ -283,8 +290,8 @@ describe("BTCPay", () => {
     test(`a partially paid invoice marked ${status} is credited per settled payment, each once`, async () => {
       const k = await m.newKey();
       const inv = await (await m.req("/deposits/btcpay", { headers: k.auth, json: { amount_usd: 50, refund_address: "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq" } })).json();
-      const payments = ["0.00025", "0.00025", "0.0002"].map((value, i) => ({ id: `pay-${i}`, status: "Processing", value }));
-      btcInvoices.set(inv.invoice_id, { status, additionalStatus: "PaidPartial", methods: [{ paymentMethodId: "BTC-CHAIN", rate: "60000", paymentMethodPaid: "0.0007", payments }] });
+      const payments = ["0.00025", "0.00025", "0.0002"].map((value, i) => ({ id: `pay-${i}`, status: "Processing", value, receivedDate: RECEIVED + i }));
+      setInvoice(inv.invoice_id, { status, additionalStatus: "PaidPartial", methods: [{ paymentMethodId: "BTC-CHAIN", rate: "60000", paymentMethodPaid: "0.0007", payments }] });
       expect((await (await hook({ type: `Invoice${status}`, invoiceId: inv.invoice_id })).json()).status).toBe("pending");
       expect(await balanceOfKey(k.keyHash)).toBe(0n);
 
@@ -292,7 +299,7 @@ describe("BTCPay", () => {
       expect((await (await hook({ type: "InvoicePaymentSettled", invoiceId: inv.invoice_id })).json()).status).toBe("credited");
       expect(await balanceOfKey(k.keyHash)).toBe(usdToPico("30"));
 
-      // A payment that settles after the invoice expired is credited on its own settlement event, once.
+      // A payment received before expiry that settles after it is credited on its own settlement event, once.
       payments[2].status = "Settled";
       expect((await (await hook({ type: "InvoicePaymentSettled", invoiceId: inv.invoice_id })).json()).status).toBe("credited");
       expect(await balanceOfKey(k.keyHash)).toBe(usdToPico("42"));

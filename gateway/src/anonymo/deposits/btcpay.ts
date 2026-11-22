@@ -4,25 +4,33 @@
 // and credit each settled payment once, keyed by its BTCPay payment id, at its payment method's quoted rate. Any
 // webhook for one of our invoices (InvoicePaymentSettled included) reconciles all of its settled payments, so a
 // partial payment that settles after the invoice expired is credited automatically and nothing is credited twice.
+// The quoted rate holds only until the invoice expires, so only payments BTCPay received by then are credited, and
+// never more than the invoice amount in total: a payment received late, and any excess, is held for an operator
+// (otherwise a late payment would be a free option on the BTC price over BTCPay's monitoring window).
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
 import { log } from "../../lib/util.ts";
-import type { Pico } from "../../lib/money.ts";
+import { usdToPico, type Pico } from "../../lib/money.ts";
 import type { BtcpayConfig } from "./config.ts";
-import { anonymoBtcpayInvoices } from "./schema.ts";
+import { anonymoBtcpayInvoices, anonymoDeposits } from "./schema.ts";
 import type { AnonymoDepositSink } from "./sink.ts";
 import { decimalProductToPico, decimalSumProductToPico } from "./units.ts";
 
-export type BtcpayInvoice = { id: string; status: string; additionalStatus?: string; checkoutLink?: string; metadata?: Record<string, unknown> };
+export type BtcpayInvoice = {
+  id: string; status: string; additionalStatus?: string; checkoutLink?: string; metadata?: Record<string, unknown>;
+  /** The invoice amount in `currency` (we create every invoice in USD) and its expiry, in unix seconds. */
+  amount?: string; currency?: string; expirationTime?: number;
+};
 export type BtcpayPaymentMethod = {
   paymentMethodId?: string;
   paymentMethod?: string;
   rate: string;
   paymentMethodPaid?: string;
   totalPaid?: string;
-  payments?: { id?: string; value: string; status: string }[];
+  /** `receivedDate`: when BTCPay first saw the payment, in unix seconds. */
+  payments?: { id?: string; value: string; status: string; receivedDate?: number }[];
 };
 
 export type BtcpayClient = {
@@ -66,19 +74,40 @@ export function settledUsdPico(methods: BtcpayPaymentMethod[]) {
 
 /** Every settled payment on an invoice with a payment id, valued at its payment method's quoted rate. Unsettled
  *  payments (BTCPay counts mempool payments as paid) and payments without an id are never credited. */
-export function settledPayments(methods: BtcpayPaymentMethod[]): { id: string; amount: Pico }[] {
-  const out: { id: string; amount: Pico }[] = [];
+export function settledPayments(methods: BtcpayPaymentMethod[]): { id: string; amount: Pico; receivedDate: number | null }[] {
+  const out: { id: string; amount: Pico; receivedDate: number | null }[] = [];
   for (const method of methods)
     for (const payment of method.payments ?? []) {
       if (payment.status !== "Settled" || typeof payment.id !== "string" || !payment.id) continue;
       const amount = decimalProductToPico(payment.value, method.rate);
-      if (amount > 0n) out.push({ id: payment.id, amount });
+      const receivedDate = typeof payment.receivedDate === "number" && Number.isFinite(payment.receivedDate) ? payment.receivedDate : null;
+      if (amount > 0n) out.push({ id: payment.id, amount, receivedDate });
     }
-  return out;
+  // Earliest first, so the payments made in time take the invoice amount before any later one.
+  return out.sort((a, b) => (a.receivedDate ?? Infinity) - (b.receivedDate ?? Infinity) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+/** The invoice amount in pico-USD, or null when BTCPay does not report a USD amount (then nothing is auto-credited). */
+export function invoiceUsdPico(inv: BtcpayInvoice): Pico | null {
+  if (inv.currency?.toUpperCase() !== "USD" || typeof inv.amount !== "string") return null;
+  try {
+    const v = usdToPico(inv.amount, "floor");
+    return v > 0n ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Why a settled payment is held rather than credited: received after the invoice expired, or not datable. */
+export function latePaymentReason(inv: BtcpayInvoice, receivedDate: number | null): string | undefined {
+  if (typeof inv.expirationTime !== "number" || !Number.isFinite(inv.expirationTime) || receivedDate === null) return "btcpay_undated";
+  return receivedDate > inv.expirationTime ? "btcpay_late" : undefined;
 }
 
 /** The deposit ref of one BTCPay payment: one credit per settled payment, ever. */
 export const btcpayPaymentRef = (invoiceId: string, paymentId: string) => `btcpay:${invoiceId}:${paymentId}`;
+/** Before per-payment credit, an invoice was credited once under this ref. Such an invoice is never credited again. */
+export const btcpayLegacyRef = (invoiceId: string) => `btcpay:${invoiceId}`;
 
 /** Handle one verified webhook body: credit every settled payment of a known invoice that is not credited yet. */
 export async function handleBtcpayEvent(db: Db, client: BtcpayClient, sink: AnonymoDepositSink, body: { type?: string; invoiceId?: string }) {
@@ -91,12 +120,16 @@ export async function handleBtcpayEvent(db: Db, client: BtcpayClient, sink: Anon
     if (fresh.status === "Expired" || fresh.status === "Invalid") await db.update(anonymoBtcpayInvoices).set({ status: "expired" }).where(eq(anonymoBtcpayInvoices.invoiceId, inv.invoiceId));
     return { status: "pending" as const, invoice: fresh.status };
   }
+  const [legacy] = await db.select({ ref: anonymoDeposits.ref }).from(anonymoDeposits).where(eq(anonymoDeposits.ref, btcpayLegacyRef(inv.invoiceId)));
+  if (legacy) return { status: "duplicate" as const, amount: 0n };
+  const maxPico = invoiceUsdPico(fresh);
   let credited = 0n;
   let held: string | undefined;
   for (const p of payments) {
+    const holdReason = maxPico === null ? "btcpay_amount_unknown" : latePaymentReason(fresh, p.receivedDate);
     const r = await sink.creditWith(
       { keyHash: inv.keyHash, chain: inv.refundChain as "btc" | "ln", amount: p.amount, ref: btcpayPaymentRef(inv.invoiceId, p.id), sourceAddr: inv.refundAddr },
-      { token: "BTC" },
+      { token: "BTC", ...(holdReason ? { holdReason } : {}), ...(maxPico !== null ? { cap: { scope: `btcpay:${inv.invoiceId}:`, maxPico } } : {}) },
     );
     if (r.credited) credited += p.amount;
     if (r.held) held ??= r.held;

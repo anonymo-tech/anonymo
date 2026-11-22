@@ -6,7 +6,7 @@ import { isApiError } from "../../lib/errors.ts";
 import type { Pico } from "../../lib/money.ts";
 import { attestationFresh } from "../../router/select.ts";
 import { RECEIPT_HEADER, buildAnonymoReceipt, issueAnonymoReceipt, receiptRoute, type RouteRole, type RouteStatus } from "../../receipts/anonymo.ts";
-import { SEALED_HEADER, assertSealedSeats, candidateState, keySealedOnly, sealedFilter, sealedRequired, sealedUnavailable, type SealedClock } from "./sealed.ts";
+import { SEALED_HEADER, assertSealedSeats, candidateState, councilSealed, keySealedOnly, sealedFilter, sealedRequired, sealedUnavailable, type SealedClock } from "./sealed.ts";
 import { weightsHashFor } from "./stats.ts";
 
 // Hooks for the single-call path in api/chat.ts and router/execute.ts (WS03 owns both). WS09 cannot edit them, so each
@@ -24,7 +24,7 @@ const clockOf = (ctx: Ctx): SealedClock => ({ now: Date.now(), maxAgeMs: ctx.cfg
 
 /** Whether this request is sealed: model `anonymo-sealed`, `x-anonymo-sealed: required`, or a `sealed_only` key. */
 export async function sealedForRequest(ctx: Ctx, c: Context, key: { keyHash: string } | null, body: Record<string, unknown>): Promise<boolean> {
-  const explicit = sealedRequired({ model: body.model, models: body.models, header: c.req.header(SEALED_HEADER) });
+  const explicit = sealedRequired({ model: body.model, models: body.models, header: c.req.header(SEALED_HEADER), councilSealed: councilSealed(body) });
   return explicit || await keySealedOnly(ctx.db, key?.keyHash);
 }
 

@@ -1021,7 +1021,7 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
         }
         if (!choices.length && ev?.usage) return; // usage-only chunk: we send our own at the end
         const { usage: _u, id: _i, model: _m, created: _c, object: _o, ...rest } = ev ?? {};
-        relay({ ...base, ...rest, choices });
+        relay({ ...base, ...(servedRefusal ? capRefusedTop(rest) : rest), choices });
       };
       try {
         for (const ev of r.buffered) emit(ev);
@@ -1238,6 +1238,12 @@ export function capRefusedChannels(holder: any, budget: number): { left: number;
   };
   for (const field of ["content", "text", "refusal", "reasoning", "reasoning_content"] as const)
     if (typeof holder[field] === "string") holder[field] = take(holder[field]);
+    else if (holder[field] != null) {
+      // An array or object in a text channel would pass whole: a served refusal carries strings only.
+      cut = true;
+      delete holder[field];
+    }
+  if (holder.role != null && typeof holder.role !== "string") delete holder.role;
   if (Array.isArray(holder.reasoning_details)) {
     cut ||= holder.reasoning_details.length > 0;
     delete holder.reasoning_details;
@@ -1250,10 +1256,11 @@ export function capRefusedChannels(holder: any, budget: number): { left: number;
         break;
       }
       const fn = tc?.function ?? {};
-      const name = typeof fn.name === "string" ? take(fn.name) : fn.name;
-      const args = typeof fn.arguments === "string" ? take(fn.arguments) : fn.arguments;
+      const name = typeof fn.name === "string" ? take(fn.name) : undefined;
+      const args = typeof fn.arguments === "string" ? take(fn.arguments) : undefined;
+      if ((fn.name != null && name === undefined) || (fn.arguments != null && args === undefined)) cut = true; // not a string: dropped
       kept.push({
-        ...(tc?.index !== undefined ? { index: tc.index } : {}),
+        ...(typeof tc?.index === "number" ? { index: tc.index } : {}),
         ...(typeof tc?.id === "string" ? { id: tc.id } : {}),
         ...(typeof tc?.type === "string" ? { type: tc.type } : {}),
         function: { ...(name !== undefined ? { name } : {}), ...(args !== undefined ? { arguments: args } : {}) },
@@ -1284,6 +1291,12 @@ export function capRefusedChoice(ch: any, budget: number): { left: number; cut: 
   for (const k of Object.keys(ch)) if (!REFUSED_CHOICE_KEYS.has(k)) delete ch[k];
   let left = budget;
   let cut = false;
+  if (ch.index != null && typeof ch.index !== "number") delete ch.index;
+  if (ch.finish_reason != null && typeof ch.finish_reason !== "string") delete ch.finish_reason;
+  if (ch.text != null && typeof ch.text !== "string") {
+    cut = true;
+    delete ch.text;
+  }
   for (const holder of [ch.message, ch.delta]) {
     if (!holder || typeof holder !== "object") continue;
     const r = capRefusedChannels(holder, left);
@@ -1300,8 +1313,21 @@ export function capRefusedChoice(ch: any, budget: number): { left: number; cut: 
   return { left, cut };
 }
 
-function capRefusedJson(json: any) {
-  for (const ch of json?.choices ?? []) {
+/** The top-level fields a served refusal keeps, in JSON and in each stream chunk. Anything else a provider adds outside
+ *  `choices` would ride along unbilled. */
+const REFUSED_TOP_KEYS = new Set(["id", "object", "created", "model", "choices", "usage", "system_fingerprint", "provider"]);
+
+/** A served refusal's top-level fields, rebuilt from REFUSED_TOP_KEYS: only `choices` and `usage` may be non-strings. */
+export function capRefusedTop(json: any) {
+  if (!json || typeof json !== "object") return json;
+  for (const k of Object.keys(json))
+    if (!REFUSED_TOP_KEYS.has(k) || (k !== "choices" && k !== "usage" && k !== "created" && json[k] != null && typeof json[k] !== "string")) delete json[k];
+  return json;
+}
+
+export function capRefusedJson(json: any) {
+  capRefusedTop(json);
+  for (const ch of Array.isArray(json?.choices) ? json.choices : []) {
     const { cut } = capRefusedChoice(ch, REFUSED_MAX_CHARS);
     if (cut) ch.finish_reason = "length";
   }

@@ -37,7 +37,7 @@ export const anonymoDepositAddresses = pgTable(
 export const anonymoDeposits = pgTable(
   "anonymo_deposits",
   {
-    ref: text("ref").primaryKey(), // `${chain}:${txHash}:${logIndex}` or `btcpay:<invoice>`
+    ref: text("ref").primaryKey(), // `${chain}:${txHash}:${logIndex}`, `btcpay:<invoice>:<payment>[:excess]` (legacy: `btcpay:<invoice>`)
     keyHash: text("key_hash").notNull(),
     chain: text("chain").notNull(),
     token: text("token").notNull().default(""),

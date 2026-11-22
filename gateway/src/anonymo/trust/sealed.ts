@@ -97,8 +97,21 @@ export function requestedModelIds(body: Record<string, unknown>): string[] {
   return [body.model, ...(Array.isArray(body.models) ? body.models : [])].filter((m): m is string => typeof m === "string");
 }
 
-/** A `:private` model named anywhere in the request (GHSA-rch8-pxr3-p8gc retest: `models` alone counts too). */
-export const namesPrivateModel = (body: Record<string, unknown>) => requestedModelIds(body).some((m) => m.includes(":private"));
+/** The model ids a council request names for its seats: `council.models`, `council.judge` and `council.aggregator`. */
+export function councilModelIds(body: Record<string, unknown>): string[] {
+  const c = body.council;
+  if (!c || typeof c !== "object" || Array.isArray(c)) return [];
+  const o = c as Record<string, unknown>;
+  return [...(Array.isArray(o.models) ? o.models : []), o.judge, o.aggregator].filter((m): m is string => typeof m === "string");
+}
+
+/** `council.sealed: true`. Read before the chat floor runs, so a sealed council is never read by the hosted guards. */
+export const councilSealed = (body: Record<string, unknown>) =>
+  !!body.council && typeof body.council === "object" && (body.council as Record<string, unknown>).sealed === true;
+
+/** A `:private` model named anywhere in the request: `model`, `models`, or a council seat (GHSA-rch8-pxr3-p8gc retests). */
+export const namesPrivateModel = (body: Record<string, unknown>) =>
+  [...requestedModelIds(body), ...councilModelIds(body)].some((m) => m.includes(":private"));
 
 /**
  * The receipt's `attestation_quote_hash` for the routes a sealed call used: the verified quote hash itself for one

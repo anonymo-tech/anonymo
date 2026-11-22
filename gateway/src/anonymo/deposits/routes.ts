@@ -51,8 +51,8 @@ export function moneyRoutes(app: Hono, ctx: Ctx, deps: MoneyDeps, o: { jobs?: bo
     const b = await balanceOf(ctx.db, key.accountId);
     const dests = await withdrawDestinations(ctx.db, key.keyHash);
     const available = b.available > 0n ? b.available : 0n;
-    const coin = await coinCreditPico(ctx.db, key.keyHash);
-    const settling = await recentBitcoinCreditPico(ctx.db, key.keyHash);
+    const coin = await coinCreditPico(ctx.db, key.accountId);
+    const settling = await recentBitcoinCreditPico(ctx.db, key.accountId);
     const cashable = available > coin + settling ? available - coin - settling : 0n;
     return c.json({
       balance_usd: picoToUsd(b.balance),
