@@ -1,5 +1,7 @@
 'use client';
 
+import { setupHref, storyDestination } from '@/lib/anonymo/setup-return';
+
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { isLiveModel, useAnonymo } from '../anonymo-provider';
@@ -222,7 +224,7 @@ export function StoryChapterEditor({
             />
           </label>
         )}
-        {!canWrite && <p className="faint"><Link className="link" href="/dashboard/key">Add an API key</Link> to use writing actions.</p>}
+        {!canWrite && <p className="faint"><Link className="link" href={setupHref('key', storyDestination(story.id, chapter.id))}>Add an API key</Link> to use writing actions.</p>}
         <div className="story-action-grid" aria-label="Writing actions and estimates" role="group">
           {estimates.map((item) => {
             const selectionNeeded = item.action === 'rewrite' || item.action === 'expand';
@@ -279,7 +281,7 @@ export function StoryChapterEditor({
           </div>
         </section>
       )}
-      {error && <p className="notice notice-rose" role="alert">{error.text} {error.needsFunds && <Link className="link" href="/dashboard/funds">Add funds</Link>}</p>}
+      {error && <p className="notice notice-rose" role="alert">{error.text} {error.needsFunds && <Link className="link" href={setupHref('funds', storyDestination(story.id, chapter.id))}>Add funds</Link>}</p>}
     </>
   );
 }

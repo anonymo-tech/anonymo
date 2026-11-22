@@ -1,6 +1,8 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
+import { setupHref } from '@/lib/anonymo/setup-return';
 import { isLiveModel, useAnonymo } from './anonymo-provider';
 import { CopyButton } from './copy-button';
 import { API_BASE, publicApiBase } from '@/lib/anonymo/config';
@@ -67,11 +69,16 @@ export function PresetsView() {
               <div className="preset-field" key={field.label}>
                 <span>{field.label}</span>
                 <code>{display.value}</code>
-                <CopyButton text={field.value} />
+                {field.secret && realKey === KEY_PLACEHOLDER
+                  ? <span className="faint">Paste your key here</span>
+                  : <CopyButton text={field.value} />}
               </div>
             );
           })}
         </div>
+        {ready && !key && (
+          <p className="muted">Replace the example key with your own. <Link className="link" href={setupHref('key', '/dashboard/presets')}>Get an API key</Link></p>
+        )}
         {snippet && shownSnippet && (
           <>
             <pre className="snippet">
@@ -80,7 +87,7 @@ export function PresetsView() {
           </>
         )}
         <div className="row">
-          <CopyButton text={presetText(preset, ctx)} label="Copy whole setup" className="btn-primary" />
+          <CopyButton text={presetText(preset, ctx)} label={realKey === KEY_PLACEHOLDER ? 'Copy setup template' : 'Copy whole setup'} className="btn-primary" />
           {snippet && <CopyButton text={snippet.text} label={`Copy ${snippet.language}`} />}
         </div>
         {preset.note && <p className="faint">{preset.note}</p>}

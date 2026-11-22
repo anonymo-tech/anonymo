@@ -1,0 +1,57 @@
+.wallet-network { margin: 0; color: var(--muted); font-size: 14px; }
+.wallet-handoff { display: grid; gap: 10px; min-width: 0; }
+.wallet-handoff h3 { font-size: 17px; margin: 0; }
+.wallet-handoff p { margin: 0; }
+.wallet-app-buttons {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(132px, 100%), 1fr));
+  gap: 6px;
+}
+.wallet-app-buttons a {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-height: 46px; padding: 8px 12px; background: var(--raised);
+  border: 1px solid var(--line-strong); border-radius: 9px;
+  color: var(--text); font: 600 14px/1.25 var(--sans); text-decoration: none;
+}
+.wallet-app-buttons a:hover, .wallet-app-buttons a:focus-visible { background: var(--raised-2); border-color: var(--pink); }
+.wallet-app-buttons svg { color: var(--pink); flex: none; }
+.wallet-payment-details { min-width: 0; }
+.wallet-payment-details summary { width: fit-content; min-height: 44px; align-content: center; color: var(--muted); cursor: pointer; }
+.wallet-payment-details p { margin: 5px 0 9px; }
+.wallet-payment-details > input { display: block; width: 100%; margin-bottom: 8px; }
+.wallet-payment-details code, .wallet-transfer-status code { overflow-wrap: anywhere; }
+.wallet-transfer-status { display: grid; gap: 6px; }
+.wallet-new-payment { justify-self: start; }
+
+.wallet-checkout { display: grid; gap: 14px; min-width: 0; }
+.wallet-amount-form { display: grid; gap: 0; }
+.wallet-amount-section { padding: 19px 0 24px; text-align: center; }
+.wallet-amount-section > label { color: var(--muted); font-size: 14px; }
+.wallet-amount-display {
+  display: flex; justify-content: center; align-items: baseline; gap: .04em; min-width: 0; margin: 6px 0 20px;
+  color: var(--text); font: 550 clamp(48px, 12vw, 68px)/1.12 var(--sans); letter-spacing: -.065em;
+}
+.wallet-amount-display > span { color: var(--faint); font-size: .67em; }
+.wallet-amount-display input {
+  min-width: 1ch; max-width: calc(100% - 2ch); padding: 0; border: 0; border-radius: 4px; background: transparent;
+  color: inherit; font: inherit; letter-spacing: inherit; font-variant-numeric: tabular-nums; text-align: left;
+}
+.wallet-amount-options { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.wallet-amount-options button { min-height: 44px; padding: 5px; color: var(--text); font: 550 14px/1.2 var(--sans); background: var(--raised); border: 1px solid var(--line); border-radius: 10px; }
+.wallet-amount-options button[aria-pressed="true"] { background: #3a2035; border-color: #df8ab9; color: #ffd5e9; }
+.wallet-pay-method { display: flex; gap: 12px; align-items: center; padding: 14px 0; border-top: 1px solid var(--line); }
+.wallet-pay-token { width: 37px; height: 37px; display: grid; place-items: center; border-radius: 50%; color: #d8d0ed; background: #342a41; }
+.wallet-pay-method span, .wallet-pay-method strong { display: block; }
+.wallet-pay-method span { font-size: 12px; color: var(--muted); }
+.wallet-pay-method strong { font-weight: 650; font-size: 15px; }
+.wallet-pay-method small { color: var(--muted); font: 450 14px/1.3 var(--sans); }
+.wallet-network-options summary, .wallet-edit { color: var(--muted); font: 500 13px/1.3 var(--sans); cursor: pointer; }
+.wallet-network-options summary { width: fit-content; padding: 6px 0 10px; }
+.wallet-network-options label { margin-bottom: 12px; }
+.wallet-primary.btn { width: 100%; min-height: 50px; margin: 9px 0 0; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 16px; }
+.wallet-review { display: grid; align-items: start; gap: 8px; }
+.wallet-edit { width: fit-content; min-height: 40px; border: 0; background: transparent; display: flex; align-items: center; gap: 6px; padding: 0; }
+.wallet-review h2 { margin: 0; font-size: clamp(28px, 7vw, 40px); letter-spacing: -.045em; }
+.wallet-review .wallet-handoff { margin-top: 14px; }
+.wallet-review .wallet-app-buttons { grid-template-columns: 1fr; }
+.wallet-checkout :focus-visible { outline: 2px solid var(--pink); outline-offset: 3px; }

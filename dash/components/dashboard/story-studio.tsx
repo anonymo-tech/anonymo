@@ -1,5 +1,6 @@
 'use client';
 
+import { useSearchParams } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import { BookOpen, Download, Plus } from 'lucide-react';
 import { useAnonymo } from '../anonymo-provider';
@@ -30,7 +31,8 @@ export function StoryStudio() {
 }
 
 function StoryShelf({ demo, stories, models }: { demo: boolean; stories: Story[]; models: StoryModel[] }) {
-  const [selected, setSelected] = useState<string>();
+  const requested = useSearchParams().get('story');
+  const [selected, setSelected] = useState<string | null>(requested);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState(false);
   const story = stories.find(({ id }) => id === selected) ?? stories[0];
@@ -80,7 +82,9 @@ type FieldEdit = { change: StoryEdit; failed?: boolean };
 
 function StoryBook({ original, demo, picker, models }: { original: Story; demo: boolean; picker: ReactNode; models: StoryModel[] }) {
   const [fields, setFields] = useState<Record<string, FieldEdit>>({});
-  const [chapterId, setChapterId] = useState(original.id === DEMO_STORY.id ? original.chapters.at(-1)?.id : original.chapters[0].id);
+  const query = useSearchParams();
+  const requestedChapter = query.get('story') === original.id ? query.get('chapter') : null;
+  const [chapterId, setChapterId] = useState(original.chapters.find(({ id }) => id === requestedChapter)?.id ?? (original.id === DEMO_STORY.id ? original.chapters.at(-1)?.id : original.chapters[0].id));
   const [chapterBusy, setChapterBusy] = useState(false);
   const [chapterError, setChapterError] = useState(false);
   const story = Object.values(fields).reduce((value, entry) => entry.change(value), original);

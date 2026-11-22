@@ -48,7 +48,7 @@ export function ModelPicker({
     <div className="picker" ref={root}>
       <button type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         {value === 'anonymo-sealed' && <ShieldCheck size={14} aria-hidden="true" />}
-        {value}
+        AI · {value}
         <ChevronDown size={14} aria-hidden="true" />
       </button>
       {open && (

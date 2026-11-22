@@ -1,5 +1,7 @@
 'use client';
 
+import { characterDestination, setupHref } from '@/lib/anonymo/setup-return';
+
 // Update "voice": Night Call. A full-screen voice call with the model, or with a character. The person talks (or
 // types), the reply is spoken sentence by sentence as it streams, and the mascot listens in the middle of the screen.
 //
@@ -79,6 +81,7 @@ function captionWidth() {
 }
 
 export function NightCall() {
+  const requested = useSearchParams().get('character');
   const { key } = useAnonymo();
   if (!key)
     return (
@@ -89,7 +92,7 @@ export function NightCall() {
         </div>
         <div className="notice row">
           <span style={{ flex: 1 }}>Connect an API key to start a call.</span>
-          <Link className="btn btn-primary btn-small" href="/dashboard/key">
+          <Link className="btn btn-primary btn-small" href={setupHref('key', characterDestination('call', requested))}>
             Create a key
           </Link>
         </div>
@@ -838,7 +841,7 @@ function Call() {
           )}
           {note && phase === 'lobby' && (
             <p className="notice notice-amber" role="alert">
-              {note.text} {note.funds && <Link href="/dashboard/funds">Add funds</Link>}
+              {note.text} {note.funds && <Link href={setupHref('funds', characterDestination('call', character?.id))}>Add funds</Link>}
             </p>
           )}
           <p className="ai-notice">{AI_NOTICE}</p>
@@ -1018,7 +1021,7 @@ function Call() {
                 {note && (
                   <div className="notice notice-amber row" role="alert">
                     <span style={{ flex: 1, minWidth: 200 }}>
-                      {note.text} {note.funds && <Link href="/dashboard/funds">Add funds</Link>}
+                      {note.text} {note.funds && <Link href={setupHref('funds', characterDestination('call', character?.id))}>Add funds</Link>}
                     </span>
                     <button type="button" className="btn btn-small btn-ghost" aria-label="Dismiss" onClick={() => setNote(null)}>
                       <X size={14} aria-hidden="true" />

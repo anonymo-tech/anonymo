@@ -2,6 +2,7 @@
 // own built-in browser instead, so the dashboard opens /pay there. The link carries only the key's keyCommit (a one-way
 // hash that every deposit already publishes on chain), never the key; /pay reads the contracts from the gateway itself.
 
+import { parseUsd } from './money.ts';
 import type { EvmChain, Hex } from './types.ts';
 
 export type PayLink = { keyCommit: Hex; chain: EvmChain; token: string; amount?: string };
@@ -9,7 +10,6 @@ export type PayLink = { keyCommit: Hex; chain: EvmChain; token: string; amount?:
 const COMMIT = /^0x[0-9a-fA-F]{64}$/;
 const CHAIN = /^(rhc|base|arbitrum)$/;
 const TOKEN = /^[A-Z]{3,5}$/;
-const AMOUNT = /^\d{1,9}(\.\d{1,2})?$/;
 
 /** A phone or tablet browser (iPadOS reports itself as a Mac with touch). */
 export function isMobileBrowser(nav: { userAgent: string; maxTouchPoints?: number } | undefined = typeof navigator === 'undefined' ? undefined : navigator): boolean {
@@ -19,7 +19,10 @@ export function isMobileBrowser(nav: { userAgent: string; maxTouchPoints?: numbe
 
 export function payUrl(origin: string, link: PayLink): string {
   const q = new URLSearchParams({ k: link.keyCommit, chain: link.chain, token: link.token });
-  if (link.amount && AMOUNT.test(link.amount)) q.set('amount', link.amount);
+  if (link.amount !== undefined) {
+    if (!parseUsd(link.amount)) return '';
+    q.set('amount', link.amount.trim().replace(/^\$\s*/, ''));
+  }
   return `${origin.replace(/\/+$/, '')}/pay?${q.toString()}`;
 }
 
@@ -30,14 +33,15 @@ export function parsePayLink(search: string): PayLink | null {
   const chain = q.get('chain') ?? '';
   const token = (q.get('token') ?? '').toUpperCase();
   const amount = q.get('amount') ?? undefined;
+  if (amount !== undefined && !parseUsd(amount)) return null;
   if (!COMMIT.test(keyCommit) || !CHAIN.test(chain) || !TOKEN.test(token)) return null;
-  return { keyCommit: keyCommit.toLowerCase() as Hex, chain: chain as EvmChain, token, ...(amount && AMOUNT.test(amount) ? { amount } : {}) };
+  return { keyCommit: keyCommit.toLowerCase() as Hex, chain: chain as EvmChain, token, ...(amount ? { amount } : {}) };
 }
 
 /** Links that open a page inside a wallet app's browser. Each app documents its own format. */
 export function walletAppLinks(url: string): { name: string; href: string }[] {
   return [
-    { name: 'MetaMask', href: `https://metamask.app.link/dapp/${url.replace(/^https?:\/\//, '')}` },
+    { name: 'MetaMask', href: `https://link.metamask.io/dapp/${url.replace(/^https?:\/\//, '')}` },
     { name: 'Coinbase Wallet', href: `https://go.cb-w.com/dapp?cb_url=${encodeURIComponent(url)}` },
     { name: 'Trust Wallet', href: `https://link.trustwallet.com/open_url?coin_id=60&url=${encodeURIComponent(url)}` },
   ];

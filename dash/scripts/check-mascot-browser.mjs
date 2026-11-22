@@ -96,8 +96,11 @@ for (const width of [1250, 390]) {
       await pop.getByRole('link', { name: 'Create a key to chat' }).click();
       await btn('Create key').click();
       await page.getByLabel('I have stored this key somewhere safe').check();
-      await btn('View funding options').click();
+      await btn('Open chat').click();
+      await page.waitForURL('**/dashboard/chat');
+      await page.goto(base + '/dashboard/funds');
       await btn('Send test USDG').click();
+      await page.getByRole('link', { name: 'Continue to chat', exact: true }).waitFor();
       await launcher.click();
       const input = pop.getByRole('textbox', { name: 'Message', exact: true });
       assert.equal(
@@ -219,17 +222,26 @@ for (const width of [1250, 390]) {
       const rect = await pop.boundingBox();
       assert.ok(rect.x >= 0 && rect.x + rect.width <= width + 1);
       await btn('Minimize chat').click();
-      const initial = await launcher.boundingBox();
-      await page.mouse.move(initial.x + 20, initial.y + 20);
-      await page.mouse.down();
-      await page.mouse.move(initial.x - 80, initial.y + 90, { steps: 5 });
-      await page.mouse.up();
-      assert.equal(await pop.count(), 0);
-      const moved = await launcher.boundingBox();
-      assert.ok(moved.x < initial.x - 60);
-      await launcher.focus();
-      await launcher.press('ArrowRight');
-      assert.ok((await launcher.boundingBox()).x > moved.x + 25);
+      if (width === 390) {
+        const dock = await page.getByRole('navigation', { name: 'Quick navigation' }).boundingBox();
+        const icon = await launcher.boundingBox();
+        assert.ok(icon.y >= dock.y && icon.y + icon.height <= dock.y + dock.height);
+        await launcher.focus();
+        await launcher.press('ArrowRight');
+        assert.deepEqual(await launcher.boundingBox(), icon);
+      } else {
+        const initial = await launcher.boundingBox();
+        await page.mouse.move(initial.x + 20, initial.y + 20);
+        await page.mouse.down();
+        await page.mouse.move(initial.x - 80, initial.y + 90, { steps: 5 });
+        await page.mouse.up();
+        assert.equal(await pop.count(), 0);
+        const moved = await launcher.boundingBox();
+        assert.ok(moved.x < initial.x - 60);
+        await launcher.focus();
+        await launcher.press('ArrowRight');
+        assert.ok((await launcher.boundingBox()).x > moved.x + 25);
+      }
       assert.deepEqual(errors, []);
     } finally {
       await browser.close();
@@ -316,9 +328,14 @@ test('feature reminders rotate after three visible minutes across pages and can 
       .getByRole('dialog', { name: 'Anonymo chat' })
       .waitFor({ state: 'hidden' });
     assert.equal(await tip.count(), 0);
+    // At phone widths a workspace tip stays in the companion so it never covers editor controls.
+    await page.clock.fastForward(180000);
+    assert.equal(await tip.count(), 0);
+    assert.equal(await button('Open Anonymo chat').getAttribute('data-tip'), 'true');
+    await button('Open Anonymo chat').click();
+    await tip.getByRole('link', { name: 'Frontend presets' }).waitFor();
     // Finish the rotation, then start again with the first feature.
     for (const title of [
-      'Frontend presets',
       'Refusal Catch',
       'Refusal leaderboard',
       'Chat exports',

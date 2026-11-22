@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test scripts/check-anonymo-client.mjs scripts/check-wallet.mjs scripts/check-copy.mjs scripts/check-solana.mjs scripts/check-guards.mjs scripts/check-safety.mjs scripts/check-history.mjs scripts/check-usage.mjs scripts/check-catchup.mjs scripts/check-status.mjs scripts/check-coin.mjs scripts/check-workspace.mjs scripts/check-compare.mjs scripts/check-vanish.mjs scripts/check-vault.mjs scripts/check-image-models.mjs scripts/check-video.mjs scripts/check-faces.mjs scripts/check-talk.mjs scripts/check-story.mjs scripts/check-memory.mjs scripts/check-voice.mjs scripts/check-movein.mjs scripts/check-sidebyside.mjs scripts/check-tickets.mjs scripts/check-ventures.mjs",
     "test:mascot": "node --test scripts/check-mascot-browser.mjs",
-    "test:workspace-browser": "node --test scripts/check-workspace-browser.mjs",
+    "test:workspace-browser": "node --test --test-concurrency=1 scripts/check-workspace-browser.mjs scripts/check-public-mobile.mjs scripts/check-mobile-navigation.mjs scripts/check-setup-browser.mjs scripts/check-funds-browser.mjs scripts/check-first-chat-browser.mjs",
     "test:client": "node --experimental-strip-types --test scripts/check-anonymo-client.mjs",
     "test:wallet": "node --experimental-strip-types --test scripts/check-wallet.mjs",
     "test:live": "node --experimental-strip-types --test scripts/check-gateway-live.mjs",

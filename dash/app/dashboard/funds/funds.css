@@ -1,0 +1,52 @@
+.funds-page {
+  width: min(100%, 33.5rem); margin: clamp(.4rem, 3.5vw, 3rem) auto; padding: clamp(1.35rem, 3.3vw, 2.35rem);
+  border: 1px solid var(--line-strong); border-radius: 1.45rem; background: var(--surface); color: var(--text);
+}
+.funds-page h1, .funds-page h2 { margin: 0; font-weight: 550; letter-spacing: -.048em; line-height: 1.1; }
+.funds-page h1 { font-size: clamp(2.05rem, 4vw, 2.65rem); }
+.funds-page h1:focus:not(:focus-visible) { outline: none; }
+.funds-page h2 { font-size: 1.2rem; }
+.funds-back, .funds-continue, .funds-confirmation, .funds-balance, .funds-refresh, .funds-secondary, .funds-secondary button, .funds-method > summary { display: flex; align-items: center; }
+.funds-back, .funds-continue { width: fit-content; min-height: 40px; gap: .4rem; font-size: .88rem; }
+.funds-back { margin: -.5rem 0 .4rem; color: var(--muted); }
+.funds-continue { margin-top: .25rem; color: var(--signal); }
+.funds-balance { gap: .7rem; width: 100%; margin-top: 1.1rem; padding: .35rem .25rem .35rem .75rem; border-radius: .7rem; background: var(--raised); font-variant-numeric: tabular-nums; }
+.funds-balance > svg { color: var(--muted); flex: none; }
+.funds-balance > div { display: grid; gap: .05rem; }
+.funds-balance span { font-size: .84rem; font-weight: 550; }
+.funds-balance small { color: var(--muted); font-size: .72rem; }
+.funds-balance strong { margin-left: auto; font-size: 1.17rem; line-height: 1.1; overflow-wrap: anywhere; }
+.funds-refresh, .funds-secondary button { border: 0; background: transparent; color: var(--muted); cursor: pointer; font: inherit; }
+.funds-refresh { justify-content: center; width: 44px; min-width: 44px; min-height: 44px; }
+.funds-page .funds-credit-detail, .funds-page .funds-confirmation { margin: .7rem 0 0; font-size: .85rem; color: var(--muted); }
+.funds-confirmation { gap: .6rem; padding: .65rem .8rem; border-left: 2px solid var(--pink); }
+.funds-confirmation svg { flex: none; }
+.funds-body { margin-top: 1.4rem; min-width: 0; }
+.funds-deposit, .funds-withdraw, .funds-history { display: grid; gap: .9rem; min-width: 0; }
+.funds-body .panel-stack, .funds-page .field { min-width: 0; }
+.funds-method { color: var(--muted); font-size: .88rem; }
+.funds-method > summary { justify-content: space-between; gap: .5rem; min-height: 44px; cursor: pointer; list-style: none; }
+.funds-method > summary::-webkit-details-marker { display: none; }
+.funds-method[open] svg { transform: rotate(180deg); }
+.funds-page .select, .funds-page .input { max-width: 100%; min-width: 0; }
+.funds-secondary { flex-wrap: wrap; gap: .25rem 1.25rem; border-top: 1px solid var(--line-strong); padding-top: .55rem; margin-top: 1rem; }
+.funds-secondary button { gap: .4rem; min-height: 44px; font-size: .85rem; padding: .25rem .05rem; }
+.funds-secondary button:hover, .funds-refresh:hover, .funds-back:hover { color: var(--text); }
+.funds-withdraw header p { margin: .5rem 0 0; }
+.funds-from { display: block; color: var(--muted); font-size: .8rem; }
+.funds-page .list, .funds-page .address-box { min-width: 0; }
+.funds-page .list li { flex-wrap: wrap; }
+.funds-page .hash, .funds-page .address-box code { overflow-wrap: anywhere; }
+.funds-guest { display: grid; justify-items: start; gap: .85rem; }
+.funds-guest > svg { color: var(--pink); }
+.funds-guest p { margin: 0; max-width: 36ch; color: var(--muted); }
+.funds-guest .btn { width: 100%; min-height: 46px; margin-top: .45rem; gap: .6rem; }
+@media (max-width: 550px) {
+  .funds-page { margin-block: .2rem; padding: 1rem 0 0; border: 0; border-radius: 0; background: transparent; }
+  .funds-balance { margin-top: .85rem; }
+  .funds-body { margin-top: 1rem; }
+  .funds-page .btn, .funds-page .input, .funds-page .select { min-height: 44px; }
+  .funds-page input, .funds-page select { font-size: 16px; }
+  .funds-page .address-box .kv > div { display: grid; grid-template-columns: minmax(0, 1fr); gap: .2rem; }
+  .funds-page .address-box .kv dd { margin: 0; }
+}

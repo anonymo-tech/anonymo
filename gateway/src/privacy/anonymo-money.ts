@@ -104,9 +104,9 @@ const ev = (file: string, contains: string) => ({ file, contains });
 export const anonymoMoneyBodyReaders: ExternalDoc["bodyReaders"] = [
   {
     file: "src/anonymo/keys/routes.ts", carries: "payment-or-signature",
-    reads: "POST /keys: optional caps. POST /keys/siwe: a SIWE message and its signature, plus optional caps. PATCH /keys/caps: caps.",
+    reads: "POST /keys: optional caps and an optional random dashboard signup UUID. POST /keys/siwe: a SIWE message and its signature, plus optional caps. PATCH /keys/caps: caps.",
     then: "Validates the caps and the SIWE message (domain, single-use nonce, time, signature), then creates a key and returns it once.",
-    kept: "sha256 of the new key in keys, caps and the proven wallet in anonymo_keys. The SIWE message and signature are not stored; the nonce row is deleted when used.",
+    kept: "SHA-256 of the new key in keys, caps and the proven wallet in anonymo_keys. Eligible first-chat signups retain the UUID’s domain-separated SHA-256 digest and an account entitlement in kv. The SIWE message and signature are not stored; the nonce row is deleted when used.",
     evidence: [ev("src/anonymo/keys/routes.ts", "createBody.parse(await readJson(c))"), ev("src/anonymo/keys/routes.ts", "siweBody.parse(await readJson(c))")],
   },
   {

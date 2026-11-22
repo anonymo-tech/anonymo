@@ -17,6 +17,7 @@ import { namesPrivateModel } from "../anonymo/trust/sealed.ts";
 import { type Pico, maxPico, picoToUsd, picoToUsdString, usdToPico } from "../lib/money.ts";
 import { canonical, canonicalJson, decrypt, genId, log, sha256 } from "../lib/util.ts";
 import { reserve, release, settle } from "../ledger/ledger.ts";
+import { reserveFirstChat, startFirstChat, finishFirstChat } from "../anonymo/keys/first-chat.ts";
 import { selectProviders, type ProviderPrefs } from "../router/select.ts";
 import { isAnonymoRoute } from "../anonymo/models.ts";
 import { isRestricted } from "../router/lane.ts";
@@ -50,7 +51,7 @@ import { parseTraceparent, shouldExportTrace } from "../services/tracing.ts";
 
 export type Kind = "chat" | "completion";
 export type Billing =
-  | { mode: "prepaid"; accountId: string; key: KeyRow }
+  | { mode: "prepaid"; accountId: string; key: KeyRow; firstChat?: string }
   | { mode: "per_call"; accountId: string; payer: string; paymentTx?: string; paymentResponse?: string; key?: undefined };
 
 const ROLES = new Set(["system", "developer", "user", "assistant", "tool", "function"]);
@@ -200,9 +201,40 @@ function selectTargets(
   return { targets, excluded };
 }
 
+// A first dashboard reply uses only ordinary text. Character Studio assembles the character's system
+// message and optional greeting locally; these are subject to the same input and floor limits.
+const FIRST_CHAT_FIELDS = new Set(["model", "messages", "stream", "max_tokens", "max_completion_tokens"]);
+const FIRST_CHAT_MAX_ATTEMPTS = 2; // allow the normal refusal retry on another family
+const FIRST_CHAT_ROUTE_BUDGET = usdToPico("0.005"); // at most one cent across both attempts
+
+function firstChatInputBound(body: Record<string, unknown>): number | null {
+  if (body.model !== "anonymo-1" || Object.keys(body).some((field) => !FIRST_CHAT_FIELDS.has(field))) return null;
+  const messages = body.messages;
+  if (!Array.isArray(messages) || messages.length > 16) return null;
+  let userMessages = 0;
+  let bytes = 0;
+  for (const m of messages) {
+    if (!m || typeof m.content !== "string" || !["system", "user", "assistant"].includes(m.role) ||
+        Object.keys(m).some((field) => field !== "role" && field !== "content")) return null;
+    if (m.role === "user") {
+      if (!m.content.trim()) return null;
+      userMessages++;
+    }
+    bytes += Buffer.byteLength(m.content, "utf8");
+    if (bytes > 8192) return null;
+  }
+  return userMessages === 1 ? bytes + (16 * messages.length) + 32 : null;
+}
+
+async function endFirstChat(ctx: Ctx, billing: Billing, outcome: "completed" | "failed") {
+  if (billing.mode === "prepaid" && billing.firstChat)
+    await finishFirstChat(ctx.db, billing.accountId, billing.firstChat, outcome);
+}
+
 /** Undo a hold whose request was not served. */
-async function giveBack(ctx: Ctx, _billing: Billing, holdId: string) {
-  await release(ctx.db, holdId);
+async function giveBack(ctx: Ctx, billing: Billing, holdId: string) {
+  try { await release(ctx.db, holdId); }
+  finally { await endFirstChat(ctx, billing, "failed"); }
 }
 
 /** x402: the settlement receipt rides on the served response. */
@@ -238,11 +270,14 @@ export function chatRoutes(app: Hono, ctx: Ctx) {
 async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): Promise<Response> {
   const t0 = Date.now();
   const body = await readJson(c);
+  const dashboardChat = body.dashboard_chat === true;
+  delete body.dashboard_chat; // control plane only; not part of the provider payload or request fingerprint
   validate(kind, body);
   validateCacheTtl(body, ctx.cfg.gateway.cacheTtlS);
   validateMulti(ctx, kind, body);
   const stream = body.stream === true;
   const bodySha = requestHash(body);
+  const firstChatRequested = dashboardChat && kind === "chat" && !characterId && firstChatInputBound(body) !== null;
 
   // ---- 1. Who is calling -------------------------------------------------------------------
   const secret = bearer(c.req.header("authorization"));
@@ -381,7 +416,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   const params = requestParams(body);
   const alternatives = { resolved, prefs, params, promptTokens, byok, body, allowed }; // B121
   // Sealed: only attested, fresh routes; otherwise 409 sealed_unavailable before any hold or provider call (WS09).
-  const { targets, excluded } = sealed
+  let { targets, excluded } = sealed
     ? sealedSelection(ctx, true, () => selectTargets(ctx, { resolved, prefs, params, promptTokens, byok, disc, maxOut: outputBudgetOf(body) }))
     : selectWithSuggestions(() => selectTargets(ctx, { resolved, prefs, params, promptTokens, byok, disc, maxOut: outputBudgetOf(body) }), ctx, alternatives); // B121
   if (!targets.length)
@@ -393,7 +428,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   // ---- 6. Hold the worst case --------------------------------------------------------------------
   const fees = { royaltyBps: 0, perCallMarginBps: ctx.cfg.fees.perCallMarginBps, byokFeeBps: ctx.cfg.fees.byokFeeBps };
   const modeForPrice: Mode = billing?.mode ?? "per_call";
-  const attemptable = targets.flatMap((t) => t.ordered.map((cand) => ({ cand, model: t.model }))).slice(0, ctx.cfg.routing.maxAttempts);
+  let attemptable = targets.flatMap((t) => t.ordered.map((cand) => ({ cand, model: t.model }))).slice(0, ctx.cfg.routing.maxAttempts);
   const worst = maxPico(...attemptable.map(({ cand, model }) => worstCase(cand, model, body, promptTokens, modeForPrice, fees, byok.has(cand.providerId))));
   const hold = batchLine ? batchHold(worst, batchLine.discountBps) : worst; // a batch line is held at its discounted worst case
 
@@ -404,18 +439,52 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   if (billing.key?.tpm) await limitOrThrow(ctx, `kt:${billing.key.keyHash}`, promptTokens, billing.key.tpm, "tokens");
 
   const holdId = batchLine?.generationId ?? genId(); // a batch line's id is chosen by the runner, so an interrupted line can be traced to its charge
+  const reservation = {
+    id: holdId, accountId: billing.accountId, keyHash: billing.key?.keyHash ?? null,
+    amount: hold, kind: "usage" as const, ttlMs: ctx.cfg.routing.providerTimeoutMs * (ctx.cfg.routing.maxAttempts + 1),
+  };
+  let maxAttempts = ctx.cfg.routing.maxAttempts;
   try {
-    await reserve(ctx.db, {
-      id: holdId,
-      accountId: billing.accountId,
-      keyHash: billing.key?.keyHash ?? null,
-      amount: hold,
-      kind: "usage",
-      ttlMs: ctx.cfg.routing.providerTimeoutMs * (ctx.cfg.routing.maxAttempts + 1),
-    });
+    await reserve(ctx.db, reservation);
   } catch (e) {
-    if (isApiError(e) && e.type === "insufficient_credits" && paywithNote) e.metadata = { ...e.metadata, pay_with: paywithNote };
-    throw e;
+    if (!isApiError(e) || e.type !== "insufficient_credits") throw e;
+    if (paywithNote) e.metadata = { ...e.metadata, pay_with: paywithNote };
+    if (!firstChatRequested || billing.mode !== "prepaid" || batchLine || alias || savedRoute || preset || character ||
+        sealed || strict || disc.lane !== "public" || cacheSpec || resolved.length !== 1 || primary.id !== "anonymo-1" ||
+        c.req.header("x-wallet-auth") || paymentHeaderOf(c)) throw e;
+    const inputBound = firstChatInputBound(body);
+    if (inputBound === null) throw e;
+    const maxOutput = Math.min(256, outputBudgetOf(body) ?? 256);
+    const boundedUsage: Usage = {
+      prompt: inputBound, completion: maxOutput, reasoning: 0, cachedRead: 0, cacheWrite: 0,
+      webSearch: 0, images: 0, estimated: true,
+    };
+    const eligible = targets.map((target) => ({
+      ...target,
+      ordered: reasoningLast(target.ordered.filter((cand) =>
+        !byok.has(cand.providerId) && (cand.ctx ?? target.model.ctx) >= inputBound + maxOutput &&
+        priceUsage({ ...cand, pricePrompt: maxPico(cand.pricePrompt, cand.priceCacheWrite ?? 0n, cand.priceCacheRead ?? 0n),
+          priceCompletion: maxPico(cand.priceCompletion, cand.priceReasoning) }, target.model, boundedUsage, "prepaid", fees, false).total <= FIRST_CHAT_ROUTE_BUDGET,
+      ), maxOutput),
+    })).filter((target) => target.ordered.length);
+    if (!eligible.length || c.req.raw.signal.aborted) throw e;
+
+    const claim = await reserveFirstChat(ctx.db, billing.accountId);
+    if (!claim) throw e;
+    billing = { ...billing, firstChat: claim };
+    try {
+      await reserve(ctx.db, { ...reservation, amount: 0n });
+      if (c.req.raw.signal.aborted || !(await startFirstChat(ctx.db, billing.accountId, claim))) throw e;
+    } catch (setupError) {
+      await giveBack(ctx, billing, holdId);
+      throw setupError;
+    }
+    targets = eligible;
+    maxAttempts = Math.min(maxAttempts, FIRST_CHAT_MAX_ATTEMPTS);
+    // Refusal rerouting can skip a candidate of the same family and reach a later one.
+    attemptable = targets.flatMap((t) => t.ordered.map((cand) => ({ cand, model: t.model })));
+    body.max_tokens = maxOutput;
+    delete body.max_completion_tokens;
   }
 
   // ---- 7. Route ---------------------------------------------------------------------------------
@@ -434,11 +503,11 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   const plannedPolicy = sharedPolicyHash(attemptable.map(({ cand }) => servedPolicyHash(ctx, cand)));
   const common = { ctx, c, body, billing, holdId, t0, bodySha, stream, kind, byok, meta, guardCfg, promptTokens, disc, planned, plannedPolicy, sealed, unavailable: (attempts: Attempt[], last?: Parameters<typeof allFailed>[1]) => availabilityFailure(() => allFailed(attempts, last), ctx, alternatives, attempts) }; // B121
 
-  if (stream) return explainedStream(ctx.cfg.routeExplain, () => route({ appSecret: ctx.cfg.appSecret, targets, path, body, stream: true, keyFor, signal: abort.signal, health: ctx.health, maxAttempts: ctx.cfg.routing.maxAttempts, timeoutMs: ctx.cfg.routing.providerTimeoutMs, firstTokenTimeoutMs: ctx.cfg.routing.firstTokenTimeoutMs, production: ctx.cfg.production, caller: sha256(billing.accountId).slice(0, 16), refusal }), (run, routeHeaders) => streamResponse({ ...common, run, routeHeaders, abort })); // V84
+  if (stream) return explainedStream(ctx.cfg.routeExplain, () => route({ appSecret: ctx.cfg.appSecret, targets, path, body, stream: true, keyFor, signal: abort.signal, health: ctx.health, maxAttempts, timeoutMs: ctx.cfg.routing.providerTimeoutMs, firstTokenTimeoutMs: ctx.cfg.routing.firstTokenTimeoutMs, production: ctx.cfg.production, caller: sha256(billing.accountId).slice(0, 16), refusal }), (run, routeHeaders) => streamResponse({ ...common, run, routeHeaders, abort })); // V84
 
   let result: Awaited<ReturnType<typeof route>>;
   try {
-    result = await route({ appSecret: ctx.cfg.appSecret, targets, path, body, stream: false, keyFor, signal: abort.signal, health: ctx.health, maxAttempts: ctx.cfg.routing.maxAttempts, timeoutMs: ctx.cfg.routing.providerTimeoutMs, firstTokenTimeoutMs: ctx.cfg.routing.firstTokenTimeoutMs, production: ctx.cfg.production, caller: sha256(billing.accountId).slice(0, 16), refusal });
+    result = await route({ appSecret: ctx.cfg.appSecret, targets, path, body, stream: false, keyFor, signal: abort.signal, health: ctx.health, maxAttempts, timeoutMs: ctx.cfg.routing.providerTimeoutMs, firstTokenTimeoutMs: ctx.cfg.routing.firstTokenTimeoutMs, production: ctx.cfg.production, caller: sha256(billing.accountId).slice(0, 16), refusal });
   } catch (e) {
     await giveBack(ctx, billing, holdId);
     throw e;
@@ -616,7 +685,8 @@ async function finalize(p: FinalizeInput) {
   // Anonymo refusal catch: an answer that is itself a refusal is billed 0 (its cost goes on the ledger with an equal
   // refusal_refund, below), and so is every refused attempt before it.
   const servedRefused = r.refusal?.served === "refused";
-  const settleAmount = servedRefused ? 0n : payable;
+  const firstChat = billing.mode === "prepaid" && !!billing.firstChat;
+  const settleAmount = servedRefused || firstChat ? 0n : payable;
   const settled = await settle(ctx.db, p.holdId, settleAmount, {
     description: `${r.model.id} via ${r.candidate.providerId}`,
     generationId: id,
@@ -643,6 +713,7 @@ async function finalize(p: FinalizeInput) {
     provider: r.candidate.providerId,
     tokens: { prompt: p.usage.prompt, completion: p.usage.completion, reasoning: p.usage.reasoning, cached: p.usage.cachedRead, estimated: p.usage.estimated },
     cost: picoToUsdString(charged),
+    ...(firstChat ? { sponsorship: "first_dashboard_chat" } : {}),
     cost_details: { upstream: picoToUsdString(cost.upstream), royalty: picoToUsdString(cost.royalty), margin: picoToUsdString(cost.margin), ...(overBudget ? { over_budget: picoToUsdString(cost.total) } : {}), ...(batchLine ? { batch_discount: picoToUsdString(cost.batchDiscount) } : {}) },
     paid_with: paidWith,
     latency_ms: Math.round(r.latencyMs),
@@ -803,10 +874,12 @@ async function finalize(p: FinalizeInput) {
     total_tokens: p.usage.prompt + p.usage.completion,
     cost: picoToUsd(charged),
     is_byok: isByok,
+    ...(firstChat ? { sponsorship: "first_dashboard_chat" } : {}),
     cost_details: { upstream_inference_cost: picoToUsd(cost.upstream), royalty: picoToUsd(cost.royalty), margin: picoToUsd(cost.margin), ...(batchLine ? { batch_discount: picoToUsd(cost.batchDiscount) } : {}) },
     prompt_tokens_details: { cached_tokens: p.usage.cachedRead, cache_write_tokens: p.usage.cacheWrite },
     completion_tokens_details: { reasoning_tokens: p.usage.reasoning },
   };
+  await endFirstChat(ctx, billing, p.cancelled || p.finishReason === "error" ? "failed" : "completed");
   const receiptJson = {
     id,
     sig: signed.sig,
@@ -1002,7 +1075,7 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
       } catch (e) {
         clearInterval(holdKeepalive);
         log.error("stream finalize failed", { error: (e as Error).message, hold: p.holdId });
-        await release(ctx.db, p.holdId).catch(() => undefined);
+        await giveBack(ctx, p.billing, p.holdId).catch(() => undefined);
       }
       send("data: [DONE]\n\n");
       closed = true;

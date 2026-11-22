@@ -40,10 +40,11 @@ export type KeyCaps = {
   wallet?: string | null;
 };
 
-export type CreateKeyRequest = { caps?: KeyCapsInput };
+export type CreateKeyRequest = { caps?: KeyCapsInput; dashboard_signup?: string };
 
 /** `POST /keys` (201). `key` is returned exactly once; the gateway stores only sha256(key) as `key_hash`. */
 export type CreateKeyResponse = {
+  first_chat_available?: boolean;
   key: string; // anm_live_…
   key_hash: string;
   wallet: string | null;
@@ -52,7 +53,7 @@ export type CreateKeyResponse = {
 };
 
 /** `GET /keys/me`. */
-export type KeyInfo = { key_hash: string; label: string | null; caps: KeyCaps; deposit: DepositInstructions };
+export type KeyInfo = { first_chat_available?: boolean; key_hash: string; label: string | null; caps: KeyCaps; deposit: DepositInstructions };
 
 // ---- deposits (gateway/src/anonymo/deposits/instructions.ts, routes.ts) ------------------------------------------
 
@@ -200,6 +201,7 @@ export type ChatRole = 'system' | 'user' | 'assistant';
 export type ChatMessage = { role: ChatRole; content: string; name?: string };
 
 export type ChatRequest = {
+  dashboard_chat?: true;
   model: string;
   messages: ChatMessage[];
   max_tokens?: number;

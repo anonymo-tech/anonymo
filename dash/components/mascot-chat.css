@@ -339,6 +339,41 @@
     visibility: hidden;
   }
 }
+/* On phones the companion has its own place alongside the four navigation controls. */
+@media (max-width: 900px) {
+  .ws {
+    height: 100dvh;
+    min-height: 0;
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .ws .ws-body {
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .ws .ws-composer { bottom: 0; }
+  .ws .ws-mobile-nav {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) 48px;
+    padding-right: max(5px, env(safe-area-inset-right));
+  }
+  .mascot-launcher[data-workspace='true'][data-docked='true'] {
+    --mascot-size: 44px;
+    right: calc(max(5px, env(safe-area-inset-right)) + 2px);
+    bottom: calc(6px + env(safe-area-inset-bottom));
+    animation: none;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  .mascot-launcher[data-docked='true'][data-tip='true']::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    right: 1px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--pink);
+  }
+}
 @media print {
   .mascot-launcher,
   .mascot-panel {

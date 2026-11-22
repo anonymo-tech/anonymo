@@ -43,6 +43,8 @@ import { removeFaces, saveArt, savePlush } from '@/lib/anonymo/faces-store';
 import { plushCard, SAMPLE_CARD } from '@/lib/anonymo/sample-character';
 import { updateOn } from '@/lib/anonymo/updates';
 
+type CharacterView = 'studio' | 'collection' | 'import' | 'memory';
+
 export function CharactersPanel() {
   const { ready, demo, key, client } = useAnonymo();
   const list = useDeviceStore(charactersStore);
@@ -52,15 +54,20 @@ export function CharactersPanel() {
   const memoryOn = ready && updateOn('memory', demo);
   const [memoryFor, setMemoryFor] = useState<string | null>(null);
   const [art, setArt] = useState<Blob | null>(null);
-  const [faceFor, setFaceFor] = useState<string | null>(
-    useSearchParams().get('face'),
-  );
+  const params = useSearchParams();
+  const [faceFor, setFaceFor] = useState<string | null>(params.get('face'));
   const faceCharacter = facesOn
     ? (list.find((c) => c.id === faceFor) ?? null)
     : null;
-  const [view, setView] = useState<'studio' | 'collection' | 'import' | 'memory'>(
-    'studio',
-  );
+  const selected = params.get('view');
+  const view: CharacterView = selected === 'collection' || selected === 'import' || selected === 'memory' ? selected : 'studio';
+  function setView(next: CharacterView) {
+    if (view === next) return;
+    const url = new URL(window.location.href);
+    if (next === 'studio') url.searchParams.delete('view');
+    else url.searchParams.set('view', next);
+    window.history.pushState(null, '', url);
+  }
   const active = view === 'memory' && !memoryOn ? 'collection' : view === 'studio' && !facesOn ? 'import' : view;
   const go = (next: typeof view) => {
     setView(next);

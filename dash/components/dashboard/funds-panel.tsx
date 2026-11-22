@@ -4,100 +4,155 @@
 // recent deposits, and withdrawals that can only go back to an address the credit came from.
 
 import Link from 'next/link';
-import { RefreshCw } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { setupHref, setupReturn } from '@/lib/anonymo/setup-return';
+import { ArrowDownLeft, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronDown, Clock3, KeyRound, RefreshCw, Wallet } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
 import { CopyButton } from '../copy-button';
 import { CoinWalletPay, EvmWalletPay } from './wallet-pay';
 import { chainName, shortAddress } from '@/lib/anonymo/chains';
 import { describeError, newIdempotencyKey } from '@/lib/anonymo/client';
 import { formatUsd, formatUsdAmount, musdToUsdString, parseUsd, usdToMusd } from '@/lib/anonymo/money';
-import type { Balance, BtcpayInvoice, DepositInstructions, DepositRow, Withdrawal } from '@/lib/anonymo/types';
+import type { Balance, BtcpayInvoice, DepositInstructions, DepositRow, Deposits as DepositData, Withdrawal } from '@/lib/anonymo/types';
 
-type Loaded = { balance: Balance; instructions: DepositInstructions; deposits: DepositRow[]; withdrawals: Withdrawal[] };
+type Loaded = { balance: Balance | null; deposits: DepositData | null; withdrawals: Withdrawal[] | null; errors: string[] };
+type Target = ReturnType<typeof setupReturn>;
+type WalletCheck = { known: Set<string>; until: number };
+const checkPeriod = 8_000;
+const checkLimit = 120_000;
 
 export function FundsPanel() {
-  const { ready, key, client, balanceVersion, refreshBalance } = useAnonymo();
+  const { ready, key } = useAnonymo();
+  const target = setupReturn(useSearchParams().get('returnTo'));
+  if (!ready) return <p className="muted" role="status">Opening funds…</p>;
+  if (key) return <KeyFunds key={key} keySuffix={key.slice(-4)} target={target} />;
+  return (
+    <section className="funds-page funds-guest">
+      {target?.href.split('?')[0] === '/dashboard/chat' && <Link className="funds-back" href={target.href}><ArrowLeft size={15} aria-hidden="true" /> Back to chat</Link>}
+      <KeyRound size={26} aria-hidden="true" />
+      <h1>Add funds</h1>
+      <p>Create a key or connect one you already have. Your key holds the credit you spend across Anonymo.</p>
+      <Link className="btn btn-primary" href={setupHref('key', target?.href)}>Set up your key <ArrowRight size={17} aria-hidden="true" /></Link>
+    </section>
+  );
+}
+
+function KeyFunds({ keySuffix, target }: { keySuffix: string; target: Target }) {
+  const { client, balanceVersion, refreshBalance } = useAnonymo();
   const [data, setData] = useState<Loaded | null>(null);
-  const [error, setError] = useState('');
   const [task, setTask] = useState<'Deposit' | 'Withdraw' | 'Activity'>('Deposit');
+  const heading = useRef<HTMLHeadingElement>(null);
+  const [watch, setWatch] = useState<WalletCheck | null>(null);
+  const [confirmed, setConfirmed] = useState<DepositRow | null>(null);
+  const [timedOut, setTimedOut] = useState(false);
 
   useEffect(() => {
-    if (!ready || !key) return;
     let live = true;
-    Promise.all([client.balance(), client.deposits(), client.withdrawals()]).then(
-      ([balance, deposits, withdrawals]) => {
-        if (!live) return;
-        setError('');
-        setData({ balance, instructions: deposits.instructions, deposits: deposits.data, withdrawals });
-      },
-      (e: unknown) => live && setError(describeError(e)),
-    );
+    Promise.allSettled([client.balance(), client.deposits(), client.withdrawals()]).then(([balance, deposits, withdrawals]) => {
+      if (!live) return;
+      const errors: string[] = [];
+      if (balance.status === 'rejected') errors.push(`Balance unavailable. ${describeError(balance.reason)}`);
+      if (deposits.status === 'rejected') errors.push(`Deposit details unavailable. ${describeError(deposits.reason)}`);
+      if (withdrawals.status === 'rejected') errors.push(`Withdrawal history unavailable. ${describeError(withdrawals.reason)}`);
+      setData({
+        balance: balance.status === 'fulfilled' ? balance.value : null,
+        deposits: deposits.status === 'fulfilled' ? deposits.value : null,
+        withdrawals: withdrawals.status === 'fulfilled' ? withdrawals.value : null,
+        errors,
+      });
+    });
+    return () => { live = false; };
+  }, [client, balanceVersion]);
+
+  useEffect(() => {
+    const resume = () => { if (document.visibilityState === 'visible' && document.hasFocus()) refreshBalance(); };
+    document.addEventListener('visibilitychange', resume);
+    window.addEventListener('focus', resume);
     return () => {
-      live = false;
+      document.removeEventListener('visibilitychange', resume);
+      window.removeEventListener('focus', resume);
     };
-  }, [ready, key, client, balanceVersion]);
+  }, [refreshBalance]);
 
-  if (!ready) return null;
-  if (!key)
-    return (
-      <section className="panel">
-        <h2>Balance & deposits</h2>
-        <p className="lede">Create a key first. Deposits are tied to the key, not to an account.</p>
-        <div className="row">
-          <Link className="btn btn-primary" href="/dashboard/key">
-            Create a key
-          </Link>
-        </div>
-      </section>
-    );
+  useEffect(() => {
+    if (!watch) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible' && document.hasFocus()) refreshBalance();
+    }, checkPeriod);
+    const stop = window.setTimeout(() => {
+      setWatch(null);
+      setTimedOut(true);
+    }, Math.max(0, watch.until - Date.now()));
+    return () => {
+      window.clearInterval(timer);
+      window.clearTimeout(stop);
+    };
+  }, [watch, refreshBalance]);
 
-  const b = data?.balance;
-  const usageOnly = b?.usage_only_usd ?? 0;
+  useEffect(() => {
+    if (!watch) return;
+    const deposit = data?.deposits?.data.find(row => row.status === 'credited' && !watch.known.has(row.ref));
+    if (deposit) {
+      setConfirmed(deposit);
+      setWatch(null);
+    }
+  }, [watch, data]);
+
+  function watchWallet() {
+    if (!data?.deposits) return;
+    setConfirmed(null);
+    setTimedOut(false);
+    const creditedRefs = data.deposits.data.filter(row => row.status === 'credited').map(row => row.ref);
+    setWatch({ known: new Set(creditedRefs), until: Date.now() + checkLimit });
+  }
+
+  const balance = data?.balance;
+  const instructions = data?.deposits?.instructions;
+  const hasCredit = !!balance && usdToMusd(balance.available_usd) > 0;
+  const resume = target ? (!target.needsCredit || hasCredit) : hasCredit;
+  const activity = data?.deposits?.data;
+  const fromChat = target?.href.split('?')[0] === '/dashboard/chat';
+  const title = task === 'Deposit' ? 'Add funds' : task === 'Withdraw' ? 'Withdraw funds' : 'Account activity';
+  function switchTask(next: typeof task) {
+    setTask(next);
+    requestAnimationFrame(() => { heading.current?.focus({ preventScroll: true }); heading.current?.scrollIntoView({ block: 'nearest' }); });
+  }
+
   return (
-    <div className="panel-stack">
-      {error && <p className="notice notice-rose">{error}</p>}
-      <section className="panel" aria-labelledby="balance-title">
-        <header>
-          <h2 id="balance-title">Balance</h2>
-          <button type="button" className="btn btn-small btn-ghost" onClick={() => refreshBalance()}>
-            <RefreshCw size={14} aria-hidden="true" /> Refresh
-          </button>
-        </header>
-        <div className="stats">
-          <div className="stat">
-            <span>Available</span>
-            <strong>{b ? formatUsdAmount(b.available_usd) : '—'}</strong>
-          </div>
-          <div className="stat">
-            <span>Held for requests in flight</span>
-            <strong>{b ? formatUsdAmount(b.held_usd) : '—'}</strong>
-          </div>
-          {usageOnly > 0 && (
-            <div className="stat">
-              <span>Paid in {coinOf(data?.instructions)?.token.symbol ?? 'the coin'} · usage only, can&apos;t be withdrawn</span>
-              <strong>{formatUsdAmount(usageOnly)}</strong>
-            </div>
-          )}
-        </div>
-      </section>
-      <fieldset className="task-tabs" aria-label="Fund actions">
-        {(['Deposit', 'Withdraw', 'Activity'] as const).map(item => (
-          <button type="button" key={item} aria-pressed={task === item} onClick={() => setTask(item)}>{item}</button>
-        ))}
-      </fieldset>
-      {!data && !error && <output className="muted">Loading funds…</output>}
-      {data && <div hidden={task !== 'Deposit'}><Deposits instructions={data.instructions} onCredited={refreshBalance} /></div>}
-      {b && <div hidden={task !== 'Withdraw'}><Withdrawals balance={b} onDone={refreshBalance} /></div>}
-      {data && task === 'Activity' && <>
-        {data.deposits.length > 0 && <DepositList rows={data.deposits} />}
-        {data.withdrawals.length > 0 && <WithdrawalList rows={data.withdrawals} />}
-        {!data.deposits.length && !data.withdrawals.length && <p className="muted">Deposits and withdrawals will appear here.</p>}
-      </>}
-      {b && usdToMusd(b.available_usd) > 0 && task === 'Deposit' &&
-        <Link className="funds-chat-link" href="/dashboard/chat">Continue to chat →</Link>}
-
-    </div>
+    <section className="funds-page" aria-labelledby="funds-title">
+      {fromChat && target && <Link className="funds-back" href={target.href}><ArrowLeft size={15} aria-hidden="true" /> Back to chat</Link>}
+      <h1 id="funds-title" ref={heading} tabIndex={-1}>{title}</h1>
+      <div className="funds-balance" role="region" aria-label="Available credit">
+        <Wallet size={17} aria-hidden="true" />
+        <div><span>Available credit</span><small>Key ending {keySuffix}</small></div>
+        <strong>{balance ? formatUsdAmount(balance.available_usd) : '—'}</strong>
+        <button className="funds-refresh" type="button" onClick={refreshBalance} aria-label="Refresh balance" title="Refresh balance"><RefreshCw size={16} aria-hidden="true" /></button>
+      </div>
+      {balance && usdToMusd(balance.held_usd) > 0 && <p className="funds-credit-detail">{formatUsdAmount(balance.held_usd)} held for active requests.</p>}
+      {balance && usdToMusd(balance.usage_only_usd ?? 0) > 0 && <p className="funds-credit-detail">{formatUsdAmount(balance.usage_only_usd)} in usage-only credit from {coinOf(instructions)?.token.symbol ?? 'coin payments'}.</p>}
+      {data?.errors.map(message => <p className="notice notice-rose" role="alert" key={message}>{message}</p>)}
+      {(watch || timedOut || confirmed) && <p className="funds-confirmation" role="status">
+        {confirmed ? <><CheckCircle2 size={17} aria-hidden="true" /><span>{formatUsdAmount(confirmed.amount_usd)} credited from {shortAddress(confirmed.from)} on {chainName(confirmed.chain)}.</span></>
+        : watch ? 'Checking for a deposit… Return here after confirming in your wallet.' : 'Automatic checks finished. Refresh to check for a deposit.'}
+      </p>}
+      {resume && !fromChat && <Link className="funds-continue" href={target?.href ?? '/dashboard/chat'}>{target ? `Return to ${target.label}` : 'Continue to chat'} <ArrowRight size={15} aria-hidden="true" /></Link>}
+      <div className="funds-body">
+        {!data && <p className="muted" role="status">Loading funds…</p>}
+        {instructions && <div hidden={task !== 'Deposit'}><Deposits instructions={instructions} onCredited={refreshBalance} onWalletOpen={watchWallet} /></div>}
+        {balance && <div hidden={task !== 'Withdraw'}><Withdrawals balance={balance} onDone={refreshBalance} /></div>}
+        {data && task === 'Activity' && <div className="funds-history">
+          {activity && activity.length > 0 && <DepositList rows={activity} />}
+          {data.withdrawals && data.withdrawals.length > 0 && <WithdrawalList rows={data.withdrawals} />}
+          {activity?.length === 0 && data.withdrawals?.length === 0 && <p className="muted">Deposits and withdrawals will appear here.</p>}
+        </div>}
+      </div>
+      <nav className="funds-secondary" aria-label="Fund actions">
+        {task !== 'Deposit' && <button onClick={() => switchTask('Deposit')} type="button"><ArrowDownLeft size={15} aria-hidden="true" /> Add funds</button>}
+        {task !== 'Activity' && <button onClick={() => switchTask('Activity')} type="button"><Clock3 size={15} aria-hidden="true" /> Account activity</button>}
+        {task !== 'Withdraw' && <button onClick={() => switchTask('Withdraw')} type="button"><ArrowUpRight size={15} aria-hidden="true" /> Withdraw</button>}
+      </nav>
+    </section>
   );
 }
 
@@ -106,42 +161,34 @@ const RAIL_LABEL: Record<Rail, string> = { evm: 'Stablecoin wallet', coin: 'Pay 
 const coinOf = (i?: DepositInstructions) => (i && !i.paused ? (i.coin ?? null) : null);
 const railLabel = (r: Rail, i: DepositInstructions) => {
   const coin = coinOf(i);
-  return r === 'coin' && coin ? `Pay with ${coin.token.symbol}` : RAIL_LABEL[r];
+  if (r === 'coin' && coin) return `${coin.token.symbol}${coin.price_usd === null ? ' · quote unavailable' : ' · usage credit'}`;
+  return RAIL_LABEL[r];
 };
 
-function Deposits({ instructions, onCredited }: { instructions: DepositInstructions; onCredited: () => void }) {
+function Deposits({ instructions, onCredited, onWalletOpen }: { instructions: DepositInstructions; onCredited: () => void; onWalletOpen: () => void }) {
   const { demo, mock, key } = useAnonymo();
-  const rails: Rail[] = instructions.paused
-    ? []
-    : (['evm', 'coin', 'solana', 'tron', 'btc'] as const).filter((r) => (instructions as Record<string, unknown>)[r]);
+  const rails: Rail[] = [];
+  if (!instructions.paused) {
+    if (instructions.evm?.chains.some(chain => chain.tokens.length > 0)) rails.push('evm');
+    if (instructions.solana?.tokens.length) rails.push('solana');
+    if (instructions.tron?.tokens.length && instructions.tron.address) rails.push('tron');
+    if (instructions.btc) rails.push('btc');
+    if (instructions.coin) rails.push('coin');
+  }
   const [rail, setRail] = useState<Rail | null>(null);
   const active = rail && rails.includes(rail) ? rail : (rails[0] ?? null);
   const [note, setNote] = useState('');
   const credited = useCallback(() => onCredited(), [onCredited]);
 
   return (
-    <section className="panel" aria-labelledby="deposit-title">
-      <header>
-        <h2 id="deposit-title">Deposit</h2>
-        <span className="faint">Stablecoins credit 1:1 · BTC at the BTCPay quote</span>
-      </header>
+    <div className="funds-deposit">
       {instructions.paused ? (
         <p className="notice notice-amber">New deposits are paused right now. Withdrawals are not affected and are never paused.</p>
       ) : rails.length === 0 ? (
-        <p className="lede">This gateway has no deposit rail configured yet.</p>
+        <p className="lede">Deposits are unavailable. Check back for payment options.</p>
       ) : (
         <>
-          {rails.length > 1 && (
-            <fieldset className="segmented">
-              <legend className="sr-only">How to pay</legend>
-              {rails.map((r) => (
-                <button key={r} type="button" aria-pressed={r === active} onClick={() => setRail(r)}>
-                  {railLabel(r, instructions)}
-                </button>
-              ))}
-            </fieldset>
-          )}
-          {active === 'evm' && instructions.evm && <EvmWalletPay evm={instructions.evm} onCredited={credited} />}
+          {active === 'evm' && instructions.evm && <EvmWalletPay evm={instructions.evm} onCredited={credited} onWalletOpen={onWalletOpen} />}
           {active === 'coin' && instructions.coin && <CoinWalletPay coin={instructions.coin} onCredited={credited} />}
           {active === 'solana' && instructions.solana && (
             <div className="address-box">
@@ -152,7 +199,7 @@ function Deposits({ instructions, onCredited }: { instructions: DepositInstructi
                 {instructions.solana.tokens.map((t) => (
                   <div key={t.mint}>
                     <dt>{t.symbol} token account</dt>
-                    <dd className="hash">{t.token_account}</dd>
+                    <dd className="hash">{t.token_account} <CopyButton text={t.token_account} label={`Copy ${t.symbol} address`} /></dd>
                   </div>
                 ))}
                 <div>
@@ -176,12 +223,20 @@ function Deposits({ instructions, onCredited }: { instructions: DepositInstructi
               </div>
             </div>
           )}
-          {active === 'btc' && <BtcpayForm />}
-          {active !== 'coin' && (
-            <p className="faint">
-              The wallet you send from becomes this credit&apos;s source: withdrawals can only go back there, and are never paused.
-            </p>
-          )}
+          {active === 'btc' && <BtcpayForm onCheckout={onWalletOpen} />}
+          {rails.length > 1 && <details className="funds-method">
+            <summary>Change payment method <ChevronDown size={15} aria-hidden="true" /></summary>
+            <label className="field">Payment method
+              <select className="select" value={active ?? ''} onChange={event => {
+                setRail(event.target.value as Rail);
+                const details = event.currentTarget.closest('details');
+                if (details) details.open = false;
+                document.getElementById('funds-title')?.focus();
+              }}>
+                {rails.map(r => <option key={r} value={r}>{railLabel(r, instructions)}</option>)}
+              </select>
+            </label>
+          </details>}
         </>
       )}
       {demo && mock && key && (
@@ -212,11 +267,11 @@ function Deposits({ instructions, onCredited }: { instructions: DepositInstructi
         </div>
       )}
       {note && <output className="notice notice-signal">{note}</output>}
-    </section>
+    </div>
   );
 }
 
-function BtcpayForm() {
+function BtcpayForm({ onCheckout }: { onCheckout: () => void }) {
   const { client } = useAnonymo();
   const [amount, setAmount] = useState('10');
   const [refund, setRefund] = useState('');
@@ -260,7 +315,7 @@ function BtcpayForm() {
             <span className="mono">{shortAddress(invoice.refund.address)}</span>
           </span>
           {invoice.checkout_link ? (
-            <a className="btn btn-primary" href={invoice.checkout_link} target="_blank" rel="noreferrer noopener">
+            <a className="btn btn-primary" href={invoice.checkout_link} onClick={onCheckout} target="_blank" rel="noreferrer noopener">
               Open the BTCPay checkout
             </a>
           ) : (
@@ -279,7 +334,7 @@ function BtcpayForm() {
 
 function DepositList({ rows }: { rows: DepositRow[] }) {
   return (
-    <section className="panel">
+    <section>
       <h2>Recent deposits</h2>
       <ul className="list">
         {rows.slice(0, 20).map((r) => (
@@ -287,6 +342,7 @@ function DepositList({ rows }: { rows: DepositRow[] }) {
             <span>
               <strong>{chainName(r.chain)}</strong> {r.chain === 'coin' ? '' : r.token}{' '}
               {r.chain === 'coin' && <span className="chip">usage only, can&apos;t be withdrawn</span>}
+              {r.from && <small className="funds-from">From {shortAddress(r.from)}</small>}
               {r.status === 'held' && <span className="chip chip-amber">held{r.reason === 'over_cap' ? ' · over the per-payment cap' : ''}</span>}
             </span>
             <span className="faint">{new Date(r.created_at).toLocaleString()}</span>
@@ -336,13 +392,13 @@ function Withdrawals({ balance, onDone }: { balance: Balance; onDone: () => void
   }
 
   return (
-    <section className="panel" aria-labelledby="withdraw-title">
+    <section className="funds-withdraw" aria-labelledby="withdraw-title">
       <header>
         <h2 id="withdraw-title">Withdraw to source</h2>
-        <span className="faint">Never paused · never to another address</span>
+        <p className="muted">Return credit to the wallet that originally sent it.</p>
       </header>
       {balance.withdraw_to.length === 0 ? (
-        <p className="lede">Nothing to withdraw yet. Credit can go back only to the wallet it was deposited from.</p>
+        <p className="lede">No source wallet has funds to withdraw yet.</p>
       ) : (
         <ul className="list">
           {balance.withdraw_to.map((d) => {
@@ -411,7 +467,7 @@ function Withdrawals({ balance, onDone }: { balance: Balance; onDone: () => void
 
 function WithdrawalList({ rows }: { rows: Withdrawal[] }) {
   return (
-    <section className="panel">
+    <section>
       <h2>Withdrawals</h2>
       <ul className="list">
         {rows.slice(0, 20).map((w) => (

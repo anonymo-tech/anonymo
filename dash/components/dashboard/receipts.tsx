@@ -37,6 +37,9 @@ export function ReceiptsList() {
           </label>
           <input
             id="receipt-id"
+            required
+            pattern={'.*\\S.*'}
+            title="Enter a receipt ID"
             className="input mono"
             style={{ flex: '1 1 200px', minWidth: 0 }}
             placeholder="Receipt id"

@@ -1,5 +1,7 @@
 'use client';
 
+import { characterDestination, setupHref } from '@/lib/anonymo/setup-return';
+
 // One answer in the thread, kept from Conclave's answer card: a model tab bar, the answer body, and a footer with what
 // it cost and where it ran. For anonymo-council the Council view lays out every seat (proposers and the aggregator or
 // judge) side by side with its route, status and cost. The gateway returns only the final reply's text.
@@ -113,7 +115,7 @@ function Seat({ title, seat }: { title: string; seat: { model: string; provider:
   );
 }
 
-export function AnswerCard({ turn }: { turn: Turn }) {
+export function AnswerCard({ turn, characterId }: { turn: Turn; characterId?: string }) {
   const council = turn.council;
   const [comparing, setComparing] = useState(false);
   const streaming = turn.status === 'streaming';
@@ -122,10 +124,10 @@ export function AnswerCard({ turn }: { turn: Turn }) {
   let body: ReactNode;
   if (turn.status === 'error')
     body = (
-      <div className="notice notice-rose notice-action">
-        <p>{turn.error}</p>
+      <div className={`notice ${turn.needsFunds ? 'notice-amber' : 'notice-rose'} notice-action`} role="status">
+        <p>{turn.needsFunds ? 'Add funds to continue this chat.' : turn.error}</p>
         {turn.needsFunds && (
-          <Link className="btn btn-small btn-primary" href="/dashboard/funds">
+          <Link className="btn btn-small btn-primary" href={setupHref('funds', characterDestination('chat', characterId))}>
             Add funds
           </Link>
         )}

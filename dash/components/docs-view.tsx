@@ -4,7 +4,9 @@
 // is one the dashboard's own client uses (lib/anonymo/client.ts, lib/anonymo/types.ts).
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useDeviceStore } from '@/lib/anonymo/device-store';
+import { adultStore } from '@/lib/anonymo/prefs';
 import { useAnonymo } from './anonymo-provider';
 import { CopyButton } from './copy-button';
 import { API_BASE, publicApiBase } from '@/lib/anonymo/config';
@@ -88,8 +90,46 @@ export function DocsView() {
   const base = ready ? publicApiBase(demo) : API_BASE || 'https://api.anonymo.example';
   const REQUEST = samples(base);
   const [lang, setLang] = useState<Lang>('cURL');
+  const docsRoot = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const root = docsRoot.current;
+    const header = root?.closest('.public')?.querySelector<HTMLElement>('.public-head');
+    if (!root || !header) return;
+    const measure = () => root.style.setProperty('--docs-header-height', `${header.offsetHeight}px`);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, []);
+  const canRead = useDeviceStore(adultStore);
+  useEffect(() => {
+    const hash = window.location.hash;
+    const section = document.getElementById(hash.slice(1));
+    const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+    if (!canRead || navigation?.type === 'back_forward' || !section?.matches('.docs-body section')) return;
+
+    // WebKit may position a document fragment before the sticky header and webfont settle.
+    // Only repair the initial jump. Input and history navigation return control to the reader.
+    const controller = new AbortController();
+    const options = { once: true, passive: true, signal: controller.signal };
+    const cancel = () => controller.abort();
+    for (const event of ['keydown', 'pointerdown', 'wheel', 'touchstart', 'popstate', 'hashchange']) {
+      window.addEventListener(event, cancel, options);
+    }
+    const align = async () => {
+      await document.fonts.ready;
+      requestAnimationFrame(() => {
+        if (controller.signal.aborted || location.hash !== hash) return;
+        section.scrollIntoView({ block: 'start', behavior: 'instant' });
+        cancel();
+      });
+    };
+    if (document.readyState === 'complete') void align();
+    else window.addEventListener('load', align, options);
+    return cancel;
+  }, [canRead]);
   return (
-    <main className="docs" id="main" tabIndex={-1}>
+    <main ref={docsRoot} className="docs" id="main" tabIndex={-1}>
       <nav className="docs-nav" aria-label="Documentation">
         <h4>Documentation</h4>
         {SECTIONS.map((s) => (
@@ -233,8 +273,7 @@ export function DocsView() {
           </span>
           <p>
             Every reply carries <code>anonymo_receipt</code>: the routes that ran, token counts, cost, and an Ed25519 signature.
-            Receipts roll into an hourly Merkle root posted on-chain. <code>GET /v1/receipts/:id/proof</code> returns the
-            inclusion proof, so you can check it yourself.
+            Once a Merkle root is published, <code>GET /v1/receipts/:id/proof</code> returns an inclusion proof for the receipt.
           </p>
         </section>
 
@@ -265,7 +304,7 @@ export function DocsView() {
                 <tr>
                   <td className="mono">402</td>
                   <td><code>insufficient_balance</code></td>
-                  <td>Not enough credit. Add funds and retry.</td>
+                  <td>Open Funds to check your balance and the deposit methods available for your key.</td>
                 </tr>
                 <tr>
                   <td className="mono">429</td>
@@ -282,7 +321,8 @@ export function DocsView() {
           <ul>
             <li>
               <code>POST /keys</code> creates a key and returns it once, with its deposit instructions. Optional caps: daily,
-              monthly and lifetime spend, a model allowlist, an IP allowlist, sealed only and an expiry.
+              monthly and lifetime spend, a model allowlist, an IP allowlist, sealed only and an expiry. Check{' '}
+              <Link href="/dashboard/funds">Funds</Link> for the tokens and networks currently available for your key.
             </li>
             <li>
               <code>GET /balance</code> shows available, held and usage-only credit.

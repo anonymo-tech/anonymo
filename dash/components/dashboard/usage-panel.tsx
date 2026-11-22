@@ -1,5 +1,7 @@
 'use client';
 
+import { setupHref } from '@/lib/anonymo/setup-return';
+
 // Update "usage": what this key spent (by day and by model), how long the balance lasts at this pace, a CSV of the
 // activity, and the key's spending limits (PATCH /keys/caps). Amounts and models only: Anonymo never stores what was
 // asked or answered, so there is nothing else to show.
@@ -49,7 +51,7 @@ export function UsagePanel() {
     return (
       <div className="notice row">
         <span style={{ flex: 1 }}>Usage belongs to a key. Create one or paste yours first.</span>
-        <Link className="btn btn-primary btn-small" href="/dashboard/key">
+        <Link className="btn btn-primary btn-small" href={setupHref('key', '/dashboard/usage')}>
           Create a key
         </Link>
       </div>

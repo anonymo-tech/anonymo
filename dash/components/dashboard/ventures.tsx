@@ -1,5 +1,7 @@
 'use client';
 
+import { setupHref } from '@/lib/anonymo/setup-return';
+
 // Update "ventures": the launcher. Pick one of four modes, fill the brief, see the all-in price before anything is
 // spent, and start the crew. Below: this key's runs, the Recipes others saved (run one with a click), and the key's
 // tier with what it unlocks. Prices and checks come from lib/anonymo/ventures.ts, which mirrors the gateway.
@@ -117,7 +119,7 @@ export function VenturesLauncher() {
       {ready && !client && (
         <div className="notice notice-action">
           <span>Connect a key to start a run. The crew is paid from the key’s balance, all-in, before it starts.</span>
-          <Link className="btn btn-primary btn-small" href="/dashboard/key">
+          <Link className="btn btn-primary btn-small" href={setupHref('key', '/dashboard/ventures')}>
             Create a key
           </Link>
         </div>
@@ -202,7 +204,7 @@ export function VenturesLauncher() {
                     Add $300 demo credit
                   </button>
                 ) : (
-                  <Link className="btn btn-small" href="/dashboard/funds">
+                  <Link className="btn btn-small" href={setupHref('funds', '/dashboard/ventures')}>
                     Add funds
                   </Link>
                 ))}

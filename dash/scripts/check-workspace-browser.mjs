@@ -55,22 +55,22 @@ test('a visitor can connect a key, fund it, chat and inspect the receipt from mo
       .getByRole('button', { name: 'Create a key', exact: true })
       .click();
     await page.getByRole('button', { name: 'Create key', exact: true }).click();
-    const next = page.getByRole('button', { name: 'View funding options' });
+    const next = page.getByRole('button', { name: 'Open chat', exact: true });
     await next.waitFor();
     assert.equal(await next.isDisabled(), true);
     await page.getByLabel('I have stored this key somewhere safe').check();
     await next.click();
-    await page.getByRole('heading', { name: 'Deposit', exact: true }).waitFor();
+    await page.waitForURL('**/dashboard/chat');
     await quick.getByRole('link', { name: 'Overview' }).click();
-    await page.getByRole('heading', { name: 'Fund your key' }).waitFor();
-    await page.getByRole('link', { name: 'View funding options' }).click();
+    await page.getByRole('heading', { name: 'Start your first chat' }).waitFor();
+    await page.getByRole('link', { name: 'Manage funds' }).click();
     await page.getByRole('button', { name: 'Withdraw', exact: true }).click();
-    await page.getByRole('heading', { name: 'Withdraw to source' }).waitFor();
-    await page.getByRole('button', { name: 'Activity', exact: true }).click();
+    await page.getByRole('heading', { name: 'Withdraw funds', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Account activity', exact: true }).click();
     await page
       .getByText('Deposits and withdrawals will appear here.')
       .waitFor();
-    await page.getByRole('button', { name: 'Deposit', exact: true }).click();
+    await page.getByRole('button', { name: 'Add funds', exact: true }).click();
     await page.getByRole('button', { name: 'Send test USDG' }).click();
     await page.getByRole('link', { name: 'Continue to chat' }).waitFor();
     await quick.getByRole('link', { name: 'Overview' }).click();
@@ -78,6 +78,8 @@ test('a visitor can connect a key, fund it, chat and inspect the receipt from mo
       .getByRole('heading', { name: 'Start your first chat' })
       .waitFor();
     await page.getByRole('link', { name: 'Open chat', exact: true }).click();
+    await page.getByRole('button', { name: 'AI · anonymo-1', exact: true }).waitFor();
+    assert.equal(await page.locator('.dock-composer .ai-notice').count(), 0);
     await page.locator('#composer').fill('Give me a short greeting.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.locator('.thread[aria-busy="false"] .answer-body').waitFor();
@@ -142,6 +144,68 @@ test('the public receipt story keeps its original desktop and phone layouts alon
       await page.getByRole('heading', { name: 'Your private workspace' }).waitFor();
       await page.close();
     }
+  } finally {
+    await browser.close();
+  }
+});
+
+test('phone onboarding offers a preset template, validates receipt IDs and carries the selected amount into a wallet app', async () => {
+  const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || undefined });
+  try {
+    const page = await browser.newPage({
+      viewport: { width: 360, height: 740 },
+      isMobile: true,
+      hasTouch: true,
+      reducedMotion: 'reduce',
+      userAgent: 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 Chrome/140.0 Mobile Safari/537.36',
+    });
+    await page.route('**/*', route => new URL(route.request().url()).origin === origin.origin ? route.continue() : route.abort());
+    await page.goto(new URL('/presets', origin).href);
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === 'I am 18 or older');
+    await page.getByRole('button', { name: 'I am 18 or older' }).tap();
+    await page.getByRole('button', { name: 'Copy setup template' }).waitFor();
+    const getKey = page.getByRole('link', { name: 'Get an API key' });
+    assert.equal(new URL(await getKey.getAttribute('href'), origin).pathname, '/dashboard/key');
+    const field = page.locator('.preset-field').filter({ hasText: 'anm_live_YOUR_KEY' });
+    assert.equal(await field.getByRole('button').count(), 0);
+    await page.goto(new URL('/dashboard/receipts', origin).href);
+    const id = page.getByLabel('Receipt id', { exact: true });
+    await id.waitFor();
+    for (const empty of ['', '  ']) {
+      await id.fill(empty);
+      await page.getByRole('button', { name: 'Open', exact: true }).tap();
+      assert.equal(await id.evaluate(el => el.validity.valid), false);
+      assert.equal(new URL(page.url()).pathname, '/dashboard/receipts');
+    }
+    await page.goto(new URL('/dashboard/key', origin).href);
+    await page.getByText('Funding options for later', { exact: true }).tap();
+    await page.getByText(/Wallet funding supports .*Robinhood Chain/).waitFor();
+    await page.getByRole('button', { name: 'Create key', exact: true }).tap();
+    await page.getByLabel('I have stored this key somewhere safe').check();
+    await page.getByRole('button', { name: 'Open chat', exact: true }).tap();
+    await page.waitForURL('**/dashboard/chat');
+    await page.getByRole('navigation', { name: 'Quick navigation' }).getByRole('link', { name: 'Funds' }).tap();
+    const walletLink = page.getByRole('link', { name: 'MetaMask', exact: true });
+    const review = page.getByRole('button', { name: 'Continue to wallet' });
+    await review.waitFor();
+    assert.equal(await walletLink.count(), 0);
+    const amount = page.getByLabel('Amount (USD)', { exact: true }).first();
+    await amount.fill('0');
+    assert.equal(await walletLink.count(), 0);
+    await amount.fill('1.000125');
+    await review.tap();
+    await walletLink.waitFor();
+    const open = new URL(await walletLink.getAttribute('href'));
+    assert.equal(open.hostname, 'link.metamask.io');
+    assert.equal(open.pathname, '/dapp/' + origin.host + '/pay');
+    assert.equal(open.searchParams.get('amount'), '1.000125');
+    assert.ok(!open.href.includes('anm_live_'));
+    await page.goto(new URL('/pay' + open.search, origin).href);
+    await walletLink.waitFor();
+    const payAmount = page.getByLabel('Amount (USD)', { exact: true });
+    assert.equal(await payAmount.inputValue(), '1.000125');
+    await payAmount.fill('2.25');
+    assert.equal(new URL(await walletLink.getAttribute('href')).searchParams.get('amount'), '2.25');
   } finally {
     await browser.close();
   }

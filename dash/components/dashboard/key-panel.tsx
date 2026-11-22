@@ -2,19 +2,26 @@
 
 import Link from 'next/link';
 import { KeyRound } from 'lucide-react';
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { setupHref, setupReturn } from '@/lib/anonymo/setup-return';
+import { useEffect, useState } from 'react';
+import { chainName } from '@/lib/anonymo/chains';
 import { useAnonymo } from '../anonymo-provider';
 import { CopyButton } from '../copy-button';
 import { describeError } from '@/lib/anonymo/client';
+import { dashboardSignup } from '@/lib/anonymo/dashboard-signup';
 import { isApiKey, maskKey } from '@/lib/anonymo/key-store';
 import { musdToUsdString, parseUsd } from '@/lib/anonymo/money';
-import type { CreateKeyResponse, KeyCapsInput } from '@/lib/anonymo/types';
+import type { CreateKeyResponse, DepositContracts, KeyCapsInput } from '@/lib/anonymo/types';
 
 /** Create a key (shown once), paste an existing one, or forget it on this device. No identity fields anywhere. */
 export function KeyPanel() {
   const { ready, demo, key, client, setKey, clearKey } = useAnonymo();
   const router = useRouter();
+  const target = setupReturn(useSearchParams().get('returnTo'));
+  const fundsHref = setupHref('funds', target?.href);
+  const nextHref = target?.href ?? '/dashboard/chat';
+  const nextAction = !target || target.href === '/dashboard/chat' ? 'Open chat' : `Return to ${target.label}`;
   const [created, setCreated] = useState<CreateKeyResponse | null>(null);
   const [remember, setRemember] = useState(true);
   const [saved, setSaved] = useState(false);
@@ -40,7 +47,7 @@ export function KeyPanel() {
     }
     if (sealedOnly) caps.sealed_only = true;
     try {
-      setCreated(await client.createKey({ caps }));
+      setCreated(await client.createKey({ caps, dashboard_signup: await dashboardSignup(demo) }));
       setSaved(false);
     } catch (e) {
       setError(describeError(e));
@@ -89,10 +96,10 @@ export function KeyPanel() {
               onClick={() => {
                 setKey(created.key, remember);
                 setCreated(null);
-                router.push('/dashboard/funds');
+                router.push(nextHref);
               }}
             >
-              View funding options
+              {nextAction}
             </button>
           </div>
         </section>
@@ -116,7 +123,8 @@ export function KeyPanel() {
             <Link href="/dashboard/presets">Presets</Link>.
           </p>
           <div className="row">
-            <Link className="btn btn-primary" href="/dashboard/funds">
+            <Link className="btn btn-primary" href={nextHref}>{nextAction}</Link>
+            <Link className="btn" href={fundsHref}>
               Add funds
             </Link>
             <button type="button" className="btn btn-danger" onClick={clearKey}>
@@ -159,6 +167,7 @@ export function KeyPanel() {
                 Save the key somewhere private. You’ll use it to access your
                 credit and chats.
               </p>
+              <details><summary className="muted">Funding options for later</summary><WalletFundingMethods /></details>
               <details>
                 <summary className="muted" style={{ cursor: 'pointer' }}>
                   Optional limits
@@ -212,6 +221,7 @@ export function KeyPanel() {
                   }
                   setKey(pasted, remember);
                   setPasted('');
+                  router.push(nextHref);
                 }}
               >
                 <label className="sr-only" htmlFor="paste-key">
@@ -251,4 +261,24 @@ export function KeyPanel() {
       )}
     </div>
   );
+}
+
+function WalletFundingMethods() {
+  const { client } = useAnonymo();
+  const [contracts, setContracts] = useState<DepositContracts | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    client.depositContracts(controller.signal).then(
+      value => { if (!controller.signal.aborted) setContracts(value); },
+      () => { if (!controller.signal.aborted) setContracts(null); },
+    );
+    return () => controller.abort();
+  }, [client]);
+
+  if (!contracts) return null;
+  if (contracts.paused) return <p className="faint">New deposits are currently paused.</p>;
+  const options = contracts.chains.filter(c => c.tokens.length).map(c =>
+    `${c.tokens.map(t => t.symbol).join(' or ')} on ${chainName(c.chain)}`,
+  );
+  return options.length ? <p className="faint">Wallet funding supports {options.join(' · ')}.</p> : null;
 }

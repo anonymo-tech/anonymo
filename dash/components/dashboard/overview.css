@@ -1,0 +1,40 @@
+.guide-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 18px;
+}
+.guide-secondary > .link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+.workspace-example {
+  width: min(420px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 22px;
+  overflow: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+}
+.workspace-example::backdrop { background: #120814c9; }
+.workspace-example h2 { font-size: 28px; }
+.workspace-example p { margin-top: 6px; }
+.workspace-example dl {
+  margin: 16px 0;
+  padding: 12px 0;
+  border-block: 1px solid var(--line);
+}
+.workspace-example dt, .workspace-example h3 { font-size: 14px; font-weight: 600; }
+.workspace-example dd { margin: 4px 0 12px; }
+.workspace-example dd:last-child { margin-bottom: 0; }
+.workspace-example .link { display: inline-block; padding: 12px 0; }
+.workspace-example form { margin-top: 6px; }
+.workspace-example .btn { min-height: 44px; }

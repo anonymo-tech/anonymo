@@ -1,5 +1,7 @@
 'use client';
 
+import { characterDestination, setupHref } from '@/lib/anonymo/setup-return';
+
 // Update "movein": the memory board, "What <name> remembers". A summary and short facts as stitched felt patches the
 // person can edit, pin, delete and add to, kept on this device and sent with each message to that character.
 // "Build memory" writes them from the imported chats with ordinary chat calls: the price is shown on the button
@@ -38,7 +40,7 @@ import {
 } from '@/lib/anonymo/movein/memory';
 import { archiveDisk, saveBoard } from '@/lib/anonymo/movein/store';
 import { modelStore } from '@/lib/anonymo/prefs';
-import { AI_NOTICE, CRISIS_LINES, mentionsSelfHarm } from '@/lib/anonymo/safety';
+import { CRISIS_LINES, mentionsSelfHarm } from '@/lib/anonymo/safety';
 import type { ChatResult } from '@/lib/anonymo/types';
 
 /** The models a build can run on: one model, not the council, and only where the gateway lists a price. */
@@ -401,7 +403,7 @@ export function MemoryBoard({ character, board: saved, onClose }: { character: A
                 </output>
               ) : !key ? (
                 <div className="row">
-                  <Link className="btn btn-primary btn-small" href="/dashboard/key">
+                  <Link className="btn btn-primary btn-small" href={setupHref('key', characterDestination('move-in', character.id))}>
                     Create a key to build memory
                   </Link>
                   {estimate !== null && left && (
@@ -430,7 +432,7 @@ export function MemoryBoard({ character, board: saved, onClose }: { character: A
             <div className="notice notice-rose notice-action" role="alert">
               <p>{trouble.text}</p>
               {trouble.funds && (
-                <Link className="btn btn-small btn-primary" href="/dashboard/funds">
+                <Link className="btn btn-small btn-primary" href={setupHref('funds', characterDestination('move-in', character.id))}>
                   Add funds
                 </Link>
               )}
@@ -447,7 +449,7 @@ export function MemoryBoard({ character, board: saved, onClose }: { character: A
             </p>
           )}
         </section>
-        <p className="ai-notice">{AI_NOTICE} What a model writes here can be wrong: read it, and fix what is.</p>
+        <p className="ai-notice">Review the AI-generated notes and correct any mistakes.</p>
       </div>
     </dialog>
   );

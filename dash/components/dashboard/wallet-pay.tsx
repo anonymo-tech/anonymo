@@ -3,17 +3,16 @@
 // Pay from a browser wallet (plain EIP-1193, no wallet SDK): stablecoins through the DepositRouter, or ANMO through
 // CoinPay. After the transaction confirms, GET /deposits is polled until the gateway records the deposit.
 
-import { Wallet } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, ArrowRight, Coins, Wallet } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
 import { CopyButton } from '../copy-button';
-import { OpenInWalletApp } from '../pay-in-wallet';
+import { OpenInWalletApp, useWalletAccess, useWalletPayment, WalletProgress } from '../pay-in-wallet';
 import { chainName, evmNetwork, shortAddress } from '@/lib/anonymo/chains';
 import { formatUsd, formatUsdAmount, parseUsd } from '@/lib/anonymo/money';
 import type { CoinInstructions, DepositRow, EvmChain, EvmInstructions } from '@/lib/anonymo/types';
 import {
   depositStablecoin,
-  describeWalletError,
   formatUnits,
   injectedProvider,
   payWithCoin,
@@ -21,20 +20,8 @@ import {
   rowForTx,
   stableUnits,
   type PayResult,
-  type PayStep,
 } from '@/lib/anonymo/wallet';
-import { isMobileBrowser, payUrl } from '@/lib/anonymo/wallet-links';
-
-const STEP_TEXT: Record<PayStep, string> = {
-  connecting: 'Connect your wallet…',
-  switching: 'Switching your wallet to the right chain…',
-  checking: 'Checking your balance and allowance…',
-  signing: 'Sign the permit in your wallet (no gas)…',
-  approving: 'Approve the spend in your wallet, then wait for it to confirm…',
-  sending: 'Confirm the payment in your wallet…',
-  confirming: 'Waiting for the transaction to be mined…',
-  submitted: 'Mined.',
-};
+import { payUrl } from '@/lib/anonymo/wallet-links';
 
 const POLL_MS = 5_000;
 const POLL_FOR_MS = 45 * 60_000;
@@ -105,7 +92,14 @@ function PaymentStatus({ result, confirmations, coin, onCredited }: { result: Pa
 }
 
 /** Stablecoin deposit through the DepositRouter on an EVM chain. */
-export function EvmWalletPay({ evm, onCredited }: { evm: EvmInstructions; onCredited: () => void }) {
+type EvmWalletProps = { evm: EvmInstructions; onCredited: () => void; onWalletOpen?: () => void };
+export function EvmWalletPay({ evm, ...events }: EvmWalletProps) {
+  const chains = evm.chains.filter((entry) => entry.tokens.length > 0);
+  if (!chains.length) return <p className="muted">Stablecoin deposits are unavailable on this network.</p>;
+  return <StablecoinPayment evm={{ ...evm, chains }} {...events} />;
+}
+
+function StablecoinPayment({ evm, onCredited, onWalletOpen }: EvmWalletProps) {
   const preferred = evm.chains.find((c) => c.chain === 'rhc') ?? evm.chains[0];
   const [chain, setChain] = useState<EvmChain>(preferred.chain);
   const entry = evm.chains.find((c) => c.chain === chain) ?? preferred;
@@ -113,110 +107,107 @@ export function EvmWalletPay({ evm, onCredited }: { evm: EvmInstructions; onCred
   const token = entry.tokens.find((t) => t.symbol === symbol) ?? entry.tokens[0];
   const network = useMemo(() => evmNetwork(entry.chain, entry), [entry]);
   const [amount, setAmount] = useState('10');
-  const [step, setStep] = useState<PayStep | null>(null);
-  const [result, setResult] = useState<PayResult | null>(null);
-  const [error, setError] = useState('');
-  const busy = step !== null && step !== 'submitted';
-  // Read after mount: the server render has no window, and a wallet may inject a moment after load.
-  const [hasWallet, setHasWallet] = useState(true);
-  const [mobile, setMobile] = useState(false);
-  useEffect(() => {
-    setHasWallet(injectedProvider() !== null);
-    setMobile(isMobileBrowser());
-  }, []);
+  const [review, setReview] = useState(false);
+  const [custom, setCustom] = useState(false);
+  const amountInput = useRef<HTMLInputElement>(null);
+  const reviewHeading = useRef<HTMLHeadingElement>(null);
+  const continueButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (review) reviewHeading.current?.focus(); }, [review]);
+  const validAmount = !!parseUsd(amount);
+  const payment = useWalletPayment();
+  const { step, hash, result, setError } = payment;
+  const busy = !!step || !!hash;
+  const access = useWalletAccess();
+  const hasWallet = access === 'injected';
+  const useWalletApp = access === 'app';
   const walletAppUrl =
-    !hasWallet && mobile && typeof window !== 'undefined'
+    !hasWallet && typeof window !== 'undefined'
       ? payUrl(window.location.origin, { keyCommit: evm.key_commit, chain: entry.chain, token: token.symbol, amount })
       : '';
 
-  async function pay() {
-    setError('');
-    setResult(null);
+  function pay() {
     const musd = parseUsd(amount);
-    if (!musd) return setError('Enter an amount in USD, like 10 or 25.50.');
+    if (!musd) return setError('Enter a positive amount in USD.');
     const provider = injectedProvider();
-    if (!provider)
-      return setError(
-        isMobileBrowser()
-          ? 'This browser has no wallet. Open the payment in your wallet app with a button below.'
-          : 'No browser wallet found. Install one, or send manually with the details below.',
-      );
-    try {
-      const units = stableUnits(musd, token.decimals);
-      setResult(
-        await depositStablecoin({ provider, network, router: entry.router, token, keyCommit: evm.key_commit, amount: units, onStep: setStep }),
-      );
-    } catch (e) {
-      setError(describeWalletError(e));
-    } finally {
-      setStep(null);
-    }
+    if (!provider) return setError('Open this payment in your wallet app.');
+    void payment.submit((callbacks) => depositStablecoin({
+      provider, network, router: entry.router, token, keyCommit: evm.key_commit,
+      amount: stableUnits(musd, token.decimals), ...callbacks,
+    }));
   }
 
   return (
-    <div className="panel-stack">
-      {evm.chains.length > 1 && (
-        <fieldset className="segmented">
-          <legend className="sr-only">Chain</legend>
-          {evm.chains.map((c) => (
-            <button
-              key={c.chain}
-              type="button"
-              aria-pressed={c.chain === chain}
-              disabled={busy}
-              onClick={() => {
-                setChain(c.chain);
-                setSymbol(c.tokens.find((t) => t.symbol === 'USDG')?.symbol ?? c.tokens[0]?.symbol);
-                setResult(null);
-                setError('');
-              }}
-            >
-              {chainName(c.chain)}
-            </button>
-          ))}
-        </fieldset>
-      )}
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void pay();
-        }}
-      >
-        <label className="field" style={{ flex: '0 1 160px' }}>
-          Amount (USD)
-          <input className="input" inputMode="decimal" value={amount} disabled={busy} onChange={(e) => setAmount(e.target.value)} />
-        </label>
-        {entry.tokens.length > 1 && (
-          <label className="field" style={{ flex: '0 1 120px' }}>
-            Token
-            <select className="select input" value={token.symbol} disabled={busy} onChange={(e) => setSymbol(e.target.value as typeof symbol)}>
-              {entry.tokens.map((t) => (
-                <option key={t.symbol} value={t.symbol}>
-                  {t.symbol}
-                </option>
+    <div className="wallet-checkout">
+      {!review && !hash ? (
+        <form className="wallet-amount-form" onSubmit={event => {
+          event.preventDefault();
+          if (!validAmount || busy) return;
+          if (hasWallet) pay();
+          else setReview(true);
+        }}>
+          <div className="wallet-amount-section">
+            <label htmlFor="wallet-topup-amount">Amount to add</label>
+            <div className="wallet-amount-display">
+              <span aria-hidden="true">$</span>
+              <input ref={amountInput} id="wallet-topup-amount" aria-label="Amount (USD)" inputMode="decimal" autoComplete="off"
+                size={Math.max(1, Math.min(16, amount.length))} value={amount} placeholder="0" disabled={busy}
+                style={{ width: `${Math.max(1, Math.min(16, amount.length))}ch`, fontSize: amount.length > 8 ? '0.58em' : undefined }}
+                onChange={event => { setCustom(true); setAmount(event.target.value); setError(''); }} />
+            </div>
+            <div className="wallet-amount-options" role="group" aria-label="Choose an amount">
+              {['5', '10', '25'].map(value => (
+                <button key={value} type="button" disabled={busy} aria-pressed={!custom && amount === value}
+                  onClick={() => { setAmount(value); setCustom(false); setError(''); }}>${value}</button>
               ))}
-            </select>
-          </label>
-        )}
-        <button type="submit" className="btn btn-primary" style={{ alignSelf: 'flex-end' }} disabled={busy}>
-          <Wallet size={16} aria-hidden="true" />
-          {busy ? 'Working…' : `Pay ${token.symbol} with wallet`}
-        </button>
-      </form>
-      {walletAppUrl && <OpenInWalletApp url={walletAppUrl} />}
-      <p className="faint">
-        {token.symbol} on {network.name} credits 1:1. {token.symbol === 'USDG' ? 'USDG supports permit, so it is one signature and one transaction.' : 'If the token has no permit, your wallet asks for an approval first.'}{' '}
-        {!hasWallet && !mobile && 'No browser wallet detected on this page.'}
-      </p>
-      {step && <p className="notice">{STEP_TEXT[step]}</p>}
-      {error && (
-        <p className="error-text" role="alert">
-          {error}
-        </p>
+              <button type="button" disabled={busy} aria-pressed={custom} onClick={() => {
+                setCustom(true); amountInput.current?.focus(); amountInput.current?.select();
+              }}>Custom</button>
+            </div>
+          </div>
+          <div className="wallet-pay-method">
+            <div className="wallet-pay-token"><Coins size={21} aria-hidden="true" /></div>
+            <div><span>Pay with</span><strong>{token.symbol} <small>on {network.name}</small></strong></div>
+          </div>
+          {(evm.chains.length > 1 || entry.tokens.length > 1) && (
+            <details className="wallet-network-options">
+              <summary>Change network or token</summary>
+              <label className="field">Network
+                <select className="select" value={entry.chain} disabled={busy} onChange={event => {
+                  const next = evm.chains.find(c => c.chain === event.target.value);
+                  if (!next) return;
+                  setChain(next.chain); setSymbol(next.tokens.find(t => t.symbol === 'USDG')?.symbol ?? next.tokens[0].symbol); setError('');
+                }}>
+                  {evm.chains.map(c => <option key={c.chain} value={c.chain}>{chainName(c.chain)}</option>)}
+                </select>
+              </label>
+              {entry.tokens.length > 1 && <label className="field">Token
+                <select className="select" value={token.symbol} disabled={busy} onChange={event => setSymbol(event.target.value as typeof symbol)}>
+                  {entry.tokens.map(t => <option key={t.symbol} value={t.symbol}>{t.symbol}</option>)}
+                </select>
+              </label>}
+            </details>
+          )}
+          <button ref={continueButton} className="wallet-primary btn btn-primary" type="submit" disabled={busy || !validAmount}>
+            {busy ? 'Payment in progress' : hasWallet ? `Pay ${amount.trim()} ${token.symbol}` : 'Continue to wallet'}
+            {hasWallet ? <Wallet size={17} aria-hidden="true" /> : <ArrowRight size={18} aria-hidden="true" />}
+          </button>
+          {!validAmount && <p className="faint" role="status">Enter an amount greater than zero.</p>}
+        </form>
+      ) : !hash && (
+        <div className="wallet-review">
+          <button type="button" className="wallet-edit" onClick={() => {
+            setReview(false); requestAnimationFrame(() => continueButton.current?.focus());
+          }}><ArrowLeft size={15} aria-hidden="true" />Edit amount</button>
+          <h2 ref={reviewHeading} tabIndex={-1}>{amount.trim()} {token.symbol}</h2>
+          <p className="wallet-network">{network.name}</p>
+          {hasWallet ? <button type="button" className="wallet-primary btn btn-primary" disabled={busy} onClick={pay}>Pay {amount.trim()} {token.symbol}</button>
+            : <OpenInWalletApp url={walletAppUrl} showApps={useWalletApp} onWalletOpen={onWalletOpen} />}
+        </div>
       )}
+      <WalletProgress payment={payment} />
       {result && <PaymentStatus key={result.hash} result={result} confirmations={entry.confirmations} coin={false} onCredited={onCredited} />}
-      <details>
+      {hash && !step && <button type="button" className="btn wallet-new-payment" onClick={() => { setReview(false); payment.startAnother(); }}>Start another payment</button>}
+      <details className="wallet-payment-details">
         <summary className="muted" style={{ cursor: 'pointer' }}>
           Send manually instead
         </summary>
@@ -259,31 +250,24 @@ export function EvmWalletPay({ evm, onCredited }: { evm: EvmInstructions; onCred
 export function CoinWalletPay({ coin, onCredited }: { coin: CoinInstructions; onCredited: () => void }) {
   const network = useMemo(() => evmNetwork('rhc', { chain_id: coin.chain_id }), [coin.chain_id]);
   const [amount, setAmount] = useState('10');
-  const [step, setStep] = useState<PayStep | null>(null);
-  const [result, setResult] = useState<PayResult | null>(null);
-  const [error, setError] = useState('');
+  const payment = useWalletPayment();
+  const { step, hash, result, setError } = payment;
   const [understood, setUnderstood] = useState(false);
-  const busy = step !== null && step !== 'submitted';
+  const busy = !!step || !!hash;
   const musd = parseUsd(amount);
   const quote = musd ? quoteCoins(musd, coin) : null;
   const unavailable = coin.price_usd === null;
   const sym = coin.token.symbol;
 
-  async function pay() {
-    setError('');
-    setResult(null);
-    if (!quote || !quote.ok) return;
+  const hasWallet = useWalletAccess() === 'injected';
+  function pay() {
+    if (!quote?.ok || !understood) return;
     const provider = injectedProvider();
-    if (!provider) return setError(`No browser wallet found. Install one to pay with ${sym}.`);
-    try {
-      setResult(
-        await payWithCoin({ provider, network, coinPay: coin.coin_pay, token: coin.token, keyCommit: coin.key_commit, amount: quote.coins, onStep: setStep }),
-      );
-    } catch (e) {
-      setError(describeWalletError(e));
-    } finally {
-      setStep(null);
-    }
+    if (!provider) return setError('Open Funds in a browser with a connected wallet to pay with this coin.');
+    void payment.submit((callbacks) => payWithCoin({
+      provider, network, coinPay: coin.coin_pay, token: coin.token,
+      keyCommit: coin.key_commit, amount: quote.coins, ...callbacks,
+    }));
   }
 
   return (
@@ -310,10 +294,10 @@ export function CoinWalletPay({ coin, onCredited }: { coin: CoinInstructions; on
             Amount (USD)
             <input className="input" inputMode="decimal" value={amount} disabled={busy} onChange={(e) => setAmount(e.target.value)} />
           </label>
-          <button type="submit" className="btn btn-primary" style={{ alignSelf: 'flex-end' }} disabled={busy || !understood || !quote?.ok}>
+          {hasWallet && !hash && <button type="submit" className="btn btn-primary" style={{ alignSelf: 'flex-end' }} disabled={busy || !understood || !quote?.ok}>
             <Wallet size={16} aria-hidden="true" />
-            {busy ? 'Working…' : `Burn ${sym} and pay`}
-          </button>
+            {busy ? 'Payment in progress' : `Burn ${sym} and pay`}
+          </button>}
         </form>
       )}
       {!unavailable && (
@@ -331,18 +315,15 @@ export function CoinWalletPay({ coin, onCredited }: { coin: CoinInstructions; on
           Credited after {coin.confirmations} confirmations on {network.name}.
         </p>
       )}
-      {!unavailable && (
+      {!unavailable && !hasWallet && <p className="notice">Coin payments require a connected browser wallet. Open Funds in a browser with your wallet connected.</p>}
+      {!unavailable && hasWallet && (
         <label className="checkbox">
-          <input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} />
+          <input type="checkbox" disabled={busy} checked={understood} onChange={(e) => setUnderstood(e.target.checked)} />
           I understand the coins are burned and the credit is usage only, never withdrawable
         </label>
       )}
-      {step && <p className="notice">{STEP_TEXT[step]}</p>}
-      {error && (
-        <p className="error-text" role="alert">
-          {error}
-        </p>
-      )}
+      <WalletProgress payment={payment} />
+      {hash && !step && <button type="button" className="btn wallet-new-payment" onClick={() => { setUnderstood(false); payment.startAnother(); }}>Start another payment</button>}
       {result && <PaymentStatus key={result.hash} result={result} confirmations={coin.confirmations} coin onCredited={onCredited} />}
     </div>
   );

@@ -4,7 +4,7 @@
 //   - A crisis protocol: when someone writes about suicide or self-harm, show crisis lines next to the answer
 //     (New York GBL §§1700–1704; California SB 243). Sources: docs/legal/region-defaults.md. It never blocks the chat: fiction and venting are allowed.
 
-export const AI_NOTICE = 'You’re talking to an AI, not a person. Characters are fictional.';
+export const AI_NOTICE = 'AI conversation';
 export const AI_REMINDER = 'Reminder: you’re talking to an AI, not a person.';
 export const AI_NOTICE_INTERVAL_MS = 3 * 60 * 60 * 1000;
 

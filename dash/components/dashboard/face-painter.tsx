@@ -1,5 +1,7 @@
 'use client';
 
+import { characterDestination, setupHref } from '@/lib/anonymo/setup-return';
+
 // Update "faces": giving a character a face. One sentence (the "look") is all the image model sees; the person can have
 // the chat model write it from the card, or type it, and edit it before anything is painted. One image then holds six
 // faces of the same person, which this browser cuts apart and keeps (lib/anonymo/faces-store.ts). Every button that
@@ -118,13 +120,13 @@ export function ModelChoice({ models, error, value, onChange, disabled }: { mode
   );
 }
 
-export function TroubleNote({ trouble }: { trouble: Trouble | null }) {
+export function TroubleNote({ trouble, destination }: { trouble: Trouble | null; destination: string }) {
   if (!trouble) return null;
   return (
     <div className={trouble.funds ? 'notice notice-amber row' : 'notice notice-rose'} role="alert">
       <span style={{ flex: 1 }}>{trouble.text}</span>
       {trouble.funds && (
-        <Link className="btn btn-small" href="/dashboard/funds">
+        <Link className="btn btn-small" href={setupHref('funds', destination)}>
           Add funds
         </Link>
       )}
@@ -331,10 +333,10 @@ export function FacePainter({ character, onClose }: { character: StoredCharacter
           </button>
           {!key && (
             <p className="faint faces-hint">
-              You need a key to paint. <Link href="/dashboard/key">Create a key</Link>
+              You need a key to paint. <Link href={setupHref('key', characterDestination('characters', character.id))}>Create a key</Link>
             </p>
           )}
-          <TroubleNote trouble={trouble} />
+          <TroubleNote trouble={trouble} destination={characterDestination('characters', character.id)} />
           <p className="studio-note">
             <ShieldCheck size={14} aria-hidden="true" /> One image makes all six faces, so they are the same person in every mood. Safe for work only: an adult, clothed, from the shoulders up. If the image check
             turns a look down, nothing is charged. Faces stay in this browser; Wipe removes them.
@@ -346,7 +348,7 @@ export function FacePainter({ character, onClose }: { character: StoredCharacter
         setShown(null);
         void setUse(demo, character.id, use).catch(() => setTrouble({ text: 'This browser could not save the choice.', funds: false }));
       }} />}
-      {editor === 'plush' && <TroubleNote trouble={trouble} />}
+      {editor === 'plush' && <TroubleNote trouble={trouble} destination={characterDestination('characters', character.id)} />}
     </section>
   );
 }

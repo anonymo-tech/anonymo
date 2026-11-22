@@ -574,7 +574,7 @@ pre.snippet { margin: 0; padding: 16px; border: 1px solid var(--line-strong); bo
 .docs-nav a { padding: 7px 12px; border-radius: 8px; text-decoration: none; color: var(--text); }
 .docs-nav a:hover { background: var(--raised); }
 .docs-body { display: grid; gap: 40px; align-content: start; min-width: 0; }
-.docs-body section { display: grid; gap: 14px; scroll-margin-top: 90px; }
+.docs-body section { display: grid; gap: 14px; scroll-margin-top: calc(var(--docs-header-height, var(--head-h)) + 12px); }
 .docs-body h1 { font-size: clamp(38px, 4.6vw, 56px); }
 .docs-body h2 { font-size: 32px; }
 .docs-body p { color: var(--muted); font-size: 16px; }
@@ -1012,6 +1012,13 @@ html[data-anonymo-panic] body { display: none !important; }
 @media (max-width: 480px) {
   .ws-top-right { gap: 6px; }
   .ws-top-right .adults-only { display: none; }
+  .ws-top-right .ca-chip code, .ws-top-right .ca-chip-pending > span:last-child { display: none; }
+}
+
+@media (max-width: 380px) {
+  .ws-top { padding-inline: 10px; }
+  .ws-mobile-brand .wordmark > span { display: none; }
+  .ws-top .ws-top-right { gap: 4px; }
 }
 
 /* ---- Update "voice" ---- */

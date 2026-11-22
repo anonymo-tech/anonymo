@@ -53,6 +53,7 @@ const groups: { title: string; links: Destination[] }[] = [
     links: [
       overview,
       chat,
+      { href: '/dashboard/characters', label: 'Characters', icon: Drama },
       { href: '/dashboard/story', label: 'Story Studio', icon: BookOpen, feature: 'story' },
       { href: '/dashboard/call', label: 'Night Call', icon: Headphones, feature: 'voice' },
       { href: '/dashboard/side-by-side', label: 'Side by side', icon: Columns3, feature: 'sidebyside' },
@@ -64,7 +65,6 @@ const groups: { title: string; links: Destination[] }[] = [
       },
       { href: '/dashboard/video', label: 'Video studio', icon: Video, feature: 'video' },
       { href: '/dashboard/library', label: 'Library', icon: Images, feature: 'vault' },
-      { href: '/dashboard/characters', label: 'Characters', icon: Drama },
       { href: '/dashboard/move-in', label: 'Move in', icon: PackageOpen, feature: 'movein' },
       { href: '/dashboard/ventures', label: 'Ventures', icon: Rocket, feature: 'ventures' },
     ],
@@ -114,7 +114,7 @@ function WorkspaceNav({
 }: {
   pathname: string;
   demo: boolean;
-  close?: () => void;
+  close?: (href: string) => void;
 }) {
   return (
     <nav className="ws-nav" aria-label="Workspace">
@@ -122,13 +122,19 @@ function WorkspaceNav({
         <div className="nav-group" key={title}>
           <span className="nav-label">{title}</span>
           {links
+            .filter((item) => !close || !shortcuts.some((shortcut) => shortcut.href === item.href))
             .filter((item) => !item.feature || updateOn(item.feature, demo))
             .map(({ href, label, icon: Icon }) => (
               <Link
                 key={href}
                 href={href}
                 aria-current={matches(pathname, href) ? 'page' : undefined}
-                onClick={close}
+                replace={!!close}
+                onClick={(event) => {
+                  if (!close || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                  if (href === pathname) event.preventDefault();
+                  close(href);
+                }}
               >
                 <Icon size={16} strokeWidth={1.65} aria-hidden="true" />
                 {label}
@@ -143,14 +149,29 @@ function WorkspaceNav({
 function MobileNav({ pathname, demo }: { pathname: string; demo: boolean }) {
   const menu = useRef<HTMLDialogElement>(null);
   const [open, setOpen] = useState(false);
+  const followingLink = useRef(false);
   useEffect(() => {
     const desktop = window.matchMedia('(min-width: 901px)');
     const resize = () => {
       if (desktop.matches) menu.current?.close();
     };
+    const restoreMenu = () => {
+      if (!desktop.matches && history.state?.workspaceMenu === pathname) {
+        if (!menu.current?.open) menu.current?.showModal();
+        setOpen(true);
+      } else {
+        menu.current?.close();
+        setOpen(false);
+      }
+    };
+    restoreMenu();
+    window.addEventListener('popstate', restoreMenu);
     desktop.addEventListener('change', resize);
-    return () => desktop.removeEventListener('change', resize);
-  }, []);
+    return () => {
+      window.removeEventListener('popstate', restoreMenu);
+      desktop.removeEventListener('change', resize);
+    };
+  }, [pathname]);
   return (
     <>
       <nav className="ws-mobile-nav" aria-label="Quick navigation">
@@ -173,6 +194,7 @@ function MobileNav({ pathname, demo }: { pathname: string; demo: boolean }) {
             !shortcuts.some((item) => matches(pathname, item.href)) || open
           }
           onClick={() => {
+            history.pushState({ workspaceMenu: pathname }, '', window.location.href);
             menu.current?.showModal();
             setOpen(true);
           }}
@@ -186,7 +208,11 @@ function MobileNav({ pathname, demo }: { pathname: string; demo: boolean }) {
         id="workspace-menu"
         className="ws-sheet"
         aria-labelledby="menu-title"
-        onClose={() => setOpen(false)}
+        onClose={() => {
+          setOpen(false);
+          if (!followingLink.current && history.state?.workspaceMenu === pathname) history.back();
+          followingLink.current = false;
+        }}
         closedby="any"
       >
         <div className="ws-sheet-inner">
@@ -204,7 +230,10 @@ function MobileNav({ pathname, demo }: { pathname: string; demo: boolean }) {
           <WorkspaceNav
             pathname={pathname}
             demo={demo}
-            close={() => menu.current?.close()}
+            close={(href) => {
+              followingLink.current = href !== pathname;
+              menu.current?.close();
+            }}
           />
         </div>
       </dialog>
@@ -227,6 +256,7 @@ export function WorkspaceShell({
   wide?: boolean;
 }) {
   const pathname = usePathname();
+  const inFunds = pathname === '/dashboard/funds';
   const { ready, demo, key } = useAnonymo();
   if (useVanishWorkspace()) return null;
   return (
@@ -254,9 +284,9 @@ export function WorkspaceShell({
             <Wordmark href="/" />
           </span>
           <div className="ws-top-right">
-            <ContractAddressChip />
+            {!inFunds && <ContractAddressChip />}
             <AdultsOnly compact />
-            {ready && key && <Purse key={key} />}
+            {ready && key && !inFunds && <Purse key={key} />}
             {ready && updateOn('vault', demo) && <VaultTopBar />}
             {ready && (updateOn('history', demo) || updateOn('vault', demo) || updateOn('faces', demo)) && <WipeDevice />}
           </div>

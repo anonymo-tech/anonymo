@@ -1,5 +1,7 @@
 'use client';
 
+import { characterDestination } from '@/lib/anonymo/setup-return';
+
 // Update "faces": the Stage. The same chat, shown as a scene: a painted backdrop, the character's face in the mood of
 // the reply, and the reply in a box under it. It is another way to look at the thread, not another chat: the answer
 // card is the thread's own (cost, receipt, council view and errors included), and the notices the thread shows with a
@@ -121,7 +123,7 @@ export function Stage({
               <p className="stage-you">
                 <span>You</span> {turn.prompt}
               </p>
-              <AnswerCard turn={turn} />
+              <AnswerCard turn={turn} characterId={character.id} />
             </>
           ) : greeting ? (
             <div className="answer">
@@ -243,7 +245,7 @@ function ScenePainter({ character, thread, scene, busyChat, onDone }: { characte
           Close
         </button>
       </div>
-      <TroubleNote trouble={trouble} />
+      <TroubleNote trouble={trouble} destination={characterDestination('chat', character.id)} />
       <p className="studio-note">
         <ShieldCheck size={14} aria-hidden="true" /> Safe for work only: an empty place, no people. If the image check turns a scene down, nothing is charged. The backdrop stays in this browser.
       </p>

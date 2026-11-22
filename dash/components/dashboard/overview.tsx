@@ -7,19 +7,20 @@ import Link from 'next/link';
 import {
   ArrowRight,
   Check,
-  Drama,
   Eye,
   EyeOff,
   ListTree,
   Plug,
   ShieldCheck,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
 import { CopyButton } from '../copy-button';
 import { maskKey } from '@/lib/anonymo/key-store';
 import { API_BASE } from '@/lib/anonymo/config';
 import { workspaceStage } from '@/lib/anonymo/workspace-guide';
+import { setupHref } from '@/lib/anonymo/setup-return';
+import './overview.css';
 import { formatUsdAmount, usdToMusd } from '@/lib/anonymo/money';
 import type { Balance } from '@/lib/anonymo/types';
 
@@ -59,12 +60,8 @@ function WorkspaceOverview() {
     return () => controller.abort();
   }, [key, client, balanceVersion]);
 
-  const stage = workspaceStage(
-    !!key,
-    balance ? usdToMusd(balance.available_usd) : null,
-    receipts.length > 0,
-  );
-  const guide = <WorkspaceGuide stage={stage} error={error} />;
+  const stage = workspaceStage(!!key, receipts.length > 0);
+  const guide = <WorkspaceGuide stage={stage} />;
   if (!key)
     return (
       <>
@@ -106,11 +103,7 @@ function WorkspaceOverview() {
               {formatUsdAmount(balance.held_usd)} held for requests in flight
             </p>
           )}
-          {stage !== 'funds' && (
-            <Link className="link" href="/dashboard/funds">
-              Manage funds
-            </Link>
-          )}
+          <Link className="link" href="/dashboard/funds">Manage funds</Link>
         </section>
 
         <section className="card span-6" aria-labelledby="key-title">
@@ -222,19 +215,13 @@ function timeAgo(iso: string): string {
 const GUIDE = {
   key: {
     title: 'Your private workspace',
-    text: 'Connect an API key to pay for conversations and see what each answer cost.',
-    action: 'Set up your key',
-    href: '/dashboard/key',
-  },
-  funds: {
-    title: 'Fund your key',
-    text: 'Your key is connected. Check which deposit methods are available before starting a paid chat.',
-    action: 'View funding options',
-    href: '/dashboard/funds',
+    text: 'Create a key to try chat, or make a character for free on this device.',
+    action: 'Try chat',
+    href: setupHref('key', '/dashboard/chat'),
   },
   'first-chat': {
     title: 'Start your first chat',
-    text: 'Your key has credit. Choose a model and send a message to get your first signed receipt.',
+    text: 'Choose a model and send a message. Your answer comes with a receipt.',
     action: 'Open chat',
     href: '/dashboard/chat',
   },
@@ -244,23 +231,15 @@ const GUIDE = {
     action: 'Open chat',
     href: '/dashboard/chat',
   },
-  unknown: {
-    title: 'Your workspace',
-    text: 'Checking the available credit on your key…',
-    action: 'View funds',
-    href: '/dashboard/funds',
-  },
 } as const;
 
 function WorkspaceGuide({
   stage,
-  error,
 }: {
   stage: keyof typeof GUIDE;
-  error: boolean;
 }) {
   const item = GUIDE[stage];
-  const step = stage === 'key' ? 0 : stage === 'first-chat' ? 2 : 1;
+  const step = stage === 'key' ? 0 : 1;
   return (
     <section className="guide" aria-labelledby="guide-title">
       <div className="guide-cover">
@@ -273,20 +252,19 @@ function WorkspaceGuide({
         />
         <div className="guide-copy">
           <h1 id="guide-title">{item.title}</h1>
-          <p>
-            {error && stage === 'unknown'
-              ? 'Your balance could not be loaded. Open Funds to check again.'
-              : item.text}
-          </p>
+          <p>{item.text}</p>
           <Link className="btn btn-primary guide-action" href={item.href}>
-            {item.action}
-            <ArrowRight size={16} aria-hidden="true" />
+            {item.action}<ArrowRight size={16} aria-hidden="true" />
           </Link>
+          {stage === 'key' && <div className="guide-secondary">
+            <Link className="link" href="/dashboard/characters">Create a free character</Link>
+            <ExampleChat />
+          </div>}
         </div>
       </div>
-      {stage !== 'returning' && stage !== 'unknown' && (
+      {stage !== 'returning' && (
         <ol className="guide-steps" aria-label="Workspace setup">
-          {['Connect a key', 'Add credit', 'Send a message'].map((label, i) => (
+          {['Connect a key', 'Send a message'].map((label, i) => (
             <li
               key={label}
               data-state={i < step ? 'done' : i === step ? 'current' : 'later'}
@@ -305,6 +283,33 @@ function WorkspaceGuide({
   );
 }
 
+function ExampleChat() {
+  const dialog = useRef<HTMLDialogElement>(null);
+  return (
+    <>
+      <button type="button" className="link" aria-haspopup="dialog" onClick={() => dialog.current?.showModal()}>
+        See an example chat
+      </button>
+      <dialog ref={dialog} className="workspace-example" aria-labelledby="workspace-example-title" closedby="any">
+        <h2 id="workspace-example-title">Example chat</h2>
+        <p>A written example you can read for free.</p>
+        <dl>
+          <dt>You</dt>
+          <dd>Write an opening line for a seaside mystery.</dd>
+          <dt>Anonymo</dt>
+          <dd>At low tide, somebody rang the bell in the village that had been underwater for forty years.</dd>
+        </dl>
+        <h3>Illustrative receipt</h3>
+        <p>Model · anonymo-1<br />Outcome · Answered</p>
+        <a className="link" href="https://anonymo.tech/verify?r=gen-1795224820-Vfcw47tjO8Q7zw" target="_blank" rel="noopener noreferrer">
+          View a real $0 refusal receipt<span className="sr-only"> (opens in a new tab)</span>
+        </a>
+        <form method="dialog"><button className="btn">Close example</button></form>
+      </dialog>
+    </>
+  );
+}
+
 function Explore() {
   const links = [
     {
@@ -318,12 +323,6 @@ function Explore() {
       title: 'Frontend presets',
       detail: 'Connect a chat app you already use.',
       icon: Plug,
-    },
-    {
-      href: '/dashboard/characters',
-      title: 'Characters',
-      detail: 'Import a character card for your chats.',
-      icon: Drama,
     },
   ];
   return (

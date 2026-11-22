@@ -1,5 +1,7 @@
 'use client';
 
+import { setupHref } from '@/lib/anonymo/setup-return';
+
 import Link from 'next/link';
 import { Download, Film, ShieldCheck } from 'lucide-react';
 import { useEffect, useState, useSyncExternalStore, type FormEvent } from 'react';
@@ -48,7 +50,7 @@ export function VideoStudio() {
   if (!key) return (
     <div className="notice row">
       <span>Connect an API key to generate video.</span>
-      <Link className="btn btn-primary btn-small" href="/dashboard/key">Create a key</Link>
+      <Link className="btn btn-primary btn-small" href={setupHref('key', '/dashboard/video')}>Create a key</Link>
     </div>
   );
   let session = sessions.get(client);
@@ -148,7 +150,7 @@ function VideoWorkspace({ client, session }: { client: AnonymoClient; session: R
         </button>
         {error && (
           <div className="notice" role="alert">
-            {error.text} {error.funds && <Link href="/dashboard/funds">Add funds</Link>}
+            {error.text} {error.funds && <Link href={setupHref('funds', '/dashboard/video')}>Add funds</Link>}
           </div>
         )}
         <p className="studio-note"><ShieldCheck size={15} aria-hidden="true" /> Safe for work only.</p>

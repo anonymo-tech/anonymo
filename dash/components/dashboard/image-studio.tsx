@@ -1,5 +1,7 @@
 'use client';
 
+import { setupHref } from '@/lib/anonymo/setup-return';
+
 // Update "images": the image studio. Prompt, model, size and count; images come back as base64 PNGs with provenance
 // (a hidden watermark and a signed C2PA label) and stay in this tab until downloaded or saved. Safe for work: the gateway refuses nude or
 // sexual prompts before anything is made and checks every image before it is returned (gateway src/anonymo/media).
@@ -117,7 +119,7 @@ export function ImageStudio() {
     return (
       <div className="notice row">
         <span style={{ flex: 1 }}>Connect an API key to generate your first image.</span>
-        <Link className="btn btn-primary btn-small" href="/dashboard/key">
+        <Link className="btn btn-primary btn-small" href={setupHref('key', '/dashboard/images')}>
           Create a key
         </Link>
       </div>
@@ -245,7 +247,7 @@ export function ImageStudio() {
           <div className={error.funds ? 'notice notice-amber row' : 'notice notice-rose'} role="alert">
             <span style={{ flex: 1 }}>{error.text}</span>
             {error.funds && (
-              <Link className="btn btn-small" href="/dashboard/funds">
+              <Link className="btn btn-small" href={setupHref('funds', '/dashboard/images')}>
                 Add funds
               </Link>
             )}

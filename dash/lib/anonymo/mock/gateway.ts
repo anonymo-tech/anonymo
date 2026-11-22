@@ -53,6 +53,8 @@ const DEMO_EVM_CHAINS = [
 type Row = DepositRow & { musd: number };
 type KeyState = {
   keyHash: string;
+  signupHash?: string;
+  firstChatAvailable?: boolean;
   caps: KeyCaps;
   keyCommit: string;
   balance: number; // micro-USD
@@ -323,11 +325,15 @@ export function createMockGateway(options: MockOptions = {}) {
   }
 
   async function createKey(request: Request) {
-    const body = ((await request.json().catch(() => ({}))) ?? {}) as { caps?: KeyCapsInput };
+    const body = ((await request.json().catch(() => ({}))) ?? {}) as { caps?: KeyCapsInput; dashboard_signup?: string };
     const key = `anm_live_${randomHex(32)}`;
     const keyHash = await sha256Hex(key);
+    const signupHash = typeof body.dashboard_signup === 'string' ? await sha256Hex(body.dashboard_signup) : undefined;
+    const firstChatAvailable = !!signupHash && !Object.values(state.keys).some(other => other.signupHash === signupHash);
     const k: KeyState = {
       keyHash,
+      signupHash,
+      firstChatAvailable,
       caps: capsOut(body.caps),
       keyCommit: keccakHex(enc.encode(`anonymo-deposit-v1:${keyHash}`)),
       balance: 0,
@@ -339,7 +345,7 @@ export function createMockGateway(options: MockOptions = {}) {
     };
     state.keys[keyHash] = k;
     persist();
-    const response: CreateKeyResponse = { key, key_hash: keyHash, wallet: null, caps: k.caps, deposit: instructions(k) };
+    const response: CreateKeyResponse = { key, first_chat_available: firstChatAvailable, key_hash: keyHash, wallet: null, caps: k.caps, deposit: instructions(k) };
     return json(response, 201);
   }
 
@@ -430,7 +436,10 @@ export function createMockGateway(options: MockOptions = {}) {
     const promptText = body.messages.map((m) => (typeof m.content === 'string' ? m.content : '')).join('\n');
     const tin = tokensOf(promptText);
     const p = price ?? DEMO_PRICES['anonymo-1'];
-    const maxCost = Math.ceil((tin * p.in + 900 * p.out) / 1_000_000);
+    const estimate = Math.ceil((tin * p.in + 900 * p.out) / 1_000_000);
+    const sponsored = body.dashboard_chat === true && model === 'anonymo-1' && k.firstChatAvailable === true
+      && k.balance === 0 && enc.encode(promptText).byteLength <= 8192;
+    const maxCost = sponsored ? 0 : estimate;
     if (k.balance - k.held < maxCost) return fail(402, 'insufficient_balance', 'Not enough credit for this request.');
     const capped = capRefusal(k);
     if (capped) return capped;
@@ -493,6 +502,10 @@ export function createMockGateway(options: MockOptions = {}) {
     }
 
     // Hold at the maximum cost, settle to the actual cost when the stream ends.
+    if (sponsored) {
+      k.firstChatAvailable = false;
+      persist();
+    }
     k.held += maxCost;
     const lastUser = [...body.messages].reverse().find((m) => m.role === 'user')?.content ?? '';
     const rerouted = !storyText && model === 'anonymo-1' && /\breroute\b/i.test(lastUser);
@@ -680,7 +693,7 @@ export function createMockGateway(options: MockOptions = {}) {
     if (k instanceof Response) return k;
     const lapsed = expiredKeyRefusal(k.caps, Date.now(), fail);
     if (lapsed) return lapsed;
-    if (method === 'GET' && path === API_PATHS.keyInfo) return json({ key_hash: k.keyHash, label: null, caps: k.caps, deposit: instructions(k) });
+    if (method === 'GET' && path === API_PATHS.keyInfo) return json({ first_chat_available: k.firstChatAvailable ?? false, key_hash: k.keyHash, label: null, caps: k.caps, deposit: instructions(k) });
     if (method === 'GET' && path === API_PATHS.balance) return json(balanceOf(k));
     if (method === 'GET' && path === API_PATHS.deposits)
       return json({ instructions: instructions(k), data: k.deposits.map(({ musd: _m, ...d }) => d) });

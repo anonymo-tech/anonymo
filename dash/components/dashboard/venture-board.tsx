@@ -1,5 +1,7 @@
 'use client';
 
+import { setupHref } from '@/lib/anonymo/setup-return';
+
 // Update "ventures": the live crew board for one run. The run's steps are laid out in waves (steps whose needs are
 // done run side by side), each with its Mo, its zone and a cost-against-cap meter, and the firewall drawn between the
 // side that read the rival and the side that never did. Events stream from GET /v1/ventures/{id}/events (SSE over
@@ -237,7 +239,7 @@ export function VentureBoard({ id }: { id: string }) {
     return (
       <div className="notice notice-action">
         <span>Connect the key that started this run to see it.</span>
-        <Link className="btn btn-primary btn-small" href="/dashboard/key">
+        <Link className="btn btn-primary btn-small" href={setupHref('key', `/dashboard/ventures/${id}`)}>
           Create a key
         </Link>
       </div>

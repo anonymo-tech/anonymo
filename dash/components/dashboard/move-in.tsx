@@ -5,7 +5,7 @@
 // are the ordinary chat calls of "Build memory", each behind a button that shows its price.
 
 import './movein.css';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { PackageOpen, Square } from 'lucide-react';
 import { useRef, useState, type CSSProperties } from 'react';
 import { useAnonymo } from '../anonymo-provider';
@@ -56,7 +56,8 @@ export function MoveIn() {
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const [result, setResult] = useState<ImportSummary | null>(null);
   const [problem, setProblem] = useState('');
-  const [boardFor, setBoardFor] = useState<string | null>(null);
+  const requestedCharacter = useSearchParams().get('character');
+  const [boardFor, setBoardFor] = useState<string | null>(requestedCharacter);
   const [confirmAll, setConfirmAll] = useState(false);
   const reading = progress !== null;
   const streaming = turns.some((turn) => turn.status === 'streaming');

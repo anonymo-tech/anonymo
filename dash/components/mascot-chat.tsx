@@ -9,6 +9,7 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from 'react';
 import { ArrowLeft, ArrowUpRight, Lightbulb, Minus, Plus } from 'lucide-react';
@@ -107,9 +108,23 @@ function SessionPicker() {
   );
 }
 
+const mobileWorkspace = '(max-width: 900px)';
+
+function subscribeViewport(listener: () => void) {
+  const media = window.matchMedia(mobileWorkspace);
+  media.addEventListener('change', listener);
+  return () => media.removeEventListener('change', listener);
+}
+
+function isMobileViewport() {
+  return window.matchMedia(mobileWorkspace).matches;
+}
+
 export function MascotChat({ children }: { children: ReactNode }) {
   const confirmed = useDeviceStore(adultStore);
   const pathname = usePathname();
+  const narrow = useSyncExternalStore(subscribeViewport, isMobileViewport, () => false);
+  const docked = narrow && pathname.startsWith('/dashboard');
   const { demo } = useAnonymo();
   const reminders = useMascotTips(confirmed, demo);
   const [guide, setGuide] = useState(false);
@@ -225,10 +240,12 @@ export function MascotChat({ children }: { children: ReactNode }) {
           className="mascot-launcher"
           type="button"
           data-workspace={pathname.startsWith('/dashboard')}
+          data-docked={docked}
+          data-tip={!!tip && !visible}
           data-resting={mood === 'roam'}
           data-placed={!!position}
           style={
-            position
+            position && !docked
               ? {
                   left: `clamp(8px, ${position.x}px, calc(100vw - var(--mascot-size) - 8px))`,
                   top: `clamp(8px, ${position.y}px, calc(100dvh - var(--mascot-size) - 8px))`,
@@ -239,9 +256,9 @@ export function MascotChat({ children }: { children: ReactNode }) {
           aria-haspopup="dialog"
           aria-expanded={visible}
           aria-controls={visible ? 'mascot-chat' : undefined}
-          title="Anonymo chat · drag or use the arrow keys to move"
+          title={docked ? 'Anonymo chat' : 'Anonymo chat · drag or use the arrow keys to move'}
           onPointerDown={(event) => {
-            if (!event.isPrimary || event.button !== 0) return;
+            if (docked || !event.isPrimary || event.button !== 0) return;
             suppressClick.current = false;
             const rect = event.currentTarget.getBoundingClientRect();
             drag.current = {
@@ -276,6 +293,7 @@ export function MascotChat({ children }: { children: ReactNode }) {
             drag.current = null;
           }}
           onKeyDown={(event) => {
+            if (docked) return;
             const directions: Record<string, [number, number]> = {
               ArrowLeft: [-32, 0],
               ArrowRight: [32, 0],
@@ -310,7 +328,7 @@ export function MascotChat({ children }: { children: ReactNode }) {
           {tip ? tip.title + '. ' + tip.text : ''}
         </output>
       )}
-      {tip && !visible && (
+      {tip && !visible && !docked && (
         <MascotTip
           tip={tip}
           anchor={launcher}

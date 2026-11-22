@@ -1,9 +1,11 @@
 'use client';
 
+import { characterDestination, setupHref } from '@/lib/anonymo/setup-return';
+
 import { MascotSprite } from '../mascot-sprite';
 import { Photo } from '@/components/photo';
 import Link from 'next/link';
-import { ArrowUp, Drama, ShieldCheck, Square } from 'lucide-react';
+import { ArrowUp, Drama, Square } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { isLiveModel, useAnonymo } from '../anonymo-provider';
@@ -27,16 +29,14 @@ import { useDeviceStore } from '@/lib/anonymo/device-store';
 import { modelStore, setStoredModel } from '@/lib/anonymo/prefs';
 import type { AnonymoModelId, ChatMessage } from '@/lib/anonymo/types';
 import { paperPrompt, type PaperSource } from '@/lib/paper-trail';
-import { AI_NOTICE, AI_REMINDER, CRISIS_LINES, mentionsSelfHarm, reminderDue } from '@/lib/anonymo/safety';
+import { AI_REMINDER, CRISIS_LINES, mentionsSelfHarm, reminderDue } from '@/lib/anonymo/safety';
 import { keepStore, saveChat } from '@/lib/anonymo/history';
 import { canRecap, recapContext, recapRequest, suggestRecap, threadTokens } from '@/lib/anonymo/catchup';
 import { updateOn } from '@/lib/anonymo/updates';
 
-const STARTERS: { model: AnonymoModelId; text: string }[] = [
-  { model: 'anonymo-1', text: 'What actually happens in the body during a long fast, hour by hour? Be frank.' },
-  { model: 'anonymo-council', text: 'Three ways to structure a dark heist novel, and which one holds tension best.' },
-  { model: 'anonymo-1', text: 'Walk me through how this reentrancy bug in my contract could be exploited.' },
-  { model: 'anonymo-sealed', text: 'Help me draft a hard conversation with my doctor. Keep it private.' },
+const STARTERS = [
+  'Give me three ideas for a short mystery story.',
+  'Help me turn a rough idea into a plan.',
 ];
 
 export function ChatWorkspace({ compact, threadHost, composerHost }: {
@@ -51,7 +51,10 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const requestedCharacter = useSearchParams().get('character');
   const [councilMode, setCouncilMode] = useState<'merge' | 'select'>('merge');
   const [refusalCatch, setRefusalCatch] = useState(true);
-  const [text, setText] = useState('');
+  const [text, setText] = useState(() => {
+    const last = turns.at(-1);
+    return last?.needsFunds && !last.attachment && !last.recap ? last.prompt : '';
+  });
   const voiceOn = ready && updateOn('talk', demo);
   const voice = useChatVoice({ enabled: voiceOn && !!key, client, chatId, turns, refreshBalance });
   const [paper, setPaper] = useState<PaperSource | null>(null);
@@ -61,7 +64,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const controller = useRef<AbortController | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const end = useRef<HTMLDivElement>(null);
-  // The AI notice below the message box is always on screen; this marks when the thread last repeated it.
+  // Track the last in-thread reminder independently of the AI label on the model picker.
   const noticedAt = useRef(Date.now());
   const scan = useContentGuard();
   const streaming = turns.some((t) => t.status === 'streaming');
@@ -184,7 +187,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     let haveReceipt = false;
     try {
       const result = await client.chat(
-        { model, messages },
+        { model, messages, ...(model === 'anonymo-1' && !turn.attachment && !turn.recap ? { dashboard_chat: true as const } : {}) },
         {
           signal: abort.signal,
           headers: {
@@ -201,7 +204,9 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
         void memory.afterReply(id, model, turn.prompt, result);
     } catch (error) {
       const stopped = abort.signal.aborted;
-      update(id, { status: stopped ? 'stopped' : 'error', error: stopped ? null : describeError(error), needsFunds: !stopped && isOutOfCredit(error) });
+      const needsFunds = !stopped && isOutOfCredit(error);
+      update(id, { status: stopped ? 'stopped' : 'error', error: stopped ? null : describeError(error), needsFunds });
+      if (needsFunds && !turn.attachment && !turn.recap) setText(draft => draft || turn.prompt);
     } finally {
       if (controller.current === abort) controller.current = null;
       refreshBalance();
@@ -375,7 +380,6 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
         </button>
       </div>
       {voiceOn && <VoiceSettings sealed={model === 'anonymo-sealed'} />}
-      <p className="ai-notice">{AI_NOTICE}</p>
       <div className="dock-meta">
         <span>Enter to send · Shift+Enter for a new line</span>
         <span>{historyOn && keep ? 'Chats are saved in this browser only, never on Anonymo.' : 'Conversations stay in this tab and are never stored.'}</span>
@@ -414,7 +418,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
         <div className="mascot-welcome">
           {hasFace(faces) ? <FaceAvatar faces={faces} /> : <MascotSprite mood="greet" />}
           <h3>{character?.card.data.name ?? 'What’s on your mind?'}</h3>
-          {key ? <p>Start a conversation here.</p> : <Link className="btn btn-primary btn-small" href="/dashboard/key">Create a key to chat</Link>}
+          {key ? <p>Start a conversation here.</p> : <Link className="btn btn-primary btn-small" href={setupHref('key', characterDestination('chat', character?.id))}>Create a key to chat</Link>}
         </div>
       ) : turns.length === 0 ? (
         <section className="empty chat-col">
@@ -424,39 +428,34 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
               <h1>{character ? character.card.data.name : 'Start a conversation'}</h1>
               <p className="muted">
                 {character
-                  ? 'Character card from this device. It works with any model; switch characters below the message box.'
-                  : 'Choose a model for your message. Each answer includes a signed receipt.'}
+                  ? 'This AI character is saved on this device. Switch characters below the message box.'
+                  : 'Write a message or start with one of these ideas.'}
               </p>
             </div>
           </div>
           {ready && !key ? (
             <div className="chat-entry">
               <span>Connect a key to send your first message.</span>
-              <Link className="btn btn-primary btn-small" href="/dashboard/key">
+              <Link className="btn btn-primary btn-small" href={setupHref('key', characterDestination('chat', character?.id))}>
                 Create a key
               </Link>
             </div>
           ) : character ? null : (
             <div className="starters">
-              {STARTERS.filter((s) => isLiveModel(liveModels, s.model)).map((s) => (
+              {STARTERS.map((starter) => (
                 <button
-                  key={s.text}
+                  key={starter}
                   type="button"
                   onClick={() => {
-                    chooseModel(s.model);
-                    setText(s.text);
+                    setText(starter);
                     input.current?.focus();
                   }}
                 >
-                  <strong>
-                    {s.model === 'anonymo-sealed' && <ShieldCheck size={12} aria-hidden="true" />} {s.model}
-                  </strong>
-                  {s.text}
+                  {starter}
                 </button>
               ))}
             </div>
           )}
-          {!key && <p className="ai-notice">{AI_NOTICE}</p>}
           {character && greetingsOf(character.card)[0] && (
             <div className="answer">
               <div className="answer-head">{character.card.data.name}</div>
@@ -489,7 +488,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
               {turn.crisis && <CrisisNotice />}
               <div className="ai-row">
                 <TurnFace faces={character && turn.character === character.card.data.name ? faces : null} turn={turn} />
-                <AnswerCard turn={turn} />
+                <AnswerCard turn={turn} characterId={character?.id} />
               </div>
             </article>
           ))}

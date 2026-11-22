@@ -3,6 +3,7 @@
 // browser renders what is stored, and every reader updates when a value changes here or in another tab.
 
 import { useSyncExternalStore } from 'react';
+import { forgetSignupMemory } from './dashboard-signup.ts';
 import { wipeFaces } from './faces-store.ts';
 import { startVault, vault } from './vault-browser.ts';
 import { deleteArchiveDb } from './movein/archive-idb.ts';
@@ -73,6 +74,7 @@ export const DEVICE_PREFIX = 'anonymo.';
 export function wipeDevice(): Promise<number>;
 export function wipeDevice(storages: Storage[]): number;
 export function wipeDevice(storages?: Storage[]) {
+  forgetSignupMemory();
   if (storages) return removeDeviceKeys(storages);
   startVault();
   // The vault wipe clears saved chats, stories and character memory (live and demo) with their legacy device keys.

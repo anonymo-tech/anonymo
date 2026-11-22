@@ -3,9 +3,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fc from 'fast-check';
-import { domainSeparator, toFunctionSelector } from 'viem';
+import { decodeFunctionData, domainSeparator, toFunctionSelector, toHex } from 'viem';
 import { DepositRouterAbi } from '../../gateway/src/chain/abis.ts';
-import { COIN_PAY_ABI, DEPOSIT_ROUTER_ABI, ensureChain, formatUnits, permitDomain, quoteCoins, rowForTx, stableUnits } from '../lib/anonymo/wallet.ts';
+import { COIN_PAY_ABI, DEPOSIT_ROUTER_ABI, depositStablecoin, describeWalletError, ensureChain, formatUnits, permitDomain, quoteCoins, rowForTx, stableUnits } from '../lib/anonymo/wallet.ts';
 
 const COIN = { price_usd: '0.0125', max_usd_per_payment: '250', token: { decimals: 18 } };
 
@@ -133,14 +133,77 @@ void test('pay links: round trip, only the keyCommit, wallet app links wrap the 
 
   // Malformed links ask for a fresh one instead of paying something else.
   for (const bad of ['?k=0x12&chain=rhc&token=USDG', `?k=${keyCommit}&chain=mainnet&token=USDG`, `?k=${keyCommit}&chain=rhc&token=`]) assert.equal(parsePayLink(bad), null);
-  assert.equal(parsePayLink(`?k=${keyCommit}&chain=rhc&token=usdg&amount=1e9`)?.amount, undefined);
+  for (const amount of ['', '0', '1e9', '-5', '0.0000001']) {
+    assert.equal(payUrl('https://anonymo.example', { keyCommit, chain: 'rhc', token: 'USDG', amount }), '');
+    assert.equal(parsePayLink(`?k=${keyCommit}&chain=rhc&token=USDG&amount=${amount}`), null);
+  }
+  const small = payUrl('https://anonymo.example', { keyCommit, chain: 'rhc', token: 'USDG', amount: '0.000125' });
+  assert.equal(parsePayLink(new URL(small).search)?.amount, '0.000125');
 
   const links = walletAppLinks(url);
   assert.deepEqual(links.map((l) => l.name), ['MetaMask', 'Coinbase Wallet', 'Trust Wallet']);
-  assert.equal(links[0].href, `https://metamask.app.link/dapp/anonymo.example/pay?k=${keyCommit}&chain=rhc&token=USDG&amount=25.50`);
+  assert.equal(links[0].href, `https://link.metamask.io/dapp/anonymo.example/pay?k=${keyCommit}&chain=rhc&token=USDG&amount=25.50`);
   for (const l of links.slice(1)) assert.ok(l.href.endsWith(encodeURIComponent(url)));
 
   assert.equal(isMobileBrowser({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile/15E148', maxTouchPoints: 5 }), true);
   assert.equal(isMobileBrowser({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', maxTouchPoints: 5 }), true);
   assert.equal(isMobileBrowser({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', maxTouchPoints: 0 }), false);
+});
+
+
+// Every RPC in this fixture terminates in memory, including both transaction submissions.
+void test('stablecoin payment sends the selected units and commitment to the router, and reports only the deposit hash', async () => {
+  const from = `0x${'11'.repeat(20)}`;
+  const router = `0x${'22'.repeat(20)}`;
+  const token = { address: `0x${'33'.repeat(20)}`, symbol: 'USDC', decimals: 6 };
+  const keyCommit = `0x${'ab'.repeat(32)}`;
+  const approvalHash = `0x${'44'.repeat(32)}`;
+  const depositHash = `0x${'55'.repeat(32)}`;
+  const network = { chainId: 8453, name: 'Base', rpcUrl: '', explorer: null, nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 } };
+  const amount = stableUnits(25_125_000, token.decimals);
+  const sent = [];
+  const events = [];
+  const provider = {
+    async request({ method, params }) {
+      if (method === 'eth_requestAccounts') return [from];
+      if (method === 'eth_chainId') return '0x2105';
+      if (method === 'eth_getCode') return '0x6000';
+      if (method === 'eth_call') {
+        const selector = params[0].data.slice(0, 10);
+        if (selector === toFunctionSelector('balanceOf(address)')) return toHex(amount, { size: 32 });
+        if (selector === toFunctionSelector('allowance(address,address)')) return toHex(0, { size: 32 });
+        if (selector === toFunctionSelector('DOMAIN_SEPARATOR()')) return '0x';
+      }
+      if (method === 'eth_sendTransaction') {
+        sent.push(params[0]);
+        return sent.length === 1 ? approvalHash : depositHash;
+      }
+      if (method === 'eth_getTransactionReceipt') {
+        events.push(`receipt ${params[0]}`);
+        return { status: '0x1', logs: [], transactionHash: params[0] };
+      }
+      throw new Error(`Unexpected wallet RPC ${method}`);
+    },
+  };
+  const options = {
+    provider, token, network, router, keyCommit, amount,
+    onBroadcast: (hash) => events.push(`broadcast ${hash}`),
+    onStep: (step) => events.push(step),
+  };
+  const result = await depositStablecoin(options);
+  assert.equal(result.hash, depositHash);
+  assert.equal(result.method, 'approve');
+  assert.equal(sent.length, 2);
+  assert.equal(sent[0].to, token.address);
+  assert.equal(sent[1].to, router);
+  assert.equal(sent[1].from, from);
+  const deposit = decodeFunctionData({ abi: DEPOSIT_ROUTER_ABI, data: sent[1].data });
+  assert.equal(deposit.functionName, 'deposit');
+  assert.deepEqual(deposit.args, [token.address, amount, keyCommit]);
+  assert.deepEqual(events, ['connecting', 'switching', 'checking', 'approving', `receipt ${approvalHash}`, 'sending', `broadcast ${depositHash}`, 'confirming', `receipt ${depositHash}`, 'submitted']);
+  events.length = 0;
+  await assert.rejects(depositStablecoin({
+    ...options, provider: { request: async () => { throw Object.assign(new Error('User rejected'), { code: 4001 }); } },
+  }), (error) => /declined/.test(describeWalletError(error)));
+  assert.deepEqual(events, ['connecting']);
 });

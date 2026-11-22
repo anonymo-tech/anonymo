@@ -69,6 +69,14 @@ const redisFamilies: RedisFamily[] = [
     evidence: [ev("src/api/keys.ts", "await ctx.limiter.take(`newkey:${from.id}`")],
   }),
   limit({
+    prefix: "dashboard-signup:",
+    shape: "dashboard-signup:<hourly caller-address digest>",
+    purpose: "Limits new dashboard key signups per hour. The counter uses a SHA-256 digest of the caller address and UTC hour.",
+    holds: "digest",
+    seconds: 3600,
+    evidence: [ev("src/anonymo/keys/routes.ts", "const bucket = sha256("), ev("src/anonymo/keys/routes.ts", "await ctx.limiter.take(`dashboard-signup:${bucket}`")],
+  }),
+  limit({
     prefix: "wallet-login:",
     shape: "wallet-login:<caller address>",
     purpose: `Wallet sign-in challenges per minute. ${ADDRESS_NOTE}`,
@@ -214,10 +222,10 @@ const addressReaders: Touchpoint[] = [
   },
   {
     file: "src/anonymo/keys/routes.ts",
-    reads: "The caller's address at PATCH /keys/caps.",
-    then: "Compared with the current allowlist before changing the key policy.",
-    kept: "Nothing.",
-    evidence: [ev("src/anonymo/keys/routes.ts", "const callerIp = clientIp(c, ctx.cfg.trustProxy);")],
+    reads: "The caller address selected by the ingress helper for a dashboard signup or an IP-allowlist change.",
+    then: "The signup counter uses an hourly address digest. For a policy change, the address is compared in memory with the current IP allowlist.",
+    kept: "The signup limiter retains its digest and counter for one hour plus one second. The allowlist check retains no caller address.",
+    evidence: [ev("src/anonymo/keys/routes.ts", "const from = addressBucket(c, ctx.cfg);"), ev("src/anonymo/keys/routes.ts", "const callerIp = clientIp(c, ctx.cfg.trustProxy);")],
   },
 
   {

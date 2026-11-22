@@ -204,8 +204,8 @@ export type Eip1193Provider = {
 /** The injected wallet, if the browser has one. */
 export function injectedProvider(): Eip1193Provider | null {
   if (typeof window === 'undefined') return null;
-  const eth = (window as unknown as { ethereum?: Eip1193Provider }).ethereum;
-  return eth && typeof eth.request === 'function' ? eth : null;
+  const browser = window as unknown as { ethereum?: Eip1193Provider; trustwallet?: { ethereum?: Eip1193Provider } };
+  return [browser.ethereum, browser.trustwallet?.ethereum].find((provider) => typeof provider?.request === 'function') ?? null;
 }
 
 /** EIP-1193 error codes a person can act on. */
@@ -309,6 +309,7 @@ type PayPlan = {
   /** The same call with a signed permit attached. */
   withPermit: (wallet: WalletClient, account: Address, deadline: bigint, sig: { v: number; r: Hex; s: Hex }) => Promise<Hex>;
   onStep?: (step: PayStep) => void;
+  onBroadcast?: (hash: Hex) => void;
   /** Seconds the permit stays valid. */
   permitTtl?: number;
 };
@@ -376,6 +377,7 @@ async function pay(plan: PayPlan): Promise<PayResult> {
       hash = await plan.plain(pub, wallet, account);
     }
   }
+  plan.onBroadcast?.(hash);
   step('confirming');
   const receipt = await pub.waitForTransactionReceipt({ hash });
   if (receipt.status !== 'success') throw new Error('The payment transaction reverted. Nothing was paid.');
@@ -392,6 +394,7 @@ export function depositStablecoin(o: {
   keyCommit: Hex;
   amount: bigint;
   onStep?: (step: PayStep) => void;
+  onBroadcast?: (hash: Hex) => void;
 }): Promise<PayResult> {
   return pay({
     ...o,
@@ -419,6 +422,7 @@ export function payWithCoin(o: {
   keyCommit: Hex;
   amount: bigint;
   onStep?: (step: PayStep) => void;
+  onBroadcast?: (hash: Hex) => void;
 }): Promise<PayResult> {
   return pay({
     ...o,

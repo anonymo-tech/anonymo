@@ -1,5 +1,7 @@
 'use client';
 
+import { setupHref } from '@/lib/anonymo/setup-return';
+
 // Update "sidebyside": Side by Side. One question, three models answering at the same time in three columns, each with
 // its cost, its tokens and its own signed receipt; then one button that merges them into a single answer, and a strip
 // of receipt paper that lists who answered, who said no and the total. A column whose receipt lists a refused route is
@@ -219,7 +221,7 @@ export function SideBySide() {
         {!key ? (
           <div className="chat-entry">
             <span>Connect a key to ask three models at once.</span>
-            <Link className="btn btn-primary btn-small" href="/dashboard/key">
+            <Link className="btn btn-primary btn-small" href={setupHref('key', '/dashboard/side-by-side')}>
               Create a key
             </Link>
           </div>
@@ -513,7 +515,7 @@ function AnswerBody({ answer }: { answer: Answer }) {
       <div className="notice notice-rose notice-action" role="alert">
         <p>{answer.error}</p>
         {answer.needsFunds && (
-          <Link className="btn btn-small btn-primary" href="/dashboard/funds">
+          <Link className="btn btn-small btn-primary" href={setupHref('funds', '/dashboard/side-by-side')}>
             Add funds
           </Link>
         )}
