@@ -3,7 +3,7 @@ import { contrastRatio, deltaEOk, gamutClip, hexToOklch, mixHex, oklchToHex } fr
 import { derivedColours, googleFontsUrl, toCss } from "../../src/anonymo/ventures/design/css.ts";
 import { PAIRINGS } from "../../src/anonymo/ventures/design/fonts.ts";
 import { generateDesignSystem, MOODS, PALETTE_ROLES, type Mood } from "../../src/anonymo/ventures/design/tokens.ts";
-import { DEFAULT_MIN_DISTANCE, designDistance, ensureUnique } from "../../src/anonymo/ventures/design/uniqueness.ts";
+import { DEFAULT_MIN_DISTANCE, HUE_FAMILY_GAP, RECENT_LOOKS, designDistance, ensureUnique, hueGap } from "../../src/anonymo/ventures/design/uniqueness.ts";
 
 // Designer Mo's tokens (Ventures Overview §2, Backend PART 11): deterministic systems, OKLCH colour maths, WCAG
 // contrast in both themes for every seed, and the uniqueness re-seed against the gallery.
@@ -132,6 +132,50 @@ describe("uniqueness vs gallery", () => {
     for (const g of gallery) expect(designDistance(r.system, g)).toBeGreaterThanOrEqual(15);
     const lone = generateDesignSystem("lonely", "luxe");
     expect(ensureUnique(lone, [])).toMatchObject({ attempts: 0, unique: true, system: lone });
+  });
+
+  test("hue gap: zero to itself, measured the short way round the circle", () => {
+    const a = generateDesignSystem("hue-a", "calm");
+    expect(hueGap(a, a)).toBe(0);
+    const b = generateDesignSystem("hue-b", "bold");
+    expect(hueGap(a, b)).toBeGreaterThanOrEqual(0);
+    expect(hueGap(a, b)).toBeLessThanOrEqual(180);
+    expect(hueGap(a, b)).toBe(hueGap(b, a));
+  });
+
+  test("the same idea run again and again: every new look is in a new hue family from the latest looks", () => {
+    // A run's look is seeded by its own id; the brief's mood is the same every time (the two-teals case). The hue rule
+    // holds for every look, even once the gallery is so full of one mood that the distance bound runs out (the
+    // fallback prefers a candidate that keeps the hue rule); while the gallery is small both rules hold.
+    const made: ReturnType<typeof generateDesignSystem>[] = [];
+    for (let i = 0; i < 24; i++) {
+      const gallery = [...made].reverse(); // newest first, as the designer step reads it
+      const r = ensureUnique(generateDesignSystem(`v_same_idea_${i}`, "calm"), gallery);
+      for (const g of gallery.slice(0, RECENT_LOOKS)) expect(hueGap(r.system, g)).toBeGreaterThanOrEqual(HUE_FAMILY_GAP);
+      if (i < 8) {
+        expect(r.unique).toBe(true);
+        for (const g of gallery) expect(designDistance(r.system, g)).toBeGreaterThanOrEqual(DEFAULT_MIN_DISTANCE);
+      }
+      made.push(r.system);
+    }
+  });
+
+  test("a look that is far enough but in the same hue family as a recent one is re-seeded", () => {
+    // Find a pair the distance rule alone would pass but the hue rule rejects, then check ensureUnique moves on.
+    let pair: [ReturnType<typeof generateDesignSystem>, ReturnType<typeof generateDesignSystem>] | null = null;
+    for (let i = 0; i < 400 && !pair; i++) {
+      const a = generateDesignSystem(`near-a-${i}`, "calm");
+      for (let j = 0; j < 40 && !pair; j++) {
+        const b = generateDesignSystem(`near-b-${i}-${j}`, "calm");
+        if (designDistance(a, b) >= DEFAULT_MIN_DISTANCE && hueGap(a, b) < HUE_FAMILY_GAP) pair = [a, b];
+      }
+    }
+    expect(pair).not.toBeNull();
+    const [earlier, candidate] = pair!;
+    const r = ensureUnique(candidate, [earlier]);
+    expect(r.attempts).toBeGreaterThanOrEqual(1);
+    expect(r.unique).toBe(true);
+    expect(r.hueGap).toBeGreaterThanOrEqual(HUE_FAMILY_GAP);
   });
 
   test("an impossible minimum stops at the bound and says so", () => {

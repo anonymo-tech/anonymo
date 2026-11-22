@@ -44,6 +44,12 @@ import { sideBySideReply } from './sidebyside.ts';
 import { updateOn } from '../updates.ts';
 import { createDemoVentures } from './ventures.ts';
 
+/** The demo's DepositRouter and stablecoins, shared by a key's instructions and the keyless /deposits/contracts. */
+const DEMO_EVM_CHAINS = [
+  { chain: 'rhc' as const, router: DEMO_ROUTER as `0x${string}`, confirmations: 3, tokens: [{ symbol: 'USDG' as const, address: '0x5fc5360d0400a0fd4f2af552add042d716f1d168' as `0x${string}`, decimals: 6 }] },
+  { chain: 'base' as const, router: DEMO_ROUTER as `0x${string}`, confirmations: 12, tokens: [{ symbol: 'USDC' as const, address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' as `0x${string}`, decimals: 6 }] },
+];
+
 type Row = DepositRow & { musd: number };
 type KeyState = {
   keyHash: string;
@@ -180,15 +186,7 @@ export function createMockGateway(options: MockOptions = {}) {
       evm: {
         key_commit: k.keyCommit as `0x${string}`,
         method: 'deposit(address token, uint256 amount, bytes32 keyCommit)',
-        chains: [
-          { chain: 'rhc', router: DEMO_ROUTER, confirmations: 3, tokens: [{ symbol: 'USDG', address: '0x5fc5360d0400a0fd4f2af552add042d716f1d168', decimals: 6 }] },
-          {
-            chain: 'base',
-            router: DEMO_ROUTER,
-            confirmations: 12,
-            tokens: [{ symbol: 'USDC', address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', decimals: 6 }],
-          },
-        ],
+        chains: DEMO_EVM_CHAINS,
       },
       solana: null,
       tron: null,
@@ -674,6 +672,7 @@ export function createMockGateway(options: MockOptions = {}) {
       const { id: _id, rooted: _r, posted: _p, verify: _v, ...anchor } = proof!;
       return json({ data: { ...r.view, anchor } });
     }
+    if (method === 'GET' && path === API_PATHS.depositContracts) return json({ paused: false, chains: DEMO_EVM_CHAINS });
     if (method === 'POST' && path === API_PATHS.keys) return createKey(request);
     if (ventures && method === 'GET' && path === API_PATHS.recipes) return (await ventures.handle(request, path, null))!;
 

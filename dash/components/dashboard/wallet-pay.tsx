@@ -7,6 +7,7 @@ import { Wallet } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
 import { CopyButton } from '../copy-button';
+import { OpenInWalletApp } from '../pay-in-wallet';
 import { chainName, evmNetwork, shortAddress } from '@/lib/anonymo/chains';
 import { formatUsd, formatUsdAmount, parseUsd } from '@/lib/anonymo/money';
 import type { CoinInstructions, DepositRow, EvmChain, EvmInstructions } from '@/lib/anonymo/types';
@@ -22,6 +23,7 @@ import {
   type PayResult,
   type PayStep,
 } from '@/lib/anonymo/wallet';
+import { isMobileBrowser, payUrl } from '@/lib/anonymo/wallet-links';
 
 const STEP_TEXT: Record<PayStep, string> = {
   connecting: 'Connect your wallet…',
@@ -115,7 +117,17 @@ export function EvmWalletPay({ evm, onCredited }: { evm: EvmInstructions; onCred
   const [result, setResult] = useState<PayResult | null>(null);
   const [error, setError] = useState('');
   const busy = step !== null && step !== 'submitted';
-  const hasWallet = typeof window !== 'undefined' && injectedProvider() !== null;
+  // Read after mount: the server render has no window, and a wallet may inject a moment after load.
+  const [hasWallet, setHasWallet] = useState(true);
+  const [mobile, setMobile] = useState(false);
+  useEffect(() => {
+    setHasWallet(injectedProvider() !== null);
+    setMobile(isMobileBrowser());
+  }, []);
+  const walletAppUrl =
+    !hasWallet && mobile && typeof window !== 'undefined'
+      ? payUrl(window.location.origin, { keyCommit: evm.key_commit, chain: entry.chain, token: token.symbol, amount })
+      : '';
 
   async function pay() {
     setError('');
@@ -123,7 +135,12 @@ export function EvmWalletPay({ evm, onCredited }: { evm: EvmInstructions; onCred
     const musd = parseUsd(amount);
     if (!musd) return setError('Enter an amount in USD, like 10 or 25.50.');
     const provider = injectedProvider();
-    if (!provider) return setError('No browser wallet found. Install one, or send manually with the details below.');
+    if (!provider)
+      return setError(
+        isMobileBrowser()
+          ? 'This browser has no wallet. Open the payment in your wallet app with a button below.'
+          : 'No browser wallet found. Install one, or send manually with the details below.',
+      );
     try {
       const units = stableUnits(musd, token.decimals);
       setResult(
@@ -187,9 +204,10 @@ export function EvmWalletPay({ evm, onCredited }: { evm: EvmInstructions; onCred
           {busy ? 'Working…' : `Pay ${token.symbol} with wallet`}
         </button>
       </form>
+      {walletAppUrl && <OpenInWalletApp url={walletAppUrl} />}
       <p className="faint">
         {token.symbol} on {network.name} credits 1:1. {token.symbol === 'USDG' ? 'USDG supports permit, so it is one signature and one transaction.' : 'If the token has no permit, your wallet asks for an approval first.'}{' '}
-        {!hasWallet && 'No browser wallet detected on this page.'}
+        {!hasWallet && !mobile && 'No browser wallet detected on this page.'}
       </p>
       {step && <p className="notice">{STEP_TEXT[step]}</p>}
       {error && (

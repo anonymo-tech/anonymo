@@ -128,7 +128,7 @@ function tickSteps(tasks: readonly RunTask[]): StepTemplate[] {
 type Palette = { ink: string; paper: string; accent: string; soft: string; font: string; head?: string; onAccent?: string; radius?: { button: string; card: string } };
 /** A run's own look, made the way the product makes it (gateway design/: a system seeded by the run, re-seeded until it
  *  differs from the earlier looks). */
-type Look = { palette: Palette; mood: Mood; attempts: number; distance: number; unique: boolean };
+type Look = { palette: Palette; mood: Mood; attempts: number; distance: number; hueGap: number; unique: boolean };
 type Scenario = {
   brand: string;
   rival: string | null;
@@ -511,14 +511,19 @@ const LOGS: Record<string, (s: Scenario, mode: VentureMode) => string[]> = {
           `Original palette and type, ${s.look.mood} mood`,
           !Number.isFinite(s.look.distance)
             ? 'No earlier looks to check against yet: kept'
-            : `Checked against earlier looks: ${s.look.attempts} re-seed${s.look.attempts === 1 ? '' : 's'}, distance ${s.look.distance.toFixed(1)} from the nearest, ${s.look.unique ? 'kept' : 'the most distant one kept'}`,
+            : `Checked against earlier looks: ${s.look.attempts} re-seed${s.look.attempts === 1 ? '' : 's'}, distance ${s.look.distance.toFixed(1)} from the nearest, main colour ${Math.round(s.look.hueGap)}° from the latest, ${s.look.unique ? 'kept' : 'the closest available kept'}`,
         ],
   copy: () => ['3 drafts, the council kept one'],
   landing: () => ['Landing page built from the design system'],
   comparison: () => ['Every row cites a dated fact', 'Claim checker dropped 2 uncited rows'],
   switch: (s) => [`Switch offer and import steps for the ${s.rival} export`],
-  ads: (s, mode) => [mode === 'TAKEOVER' ? `${s.ads.length} ads aimed at ${new Set(s.ads.map((a) => a.angle)).size} complaint themes` : `${s.ads.length} ads, ${s.posts?.length ?? 2} posts, ${s.emails?.length ?? 2} emails`, 'Copy rules removed 1 line'],
+  ads: (s, mode) =>
+    mode === 'RUN'
+      ? [`${Math.min(5, s.ads.length)} fresh ads to rotate in this week`, 'Copy rules removed 1 line']
+      : [mode === 'TAKEOVER' ? `${s.ads.length} ads aimed at ${new Set(s.ads.map((a) => a.angle)).size} complaint themes` : `${s.ads.length} ads, ${s.posts?.length ?? 2} posts, ${s.emails?.length ?? 2} emails`, 'Copy rules removed 1 line'],
   launch: () => ['14-day launch plan'],
+  improve: () => ['One improvement proposed for this week, with its acceptance tests'],
+  brief: () => ['Monday brief written from this week’s steps'],
   tests: () => ['Wrote 24 tests from the acceptance criteria'],
   build: () => ['5 Builder Mos in 5 sandboxes, no network but the gateway'],
   rebrand: (s) => [`Rebranded the ${s.files.length} files of the fork to ${s.brand}, new colours and icon`],
@@ -564,6 +569,7 @@ function artifactsFor(run: Run, step: StepTemplate, s: Scenario): Omit<Artifact,
     case 'switch':
       return [h('alternative', 'page', landingPage(s, `The ${s.rival} alternative`)), j('switch', 'copy', { offer: { title: 'Two months on us', body: 'Import and keep going.', cta: 'Switch now' }, migration: ['Export a CSV', 'Drop it in', 'Check the preview'] })];
     case 'ads':
+      if (run.mode === 'RUN') return [j('ads-rotation', 'copy', { ads: s.ads.slice(0, 5) })]; // Run Mode: 5 fresh ads (runmode.ts adsTask)
       return run.mode === 'TAKEOVER'
         ? [j('ads', 'copy', { ads: s.ads })]
         : [j('adkit', 'copy', { hooks: s.ads.slice(0, 10).map((a) => a.headline), ads: s.ads, posts: s.posts ?? [{ channel: 'producthunt', text: `${s.brand} is live: ${s.tagline}` }, { channel: 'x', text: `We built ${s.brand} for one reason: ${s.subhead}` }], emails: s.emails ?? [{ subject: `Welcome to ${s.brand}`, body: 'Here is how to start in two minutes.', sendDay: 0 }, { subject: 'One tip most people miss', body: 'Turn on quiet hours.', sendDay: 3 }] })];
@@ -635,10 +641,10 @@ const MOOD_WORDS: [Mood, RegExp][] = [
  *  local fallbacks: demo mode loads nothing from outside the browser. */
 function lookFor(run: Run, gallery: DesignSystem[]): { look: Look; system: DesignSystem } {
   const mood = MOOD_WORDS.find(([, re]) => re.test(run.brief))?.[0] ?? moodFor(run.id);
-  const u = ensureUnique(generateDesignSystem(run.id, mood), gallery);
+  const u = ensureUnique(generateDesignSystem(run.id, mood), [...gallery].reverse()); // newest first, as the product reads it
   const l = u.system.palette.light;
   const palette: Palette = { ink: l.text, paper: l.bg, accent: l.primary, soft: l.surface2, onAccent: l.primaryText, font: u.system.fonts.body.fallback, head: u.system.fonts.display.fallback, radius: { button: u.system.radii.button, card: u.system.radii.lg } };
-  return { look: { palette, mood, attempts: u.attempts, distance: u.distance, unique: u.unique }, system: u.system };
+  return { look: { palette, mood, attempts: u.attempts, distance: u.distance, hueGap: u.hueGap, unique: u.unique }, system: u.system };
 }
 
 /** The run's scenario, in the run's own look when it has one. */
@@ -653,11 +659,15 @@ function mondayBrief(tasks: readonly RunTask[], hasRival: boolean, spentUsd: num
   if (!tasks.includes('brief')) return null;
   const parts = ['Monday brief:'];
   if (tasks.includes('watch') && hasRival) parts.push('the rival changed one public page this week; the diff is in the watch log.');
-  if (tasks.includes('ads')) parts.push('Two new ads are ready, written from this week’s plan.');
+  if (tasks.includes('ads')) parts.push('Five fresh ads are ready to rotate in this week.');
   if (tasks.includes('improve')) parts.push('Next: one improvement drafted from the plan, waiting for your review.');
   parts.push(`Spend today: $${spentUsd.toFixed(2)} of a $${capUsd} daily cap.`);
   return parts.join(' ');
 }
+
+const RUN_MODE_DAILY_FEE = 5;
+/** What a run's steps are costed against: its price, or for a Run Mode tick the day's work budget (the cap less the fee). */
+const budgetOf = (run: Run) => (run.runMode ? Math.max(0, run.runMode.cap - RUN_MODE_DAILY_FEE) : run.price);
 
 /** Builds a run's whole timeline once: when each step starts and ends, and every event in between. */
 function buildScript(run: Run, totalMs: number) {
@@ -688,7 +698,8 @@ function buildScript(run: Run, totalMs: number) {
     const { start, end } = timeOf(st.key);
     const a = ms(start);
     const b = ms(end);
-    const cap = Math.min(run.price * 0.35, run.price * st.share * 2.5);
+    const basis = budgetOf(run);
+    const cap = Math.min(basis * 0.35, basis * st.share * 2.5);
     const cost = Math.round(cap * (0.12 + ((index * 37) % 17) / 100) * 1e4) / 1e4;
     push(a, { type: 'step', step: st.key, role: st.role, state: 'RUNNING', costUsd: 0 });
     const lines = (LOGS[st.key.replace(/^t\d+-/, '')] ?? (() => []))(s, run.mode);
@@ -780,7 +791,7 @@ function initial(run: Run): VentureSnapshot {
       needs: s.needs,
       state: 'QUEUED',
       cost_usd: 0,
-      cap_usd: Math.round(Math.min(run.price * 0.35, run.price * s.share * 2.5) * 100) / 100,
+      cap_usd: Math.round(Math.min(budgetOf(run) * 0.35, budgetOf(run) * s.share * 2.5) * 100) / 100,
       receipts: [],
       outputs: [],
       error: null,
@@ -947,7 +958,7 @@ export function createDemoVentures<Key extends object>(o: DemoVenturesOptions<Ke
       ),
     };
     if (run.runMode) {
-      const spent = Math.min(run.runMode.cap, 5 + 1.84);
+      const spent = Math.round(Math.min(run.runMode.cap, RUN_MODE_DAILY_FEE + v.cost_usd) * 100) / 100; // the day's fee plus what the tick's steps cost
       v.run_mode = {
         enabled: run.runMode.enabled,
         daily_cap_usd: run.runMode.cap,

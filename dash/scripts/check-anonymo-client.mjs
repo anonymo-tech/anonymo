@@ -356,3 +356,12 @@ void test('images (update "images"): models, price × n charged, nudity refused 
   await assert.rejects(client.generateImages({ model: 'google/nano-banana', prompt: 'x', size: '640x480' }), (e) => e instanceof AnonymoApiError && e.status === 400);
   await assert.rejects(client.generateImages({ model: 'nope', prompt: 'x' }), (e) => e instanceof AnonymoApiError && e.status === 404);
 });
+
+void test('GET /deposits/contracts needs no key and lists the same router and tokens as a key\'s instructions', async () => {
+  const { mock, client } = await funded();
+  const anon = createAnonymoClient({ baseUrl: BASE, fetch: mock.fetch });
+  const contracts = await anon.depositContracts();
+  assert.equal(contracts.paused, false);
+  const { instructions } = await client.deposits();
+  assert.deepEqual(contracts.chains, instructions.evm.chains);
+});

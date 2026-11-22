@@ -32,6 +32,7 @@ import {
   tierFor,
   tierLabel,
   tierPerks,
+  RECIPE_MAKER_SHARE,
   usd,
   type BriefForm,
   type ModeInfo,
@@ -163,7 +164,7 @@ export function VenturesLauncher() {
             <div className="vx-recipe-on">
               <BookOpen size={15} aria-hidden="true" />
               <span>
-                Recipe: <strong>{recipe.title}</strong> · {recipe.steps.length} steps · {recipe.price_usd ? `${usd(recipe.price_usd)} to its maker` : 'free'}
+                Recipe: <strong>{recipe.title}</strong> · {recipe.steps.length} steps · {recipe.price_usd ? `+${usd(recipe.price_usd)} recipe, ${usd(recipe.price_usd * RECIPE_MAKER_SHARE, true)} to its maker` : 'free'}
               </span>
               <button type="button" className="btn btn-ghost btn-small" aria-label="Stop using this Recipe" onClick={() => setRecipe(null)}>
                 <X size={15} />

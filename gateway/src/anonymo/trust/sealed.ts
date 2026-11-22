@@ -85,11 +85,20 @@ export async function keySealedOnly(db: Db, keyHash?: string): Promise<boolean> 
  * Whether this request must be sealed. The header accepts only "required" (any other value is a 400, so a typo never
  * silently runs unsealed).
  */
-export function sealedRequired(o: { model?: unknown; header?: string | null; keySealed?: boolean; councilSealed?: unknown }): boolean {
+export function sealedRequired(o: { model?: unknown; models?: unknown; header?: string | null; keySealed?: boolean; councilSealed?: unknown }): boolean {
   const h = o.header?.trim().toLowerCase();
   if (h && h !== "required") fail(400, `\`${SEALED_HEADER}\` accepts only "required".`, "invalid_request");
-  return o.model === SEALED_MODEL || h === "required" || o.keySealed === true || o.councilSealed === true;
+  const named = o.model === SEALED_MODEL || (Array.isArray(o.models) && o.models.includes(SEALED_MODEL));
+  return named || h === "required" || o.keySealed === true || o.councilSealed === true;
 }
+
+/** Every model id a request names: `model` and its `models` fallback list. A request may name its model only in `models`. */
+export function requestedModelIds(body: Record<string, unknown>): string[] {
+  return [body.model, ...(Array.isArray(body.models) ? body.models : [])].filter((m): m is string => typeof m === "string");
+}
+
+/** A `:private` model named anywhere in the request (GHSA-rch8-pxr3-p8gc retest: `models` alone counts too). */
+export const namesPrivateModel = (body: Record<string, unknown>) => requestedModelIds(body).some((m) => m.includes(":private"));
 
 /**
  * The receipt's `attestation_quote_hash` for the routes a sealed call used: the verified quote hash itself for one

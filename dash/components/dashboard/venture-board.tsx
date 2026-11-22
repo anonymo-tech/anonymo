@@ -77,6 +77,7 @@ import {
   type VentureReceipt,
   type VentureSnapshot,
   type VentureStep,
+  RECIPE_MAKER_SHARE,
 } from '@/lib/anonymo/ventures';
 import './ventures.css';
 
@@ -1447,7 +1448,7 @@ function RecipePanel({ client, run, tier }: { client: AnonymoClient; run: Ventur
               <span aria-hidden="true">$</span>
               <input id={`${id}-price`} className="input" type="number" inputMode="decimal" min={0} max={500} step={1} value={price} disabled={!selling} onChange={(e) => setPrice(Math.max(0, Number(e.target.value) || 0))} />
             </span>
-            <span className="faint">{selling ? 'You receive 80% of the price each time someone runs it.' : 'Selling Recipes needs the Gang tier. Share it free for now.'}</span>
+            <span className="faint">{selling ? `You receive ${Math.round(RECIPE_MAKER_SHARE * 100)}% of the price each time someone runs it.` : 'Selling Recipes needs the Gang tier. Share it free for now.'}</span>
           </label>
           <button type="button" className="btn btn-outline" onClick={() => void save()} disabled={busy || !title.trim()}>
             <BookOpen size={15} aria-hidden="true" /> {busy ? 'Saving…' : 'Save Recipe'}

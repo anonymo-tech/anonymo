@@ -141,6 +141,8 @@ export type DepositRow = {
 
 /** `GET /deposits`. */
 export type Deposits = { instructions: DepositInstructions; data: DepositRow[] };
+/** `GET /deposits/contracts`: the DepositRouter and tokens per EVM chain, the same for every key. No key needed. */
+export type DepositContracts = { paused: true } | { paused: false; chains: EvmInstructions['chains'] };
 
 /** `POST /deposits/btcpay`: BTC on-chain or Lightning through BTCPay, credited at the BTCPay quote. */
 export type BtcpayInvoiceRequest = { amount_usd: string; refund_address: string };

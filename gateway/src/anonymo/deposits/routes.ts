@@ -3,6 +3,7 @@
 //   POST /withdraw           → pay unused credit back to a source address (Idempotency-Key required; never paused)
 //   GET  /withdrawals        → this key's withdrawals
 //   GET  /deposits           → deposit instructions and this key's recent deposits
+//   GET  /deposits/contracts → the DepositRouter and tokens per EVM chain, no key (a wallet app's browser pays from it)
 //   POST /deposits/btcpay    → a BTCPay invoice (BTC or Lightning) for an amount in USD
 //   POST /webhooks/btcpay    → BTCPay's signed webhook
 
@@ -19,7 +20,7 @@ import { picoToUsd, usdToPico } from "../../lib/money.ts";
 import { uid } from "../../lib/util.ts";
 import { keysRoutes } from "../keys/routes.ts";
 import { handleBtcpayEvent, refundTarget, verifyBtcpaySignature } from "./btcpay.ts";
-import { depositInstructions } from "./instructions.ts";
+import { depositInstructions, evmContracts } from "./instructions.ts";
 import { anonymoBtcpayInvoices, anonymoDeposits, anonymoWithdrawals } from "./schema.ts";
 import { registerMoneyJobs, type MoneyDeps } from "./services.ts";
 import { attemptPayout, coinCreditPico, recentBitcoinCreditPico, requestWithdrawal, withdrawalJson, withdrawDestinations } from "./withdraw.ts";
@@ -84,6 +85,13 @@ export function moneyRoutes(app: Hono, ctx: Ctx, deps: MoneyDeps, o: { jobs?: bo
       instructions: await depositInstructions(ctx, deps, key.keyHash),
       data: rows.map((r) => ({ ref: r.ref, chain: r.chain, token: r.token, amount_usd: picoToUsd(r.amountPico), from: r.sourceAddr, status: r.status, created_at: r.createdAt.toISOString() })),
     });
+  });
+
+  // No key: a phone wallet's own browser opens /pay with only the key's public keyCommit, and reads the contracts here,
+  // so a link can never point a payment at another contract.
+  app.get("/deposits/contracts", (c) => {
+    if (deps.config.depositsPaused) return c.json({ paused: true });
+    return c.json({ paused: false, chains: evmContracts(deps) });
   });
 
   app.post("/deposits/btcpay", async (c) => {

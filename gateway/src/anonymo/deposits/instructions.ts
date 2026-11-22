@@ -6,6 +6,16 @@ import type { MoneyDeps } from "./services.ts";
 import { coinPicoPerCoin, v4PoolId } from "./coin.ts";
 import { picoToUsd } from "../../lib/money.ts";
 
+/** The DepositRouter and stablecoins on each EVM chain. Public: the same for every key. */
+export function evmContracts(deps: MoneyDeps) {
+  return deps.config.evm.map((x) => ({
+    chain: x.chain,
+    router: x.router,
+    confirmations: x.confirmations,
+    tokens: x.tokens.map((t) => ({ symbol: t.symbol, address: t.address, decimals: t.decimals })),
+  }));
+}
+
 export async function depositInstructions(ctx: Pick<Ctx, "db">, deps: MoneyDeps, keyHash: string) {
   const c = deps.config;
   if (c.depositsPaused) return { paused: true };
@@ -13,7 +23,7 @@ export async function depositInstructions(ctx: Pick<Ctx, "db">, deps: MoneyDeps,
     ? {
         key_commit: await ensureDepositAddress(ctx.db, keyHash, "evm"),
         method: "deposit(address token, uint256 amount, bytes32 keyCommit)",
-        chains: c.evm.map((x) => ({ chain: x.chain, router: x.router, confirmations: x.confirmations, tokens: x.tokens.map((t) => ({ symbol: t.symbol, address: t.address, decimals: t.decimals })) })),
+        chains: evmContracts(deps),
       }
     : null;
   const solana = c.solana

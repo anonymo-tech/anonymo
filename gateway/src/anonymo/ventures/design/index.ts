@@ -18,7 +18,7 @@ export { contrastRatio, deltaEOk, oklchToHex, hexToOklch } from "./color.ts";
 export { fontLinks, googleFontsUrl, toCss } from "./css.ts";
 export { escapeHtml, renderComparison, renderDesignPreview, renderLanding, citedRows, type ComparisonContent, type ComparisonRow, type LandingContent } from "./pages.ts";
 export { generateDesignSystem, MOODS, type DesignSystem, type Mood, type Palette } from "./tokens.ts";
-export { designDistance, ensureUnique, DEFAULT_MIN_DISTANCE } from "./uniqueness.ts";
+export { designDistance, ensureUnique, hueGap, DEFAULT_MIN_DISTANCE, HUE_FAMILY_GAP, RECENT_LOOKS } from "./uniqueness.ts";
 export { nameIsSafe, nameConflict, proposeVoice, soundKey } from "./voice.ts";
 
 const MOOD_WORDS: [Mood, RegExp][] = [
@@ -53,7 +53,7 @@ export type DesignVentureResult = {
   preview: string;
   sha256: string;
   brand: Omit<VoiceProposal, "voice">;
-  uniqueness: { attempts: number; distance: number; unique: boolean };
+  uniqueness: { attempts: number; distance: number; hueGap: number; unique: boolean };
 };
 
 const canonical = (v: unknown): string =>
@@ -81,6 +81,6 @@ export async function designVenture(input: DesignVentureInput): Promise<DesignVe
     preview: renderDesignPreview(system),
     sha256: systemSha256(system, css),
     brand,
-    uniqueness: { attempts: unique.attempts, distance: unique.distance, unique: unique.unique },
+    uniqueness: { attempts: unique.attempts, distance: unique.distance, hueGap: unique.hueGap, unique: unique.unique },
   };
 }

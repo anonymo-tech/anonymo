@@ -280,6 +280,9 @@ export const priceOf = (mode: VentureMode) => (mode === 'RUN' ? RUN_MODE.dailyFe
 /** The same run paid in $NYMO (shown as information only). */
 export const nymoPrice = (usd: number) => Math.round(usd * (100 - NYMO_DISCOUNT_PCT)) / 100;
 
+/** A Recipe's maker is credited this share of its price on every run (gateway recipes.ts CREATOR_SHARE_BPS = 8000). */
+export const RECIPE_MAKER_SHARE = 0.8;
+
 /** Whole dollars stay whole ("$149"); anything else gets cents ("$111.75"). */
 export function usd(amount: number, cents = false): string {
   if (!Number.isFinite(amount)) return '—';
@@ -446,6 +449,8 @@ const STEP_TITLES: Record<string, string> = {
 };
 export function stepTitle(key: string): string {
   const bare = key.replace(/^t\d+-/, '');
+  // A Run Mode tick's own tasks are named as the Run Mode panel names them ("Fresh ads", not the launch kit's "Ad kit").
+  if (bare !== key && bare in RUN_TASK_LABELS) return RUN_TASK_LABELS[bare as RunTask].title;
   return STEP_TITLES[bare] ?? bare.charAt(0).toUpperCase() + bare.slice(1);
 }
 

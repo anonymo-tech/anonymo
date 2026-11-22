@@ -7,6 +7,7 @@
 
 import { SPEECH_MODEL, TRANSCRIPTION_MODEL, type SpeechModel, type TranscriptionModel, type VoiceModels } from './talk.ts';
 import type {
+  DepositContracts,
   StatusSlo,
   CapsUpdate,
   KeyCapsInput,
@@ -69,6 +70,7 @@ export const API_PATHS = {
   withdrawals: '/withdrawals',
   deposits: '/deposits',
   btcpayInvoice: '/deposits/btcpay',
+  depositContracts: '/deposits/contracts',
   chat: '/v1/chat/completions',
   models: '/v1/models',
   receipt: (id: string) => `/v1/receipts/${encodeURIComponent(id)}`,
@@ -195,6 +197,8 @@ export function createAnonymoClient(options: ClientOptions) {
     keyInfo: () => json<KeyInfo>(API_PATHS.keyInfo),
     balance: (signal?: AbortSignal) => json<Balance>(API_PATHS.balance, { signal }),
     deposits: (signal?: AbortSignal) => json<Deposits>(API_PATHS.deposits, { signal }),
+    /** No key: the /pay page in a wallet app's browser reads the contracts from here, never from its link. */
+    depositContracts: (signal?: AbortSignal) => json<DepositContracts>(API_PATHS.depositContracts, { signal, auth: false }),
     btcpayInvoice: (body: BtcpayInvoiceRequest) =>
       json<BtcpayInvoice>(API_PATHS.btcpayInvoice, { method: 'POST', body: JSON.stringify(body) }),
     /** `idempotencyKey` must be reused when retrying the same withdrawal, so a retry never pays twice. */

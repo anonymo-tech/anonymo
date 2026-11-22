@@ -120,3 +120,27 @@ void test('the deposit row for a transaction is found by its hash in the ref', (
   assert.equal(rowForTx(rows, '0xDEF').ref, 'coin:0xdef:1');
   assert.equal(rowForTx(rows, '0x123'), undefined);
 });
+
+// Phones: no browser wallet, so Funds opens /pay inside a wallet app. The link names the key only by its keyCommit.
+import { isMobileBrowser, parsePayLink, payUrl, walletAppLinks } from '../lib/anonymo/wallet-links.ts';
+
+void test('pay links: round trip, only the keyCommit, wallet app links wrap the whole URL, and phones are detected', async () => {
+  const keyCommit = `0x${'ab'.repeat(32)}`;
+  const url = payUrl('https://anonymo.example/', { keyCommit, chain: 'rhc', token: 'USDG', amount: '25.50' });
+  assert.equal(url, `https://anonymo.example/pay?k=${keyCommit}&chain=rhc&token=USDG&amount=25.50`);
+  assert.deepEqual(parsePayLink(new URL(url).search), { keyCommit, chain: 'rhc', token: 'USDG', amount: '25.50' });
+  assert.ok(!url.includes('anm_'), 'a pay link never carries the key');
+
+  // Malformed links ask for a fresh one instead of paying something else.
+  for (const bad of ['?k=0x12&chain=rhc&token=USDG', `?k=${keyCommit}&chain=mainnet&token=USDG`, `?k=${keyCommit}&chain=rhc&token=`]) assert.equal(parsePayLink(bad), null);
+  assert.equal(parsePayLink(`?k=${keyCommit}&chain=rhc&token=usdg&amount=1e9`)?.amount, undefined);
+
+  const links = walletAppLinks(url);
+  assert.deepEqual(links.map((l) => l.name), ['MetaMask', 'Coinbase Wallet', 'Trust Wallet']);
+  assert.equal(links[0].href, `https://metamask.app.link/dapp/anonymo.example/pay?k=${keyCommit}&chain=rhc&token=USDG&amount=25.50`);
+  for (const l of links.slice(1)) assert.ok(l.href.endsWith(encodeURIComponent(url)));
+
+  assert.equal(isMobileBrowser({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile/15E148', maxTouchPoints: 5 }), true);
+  assert.equal(isMobileBrowser({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', maxTouchPoints: 5 }), true);
+  assert.equal(isMobileBrowser({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', maxTouchPoints: 0 }), false);
+});

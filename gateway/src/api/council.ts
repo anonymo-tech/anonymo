@@ -45,7 +45,7 @@ import { outputModalities } from "../catalog/catalog.ts";
 import { trustConfig } from "../anonymo/trust/config.ts";
 import { familyOf } from "../anonymo/trust/families.ts";
 import { weightsHashFor } from "../anonymo/trust/stats.ts";
-import { SEALED_HEADER, assertSealedSeats, candidateState, keySealedOnly, sealedFilter, sealedRequired, sealedUnavailable, type SealedClock } from "../anonymo/trust/sealed.ts";
+import { SEALED_HEADER, assertSealedSeats, candidateState, keySealedOnly, namesPrivateModel, sealedFilter, sealedRequired, sealedUnavailable, type SealedClock } from "../anonymo/trust/sealed.ts";
 import { floorInputOf } from "../anonymo/services.ts";
 import { refuseConfidentialOutsideEnclave } from "../anonymo/floor/confidential.ts";
 import { floorErrorReason } from "../anonymo/floor/guard-client.ts";
@@ -493,7 +493,7 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
   const mode: AnonymoCouncilMode = parseCouncilMode(c.req.header(COUNCIL_MODE_HEADER), spec.mode, "merge");
   const sealed = sealedRequired({ header: c.req.header(SEALED_HEADER), councilSealed: spec.sealed }) || disc.lane === "attested" || await keySealedOnly(ctx.db, key?.keyHash);
   // A sealed or attested council is never read by the hosted guards (GHSA-rch8-pxr3-p8gc).
-  refuseConfidentialOutsideEnclave(ctx.anonymo.floor, sealed || disc.lane !== "public" || String(body.model ?? "").includes(":private") || (body.provider as { private?: unknown } | undefined)?.private === true);
+  refuseConfidentialOutsideEnclave(ctx.anonymo.floor, sealed || disc.lane !== "public" || namesPrivateModel(body) || (body.provider as { private?: unknown } | undefined)?.private === true);
   // The floor gate first: a blocked prompt is never priced, held, sent or rerouted.
   await councilFloorCheck(ctx, body);
   if (sealed && disc.lane === "public") {

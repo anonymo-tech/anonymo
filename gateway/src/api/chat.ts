@@ -13,6 +13,7 @@ import { floorInputOf } from "../anonymo/services.ts";
 import { floorErrorReason } from "../anonymo/floor/guard-client.ts";
 import { checksReplies, floorReplyCheck, replyFloorError, replyTextOf, StreamReplyGate } from "../anonymo/floor/reply.ts";
 import { refuseConfidentialOutsideEnclave } from "../anonymo/floor/confidential.ts";
+import { namesPrivateModel } from "../anonymo/trust/sealed.ts";
 import { type Pico, maxPico, picoToUsd, picoToUsdString, usdToPico } from "../lib/money.ts";
 import { canonical, canonicalJson, decrypt, genId, log, sha256 } from "../lib/util.ts";
 import { reserve, release, settle } from "../ledger/ledger.ts";
@@ -291,7 +292,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   const sealed = await sealedForRequest(ctx, c, key, body);
   const disc = sealedLane(sealed, requestLane(c, (body.provider ?? {}) as Record<string, unknown>));
   // Private-lane traffic (and `:private`, stored as private) is published only through noisy hourly counters.
-  noteLane(c.req.raw, disc.lane !== "public" ? disc.lane : (body.provider as ProviderPrefs | undefined)?.private === true || String(body.model ?? "").includes(":private") ? "attested" : "public");
+  noteLane(c.req.raw, disc.lane !== "public" ? disc.lane : (body.provider as ProviderPrefs | undefined)?.private === true || namesPrivateModel(body) ? "attested" : "public");
   const strict = disc.max !== "any";
   const prefs: ProviderPrefs = { ...basePrefs, ...(strict ? { disclosure: disc.max } : {}), ...(disc.lane !== "public" ? { lane: disc.lane } : {}) };
 
@@ -496,7 +497,7 @@ function allFailed(attempts: Attempt[], last?: { status?: number; errorKind: str
 
 /** A request that may only be answered by attested hardware: lane "attested" (or any disclosure "none"), or `:private`. */
 export function requiresAttestedUpstream(body: Record<string, unknown>, disc: DisclosureRequest) {
-  return disc.max === "none" || (body.provider as ProviderPrefs | undefined)?.private === true || String(body.model ?? "").includes(":private");
+  return disc.max === "none" || (body.provider as ProviderPrefs | undefined)?.private === true || namesPrivateModel(body);
 }
 
 /**
@@ -631,7 +632,7 @@ async function finalize(p: FinalizeInput) {
   // without a fresh attestation, whatever the gateway's own attestation says.
   const served = servedWith(ctx, r.candidate, ua, p.extra?.served ?? servedDisclosure(ctx, r.candidate));
   if (ua) await recordGpuAttested(ctx.db, r.model.id, r.candidate.providerId, ua).catch((e) => log.error("recording gpu attestation failed", { error: (e as Error).message }));
-  const privateRoute = (p.body.provider as ProviderPrefs | undefined)?.private === true || String(p.body.model ?? "").includes(":private");
+  const privateRoute = (p.body.provider as ProviderPrefs | undefined)?.private === true || namesPrivateModel(p.body);
   const payer = billing.key ? billing.key.chainKeyHash : billing.mode === "per_call" ? billing.payer : null;
   const payload = {
     v: 1,
@@ -921,16 +922,9 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
         const choices = Array.isArray(ev?.choices) ? ev.choices : [];
         for (const ch of choices) {
           if (servedRefusal) {
-            if (ch?.delta) {
-              const c = capRefusedChannels(ch.delta, refusedLeft);
-              refusedLeft = c.left;
-              refusedCut ||= c.cut;
-            }
-            if (typeof ch?.text === "string") {
-              const c = capRefusedChannels(ch, refusedLeft);
-              refusedLeft = c.left;
-              refusedCut ||= c.cut;
-            }
+            const c = capRefusedChoice(ch, refusedLeft);
+            refusedLeft = c.left;
+            refusedCut ||= c.cut;
           }
           const d = ch?.delta ?? {};
           if (typeof d.content === "string") text += d.content;
@@ -1176,7 +1170,12 @@ export function capRefusedChannels(holder: any, budget: number): { left: number;
       const fn = tc?.function ?? {};
       const name = typeof fn.name === "string" ? take(fn.name) : fn.name;
       const args = typeof fn.arguments === "string" ? take(fn.arguments) : fn.arguments;
-      kept.push({ ...tc, function: { ...fn, ...(name !== undefined ? { name } : {}), ...(args !== undefined ? { arguments: args } : {}) } });
+      kept.push({
+        ...(tc?.index !== undefined ? { index: tc.index } : {}),
+        ...(typeof tc?.id === "string" ? { id: tc.id } : {}),
+        ...(typeof tc?.type === "string" ? { type: tc.type } : {}),
+        function: { ...(name !== undefined ? { name } : {}), ...(args !== undefined ? { arguments: args } : {}) },
+      });
     }
     holder.tool_calls = kept;
     if (!kept.length) delete holder.tool_calls;
@@ -1186,18 +1185,42 @@ export function capRefusedChannels(holder: any, budget: number): { left: number;
       cut = true;
       delete holder[field];
     }
+  // Anything else a provider adds rides along unbilled, so a served refusal keeps only the fields above.
+  for (const k of Object.keys(holder)) if (!REFUSED_MESSAGE_KEYS.has(k)) delete holder[k];
+  return { left, cut };
+}
+
+const REFUSED_MESSAGE_KEYS = new Set(["role", "content", "text", "refusal", "reasoning", "reasoning_content", "tool_calls"]);
+const REFUSED_CHOICE_KEYS = new Set(["index", "message", "delta", "text", "finish_reason"]);
+
+/**
+ * One choice of a served refusal, rebuilt from an allowlist: choice-level extras such as `logprobs` (a token-by-token
+ * copy of the answer) are dropped, and the message, delta and text share the REFUSED_MAX_CHARS budget.
+ */
+export function capRefusedChoice(ch: any, budget: number): { left: number; cut: boolean } {
+  if (!ch || typeof ch !== "object") return { left: budget, cut: false };
+  for (const k of Object.keys(ch)) if (!REFUSED_CHOICE_KEYS.has(k)) delete ch[k];
+  let left = budget;
+  let cut = false;
+  for (const holder of [ch.message, ch.delta]) {
+    if (!holder || typeof holder !== "object") continue;
+    const r = capRefusedChannels(holder, left);
+    left = r.left;
+    cut ||= r.cut;
+  }
+  if (typeof ch.text === "string") {
+    const box = { text: ch.text };
+    const r = capRefusedChannels(box, left);
+    ch.text = box.text;
+    left = r.left;
+    cut ||= r.cut;
+  }
   return { left, cut };
 }
 
 function capRefusedJson(json: any) {
   for (const ch of json?.choices ?? []) {
-    let budget = REFUSED_MAX_CHARS;
-    let cut = false;
-    if (ch?.message) ({ left: budget, cut } = capRefusedChannels(ch.message, budget));
-    if (typeof ch?.text === "string") {
-      const r = capRefusedChannels(ch, budget);
-      cut ||= r.cut;
-    }
+    const { cut } = capRefusedChoice(ch, REFUSED_MAX_CHARS);
     if (cut) ch.finish_reason = "length";
   }
 }

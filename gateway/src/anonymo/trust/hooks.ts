@@ -24,7 +24,7 @@ const clockOf = (ctx: Ctx): SealedClock => ({ now: Date.now(), maxAgeMs: ctx.cfg
 
 /** Whether this request is sealed: model `anonymo-sealed`, `x-anonymo-sealed: required`, or a `sealed_only` key. */
 export async function sealedForRequest(ctx: Ctx, c: Context, key: { keyHash: string } | null, body: Record<string, unknown>): Promise<boolean> {
-  const explicit = sealedRequired({ model: body.model, header: c.req.header(SEALED_HEADER) });
+  const explicit = sealedRequired({ model: body.model, models: body.models, header: c.req.header(SEALED_HEADER) });
   return explicit || await keySealedOnly(ctx.db, key?.keyHash);
 }
 

@@ -20,7 +20,8 @@ export const designSystem: RoleHandler = async (s) => {
   await s.put({ kind: "design", name: "css", mime: "text/css", body: result.css });
   await s.put({ kind: "design", name: "preview", mime: "text/html", body: result.preview });
   await s.put({ kind: "design", name: "brand", mime: "application/json", body: JSON.stringify(result.brand) });
-  s.log(`design system ${result.system.name}: ${result.uniqueness.attempts} attempt(s), distance ${result.uniqueness.distance.toFixed(1)} from the gallery`);
+  const u = result.uniqueness;
+  s.log(`design system ${result.system.name}: ${u.attempts} attempt(s), distance ${u.distance.toFixed(1)} from the gallery, main colour ${Number.isFinite(u.hueGap) ? `${Math.round(u.hueGap)}°` : "free"} from the latest looks${u.unique ? "" : " (closest available kept)"}`);
 };
 
 export const landingPage: RoleHandler = async (s) => {
