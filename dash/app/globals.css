@@ -1118,3 +1118,19 @@ html[data-anonymo-panic] body { display: none !important; }
 .memory-suggestions li > span { overflow-wrap: anywhere; }
 .memory-suggestions li > div { display: flex; flex-wrap: wrap; gap: 4px; }
 .memory-charge { overflow-wrap: anywhere; }
+
+/* Update "search": sources under a searched answer. */
+.web-sources { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 13px; }
+.web-sources ol { margin: 4px 0 0; padding-left: 22px; display: grid; gap: 3px; }
+.web-sources li { overflow-wrap: anywhere; }
+
+/* Update "photos": the tray above the composer and the photos shown with a sent message. */
+.photo-tray { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 13px; }
+.photo-thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.photo-thumbs-sent { justify-self: end; justify-content: flex-end; }
+.photo-thumb { position: relative; display: grid; place-items: center; width: 56px; height: 56px; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--raised); }
+.photo-thumbs-sent .photo-thumb { width: 96px; height: 96px; }
+.photo-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.photo-thumb button { position: absolute; top: 2px; right: 2px; display: grid; place-items: center; width: 20px; height: 20px; border: 0; border-radius: 999px; background: #000a; color: #fff; cursor: pointer; }
+.photo-missing { padding: 6px; font-size: 11px; line-height: 1.3; color: var(--muted); text-align: center; }
+.photo-note { color: var(--amber); }

@@ -98,7 +98,7 @@ describe("the Responses endpoint on a public provider", () => {
         instructions: "Answer in French.",
         input: [
           { role: "developer", content: "Be brief." },
-          { type: "message", role: "user", content: [{ type: "input_text", text: "What is this?" }, { type: "input_image", image_url: "data:image/png;base64,AAAA", detail: "high" }] },
+          { type: "message", role: "user", content: [{ type: "input_text", text: "What is this?" }, { type: "input_image", image_url: "data:image/png;base64,iVBORw0KGgo=", detail: "high" }] },
           { type: "message", role: "assistant", content: [{ type: "output_text", text: "A cat." }] },
           { type: "reasoning", id: "rs_1", summary: [] },
           { role: "user", content: "Thanks" },
@@ -114,7 +114,7 @@ describe("the Responses endpoint on a public provider", () => {
       expect(sent.messages).toEqual([
         { role: "system", content: "Answer in French." },
         { role: "system", content: "Be brief." },
-        { role: "user", content: [{ type: "text", text: "What is this?" }, { type: "image_url", image_url: { url: "data:image/png;base64,AAAA", detail: "high" } }] },
+        { role: "user", content: [{ type: "text", text: "What is this?" }, { type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=", detail: "high" } }] },
         { role: "assistant", content: "A cat." },
         { role: "user", content: "Thanks" },
       ]);

@@ -180,7 +180,7 @@ describe("the model list built from the gateway's catalogues", () => {
 
 describe("images", () => {
   const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
-  const withImages = [{ role: "user", content: [{ type: "text", text: "What is in these pictures?" }, { type: "image_url", image_url: { url: png } }, { type: "image_url", image_url: { url: "https://images.example/cat.jpg", detail: "low" } }] }];
+  const withImages = [{ role: "user", content: [{ type: "text", text: "What is in these pictures?" }, { type: "image_url", image_url: { url: png } }, { type: "image_url", image_url: { url: png, detail: "low" } }] }];
 
   test("image parts reach the gateway exactly as sent, and the answer is verified against them", async () => {
     const r = await chat({ messages: withImages, ...attestedLane });

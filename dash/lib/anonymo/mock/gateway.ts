@@ -10,6 +10,7 @@ import type {
   Balance,
   ChatChunk,
   ChatRequest,
+  PhotoChatRequest,
   CoinInstructions,
   CouncilResult,
   CreateKeyResponse,
@@ -40,9 +41,12 @@ import { createDemoVideo } from './video.ts';
 import { createDemoSpeech, demoStoryReply as bedtimeStoryReply, DEMO_SPEECH_MODELS } from './voice.ts';
 import { activityCsv, runway, sampleHistory, spendReport, spentWindows, type UsageEntry } from './usage.ts';
 import { COUNCIL_MERGED, DEMO_NYMO, DEMO_COIN_PAY, DEMO_LEADERBOARD, DEMO_MANIFEST, DEMO_MODELS, DEMO_PRICES, DEMO_ROUTER, DEMO_ROUTES, DEMO_VIDEO_MODELS, demoReply } from './fixtures.ts';
-import { sideBySideReply } from './sidebyside.ts';
+import { listPricing, sideBySideReply } from './sidebyside.ts';
 import { updateOn } from '../updates.ts';
 import { createDemoVentures } from './ventures.ts';
+import { AUTO_MODEL, DEMO_AUTO_MODEL_INFO, classifyDemo, rankAuto, type AutoClass } from '../auto.ts';
+import { DEMO_SEARCH_MUSD, demoSearchAsk, demoSearchRefusal, demoSearchReply } from './search.ts'; // update "search"
+import { readPhotoParts } from '../photos.ts';
 
 /** The demo's DepositRouter and stablecoins, shared by a key's instructions and the keyless /deposits/contracts. */
 const DEMO_EVM_CHAINS = [
@@ -425,10 +429,25 @@ export function createMockGateway(options: MockOptions = {}) {
   };
 
   async function chat(request: Request, k: KeyState) {
-    const body = (await request.json().catch(() => null)) as (ChatRequest & { stream?: boolean; council?: { mode?: string } }) | null;
-    if (!body || typeof body.model !== 'string' || !Array.isArray(body.messages) || body.messages.length === 0)
+    const raw = (await request.json().catch(() => null)) as (PhotoChatRequest & { stream?: boolean; council?: { mode?: string } }) | null;
+    if (!raw || typeof raw.model !== 'string' || !Array.isArray(raw.messages) || raw.messages.length === 0)
       return fail(400, 'invalid_request', 'Invalid request: model and messages are required.');
-    const model = body.model;
+    // Update "photos": image parts are checked as the gateway checks them; the rest of the demo reads the text.
+    const photos = readPhotoParts(raw.messages);
+    if (!photos.ok) return fail(photos.status, photos.type, photos.message);
+    const body: ChatRequest & { stream?: boolean; council?: { mode?: string } } = { ...raw, messages: photos.messages };
+    const asked = demoSearchAsk(body); // update "search": `:online` is stripped before the model is looked up
+    let model = asked.model;
+    // Update "auto": classify the request and answer with the top-ranked demo model, as the gateway does.
+    let autoClass: AutoClass | null = null;
+    if (model === AUTO_MODEL) {
+      autoClass = classifyDemo(body.messages);
+      const wantsSealed = request.headers.get('x-anonymo-sealed') === 'required' || k.caps.sealed_only;
+      const ranked = rankAuto(autoClass, DEMO_MODELS, { sealed: wantsSealed });
+      if (!ranked.length && wantsSealed) return fail(409, 'sealed_unavailable', 'No Auto candidate has an attested route with a fresh verified attestation for this sealed request. Nothing was sent or charged.', { sealed: true });
+      if (!ranked.length) return fail(404, 'no_providers', `Auto has no live ${autoClass} model right now. Nothing was sent or charged.`);
+      model = ranked[0];
+    }
     const price = DEMO_PRICES[model];
     if (!price && !DEMO_MODELS.some((m) => m.id === model)) return fail(404, 'model_not_found', `Model ${model.slice(0, 80)} is not available.`);
     if (model === 'anonymo-council' && body.stream === true) return fail(400, 'streaming_unsupported', 'Council mode does not support streaming. Send stream: false.');
@@ -436,13 +455,16 @@ export function createMockGateway(options: MockOptions = {}) {
     if (k.caps.sealed_only && !sealed) return fail(403, 'sealed_only', 'This key is sealed-only: use model anonymo-sealed.');
     if (sealed && options.sealedAvailable === false)
       return fail(409, 'sealed_unavailable', 'No attested route with a fresh verified attestation can serve this sealed request. Nothing was sent or charged.', { sealed: true });
+    const searchRefused = asked.searching ? demoSearchRefusal(model, sealed) : null;
+    if (searchRefused) return fail(searchRefused.status, searchRefused.type, searchRefused.message);
+    const searchMusd = asked.searching ? DEMO_SEARCH_MUSD : 0;
     const promptText = body.messages.map((m) => (typeof m.content === 'string' ? m.content : '')).join('\n');
     const tin = tokensOf(promptText);
     const p = price ?? DEMO_PRICES['anonymo-1'];
     const estimate = Math.ceil((tin * p.in + 900 * p.out) / 1_000_000);
-    const sponsored = body.dashboard_chat === true && model === 'anonymo-1' && k.firstChatAvailable === true
+    const sponsored = body.dashboard_chat === true && !asked.searching && model === 'anonymo-1' && k.firstChatAvailable === true
       && k.balance === 0 && enc.encode(promptText).byteLength <= 8192;
-    const maxCost = sponsored ? 0 : estimate;
+    const maxCost = sponsored ? 0 : estimate + searchMusd;
     if (k.balance - k.held < maxCost) return fail(402, 'insufficient_balance', 'Not enough credit for this request.');
     const capped = capRefusal(k);
     if (capped) return capped;
@@ -530,13 +552,16 @@ export function createMockGateway(options: MockOptions = {}) {
     text = bedtimeStoryReply(body.messages) ?? text; // Night Call's bedtime starter
     // Update "movein": a memory request (a running summary, or the facts) gets a memory-shaped answer.
     text = moveInReply(body.messages) ?? text;
+    if (photos.count) text = `(Demo: ${photos.count === 1 ? 'one photo' : `${photos.count} photos`} received and checked. A real model describes what it sees here.) ${text}`;
     if (rerouted) text = `The first route refused this, so the router retried on a different model family (${other.family}) and billed the refused attempt nothing. ${text}`;
+    const searched = asked.searching ? demoSearchReply(text, typeof lastUser === 'string' ? lastUser : '') : null;
+    if (searched) text = searched.text;
 
     const chunks = text.match(/\S+\s*/g) ?? [text];
     const signal = request.signal;
     const finish = (delivered: string) => {
       const tout = tokensOf(delivered);
-      const cost = Math.min(maxCost, Math.ceil((tin * p.in + tout * p.out) / 1_000_000));
+      const cost = Math.min(maxCost - searchMusd, Math.ceil((tin * p.in + tout * p.out) / 1_000_000)) + searchMusd;
       k.held -= maxCost;
       spend(k, cost, { model, kind: 'call', requestId });
       const served = rerouted ? other : first;
@@ -575,6 +600,7 @@ export function createMockGateway(options: MockOptions = {}) {
             send({ id: requestId, object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { content: piece } }] });
           }
           send({ id: requestId, object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+          if (searched) send({ id: requestId, object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { annotations: searched.annotations }, finish_reason: null }] });
           send({ id: requestId, object: 'chat.completion.chunk', model, choices: [], anonymo_receipt: finish(sent) });
           controller.enqueue(enc.encode('data: [DONE]\n\n'));
           controller.close();
@@ -589,7 +615,7 @@ export function createMockGateway(options: MockOptions = {}) {
         }
       },
     });
-    return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream', 'x-receipt-id': requestId } });
+    return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream', 'x-receipt-id': requestId, ...(autoClass ? { 'x-anonymo-auto': autoClass } : {}) } });
   }
 
   function proofOf(id: string): Extract<ProofView, { rooted: true }> | null {
@@ -672,7 +698,9 @@ export function createMockGateway(options: MockOptions = {}) {
     const path = url.pathname;
     const method = request.method.toUpperCase();
 
-    if (method === 'GET' && path === API_PATHS.models) return json({ data: withTextPrices(DEMO_MODELS, DEMO_PRICES) });
+    // Auto first, as the gateway lists it. Every model Auto can pick in the demo is billed at anonymo-1's price, so that is its list price here.
+    if (method === 'GET' && path === API_PATHS.models)
+      return json({ data: [{ ...DEMO_AUTO_MODEL_INFO, pricing: listPricing(DEMO_PRICES['anonymo-1']) }, ...withTextPrices(DEMO_MODELS, DEMO_PRICES)] });
     if (method === 'GET' && path === API_PATHS.manifest) return json(DEMO_MANIFEST);
     if (method === 'GET' && path === API_PATHS.leaderboard) return json(DEMO_LEADERBOARD);
     if (method === 'GET' && path === API_PATHS.statusSlo) return json({ data: demoStatus(Date.now()) });

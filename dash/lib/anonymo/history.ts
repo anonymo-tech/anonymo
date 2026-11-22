@@ -26,6 +26,8 @@ export type SavedTurn = {
   councilMode: 'merge' | 'select' | null;
   recap?: boolean;
   memoryCharge?: MemoryCharge;
+  /** Update "photos": how many photos went with the message. The photos themselves are never saved. */
+  photoCount?: number;
 };
 export type SavedChat = { id: string; title: string; createdAt: string; updatedAt: string; model: string; turns: SavedTurn[]; expiresAt?: number };
 
@@ -65,6 +67,7 @@ export function toSaved(turns: TurnLike[]): SavedTurn[] {
       councilMode: t.councilMode,
       ...(t.recap ? { recap: true } : {}),
       ...(t.memoryCharge ? { memoryCharge: t.memoryCharge } : {}),
+      ...(t.photoCount ? { photoCount: t.photoCount } : {}),
     });
   }
   return out;
@@ -88,6 +91,7 @@ export function toMarkdown(chat: SavedChat): string {
   const lines = [`# ${chat.title}`, '', `_Saved from Anonymo on this device · ${chat.model} · ${chat.createdAt.slice(0, 10)}_`, ''];
   for (const t of chat.turns) {
     lines.push(`**You${t.character ? ` (to ${t.character})` : ''}:**`, '', t.prompt, '');
+    if (t.photoCount) lines.push(`_${t.photoCount === 1 ? 'A photo' : `${t.photoCount} photos`} went with this message (not saved)._`, '');
     if (t.content) lines.push(`**${t.character ?? t.model}:**`, '', t.content, '');
     if (t.status === 'error' && t.error) lines.push(`_Error: ${t.error}_`, '');
     if (t.receiptId) lines.push(`_Receipt: ${t.receiptId}_`, '');

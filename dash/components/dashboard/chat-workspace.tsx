@@ -19,6 +19,8 @@ import type { Turn } from './chat-types';
 import { ModelPicker } from './model-picker';
 import { MemorySuggestions, useChatMemory } from './memory-chat';
 import { PaperTrail } from './paper-trail';
+import { ShareChat } from './share-chat';
+import { PhotoButton, PhotoTrayView, TurnPhotos, usePhotos } from './chat-photos';
 import { useContentGuard } from './use-content-guard';
 import { createPortal } from 'react-dom';
 import { buildCharacterMessages, greetingsOf } from '@/lib/anonymo/card';
@@ -28,12 +30,17 @@ import { describeError, isOutOfCredit } from '@/lib/anonymo/client';
 import { useDeviceStore } from '@/lib/anonymo/device-store';
 import { chatModels, isAnonymoModel, publishedPpqChat } from '@/lib/anonymo/chat-models';
 import { chatModelStore, setChatModel } from '@/lib/anonymo/prefs';
-import type { ChatMessage } from '@/lib/anonymo/types';
+import type { ChatMessage, ChatPhotoMessage } from '@/lib/anonymo/types';
+import { attachPhotos, photoHint, photoSupport, withPhotoNote } from '@/lib/anonymo/photos';
 import { paperPrompt, type PaperSource } from '@/lib/paper-trail';
 import { AI_REMINDER, CRISIS_LINES, mentionsSelfHarm, reminderDue } from '@/lib/anonymo/safety';
 import { keepStore, saveChat } from '@/lib/anonymo/history';
 import { canRecap, recapContext, recapRequest, suggestRecap, threadTokens } from '@/lib/anonymo/catchup';
 import { updateOn } from '@/lib/anonymo/updates';
+import { PriceTag, usePriceTag } from './price-tag';
+import { isAutoModel } from '@/lib/anonymo/auto';
+import { onlineModel, WEB_SEARCH_PRICE_USD } from '@/lib/anonymo/search';
+import { SearchToggle } from './web-sources';
 
 const STARTERS = [
   'Give me three ideas for a short mystery story.',
@@ -48,12 +55,17 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const { ready, demo, key, client, turns, setTurns, chatId, openChat, rememberReceipt, refreshBalance, liveModels, catalog, catalogError, refreshCatalog } = useAnonymo();
   const stored = useDeviceStore(chatModelStore);
   const directModels = useMemo(() => chatModels(catalog ?? []), [catalog]);
-  const branded = isAnonymoModel(stored);
-  const model = branded && !isLiveModel(liveModels, stored) ? 'anonymo-1' : stored;
+  // Update "auto": Auto is offered only while the update is on; a stored Auto choice falls back to anonymo-1 otherwise.
+  const autoOn = ready && updateOn('auto', demo);
+  const branded = isAnonymoModel(stored) || isAutoModel(stored);
+  const model = (branded && !isLiveModel(liveModels, stored)) || (isAutoModel(stored) && !autoOn) ? 'anonymo-1' : stored;
   const modelReady = branded ? isLiveModel(liveModels, model) : directModels.some(m => m.id === model && m.availability !== 'temporarily_unavailable');
   const requestedCharacter = useSearchParams().get('character');
   const [councilMode, setCouncilMode] = useState<'merge' | 'select'>('merge');
   const [refusalCatch, setRefusalCatch] = useState(true);
+  // Update "search": "Search the web" sends the model as `<model>:online` (sealed, council and :private never search).
+  const searchOn = ready && updateOn('search', demo);
+  const [webSearch, setWebSearch] = useState(false);
   const [text, setText] = useState(() => {
     const last = turns.at(-1);
     return last?.needsFunds && !last.attachment && !last.recap ? last.prompt : '';
@@ -61,6 +73,10 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const voiceOn = ready && updateOn('talk', demo);
   const voice = useChatVoice({ enabled: voiceOn && !!key, client, chatId, turns, refreshBalance });
   const [paper, setPaper] = useState<PaperSource | null>(null);
+  // Update "photos": only a model that lists image input gets them; the tray lives in this tab's memory only.
+  const photosOn = ready && updateOn('photos', demo);
+  const support = useMemo(() => photoSupport(model, directModels), [model, directModels]);
+  const tray = usePhotos(support);
   const characters = useDeviceStore(charactersStore);
   const [characterId, setCharacterId] = useState<string | null>(requestedCharacter);
   const [guardNote, setGuardNote] = useState<{ redacted: string; message: string } | null>(null);
@@ -79,6 +95,8 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const facesOn = ready && updateOn('faces', demo);
   const faces = useFaces(demo, facesOn && character ? character.id : null);
   const [stage, setStage] = useState(false);
+  // Update "share": share this chat as a sealed link (components/dashboard/share-chat.tsx).
+  const shareOn = ready && updateOn('share', demo);
 
   // Update "history": finished turns are saved in this browser when the person has turned keeping on.
   const historyOn = ready && updateOn('history', demo);
@@ -99,6 +117,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     setText('');
     setPaper(null);
     setGuardNote(null);
+    tray.clear();
   }
   const pendingScan = useRef(0);
   useEffect(() => { pendingScan.current++; }, [chatId]);
@@ -134,15 +153,38 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
         if (t.content) out.push(...recapContext(t.content));
         continue;
       }
-      out.push({ role: 'user', content: t.prompt });
+      out.push({ role: 'user', content: withPhotoNote(t.prompt, t.photoCount) });
       if (t.content) out.push({ role: 'assistant', content: t.content });
     }
     return out;
   }
 
+  // Update "pricetag": what send() would send for this draft (keep in step with it), priced before it goes.
+  function outgoing(prompt: string): ChatMessage[] {
+    let messages: ChatMessage[] = [...history(), { role: 'user', content: paper ? paperPrompt(prompt, paper) : prompt }];
+    if (character) {
+      const built = buildCharacterMessages(character.card, messages, { memory: memoryFor(demo, character.id) });
+      messages = built.messages.map((m) => ({ role: m.role as ChatMessage['role'], content: typeof m.content === 'string' ? m.content : '' }));
+      if (memoryOn) {
+        const recent = turns.filter((turn) => !turn.attachment && turn.status === 'done').slice(-2);
+        messages = memory.addToPrompt(messages, [prompt, ...recent.flatMap((turn) => [turn.prompt, turn.content.slice(-800)])]);
+      }
+    }
+    return messages;
+  }
+  const priceOn = ready && updateOn('pricetag', demo);
+  const priceDraft = priceOn ? text.trim() : '';
+  const price = usePriceTag({ on: priceOn, demo, chatId, model, priced: catalog?.find((m) => m.id === model) ?? null, messages: priceDraft ? outgoing(priceDraft) : null, turns, extraUsd: searchOn && webSearch && onlineModel(model, true) !== model ? WEB_SEARCH_PRICE_USD : undefined });
+
   async function send(promptText: string) {
     const prompt = promptText.trim();
-    if (!prompt || streaming || controller.current || !key || !modelReady) return;
+    const photos = photosOn ? tray.photos.map((p) => p.dataUrl) : [];
+    if ((!prompt && !photos.length) || streaming || controller.current || !key || !modelReady || tray.busy) return;
+    if (price.blocked) return; // update "pricetag": this chat's limit
+    if (photos.length && !support.ok) {
+      tray.setNote(photoHint(support));
+      return;
+    }
     if (model !== 'anonymo-sealed') voice.prepare();
     setGuardNote(null);
     const content = paper ? paperPrompt(prompt, paper) : prompt;
@@ -155,6 +197,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
         messages = memory.addToPrompt(messages, [prompt, ...recent.flatMap((turn) => [turn.prompt, turn.content.slice(-800)])]);
       }
     }
+    const request = photos.length ? attachPhotos(messages, photos) : messages;
     const id = crypto.randomUUID();
     const aiReminder = reminderDue(noticedAt.current);
     if (aiReminder) noticedAt.current = Date.now();
@@ -173,15 +216,18 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       councilMode: model === 'anonymo-council' ? councilMode : null,
       aiReminder,
       crisis: mentionsSelfHarm(prompt),
+      ...(searchOn && webSearch && onlineModel(model, true) !== model ? { search: true } : {}),
+      ...(photos.length ? { photos, photoCount: photos.length } : {}),
     };
     setTurns((list) => [...list, turn]);
     setText('');
     setPaper(null);
-    await run(turn, messages);
+    tray.clear();
+    await run(turn, request);
   }
 
   /** Streams one turn's reply into it, then settles its receipt and the balance. */
-  async function run(turn: Turn, messages: ChatMessage[]) {
+  async function run(turn: Turn, messages: (ChatMessage | ChatPhotoMessage)[]) {
     const { id, model } = turn;
     const listed = directModels.find(m => m.id === model);
     const plainChat = model === 'anonymo-1' || !!(listed && (publishedPpqChat(listed) || listed.ppq_uncensored === true));
@@ -192,11 +238,11 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     let haveReceipt = false;
     try {
       const result = await client.chat(
-        { model, messages, ...(plainChat && !turn.attachment && !turn.recap ? { dashboard_chat: true as const } : {}) },
+        { model: onlineModel(model, !!turn.search), messages, ...(plainChat && !turn.attachment && !turn.recap && !turn.search && !turn.photoCount ? { dashboard_chat: true as const } : {}) },
         {
           signal: abort.signal,
           headers: {
-            ...(isAnonymoModel(model) ? { refusalCatch: refusalCatch ? 'on' : 'off' } : {}),
+            ...(isAnonymoModel(model) || isAutoModel(model) ? { refusalCatch: refusalCatch ? 'on' : 'off' } : {}),
             ...(model === 'anonymo-council' ? { councilMode } : {}),
           },
           onDelta: (delta) => update(id, (t) => ({ content: t.content + delta })),
@@ -204,7 +250,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       );
       receiptId = result.receiptId;
       haveReceipt = result.receipt !== null;
-      update(id, { status: 'done', content: result.content, council: result.council, receiptId, receipt: result.receipt });
+      update(id, { status: 'done', content: result.content, council: result.council, receiptId, receipt: result.receipt, answeredBy: result.model, autoClass: result.autoClass ?? null, ...(result.citations?.length ? { citations: result.citations } : {}) });
       if (!turn.recap && !turn.attachment && !abort.signal.aborted)
         void memory.afterReply(id, model, turn.prompt, result);
     } catch (error) {
@@ -260,8 +306,10 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
 
   async function submit() {
     const prompt = text.trim();
-    if (!prompt || streaming || !key) return;
+    const withPhotos = photosOn && tray.photos.length > 0;
+    if ((!prompt && !withPhotos) || streaming || !key) return;
     if (model !== 'anonymo-sealed') voice.prepare();
+    if (!prompt) return void send('');
     const request = ++pendingScan.current;
     const result = await scan(prompt);
     if (request !== pendingScan.current) return;
@@ -286,6 +334,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
           </button>
         </div>
       )}
+      {photosOn && <PhotoTrayView tray={tray} support={support} />}
       <form
         className="dock-input"
         onSubmit={(e) => {
@@ -309,6 +358,17 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
             e.target.style.height = 'auto';
             e.target.style.height = `${Math.min(e.target.scrollHeight, 220)}px`;
           }}
+          onDragOver={photosOn ? (e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); } : undefined}
+          onDrop={photosOn ? (e) => {
+            if (!e.dataTransfer.files.length) return;
+            e.preventDefault();
+            void tray.add(e.dataTransfer.files);
+          } : undefined}
+          onPaste={photosOn ? (e) => {
+            if (!e.clipboardData.files.length) return;
+            e.preventDefault();
+            void tray.add(e.clipboardData.files);
+          } : undefined}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
@@ -317,7 +377,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
           }}
         />
         <ModelPicker value={model} onChange={chooseModel} live={liveModels} models={directModels}
-          catalogError={catalogError} onRefresh={refreshCatalog} />
+          catalogError={catalogError} onRefresh={refreshCatalog} auto={autoOn} />
         {voiceOn && voice.transcription && model !== 'anonymo-sealed' && (
           <VoiceMic key={chatId} model={voice.transcription} client={client} demo={demo} disabled={streaming}
             beforeRecord={voice.stop} onCharge={refreshBalance} onText={(transcript) => {
@@ -331,15 +391,18 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
             <Square size={14} fill="currentColor" aria-hidden="true" />
           </button>
         ) : (
-          <button type="submit" className="send" aria-label="Send" disabled={!key || !modelReady || !text.trim()}>
+          <button type="submit" className="send" aria-label="Send" disabled={!key || !modelReady || (!text.trim() && !(photosOn && tray.photos.length)) || (photosOn && tray.busy) || price.blocked}>
             <ArrowUp size={18} aria-hidden="true" />
           </button>
         )}
       </form>
+      {priceOn && <PriceTag {...price} />}
       {!modelReady && <p className="notice" role="status">{!catalog && !catalogError ? 'Checking your selected model…' : 'Your selected model is unavailable. Choose another model to send.'}</p>}
       {memoryOn && character && <MemorySuggestions {...memory} />}
       <div className="dock-tools">
         <PaperTrail value={paper} onChange={setPaper} />
+        {searchOn && <SearchToggle model={model} on={webSearch} onToggle={() => setWebSearch((w) => !w)} disabled={streaming} />}
+        {photosOn && <PhotoButton tray={tray} support={support} disabled={streaming} />}
         {model === 'anonymo-council' && (
           <button
             type="button"
@@ -370,6 +433,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
             </select>
           </label>
         )}
+        {shareOn && turns.length > 0 && <ShareChat turns={turns} disabled={streaming} />}
         {facesOn && character && <StageTools on={stage} onToggle={() => setStage((s) => !s)} character={character} faces={faces} />}
         {memoryOn && character && memory.memory?.enabled && (
           <button type="button" className="tool" aria-pressed={memory.extractionOn} disabled={memory.busy}
@@ -480,7 +544,8 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
                   {AI_REMINDER}
                 </p>
               )}
-              <p className="prompt">{turn.prompt}</p>
+              {turn.prompt && <p className="prompt">{turn.prompt}</p>}
+              {photosOn && <TurnPhotos photos={turn.photos} count={turn.photoCount} />}
               {turn.recap && (
                 <p className="recap-note" role="note">
                   Caught up: this chat starts from a recap of the last one, so replies stay sharp and cheaper.

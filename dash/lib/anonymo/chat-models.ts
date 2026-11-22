@@ -12,7 +12,7 @@ export const chatModelName = (m: ModelInfo): string => (publishedPpqChat(m) && m
 /** /v1/models applies route eligibility. Media and separate-protocol transports cannot run from a text composer. */
 export function chatModels(rows: readonly ModelInfo[]): ModelInfo[] {
   return rows.filter(m => {
-    if (typeof m.id !== 'string' || isAnonymoModel(m.id) || m.id.startsWith('private/') || separateProtocol.test(m.id)) return false;
+    if (typeof m.id !== 'string' || isAnonymoModel(m.id) || m.id === 'anonymo-auto' || m.id.startsWith('private/') || separateProtocol.test(m.id)) return false;
     if (/(?:^|[/:._-])(?:e2ee|e2e)(?:$|[/:._-])/i.test(m.id) && !publishedPpqChat(m)) return false;
     const architecture = m.architecture;
     return architecture ? architecture.input_modalities?.includes('text') && architecture.output_modalities?.length === 1 &&

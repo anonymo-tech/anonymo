@@ -1,6 +1,7 @@
 'use client';
 
 import { isAnonymoModel } from '@/lib/anonymo/chat-models';
+import { autoClassOf, autoNote, autoTabLabel, isAutoModel } from '@/lib/anonymo/auto';
 import { characterDestination, setupHref } from '@/lib/anonymo/setup-return';
 
 // One answer in the thread, kept from Conclave's answer card: a model tab bar, the answer body, and a footer with what
@@ -15,6 +16,7 @@ import { formatUsdAmount } from '@/lib/anonymo/money';
 import { VoiceReply } from './chat-voice';
 import type { Turn } from './chat-types';
 import { MemoryCost } from './memory-cost';
+import { WebSources } from './web-sources';
 
 /** Paragraphs and fenced code only; everything renders as text, never as HTML. */
 export function AnswerText({ text, streaming = false }: { text: string; streaming?: boolean }) {
@@ -48,7 +50,12 @@ export function AnswerText({ text, streaming = false }: { text: string; streamin
   );
 }
 
+/** Update "auto": the model that answered an Auto turn, from the reply or else from its receipt. */
+const answeredBy = (turn: Turn) => turn.answeredBy ?? turn.receipt?.routes.find((x) => x.status === 'ok')?.model ?? null;
+
 function PrivacyChip({ turn }: { turn: Turn }) {
+  // Update "auto": the model Auto picked answered, so the data policy of its provider applies.
+  if (isAutoModel(turn.model)) return <span className="chip" title="The data policy of the provider that answered applies.">Auto</span>;
   if (!isAnonymoModel(turn.model)) return <span className="chip" title="The selected provider’s data policy applies.">Regular Chat</span>;
   if (turn.model === 'anonymo-sealed' && turn.receipt?.attestation_quote_hash)
     return <span className="chip chip-signal">Fully private · attested enclave</span>;
@@ -161,11 +168,13 @@ export function AnswerCard({ turn, characterId }: { turn: Turn; characterId?: st
     body = (
       <div className="answer">
         {turn.character && <div className="answer-head">{turn.character}</div>}
+        {isAutoModel(turn.model) && turn.status === 'done' && <p className="faint">{autoNote(answeredBy(turn), autoClassOf(turn.autoClass))}</p>}
         {turn.content || streaming ? (
           <AnswerText text={turn.content} streaming={streaming} />
         ) : (
           <p className="muted">{turn.status === 'stopped' ? 'Stopped before any text arrived.' : ''}</p>
         )}
+        <WebSources citations={turn.citations} />
       </div>
     );
 
@@ -173,7 +182,7 @@ export function AnswerCard({ turn, characterId }: { turn: Turn; characterId?: st
     <div className="answer">
       <div className="response-bar" role="tablist" aria-label="Answers">
         <button type="button" role="tab" className="tab" aria-selected={!comparing} onClick={() => setComparing(false)}>
-          {council ? (council.mode === 'select' ? `Selected${council.selected ? ` · ${council.selected}` : ''}` : 'Merged') : turn.model}
+          {council ? (council.mode === 'select' ? `Selected${council.selected ? ` · ${council.selected}` : ''}` : 'Merged') : isAutoModel(turn.model) ? autoTabLabel(answeredBy(turn)) : turn.model}
         </button>
         <span className="spacer" />
         {council && (

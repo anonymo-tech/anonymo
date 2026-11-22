@@ -56,6 +56,7 @@ export function generationHeaders(id: string, lane: string, policyHash?: string 
 
 /** The response headers listed above plus the others a browser client may read. */
 export const EXPOSED_RESPONSE_HEADERS = ["x-generation-id", "x-receipt-id", "inference-id", "x-anonymo-lane", "x-anonymo-policy-hash", "x-payment-required", "x-payment-response", "payment-required", "payment-response", "x-anonymo-disclosure", "x-anonymo-cache", "x-anonymo-character", "x-anonymo-character-lane", "x-anonymo-character-note", "x-anonymo-character-session", "x-anonymo-default-route", "retry-after", "x-anonymo-receipt", "x-anonymo-council-mode", "x-anonymo-refusal", "x-anonymo-request-id", "x-anonymo-cost-usd", "x-anonymo-provenance"];
+EXPOSED_RESPONSE_HEADERS.push("x-anonymo-auto"); // Auto Model: the class of request anonymo-auto read (auto/plan.ts)
 
 /** The policy hash a header may state for a response that stands for several calls: only one they all share. */
 export const sharedPolicyHash = (hashes: (string | null | undefined)[]): string | null => (hashes.length && hashes.every((h) => h && h === hashes[0]) ? hashes[0]! : null);

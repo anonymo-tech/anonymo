@@ -27,3 +27,6 @@
 .model-logo img { display: block; object-fit: contain; max-width: 24px; max-height: 24px; }
 .model-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 550; line-height: 1.35; overflow-wrap: anywhere; }
 .model-check { flex: none; color: var(--signal); }
+/* Update "auto": Auto sits on its own above the other choices, with one line saying what it does. */
+.model-auto { padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
+.model-auto-note { padding: 0 7px 4px 46px; font-size: 12.5px; line-height: 1.4; color: var(--muted); }

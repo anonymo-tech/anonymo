@@ -6,6 +6,7 @@
 // it on the device is the caller's choice (lib/anonymo/key-store.ts).
 
 import { SPEECH_MODEL, TRANSCRIPTION_MODEL, type SpeechModel, type TranscriptionModel, type VoiceModels } from './talk.ts';
+import { citationsOf } from './search.ts'; // update "search"
 import type {
   DepositContracts,
   NymoQuote,
@@ -33,6 +34,7 @@ import type {
   ChatCompletion,
   ChatHeaders,
   ChatRequest,
+  PhotoChatRequest,
   ChatResult,
   CreateKeyRequest,
   CreateKeyResponse,
@@ -330,7 +332,7 @@ export function createAnonymoClient(options: ClientOptions) {
      * `onDelta` receives text as it arrives; the result carries the Anonymo receipt and its id.
      */
     async chat(
-      body: ChatRequest,
+      body: ChatRequest | PhotoChatRequest,
       opts: { headers?: ChatHeaders; signal?: AbortSignal; onDelta?: (text: string) => void } = {},
     ): Promise<ChatResult> {
       const headers: Record<string, string> = {};
@@ -358,6 +360,7 @@ export function createAnonymoClient(options: ClientOptions) {
         councilMode: response.headers.get('x-anonymo-council-mode'),
         council: null,
         finishReason: null,
+        autoClass: response.headers.get('x-anonymo-auto'), // update "auto"
       };
       if (!streaming) {
         const done = (await response.json()) as ChatCompletion;
@@ -370,6 +373,8 @@ export function createAnonymoClient(options: ClientOptions) {
         result.councilMode ??= done.council?.mode ?? null;
         result.receipt = done.anonymo_receipt?.payload ?? null;
         result.receiptId = result.receipt?.request_id ?? receiptIdFromHeader(response.headers.get('x-anonymo-receipt')) ?? done.id ?? null;
+        const cited = citationsOf(choice?.message?.annotations);
+        if (cited.length) result.citations = cited;
         return result;
       }
       // The stream's id is the request id; the final event carries the signed receipt (headers are sent before it exists).
@@ -380,6 +385,8 @@ export function createAnonymoClient(options: ClientOptions) {
         // that fell over) arrives as an error event inside the stream.
         if (chunk.error) throw errorFromBody(typeof chunk.error.code === 'number' ? chunk.error.code : 502, { error: chunk.error });
         streamId ??= chunk.id ?? null;
+        // Update "auto": every chunk names the model that answered, not anonymo-auto.
+        if (body.model === 'anonymo-auto' && typeof chunk.model === 'string' && chunk.model) result.model = chunk.model;
         const choice = chunk.choices?.[0];
         const text = choice?.delta?.content;
         if (text) {
@@ -387,6 +394,7 @@ export function createAnonymoClient(options: ClientOptions) {
           opts.onDelta?.(text);
         }
         if (choice?.finish_reason) result.finishReason = choice.finish_reason;
+        if (choice?.delta?.annotations) result.citations = citationsOf(choice.delta.annotations, result.citations); // update "search"
         if (chunk.anonymo_receipt?.payload) result.receipt = chunk.anonymo_receipt.payload;
       }
       result.receiptId = result.receipt?.request_id ?? receiptIdFromHeader(response.headers.get('x-anonymo-receipt')) ?? streamId;

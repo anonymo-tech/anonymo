@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 // Behaviours can be switched at runtime through POST /_control.
 
 export type MockBehaviour = "ok" | "empty200" | "error500" | "rate429" | "pay402" | "error503" | "slow" | "hang" | "reject400" | "midstream_error" | "no_usage" | "auth401" | "truncate_after_usage";
-export type MockModel = { id: string; slug?: string; prompt: string; completion: string; request?: string; ctx?: number; quant?: string; features?: string[]; params?: string[]; creator?: string; output?: string[]; hf?: string };
+export type MockModel = { id: string; slug?: string; prompt: string; completion: string; request?: string; ctx?: number; quant?: string; features?: string[]; params?: string[]; creator?: string; output?: string[]; hf?: string; input?: string[] };
 export type MockConfig = {
   name: string;
   models: MockModel[];
@@ -91,7 +91,7 @@ export function createMockProvider(initial: MockConfig) {
         created: 1_780_000_000,
         anonymo: m.slug ? { slug: m.slug } : undefined,
         hugging_face_id: m.hf,
-        input_modalities: ["text"],
+        input_modalities: m.input ?? ["text"],
         output_modalities: m.output ?? ["text"],
         quantization: m.quant ?? "bf16",
         context_length: m.ctx ?? 131072,

@@ -20,4 +20,10 @@ export type Turn = {
   crisis?: boolean; // the prompt mentioned suicide or self-harm: show crisis lines with the answer
   recap?: boolean; // update "catchup": this turn is a recap of an earlier chat, sent as context at the start of this one
   memoryCharge?: MemoryCharge;
+  answeredBy?: string | null; // update "auto": the model that answered an anonymo-auto turn
+  autoClass?: string | null; // update "auto": the kind of request it read (x-anonymo-auto)
+  search?: boolean; // update "search": sent as `<model>:online`
+  citations?: { url: string; title: string }[]; // update "search": the sources the answer cites
+  photos?: string[]; // update "photos": the photos sent with this message, as data URLs, in this tab's memory only
+  photoCount?: number; // how many photos went with it; saved chats keep this and a "photo not saved" placeholder
 };

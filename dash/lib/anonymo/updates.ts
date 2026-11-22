@@ -22,10 +22,15 @@
 //   movein    bring characters and chats from other apps, read in the browser
 //   sidebyside one question answered by three models at once, then merged
 //   tickets   hand someone a funded key as a link, a QR code or a printed ticket
+//   share     Sealed Share: a chat shared as a link that Anonymo can't read (sealed in the browser)
+//   pricetag  in chat: the estimated price of a message before sending, this chat's charges so far, and a per-chat limit
+//   auto      in chat: the Auto model (anonymo-auto) picks a model for each message and shows which one answered
+//   search    in chat: "Search the web" sends the model as :online and shows the sources under the answer
+//   photos    in chat: attach up to 4 photos for models that take images (shrunk in the browser, never saved)
 //
 // Ventures requires an explicit build opt-in. Demo mode shows the other updates, so each can be tried and filmed without a key or a deploy that has it on.
 
-export const UPDATE_IDS = ['history', 'images', 'usage', 'catchup', 'status', 'compare', 'vanish', 'vault', 'video', 'faces', 'talk', 'story', 'memory', 'voice', 'movein', 'sidebyside', 'tickets', 'ventures'] as const;
+export const UPDATE_IDS = ['history', 'images', 'usage', 'catchup', 'status', 'compare', 'vanish', 'vault', 'video', 'faces', 'talk', 'story', 'memory', 'voice', 'movein', 'sidebyside', 'tickets', 'share', 'pricetag', 'auto', 'search', 'photos', 'ventures'] as const;
 export type UpdateId = (typeof UPDATE_IDS)[number];
 
 export function parseUpdates(raw: string | undefined): ReadonlySet<UpdateId> {

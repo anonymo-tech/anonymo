@@ -14,6 +14,7 @@ import { floorInputOf } from "../anonymo/services.ts";
 import { floorErrorReason } from "../anonymo/floor/guard-client.ts";
 import { checksReplies, floorReplyCheck, replyFloorError, replyTextOf, StreamReplyGate } from "../anonymo/floor/reply.ts";
 import { refuseConfidentialOutsideEnclave } from "../anonymo/floor/confidential.ts";
+import { checkChatPhotos } from "../anonymo/floor/chat-photos.ts";
 import { namesPrivateModel } from "../anonymo/trust/sealed.ts";
 import { type Pico, maxPico, picoToUsd, picoToUsdString, usdToPico } from "../lib/money.ts";
 import { canonical, canonicalJson, decrypt, genId, log, sha256 } from "../lib/util.ts";
@@ -50,6 +51,8 @@ import { receiptForCall, sealedForRequest, sealedLane, sealedSelection } from ".
 import { requestLane } from "../router/request-lane.ts";
 import { blockReasonForStatus, isPrivateLaneRequest, noteLane, recordPrivateLane } from "../services/private-stats.ts";
 import { parseTraceparent, shouldExportTrace } from "../services/tracing.ts";
+import { autoDecisionOf, planAuto, withAutoHeader } from "../auto/plan.ts"; // Auto Model
+import * as webSearchPath from "../anonymo/search/chat.ts"; // Private Web Search
 
 export type Kind = "chat" | "completion";
 export type Billing =
@@ -256,7 +259,7 @@ function chunkBase(id: string, created: number, model: ModelRow, provider: strin
 export async function runChat(ctx: Ctx, c: Context, kind: Kind, characterId?: string): Promise<Response> {
   const t0 = Date.now();
   try {
-    return await handle(ctx, c, kind, characterId);
+    return withAutoHeader(c.req.raw, await handle(ctx, c, kind, characterId)); // Auto Model: x-anonymo-auto
   } catch (e) {
     if (isPrivateLaneRequest(c.req.raw)) recordPrivateLane(ctx, c.req.raw, { blocked: isApiError(e) ? blockReasonForStatus(e.status, e.type) : "upstream_error", latencyMs: Date.now() - t0 });
     throw e;
@@ -283,6 +286,8 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   const stream = body.stream === true;
   const bodySha = requestHash(body);
   const firstChatRequested = dashboardChat && kind === "chat" && !characterId && firstChatInputBound(body) !== null;
+  // Private Web Search: `:online`, plugins web, web_search_options, stripped here (after firstChatRequested, so a search is never a sponsored first chat).
+  const searchAsk = webSearchPath.takeWebSearch(body);
 
   // ---- 1. Who is calling -------------------------------------------------------------------
   const secret = bearer(c.req.header("authorization"));
@@ -341,7 +346,13 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   // served, charged, sent to any provider or rerouted. A gate that cannot answer fails closed.
   // Sealed, attested-lane and `:private` requests are never read by the hosted guards (GHSA-rch8-pxr3-p8gc).
   refuseConfidentialOutsideEnclave(ctx.anonymo.floor, disc.lane !== "public" || requiresAttestedUpstream(body, disc));
+  // Photos in chat: every image part passes the upload rule before the floor reads the text (floor/chat-photos.ts).
+  await checkChatPhotos(ctx, body, disc.lane !== "public" || requiresAttestedUpstream(body, disc), c.req.raw.signal);
   await floorCheck(ctx, body);
+  // Auto Model: only after the floor passed. Rewrites `model`/`models` to the ranked candidates (auto/plan.ts).
+  const auto = await planAuto(ctx, c.req.raw, { body, kind, key, prefs, disc, sealed, character: !!character });
+  // Private Web Search: only after the floor passed; refused for sealed/private/attested, 501 when not set up. Nothing searched yet.
+  const webSearch = searchAsk ? webSearchPath.admitWebSearch(ctx.anonymo.search, searchAsk, body, { kind, sealed: !!sealed, confidential: disc.lane !== "public" || requiresAttestedUpstream(body, disc), council: ctx.cfg.features.council && body.model === COUNCIL_MODEL, verify: body.verify != null }) : null;
 
   if (batchLine && (stream || body.verify != null || (ctx.cfg.features.council && body.model === COUNCIL_MODEL)))
     fail(400, "Batch lines cannot stream, use council mode or use dual verification.", "invalid_request");
@@ -353,6 +364,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   await ctx.catalog.ensureFresh();
   // A key allowed `@route/<slug>` (e.g. an agent session) may use exactly that route's own models.
   const allowed = new Set(key?.allowedModels ?? []);
+  for (const id of auto?.allow ?? []) allowed.add(id); // a key allowed `anonymo-auto` may use what Auto picked
   if (savedRoute && allowed.has(`@route/${savedRoute}`) && key) {
     const [row] = await ctx.db.select({ config: savedRoutes.config }).from(savedRoutes).where(and(eq(savedRoutes.accountId, key.accountId), eq(savedRoutes.slug, savedRoute)));
     for (const m of ((row?.config as { models?: string[] } | undefined)?.models ?? [])) {
@@ -395,6 +407,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
     const reserveOut = Number(body.max_tokens ?? body.max_completion_tokens ?? Math.min(4096, Math.floor(primary.ctx / 4)));
     middle = middleOut(body, primary.ctx, reserveOut);
   }
+  if (webSearch) webSearchPath.reserveSearchSlot(body, webSearch); // sized for the largest result block, so the hold covers it
   const promptTokens = estimatePromptTokens(body);
 
   // ---- 3. Accounts: key, wallet change, per-call payment -------------------------------------------
@@ -409,7 +422,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   const cacheMode: CacheMode | null = !strict && !resolved.some((r) => {
     const lane = ctx.catalog.laneOf(r.model);
     return isRestricted(lane.variant) || ctx.catalog.offers(r.model.id).some((offer) => isRestricted(offerLane(lane, offer.weightLane).variant));
-  }) && (cacheSpec?.mode === "exact" || cacheSpec?.mode === "semantic") ? cacheSpec.mode : null;
+  }) && !webSearch && (cacheSpec?.mode === "exact" || cacheSpec?.mode === "semantic") ? cacheSpec.mode : null; // a web search answer is never cached
   // `user` is forwarded to the provider as the end-user identity; a response made for one end user
   // must never be replayed to another behind the same key (exact or semantic).
   const cacheScope = billing ? `${billing.accountId}:policy-v3:${sha256(canonicalJson({ key: key?.keyHash ?? null, user: body.user ?? null, guardrails: guardCfg, provider: prefs, kind, models: resolved.map((r) => ({ id: r.model.id, modifiers: [...r.modifiers].sort() })), ...(savedRoute ? { route: savedRoute } : {}), ...(presetMeta ? { preset: presetMeta } : {}) }))}` : "";
@@ -438,7 +451,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   const modeForPrice: Mode = billing?.mode ?? "per_call";
   let attemptable = targets.flatMap((t) => t.ordered.map((cand) => ({ cand, model: t.model }))).slice(0, ctx.cfg.routing.maxAttempts);
   const worst = maxPico(...attemptable.map(({ cand, model }) => worstCase(cand, model, body, promptTokens, modeForPrice, fees, byok.has(cand.providerId))));
-  const hold = batchLine ? batchHold(worst, batchLine.discountBps) : worst; // a batch line is held at its discounted worst case
+  const hold = (batchLine ? batchHold(worst, batchLine.discountBps) : worst) + webSearchPath.webSearchHold(webSearch); // a batch line is held at its discounted worst case
 
   if (!billing) {
     const r = await payPerCall(ctx, c, { pricePico: hold, bodySha, modelId: primary.id });
@@ -496,6 +509,9 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
     delete body.max_completion_tokens;
   }
 
+  // Private Web Search: the one query leaves now, after the floor and the hold. A failure releases the hold (502, nothing charged).
+  if (webSearch) await webSearchPath.runWebSearch(webSearch, c.req.raw.signal).catch(async (e) => { await giveBack(ctx, billing!, holdId); throw e; });
+
   // ---- 7. Route ---------------------------------------------------------------------------------
   const abort = new AbortController();
   // A non-streamed call paid with x402 runs to its end even if the caller goes away, so a lost answer can be sent again
@@ -503,7 +519,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   if (stream || !(billing.mode === "per_call" && billing.paymentResponse)) c.req.raw.signal?.addEventListener("abort", () => abort.abort(new DOMException("client disconnected", "AbortError")), { once: true });
   const keyFor = (cand: Candidate) => providerKey(cand, ctx.cfg.appSecret, byok.get(cand.providerId));
   const path = kind === "chat" ? ("/chat/completions" as const) : ("/completions" as const);
-  const meta = { guard, middle, paywithNote, cacheMode, excluded, route: savedRoute, preset: presetMeta, character };
+  const meta = { guard, middle, paywithNote, cacheMode, excluded, route: savedRoute, preset: presetMeta, character, webSearch };
   // Streams send their headers before a provider is chosen, so the header is only set up front when every
   // provider this request can reach is served under the same class; the signed receipt always carries the truth.
   const classes = new Set(attemptable.map(({ cand }) => servedDisclosure(ctx, cand).class));
@@ -545,7 +561,8 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
     const err = unattestedUpstream(upstreamAttestation);
     return c.json({ ...err.toJSON(), id: fin.id, usage: fin.usageJson, receipt: fin.receiptJson }, 502, { ...generationHeaders(fin.id, disc.lane, fin.policyHash), ...routeResponseHeaders(ctx.cfg.routeExplain, r), "x-anonymo-disclosure": fin.disclosure, ...paymentHeaders(billing) });
   }
-  const anon = await receiptForCall(ctx, { r, fin, modelId: String(body.model ?? r.model.id), sealed }); // WS09
+  const anon = await receiptForCall(ctx, { r, fin, modelId: autoDecisionOf(c.req.raw) ? r.model.id : String(body.model ?? r.model.id), sealed }); // WS09
+  if (r.refusal?.served !== "refused") webSearchPath.attachWebCitations(json, webSearch); // url_citation annotations
   const out = {
     ...json,
     id: fin.id,
@@ -632,7 +649,7 @@ export type Common = {
   stream: boolean;
   kind: Kind;
   byok: Map<string, string>;
-  meta: { guard: ReturnType<typeof applyGuardrails>; middle: { removed: number; truncated: number } | null; paywithNote?: string; cacheMode: CacheMode | null; excluded: unknown[]; route: string | null; preset?: { name: string; version: number; hash: string } | null; character?: CharacterMeta | null };
+  meta: { guard: ReturnType<typeof applyGuardrails>; middle: { removed: number; truncated: number } | null; paywithNote?: string; cacheMode: CacheMode | null; excluded: unknown[]; route: string | null; preset?: { name: string; version: number; hash: string } | null; character?: CharacterMeta | null; webSearch?: webSearchPath.WebSearchUse | null };
   guardCfg: GuardrailConfig | null;
   promptTokens: number;
   disc: DisclosureRequest;
@@ -695,7 +712,8 @@ async function finalize(p: FinalizeInput) {
   // refusal_refund, below), and so is every refused attempt before it.
   const servedRefused = r.refusal?.served === "refused";
   const firstChat = billing.mode === "prepaid" && !!billing.firstChat;
-  const settleAmount = servedRefused || firstChat ? 0n : payable;
+  const searchFee = servedRefused || firstChat ? 0n : webSearchPath.webSearchFee(p.meta.webSearch); // once per served request
+  const settleAmount = servedRefused || firstChat ? 0n : payable + searchFee;
   const settled = await settle(ctx.db, p.holdId, settleAmount, {
     description: `${r.model.id} via ${r.candidate.providerId}`,
     generationId: id,
@@ -742,6 +760,7 @@ async function finalize(p: FinalizeInput) {
     ...(batchLine ? { batch: { id: batchLine.batchId, line: batchLine.idx } } : {}),
     ...routeReceiptFields(ctx.cfg.routeExplain, r), // V84: signed optional extension.
     ...(refusalReceipt ?? {}), // Anonymo WS03: `refused`, every route the call touched, and the refund
+    ...webSearchPath.webSearchReceipt(p.meta.webSearch, searchFee), // counts and price only
     ...(p.extra?.payload ?? {}),
   };
   const signed = ctx.signer.sign(payload);
@@ -884,9 +903,10 @@ async function finalize(p: FinalizeInput) {
     cost: picoToUsd(charged),
     is_byok: isByok,
     ...(firstChat ? { sponsorship: "first_dashboard_chat" } : {}),
-    cost_details: { upstream_inference_cost: picoToUsd(cost.upstream), royalty: picoToUsd(cost.royalty), margin: picoToUsd(cost.margin), ...(batchLine ? { batch_discount: picoToUsd(cost.batchDiscount) } : {}) },
+    cost_details: { upstream_inference_cost: picoToUsd(cost.upstream), royalty: picoToUsd(cost.royalty), margin: picoToUsd(cost.margin), ...(batchLine ? { batch_discount: picoToUsd(cost.batchDiscount) } : {}), ...(searchFee ? { web_search: picoToUsd(searchFee) } : {}) },
     prompt_tokens_details: { cached_tokens: p.usage.cachedRead, cache_write_tokens: p.usage.cacheWrite },
     completion_tokens_details: { reasoning_tokens: p.usage.reasoning },
+    ...webSearchPath.webSearchUsage(p.meta.webSearch, searchFee),
   };
   await endFirstChat(ctx, billing, p.cancelled || p.finishReason === "error" ? "failed" : "completed");
   const receiptJson = {
@@ -1077,9 +1097,11 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
         if (hold && !refused) for (const e of held) chained(e);
         // The refusal goes out before the receipt is signed, so the chain covers it too.
         if (refused) chained({ ...unattestedUpstream(upstreamAttestation!).toJSON(), id: p.holdId });
+        const cites = refused || servedRefusal ? null : webSearchPath.webCitationChoice(p.meta.webSearch, text); // url_citation annotations
+        if (cites) chained({ ...base, choices: [cites] });
         const fin = await finalize({ ...p, r, usage, responseText: text, finishReason: finish ?? (cancelled ? "cancelled" : midError ? "error" : null), nativeFinish, generationMs: Date.now() - p.t0, cancelled, upstreamAttestation, chainHead: chain.head, delivered: { completion: Math.ceil((text.length + toolText.length) / 4) + reasoningEst, reasoning: reasoningEst } /* V6 R */ });
         // WS09: a stream's headers are already sent, so its Anonymo receipt (and the header form) ride in the final event.
-        const anon = await receiptForCall(ctx, { r, fin, modelId: String(p.body.model ?? r.model.id), sealed: p.sealed === true });
+        const anon = await receiptForCall(ctx, { r, fin, modelId: autoDecisionOf(p.c.req.raw) ? r.model.id : String(p.body.model ?? r.model.id), sealed: p.sealed === true });
         event({ ...base, choices: [], usage: fin.usageJson, receipt: fin.receiptJson, anonymo_receipt: { ...anon.body, header: anon.header_value }, ...(fin.extras(0) ?? {}) });
       } catch (e) {
         clearInterval(holdKeepalive);

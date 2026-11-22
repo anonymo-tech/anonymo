@@ -32,10 +32,16 @@ export interface HashBlocklist {
  *  and a stub exist. A real client must throw on any failure so the upload is refused, never passed unchecked. */
 export interface CsamHashClient {
   match(upload: { bytes: Uint8Array; mime: string }, signal?: AbortSignal): Promise<{ matched: boolean }>;
+  /** False when matching never sends the upload outside this process. Unset means it does (fails closed for
+   *  sealed and private requests, which may not send anything outside the enclave). */
+  readonly sendsOutside?: boolean;
+  /** Set by a client that runs inside the attestation boundary. */
+  readonly inEnclave?: boolean;
 }
 
 /** Placeholder until a hash-matching contract exists. With `required` it fails closed, like the floor stub. */
 export const stubCsamHashClient = (required: boolean): CsamHashClient => ({
+  sendsOutside: false, // it sends nothing anywhere
   async match() {
     if (required) throw new Error("CSAM hash matching is not configured");
     return { matched: false };

@@ -233,7 +233,7 @@ export function summarize(tables: TableOut[], ext: ExternalDoc, schemaLabel = "d
     facts,
     caveats,
     reads:
-      "This page is about what is kept. It is not a claim that nobody can read a request while it is in flight: on ordinary chat routes on every lane the router reads the text of a request in memory, and the provider reads it too under its own policy. The dedicated, off-by-default E2EE adapter forwards encrypted content without decryption; the gateway enclave restores it. Clear routing and billing metadata remains visible.",
+      "This page is about what is kept. It is not a claim that nobody can read a request while it is in flight: on ordinary chat routes on every lane the router reads the text of a request in memory, and the provider reads it too under its own policy. The dedicated, off-by-default E2EE adapter forwards encrypted content without decryption; the gateway enclave restores it. Clear routing and billing metadata remains visible. A request that asks for web search (`:online`) also sends a search query, cut from its last message, to the search engine; your key, address and headers are not sent with it, and the query and results are not kept. Sealed, private and attested-lane requests cannot use web search.",
     counts: { tables: tables.length, columns: cols.length, reviewed_columns: cols.filter((c) => c.col.review).length, hash_columns: hashes.length },
   };
 }

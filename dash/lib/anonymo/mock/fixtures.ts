@@ -94,13 +94,15 @@ const MODEL_INFO: Record<string, { context_length: number; description: string }
 };
 
 const DIRECT_IDS = [...new Set(DEMO_ROUTES.filter((r) => r.upstream !== 'venice' && r.upstream !== 'featherless').map((r) => r.model))];
+/** Update "photos": demo models that take image input, so photos in chat can be tried without a key. */
+const DEMO_VISION_IDS = new Set(['gemma-4-26b-uncensored', 'qwen3.5-27b-abliterated']);
 
 /** `GET /v1/models` entries (only the fields the dashboard reads). */
 export const DEMO_MODELS: ModelInfo[] = [...Object.keys(MODEL_INFO), ...DIRECT_IDS].map((id) => {
   const rows = servers(id);
   return {
     id,
-    architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+    architecture: { input_modalities: DEMO_VISION_IDS.has(id) ? ['text', 'image'] : ['text'], output_modalities: ['text'] },
     ...MODEL_INFO[id],
     family: shared(rows.map((r) => r.family)) ?? rows[0]?.family ?? null,
     quant: shared(rows.map((r) => r.quant)),

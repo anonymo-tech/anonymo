@@ -15,6 +15,7 @@ import { ordinaryPpqTransport, regularPpqOffer } from "../router/regular-ppq.ts"
 import { laneJson, offerEligible } from "./lane.ts";
 import { latestAttempts, summarizeAttestation } from "./provider-attestation.ts";
 import { anonymoModelFields, refusalStats30d } from "../anonymo/trust/stats.ts"; // WS09
+import { autoModelListing } from "../auto/plan.ts"; // Auto Model
 
 function regularChatMetadata(ctx: Ctx, m: ModelRow, offers: Candidate[]) {
   const match = offers.find(o => o.providerModelId === m.id && regularPpqOffer(o) &&
@@ -231,7 +232,8 @@ export function modelsRoutes(app: Hono, ctx: Ctx) {
       .sort((a, b) => b.created - a.created || a.id.localeCompare(b.id))
       // The attested lane also says, per model, whether GPU attestation was seen (gateway receipts).
       .map((m) => (lane === "attested" || lane === "unlinkable" ? { ...m, ...gpuAttested(ctx, ctx.catalog.models.get(m.id)!) } : m));
-    return c.json({ data });
+    const auto = autoModelListing(ctx, { need, lane, variants, outputs }); // Auto Model: listed first, same filters
+    return c.json({ data: auto ? [auto, ...data] : data });
   };
   app.get("/api/v1/models", list);
   app.get("/v1/models", list);

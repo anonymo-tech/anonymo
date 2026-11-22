@@ -212,6 +212,9 @@ export type ModelList = { data: ModelInfo[] };
 
 export type ChatRole = 'system' | 'user' | 'assistant';
 export type ChatMessage = { role: ChatRole; content: string; name?: string };
+/** Update "photos": a user message can carry images as OpenAI `image_url` parts with data URLs (lib/anonymo/photos.ts). */
+export type ChatPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
+export type ChatPhotoMessage = { role: ChatRole; content: string | ChatPart[]; name?: string };
 
 export type ChatRequest = {
   dashboard_chat?: true;
@@ -220,6 +223,9 @@ export type ChatRequest = {
   max_tokens?: number;
   temperature?: number;
 };
+
+/** A chat request whose user messages may carry photos (update "photos"). */
+export type PhotoChatRequest = Omit<ChatRequest, 'messages'> & { messages: (ChatMessage | ChatPhotoMessage)[] };
 
 export type CouncilMode = 'merge' | 'select';
 
@@ -252,7 +258,7 @@ export type ChatChunk = {
   id: string;
   object: 'chat.completion.chunk';
   model: string;
-  choices: { index: number; delta: { role?: ChatRole; content?: string }; finish_reason?: string | null }[];
+  choices: { index: number; delta: { role?: ChatRole; content?: string; annotations?: unknown }; finish_reason?: string | null }[];
   anonymo_receipt?: SignedAnonymoReceipt;
   /** A failure after the stream started: a reply the floor withheld (451, stage "reply"), or a provider error. */
   error?: ApiErrorBody['error'];
@@ -263,7 +269,7 @@ export type ChatCompletion = {
   id: string;
   object: 'chat.completion';
   model: string;
-  choices: { index: number; message: { role: ChatRole; content: string | null }; finish_reason: string | null }[];
+  choices: { index: number; message: { role: ChatRole; content: string | null; annotations?: unknown }; finish_reason: string | null }[];
   anonymo_receipt?: SignedAnonymoReceipt;
   council?: CouncilResult;
 };
@@ -276,6 +282,10 @@ export type ChatResult = {
   councilMode: string | null; // x-anonymo-council-mode
   council: CouncilResult | null;
   finishReason: string | null;
+  /** Update "auto": the kind of request anonymo-auto read (`x-anonymo-auto`); `model` is then the model that answered. */
+  autoClass?: string | null;
+  /** Update "search": the sources a web search gave the model (`url_citation` annotations). */
+  citations?: { url: string; title: string }[];
 };
 
 // ---- receipts (gateway/src/receipts/anonymo.ts, receipts/roots.ts, anonymo/trust/routes.ts) ----------------------

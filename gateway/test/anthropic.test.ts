@@ -220,10 +220,10 @@ describe("POST /v1/messages", () => {
   });
 
   describe("content blocks", () => {
-    test("images (base64 and URL) become image_url parts; text-only turns stay plain strings", async () => {
+    test("base64 images become image_url parts; text-only turns stay plain strings", async () => {
       const res = await ask({
         messages: [
-          { role: "user", content: [{ type: "text", text: "What is in these?" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } }, { type: "image", source: { type: "url", url: "https://example.com/cat.jpg" } }] },
+          { role: "user", content: [{ type: "text", text: "What is in these?" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } }] },
           { role: "assistant", content: [{ type: "text", text: "Two pictures." }] },
           { role: "user", content: [{ type: "text", text: "Thanks" }, { type: "text", text: "and goodbye" }] },
         ],
@@ -235,11 +235,15 @@ describe("POST /v1/messages", () => {
         content: [
           { type: "text", text: "What is in these?" },
           { type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } },
-          { type: "image_url", image_url: { url: "https://example.com/cat.jpg" } },
         ],
       });
       expect(sent[1]).toEqual({ role: "assistant", content: "Two pictures." });
       expect(sent[2]).toEqual({ role: "user", content: "Thanks\n\nand goodbye" });
+    });
+
+    test("an image link passes through while photo checks are not set up (chat-photos.ts)", async () => {
+      const res = await ask({ messages: [{ role: "user", content: [{ type: "text", text: "What is this?" }, { type: "image", source: { type: "url", url: "https://example.com/cat.jpg" } }] }] });
+      expect(res.status).toBe(200);
     });
 
     test("an unusable image, an unknown block and a PDF document are 400s that name the field", async () => {
@@ -340,7 +344,7 @@ describe("POST /v1/messages", () => {
             role: "user",
             content: [
               { type: "text", text: "(sent with the result)" },
-              { type: "tool_result", tool_use_id: "call_x", content: [{ type: "text", text: "3 C and raining" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } }] },
+              { type: "tool_result", tool_use_id: "call_x", content: [{ type: "text", text: "3 C and raining" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } }] },
             ],
           },
         ],
@@ -350,7 +354,7 @@ describe("POST /v1/messages", () => {
       expect(sent[1]).toEqual({ role: "assistant", content: "Checking.", tool_calls: [{ id: "call_x", type: "function", function: { name: "get_weather", arguments: '{"city":"Oslo"}' } }] });
       // The tool message directly follows the call; what came with it (an image the tool returned, the text) follows that.
       expect(sent[2]).toEqual({ role: "tool", tool_call_id: "call_x", content: "3 C and raining" });
-      expect(sent[3]).toEqual({ role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } }, { type: "text", text: "(sent with the result)" }] });
+      expect(sent[3]).toEqual({ role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } }, { type: "text", text: "(sent with the result)" }] });
       expect(((await second.json()) as any).stop_reason).toBe("end_turn");
 
       // A tool-only turn (no text of its own) adds just the tool message; a tool_result may be a bare string.

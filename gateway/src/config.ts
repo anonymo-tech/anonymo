@@ -1,6 +1,7 @@
 import { hardeningEnv, hardeningSettings } from "./hardening/config.ts"; // HD1
 import { rpcEnv, rpcSettings } from "./chain/rpc-config.ts"; // RPC1: private transport settings.
 import { rushEnv, rushSettings } from "./rush/config.ts"; // ON3
+import { autoEnv, autoSettings } from "./auto/config.ts"; // Auto Model (anonymo-auto)
 import { structuredOutputEnv } from "./structured-output/options.ts"; // V83: opt-in JSON checking.
 import { insightsEnv } from "./insights/config.ts"; // V88: off by default.
 import { facilitatorEnv, facilitatorSettings } from "./facilitator/config.ts"; // v6 F: hosted x402 facilitator
@@ -51,6 +52,7 @@ function measurementPublicKey(raw: string | undefined): string | null {
 const schema = z.object({
   ...hardeningEnv, // HD1
   ...rushEnv, // ON3
+  ...autoEnv, // Auto Model (anonymo-auto)
   DEVELOPER_FIRST_CALL_ENABLED: bool.default(false), // ON2: guidance for GETs to model endpoints.
   ...structuredOutputEnv, // V83
   ...insightsEnv, // V88: spend insights.
@@ -369,6 +371,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     inferenceKeysEnabled: e.INFERENCE_KEYS_ENABLED, // ZK6
     statementsEnabled: e.STATEMENTS_ENABLED, // V87
     rush: rushSettings(e), // ON3
+    auto: autoSettings(e), // Auto Model (anonymo-auto)
     spendInsightsEnabled: e.SPEND_INSIGHTS_ENABLED, // V88: read-only spend insights.
     webhookSigningEnabled: e.WEBHOOK_SIGNING_ENABLED, // V86: off preserves existing delivery.
     runtimeRole: e.RUNTIME_ROLE,

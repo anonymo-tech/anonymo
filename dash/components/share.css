@@ -1,0 +1,21 @@
+/* Update "share": the Share dialog in the chat and the read-only page a shared link opens. */
+
+.sh-dialog { display: grid; gap: 14px; min-width: 0; }
+.sh-dialog .vault-modal-body, .sh-dialog > * { min-width: 0; }
+.sh-lede { color: var(--muted); font-size: 15px; max-width: 62ch; }
+.sh-note { color: var(--faint); font-size: 13.5px; font-weight: 400; }
+.sh-result { display: grid; gap: 10px; }
+.sh-result .input { width: 100%; text-overflow: ellipsis; }
+
+.sh-view { display: grid; gap: 18px; max-width: 760px; margin-inline: auto; min-width: 0; }
+.sh-view h1 { font-size: clamp(28px, 4vw, 44px); overflow-wrap: anywhere; }
+.sh-head { display: grid; gap: 8px; }
+.sh-kicker { color: var(--amber); font-size: 12.5px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; }
+.sh-thread { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.sh-msg { display: grid; gap: 6px; padding: 12px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); min-width: 0; }
+.sh-user { background: var(--raised); border-color: var(--line-strong); }
+.sh-who { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.sh-model { color: var(--faint); font-size: 12px; font-weight: 400; }
+.sh-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); font-size: 15.5px; line-height: 1.55; }
+.sh-unlock { display: grid; gap: 12px; max-width: 420px; }
+.sh-cta { margin-top: 8px; }

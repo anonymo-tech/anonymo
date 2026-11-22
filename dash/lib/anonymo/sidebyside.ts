@@ -23,7 +23,8 @@ export const MERGE_ANSWER_CHARS = 6000;
 /** Models a column can ask: every listed model that streams. The council answers as one body and is three models itself. */
 export function slotModels(models: readonly ModelInfo[]): ModelInfo[] {
   const seen = new Set<string>();
-  return models.filter((m) => !NON_STREAMING_MODELS.includes(m.id) && !seen.has(m.id) && !!seen.add(m.id));
+  // anonymo-auto has no list price of its own (it bills the model it picks), so it cannot be priced before sending.
+  return models.filter((m) => !NON_STREAMING_MODELS.includes(m.id) && m.id !== 'anonymo-auto' && !seen.has(m.id) && !!seen.add(m.id));
 }
 
 const isRouted = (id: string) => (ANONYMO_MODEL_IDS as readonly string[]).includes(id);
