@@ -18,6 +18,8 @@ export type TopupAttempt = {
   /** The amount as the person typed it, and the same in micro-USD. */
   amount: string;
   musd: number;
+  /** NYMO only: the quoted coin amount, already formatted ("256,323.87"). The typed amount is dollars. */
+  coinAmount?: string;
   startedAt: number;
   walletOpenedAt: number | null;
   hash: Hex | null;
@@ -45,6 +47,7 @@ export const NETWORK_DELAY_MS = 20 * 60_000;
 export const attemptSlot = (keyCommit: string, rail: TopupRail) => `${PREFIX}${keyCommit.toLowerCase()}:${rail}`;
 
 const HEX32 = /^0x[0-9a-fA-F]{64}$/;
+const COIN_AMOUNT = /^\d{1,3}(,\d{3})*(\.\d+)?$/;
 const isNum = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 const isNumOrNull = (n: unknown) => n === null || isNum(n);
 
@@ -63,7 +66,8 @@ export function parseAttempt(raw: string | null, keyCommit: string, rail: TopupR
   if (a.hash !== null && !(typeof a.hash === 'string' && HEX32.test(a.hash))) return null;
   if (!Array.isArray(a.knownRefs) || !a.knownRefs.every(r => typeof r === 'string')) return null;
   if (a.claimedRef !== null && typeof a.claimedRef !== 'string') return null;
-  return { ...(a as TopupAttempt), uncertain: a.uncertain === true };
+  const { coinAmount, ...rest } = a as TopupAttempt;
+  return { ...rest, ...(typeof coinAmount === 'string' && COIN_AMOUNT.test(coinAmount) ? { coinAmount } : {}), uncertain: a.uncertain === true };
 }
 
 export function readAttempt(storage: Storage | undefined, keyCommit: string, rail: TopupRail): TopupAttempt | null {
@@ -108,6 +112,7 @@ export function newAttempt(o: {
   token: string;
   amount: string;
   musd: number;
+  coinAmount?: string;
   rows: Pick<DepositRow, 'ref'>[];
   now: number;
   id?: string;
@@ -121,6 +126,7 @@ export function newAttempt(o: {
     token: o.token,
     amount: o.amount.trim(),
     musd: o.musd,
+    ...(o.coinAmount ? { coinAmount: o.coinAmount } : {}),
     startedAt: o.now,
     walletOpenedAt: null,
     hash: null,

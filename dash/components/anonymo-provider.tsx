@@ -10,7 +10,7 @@ import { createAnonymoClient, type AnonymoClient } from '@/lib/anonymo/client';
 import { API_BASE, DEMO_BY_DEFAULT, isDemoMode } from '@/lib/anonymo/config';
 import { deviceStore, useDeviceStore, useHydrated } from '@/lib/anonymo/device-store';
 import { forgetKey, keyStore, saveKey } from '@/lib/anonymo/key-store';
-import { createMockGateway, type MockGateway } from '@/lib/anonymo/mock/gateway';
+import type { MockGateway } from '@/lib/anonymo/mock/gateway';
 import { forgetReceipts, receiptsStore, rememberReceipt, type SeenReceipt } from '@/lib/anonymo/prefs';
 import { keepStore } from '@/lib/anonymo/history';
 import { freshTabChats, switchTabChat, type TabChat } from '@/lib/anonymo/tab-chats';
@@ -53,19 +53,28 @@ type AnonymoState = {
 
 const Context = createContext<AnonymoState | null>(null);
 
+// The demo gateway and its fixtures load only when demo mode is on, so the live site's scripts never carry demo
+// data (its placeholder addresses read like real contracts to anyone inspecting the bundle).
 let mockSingleton: MockGateway | null = null;
-function demoGateway() {
-  if (!mockSingleton) {
+let mockLoading: Promise<MockGateway> | null = null;
+function loadDemoGateway(): Promise<MockGateway> {
+  if (mockSingleton) return Promise.resolve(mockSingleton);
+  mockLoading ??= import('@/lib/anonymo/mock/gateway').then(({ createMockGateway }) => {
     let storage: Storage | null = null;
     try {
       storage = window.localStorage;
     } catch {
       storage = null;
     }
-    mockSingleton = createMockGateway({ storage });
-  }
-  return mockSingleton;
+    return (mockSingleton = createMockGateway({ storage }));
+  }).catch((e: unknown) => {
+    mockLoading = null; // a failed chunk load can be retried
+    throw e;
+  });
+  return mockLoading;
 }
+/** Demo requests made before the gateway has loaded wait for it instead of going to the network. */
+export const lazyDemoFetch: typeof fetch = (input, init) => loadDemoGateway().then((m) => m.fetch(input, init));
 
 export function AnonymoProvider({ children }: { children: ReactNode }) {
   const ready = useHydrated();
@@ -88,10 +97,18 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
     keyStore.changed();
   }, [search]);
 
-  const mock = ready && demo ? demoGateway() : null;
+  const [loadedMock, setLoadedMock] = useState<MockGateway | null>(mockSingleton);
+  useEffect(() => {
+    if (!ready || !demo || loadedMock) return;
+    let live = true;
+    loadDemoGateway().then((m) => live && setLoadedMock(m), () => undefined);
+    return () => { live = false; };
+  }, [ready, demo, loadedMock]);
+  const mock = ready && demo ? loadedMock : null;
+  const demoFetch = mock?.fetch ?? (demo ? lazyDemoFetch : undefined);
   const client = useMemo(
-    () => createAnonymoClient({ baseUrl: demo ? DEMO_BASE : API_BASE, key, fetch: mock?.fetch }),
-    [demo, key, mock],
+    () => createAnonymoClient({ baseUrl: demo ? DEMO_BASE : API_BASE, key, fetch: demoFetch }),
+    [demo, key, demoFetch],
   );
 
   const [catalog, setCatalog] = useState<ModelInfo[] | null>(null);
@@ -102,7 +119,7 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!ready) return;
     const controller = new AbortController();
-    const publicClient = createAnonymoClient({ baseUrl: demo ? DEMO_BASE : API_BASE, fetch: mock?.fetch });
+    const publicClient = createAnonymoClient({ baseUrl: demo ? DEMO_BASE : API_BASE, fetch: demoFetch });
     let fetching = false;
     let checked = 0;
     async function load() {
@@ -131,7 +148,7 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('focus', load);
       document.removeEventListener('visibilitychange', load);
     };
-  }, [ready, demo, mock, catalogVersion]);
+  }, [ready, demo, demoFetch, catalogVersion]);
 
   const setKey = useCallback(
     (value: string, remember: boolean) => {

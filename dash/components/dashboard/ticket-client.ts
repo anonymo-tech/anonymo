@@ -5,7 +5,7 @@
 // anything but its own balance, deposits and withdrawal.
 
 import { useCallback } from 'react';
-import { useAnonymo } from '../anonymo-provider';
+import { lazyDemoFetch, useAnonymo } from '../anonymo-provider';
 import { AnonymoApiError, createAnonymoClient, type AnonymoClient } from '@/lib/anonymo/client';
 import { API_BASE } from '@/lib/anonymo/config';
 import { usdToMusd } from '@/lib/anonymo/money';
@@ -18,7 +18,7 @@ const DEMO_BASE = 'https://demo.anonymo.invalid';
 /** Makes a client bound to a ticket's key (or to no key, to create one), in the tab's current mode. */
 export function useTicketClient(): (key: string | null) => AnonymoClient {
   const { demo, mock } = useAnonymo();
-  return useCallback((key: string | null) => createAnonymoClient({ baseUrl: demo ? DEMO_BASE : API_BASE, key, fetch: mock?.fetch }), [demo, mock]);
+  return useCallback((key: string | null) => createAnonymoClient({ baseUrl: demo ? DEMO_BASE : API_BASE, key, fetch: mock?.fetch ?? (demo ? lazyDemoFetch : undefined) }), [demo, mock]);
 }
 
 /** Why the gateway refused a key, when it did: its date has passed, or it does not know the key. */

@@ -375,6 +375,11 @@ void test('04 top-up: storage holds one nonsecret attempt per key and rail, and 
   for (const bad of ['', '{', 'null', JSON.stringify({ ...a, v: 2 }), JSON.stringify({ ...a, musd: 0 }), JSON.stringify({ ...a, hash: '0x12' }), JSON.stringify({ ...a, knownRefs: [1] })])
     assert.equal(parseAttempt(bad, COMMIT_A, 'evm'), null, bad);
   assert.ok(!/anm_(live|test)_/.test(raw), 'no key material');
+  // NYMO: the typed amount is dollars; the quoted coin amount rides along for display, and only a plain number is kept.
+  const c = newAttempt({ keyCommit: COMMIT_A, rail: 'coin', chain: 'rhc', token: 'NYMO', amount: '3', musd: 3_000_000, coinAmount: '256,323.87', rows: [], now: T0, id: 'coin' });
+  assert.deepEqual(parseAttempt(JSON.stringify(c), COMMIT_A, 'coin'), c);
+  assert.equal(parseAttempt(JSON.stringify({ ...c, coinAmount: '<b>9</b>' }), COMMIT_A, 'coin').coinAmount, undefined);
+  assert.equal('coinAmount' in parseAttempt(raw, COMMIT_A, 'evm'), false);
   assert.equal(attemptSlot(COMMIT_A.toUpperCase().replace('0X', '0x'), 'evm'), attemptSlot(COMMIT_A, 'evm'));
   const map = new Map([[attemptSlot(COMMIT_A, 'evm'), raw], ['anonymo.key', 'kept']]);
   const storage = { get length() { return map.size; }, key: i => [...map.keys()][i] ?? null, removeItem: k => map.delete(k) };

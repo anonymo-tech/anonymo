@@ -48,7 +48,12 @@ export function KeyPanel() {
     }
     if (sealedOnly) caps.sealed_only = true;
     try {
-      setCreated(await client.createKey({ caps, dashboard_signup: await dashboardSignup(demo) }));
+      const fresh = await client.createKey({ caps, dashboard_signup: await dashboardSignup(demo) });
+      // A first key is kept in this tab at once, so leaving this screen early (to Funds, say) never strands a key
+      // that already exists. "Remember on this device" still applies when the person confirms. A key already on the
+      // device is never replaced until then: it may hold credit.
+      if (!key) setKey(fresh.key, false);
+      setCreated(fresh);
       setSaved(false);
     } catch (e) {
       setError(describeError(e));

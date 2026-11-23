@@ -261,7 +261,8 @@ export function CoinWalletPay({ coin, amount, setAmount, topup, rows, back, stop
       <button ref={continueButton} type="button" className="wallet-primary btn btn-primary" disabled={!quote || !musd || (!demo && !paymentUrl)}
         onClick={() => {
           if (!musd || attempt) return;
-          topup.save(newAttempt({ keyCommit: coin.key_commit, rail: 'coin', chain: 'rhc', token: 'NYMO', amount, musd, rows, now: Date.now() }));
+          topup.save(newAttempt({ keyCommit: coin.key_commit, rail: 'coin', chain: 'rhc', token: 'NYMO', amount, musd, rows, now: Date.now(),
+            coinAmount: quote ? formatUnits(BigInt(quote.amount_raw), coin.token.decimals, 2) : undefined }));
         }}>Continue to wallet <ArrowRight size={17} aria-hidden="true" /></button>
     </div>
   );

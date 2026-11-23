@@ -203,9 +203,10 @@ export function TopupTracker({
         <span className="topup-kicker">Payment status</span>
         <h2 id={headingId} ref={heading} tabIndex={-1}>
           <span className="sr-only">Payment status: </span>
-          {attempt.amount} {attempt.token}
+          {/* The typed amount is dollars on the NYMO rail and token units on the stablecoin rails. */}
+          {coin ? `${formatUsdAmount(attempt.amount)} of NYMO` : `${attempt.amount} ${attempt.token}`}
         </h2>
-        <p className="wallet-network">{coin ? `${network} · usage-only credit` : network}</p>
+        <p className="wallet-network">{coin ? `${attempt.coinAmount ? `${attempt.coinAmount} NYMO quoted · ` : ''}${network} · usage-only credit` : network}</p>
       </header>
 
       <ol className="topup-steps">
