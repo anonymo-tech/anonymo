@@ -9,8 +9,9 @@ import { characterDestination, setupHref } from '@/lib/anonymo/setup-return';
 // judge) side by side with its route, status and cost. The gateway returns only the final reply's text.
 
 import Link from 'next/link';
-import { Columns3, ReceiptText } from 'lucide-react';
-import { Fragment, useState, type ReactNode } from 'react';
+import { BookOpen, Columns3, FileText, ReceiptText } from 'lucide-react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { claimGaps, context, locate, parseCitations, statusLabel, type ProofSource, type ProofStatus } from '@/lib/anonymo/citations';
 import { CopyButton } from '../copy-button';
 import { formatUsdAmount } from '@/lib/anonymo/money';
 import { VoiceReply } from './chat-voice';
@@ -123,11 +124,111 @@ function Seat({ title, seat }: { title: string; seat: { model: string; provider:
   );
 }
 
-export function AnswerCard({ turn, characterId }: { turn: Turn; characterId?: string }) {
+/** Feature 07: the local source behind a turn that sent a document or excerpt. `source` is null once it is gone. */
+export type TurnProof = { source: ProofSource | null; onForget: () => void };
+
+type Checked = { index: number; page: number; quote: string | null; claim: string; proof: ProofStatus; gaps: ('amount' | 'frequency')[] };
+
+/** Answer text with each [p. N "quote"] as a numbered mark after its claim, checked against the local source. */
+function CitedText({ text, streaming, checked, selected, onSelect }: { text: string; streaming: boolean; checked: Map<number, Checked>; selected: number | null; onSelect: (n: number | null) => void }) {
+  const blocks = text.split(/(```[\s\S]*?(?:```|$))/g).filter((b) => b.length > 0);
+  const cursor = streaming ? <span className="cursor" aria-hidden="true" /> : null;
+  let n = 0;
+  const paragraph = (p: string) => {
+    const segments = parseCitations(p);
+    return segments.map((seg, i) => {
+      if (seg.kind === 'text') {
+        const next = segments[i + 1];
+        const claim = next?.kind === 'cite' ? next.claim : '';
+        const at = claim ? seg.text.lastIndexOf(claim) : -1;
+        if (at < 0 || !claim) return <Fragment key={i}>{seg.text}</Fragment>;
+        return <Fragment key={i}>{seg.text.slice(0, at)}<span className={`claim${selected === n + 1 ? ' claim-on' : ''}`}>{claim}</span>{seg.text.slice(at + claim.length)}</Fragment>;
+      }
+      n += 1;
+      const c = checked.get(n);
+      const label = c ? statusLabel(c.proof, c.gaps) : 'Checking';
+      const index = n;
+      return (
+        <sup key={i} className="cite">
+          <button type="button" className={`cite-mark cite-${c?.proof.status ?? 'missing'}`} aria-expanded={selected === index} aria-label={`Source ${index}, page ${seg.page}: ${label}`} onClick={() => onSelect(selected === index ? null : index)}>
+            {index}
+          </button>
+        </sup>
+      );
+    });
+  };
+  if (!blocks.length) return <div className="answer-body"><p>{cursor}</p></div>;
+  return (
+    <div className="answer-body">
+      {blocks.map((block, i) => {
+        const last = i === blocks.length - 1;
+        if (block.startsWith('```'))
+          return <pre key={i}><code>{block.replace(/^```[^\n]*\n?/, '').replace(/```$/, '')}</code>{last && cursor}</pre>;
+        const paragraphs = block.split(/\n{2,}/).filter((p) => p.trim());
+        return <Fragment key={i}>{paragraphs.map((p, j) => <p key={j}>{paragraph(p)}{last && j === paragraphs.length - 1 && cursor}</p>)}</Fragment>;
+      })}
+    </div>
+  );
+}
+
+const GAP_TEXT = { amount: 'The answer gives an amount this passage does not state.', frequency: 'The answer says how often, but this passage does not state a frequency.' };
+
+function ProofPanel({ checked, source, onHide, onForget }: { checked: Checked; source: ProofSource | null; onHide: () => void; onForget: () => void }) {
+  const { proof, page, gaps } = checked;
+  const located = 'at' in proof ? proof.at : null;
+  const passage = located && source ? context(source, located) : null;
+  const explain: Record<ProofStatus['status'], string> = {
+    found: 'Supporting passage from your attachment. A located quote shows these words are in your document; check that they support the whole claim.',
+    ambiguous: `These exact words appear on ${'pages' in proof ? proof.pages.map((x) => `p. ${x}`).join(' and ') : 'several pages'}. The one shown is on the cited page, p. ${page}.`,
+    'other-page': `These words are on p. ${located?.page ?? '?'}, not on p. ${page} as the answer cites.`,
+    missing: 'These words are not in your document. Treat this part of the answer as unsupported.',
+    expired: 'The document is no longer on this device, so this quote cannot be checked.',
+    'page-only': `The answer cites p. ${page} without quoting it, so there is nothing to check.`,
+  };
+  return (
+    <section className="proof-panel" aria-label="Selected claim">
+      <h4 className="sheet-label">Selected claim</h4>
+      <div className={`proof-card proof-${proof.status}`}>
+        <div className="proof-card-head">
+          <span><FileText size={14} aria-hidden="true" /> {source?.name ?? 'Your attachment'}</span>
+          <span>p. {located?.page ?? page}</span>
+        </div>
+        <p className="proof-status" role="status">{statusLabel(proof, gaps)}</p>
+        {passage ? (
+          <p className="proof-context">{passage.before}<mark>{passage.quote}</mark>{passage.after}</p>
+        ) : checked.quote ? (
+          <p className="proof-context proof-unverified">“{checked.quote}”</p>
+        ) : null}
+      </div>
+      <p className="faint proof-explain"><BookOpen size={14} aria-hidden="true" /> {explain[proof.status]}</p>
+      {proof.status === 'found' && gaps.map((g) => <p key={g} className="notice notice-amber proof-gap">{GAP_TEXT[g]}</p>)}
+      <div className="proof-actions">
+        <button type="button" className="btn proof-hide" onClick={onHide}><BookOpen size={16} aria-hidden="true" /> Hide source</button>
+        {source && <button type="button" className="btn btn-ghost btn-small" onClick={onForget}>Remove source from this device</button>}
+      </div>
+    </section>
+  );
+}
+
+export function AnswerCard({ turn, characterId, proof }: { turn: Turn; characterId?: string; proof?: TurnProof | null }) {
   const council = turn.council;
   const [comparing, setComparing] = useState(false);
   const streaming = turn.status === 'streaming';
   const lead = council?.aggregator ?? council?.judge ?? null;
+  // Feature 07: only a turn that sent a document or excerpt gets citation marks; other answers render as before.
+  const cited = !!proof && !!turn.attachment;
+  const [selected, setSelected] = useState<number | null>(null);
+  const checked = useMemo(() => {
+    const out = new Map<number, Checked>();
+    if (!cited) return out;
+    for (const seg of parseCitations(turn.content)) {
+      if (seg.kind !== 'cite') continue;
+      const found = locate(proof?.source ?? null, seg.page, seg.quote);
+      out.set(seg.index, { index: seg.index, page: seg.page, quote: seg.quote, claim: seg.claim, proof: found, gaps: 'at' in found && found.status === 'found' && seg.quote ? claimGaps(seg.claim, seg.quote) : [] });
+    }
+    return out;
+  }, [cited, proof?.source, turn.content]);
+  const selectedCheck = selected !== null ? checked.get(selected) ?? null : null;
 
   let body: ReactNode;
   if (turn.status === 'error')
@@ -170,7 +271,7 @@ export function AnswerCard({ turn, characterId }: { turn: Turn; characterId?: st
         {turn.character && <div className="answer-head">{turn.character}</div>}
         {isAutoModel(turn.model) && turn.status === 'done' && <p className="faint">{autoNote(answeredBy(turn), autoClassOf(turn.autoClass))}</p>}
         {turn.content || streaming ? (
-          <AnswerText text={turn.content} streaming={streaming} />
+          cited ? <CitedText text={turn.content} streaming={streaming} checked={checked} selected={selected} onSelect={setSelected} /> : <AnswerText text={turn.content} streaming={streaming} />
         ) : (
           <p className="muted">{turn.status === 'stopped' ? 'Stopped before any text arrived.' : ''}</p>
         )}
@@ -193,6 +294,9 @@ export function AnswerCard({ turn, characterId }: { turn: Turn; characterId?: st
         )}
       </div>
       {body}
+      {selectedCheck && proof && !comparing && (
+        <ProofPanel checked={selectedCheck} source={proof.source} onHide={() => setSelected(null)} onForget={() => { proof.onForget(); }} />
+      )}
       {turn.status === 'stopped' && <p className="faint">Stopped. You are charged only for the text that arrived.</p>}
       {turn.status !== 'streaming' && turn.status !== 'error' && <Footer turn={turn} />}
     </div>

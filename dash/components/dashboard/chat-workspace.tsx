@@ -5,8 +5,9 @@ import { characterDestination, setupHref } from '@/lib/anonymo/setup-return';
 import { MascotSprite } from '../mascot-sprite';
 import { Photo } from '@/components/photo';
 import Link from 'next/link';
-import { ArrowUp, Drama, Square } from 'lucide-react';
-import { useSearchParams } from 'next/navigation';
+import { ArrowUp, Crop, Drama, ImageIcon, ShieldCheck, Square, X } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { mightBeWalletRequest, parseWalletRequest, WALLET_REVIEW_DRAFT } from '@/lib/anonymo/wallet-request';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { isLiveModel, useAnonymo } from '../anonymo-provider';
 import { AnswerCard } from './answer-card';
@@ -21,7 +22,13 @@ import { MemorySuggestions, useChatMemory } from './memory-chat';
 import { PaperTrail } from './paper-trail';
 import { ShareChat } from './share-chat';
 import { PhotoButton, PhotoTrayView, TurnPhotos, usePhotos } from './chat-photos';
-import { useContentGuard } from './use-content-guard';
+import { scanFailed, useContentGuard } from './use-content-guard';
+import { MaskReview, MaskedPrompt } from './mask-review';
+import { AttachmentEditor, type EditorSource } from './attachment-editor';
+import { SafePostEditor } from './safe-post-editor';
+import type { ProofSource } from '@/lib/anonymo/citations';
+import { decodeImage, type DecodedImage } from '@/lib/anonymo/attachment-image';
+import { DEFAULT_QUESTION, excerptBody, excerptContent, excerptMessage, type Excerpt, type ExcerptPurpose } from '@/lib/anonymo/excerpt';
 import { createPortal } from 'react-dom';
 import { buildCharacterMessages, greetingsOf } from '@/lib/anonymo/card';
 import { charactersStore } from '@/lib/anonymo/characters-store';
@@ -41,6 +48,8 @@ import { PriceTag, usePriceTag } from './price-tag';
 import { isAutoModel } from '@/lib/anonymo/auto';
 import { onlineModel, WEB_SEARCH_PRICE_USD } from '@/lib/anonymo/search';
 import { SearchToggle } from './web-sources';
+import { chatInputOn } from '@/lib/anonymo/chat-inputs';
+import { MaskVault, addMask, maskSegments, masksFromFindings, payloadDigest, sanitizedSlice, segmentsText, toggleMask, type Mask } from '@/lib/anonymo/masking';
 
 const STARTERS = [
   'Give me three ideas for a short mystery story.',
@@ -60,6 +69,8 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const branded = isAnonymoModel(stored) || isAutoModel(stored);
   const model = (branded && !isLiveModel(liveModels, stored)) || (isAutoModel(stored) && !autoOn) ? 'anonymo-1' : stored;
   const modelReady = branded ? isLiveModel(liveModels, model) : directModels.some(m => m.id === model && m.availability !== 'temporarily_unavailable');
+  // Features 02/03: a crop goes as an image only to a direct model whose catalog row lists image input.
+  const visionModel = !branded && !!directModels.find((m) => m.id === model)?.architecture?.input_modalities?.includes('image');
   const requestedCharacter = useSearchParams().get('character');
   const [councilMode, setCouncilMode] = useState<'merge' | 'select'>('merge');
   const [refusalCatch, setRefusalCatch] = useState(true);
@@ -79,7 +90,33 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const tray = usePhotos(support);
   const characters = useDeviceStore(charactersStore);
   const [characterId, setCharacterId] = useState<string | null>(requestedCharacter);
+  // `redacted` is empty when there is no safe redacted version to offer (the check itself failed).
   const [guardNote, setGuardNote] = useState<{ redacted: string; message: string } | null>(null);
+  // Feature 01 "Mask my details": the draft under review, its masks and an undo stack. The vault maps this chat's
+  // placeholders back to the original values, in memory only.
+  const maskOn = ready && chatInputOn('01', demo);
+  const vault = useRef(new MaskVault());
+  // `draft` is the exact message under review; with an excerpt it is the whole excerpt message, and `question` is the
+  // length of the question at its start (kept as the turn's prompt).
+  const [review, setReview] = useState<{ draft: string; masks: Mask[]; past: Mask[][]; question: number; excerpt: Excerpt | null } | null>(null);
+  // Features 02/03 "Circle anything" / "Send only this part": an approved excerpt replaces the whole document.
+  const pickOn = ready && (chatInputOn('02', demo) || chatInputOn('03', demo));
+  const [excerpt, setExcerpt] = useState<Excerpt | null>(null);
+  const [picture, setPicture] = useState<DecodedImage | null>(null);
+  const [pictureError, setPictureError] = useState('');
+  const [editor, setEditor] = useState<{ source: EditorSource; purpose: ExcerptPurpose } | null>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  const pictureInput = useRef<HTMLInputElement>(null);
+  // Feature 06 "Make this safe to post": a local export only. The picture is never sent and never changed.
+  const safeOn = ready && chatInputOn('06', demo);
+  const [safePost, setSafePost] = useState<DecodedImage | null>(null);
+  const safeInput = useRef<HTMLInputElement>(null);
+  // Feature 07 "Show me the proof": the document behind each turn, kept in this tab's memory only so citations can be
+  // checked. It lives no longer than the attachment's chat: cleared on chat, key and mode change, or on request.
+  const proofOn = ready && chatInputOn('07', demo);
+  const sources = useRef(new Map<string, ProofSource>());
+  const [, setSourcesVersion] = useState(0);
+  const [checking, setChecking] = useState(false);
   const controller = useRef<AbortController | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const end = useRef<HTMLDivElement>(null);
@@ -90,6 +127,8 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   // A character card is only a system prompt, so it works with any model, not just anonymo-rp.
   const character = characters.find((c) => c.id === characterId) ?? null;
   const memoryOn = ready && updateOn('memory', demo);
+  const router = useRouter();
+  const walletRequest = ready && updateOn('walletreview', demo) && mightBeWalletRequest(text) && parseWalletRequest(text).ok;
   const memory = useChatMemory(memoryOn ? character : null);
   // Update "faces": the chosen character's faces from this device, and the Stage (the same thread shown as a scene).
   const facesOn = ready && updateOn('faces', demo);
@@ -118,9 +157,26 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     setPaper(null);
     setGuardNote(null);
     tray.clear();
+    setReview(null);
+    setExcerpt(null);
+    setPicture(null);
+    setEditor(null);
+    setSafePost(null);
   }
+  // A picture's decoded pixels are released as soon as it is replaced or the chat moves on.
+  useEffect(() => () => picture?.bitmap.close(), [picture]);
+  useEffect(() => () => { if (safePost && safePost !== picture) safePost.bitmap.close(); }, [safePost, picture]);
   const pendingScan = useRef(0);
   useEffect(() => { pendingScan.current++; }, [chatId]);
+  // Original values never outlive the chat, the key or the mode they were typed in.
+  useEffect(() => {
+    const restore = vault.current;
+    const kept = sources.current;
+    return () => {
+      restore.clear();
+      kept.clear();
+    };
+  }, [chatId, key, demo]);
   useEffect(() => () => controller.current?.abort(), [key, demo]);
   useEffect(() => {
     const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -153,7 +209,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
         if (t.content) out.push(...recapContext(t.content));
         continue;
       }
-      out.push({ role: 'user', content: withPhotoNote(t.prompt, t.photoCount) });
+      out.push({ role: 'user', content: t.sent ?? withPhotoNote(t.prompt, t.photoCount) });
       if (t.content) out.push({ role: 'assistant', content: t.content });
     }
     return out;
@@ -161,7 +217,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
 
   // Update "pricetag": what send() would send for this draft (keep in step with it), priced before it goes.
   function outgoing(prompt: string): ChatMessage[] {
-    let messages: ChatMessage[] = [...history(), { role: 'user', content: paper ? paperPrompt(prompt, paper) : prompt }];
+    let messages: ChatMessage[] = [...history(), { role: 'user', content: excerpt ? excerptMessage(prompt, excerpt) : paper ? paperPrompt(prompt, paper) : prompt }];
     if (character) {
       const built = buildCharacterMessages(character.card, messages, { memory: memoryFor(demo, character.id) });
       messages = built.messages.map((m) => ({ role: m.role as ChatMessage['role'], content: typeof m.content === 'string' ? m.content : '' }));
@@ -176,19 +232,28 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const priceDraft = priceOn ? text.trim() : '';
   const price = usePriceTag({ on: priceOn, demo, chatId, model, priced: catalog?.find((m) => m.id === model) ?? null, messages: priceDraft ? outgoing(priceDraft) : null, turns, extraUsd: searchOn && webSearch && onlineModel(model, true) !== model ? WEB_SEARCH_PRICE_USD : undefined });
 
-  async function send(promptText: string) {
-    const prompt = promptText.trim();
-    const photos = photosOn ? tray.photos.map((p) => p.dataUrl) : [];
-    if ((!prompt && !photos.length) || streaming || controller.current || !key || !modelReady || tray.busy) return;
-    if (price.blocked) return; // update "pricetag": this chat's limit
-    if (photos.length && !support.ok) {
-      tray.setNote(photoHint(support));
+  /**
+   * Sends one turn. Call it only after the content check passed. `confirmed` is the digest of a reviewed preview:
+   * when given, anything but that exact text is refused.
+   */
+  async function send(out: { prompt: string; message: string; excerpt: Excerpt | null }, confirmed?: string) {
+    const prompt = out.prompt.trim();
+    const message = out.message.trim();
+    const sentExcerpt = out.excerpt;
+    const photos = photosOn && !sentExcerpt ? tray.photos.map((p) => p.dataUrl) : [];
+    if ((!message && !photos.length) || streaming || controller.current || !key || !modelReady || tray.busy || price.blocked) return;
+    if ((photos.length || sentExcerpt?.image) && !support.ok) {
+      setGuardNote({ redacted: '', message: photoHint(support) });
       return;
     }
+    if (confirmed !== undefined && payloadDigest(message, sentExcerpt?.image?.url) !== confirmed) return;
     if (model !== 'anonymo-sealed') voice.prepare();
     setGuardNote(null);
-    const content = paper ? paperPrompt(prompt, paper) : prompt;
-    let messages: ChatMessage[] = [...history(), { role: 'user', content }];
+    // An excerpt is a fresh payload built from what the person approved: the whole-document prompt is never used.
+    const content = sentExcerpt ? excerptContent(message, character ? null : sentExcerpt.image) : message;
+    // The chat path takes content parts; ChatMessage stays text-only for every other caller, so the one image message
+    // is passed through as is (the client serialises the body unchanged).
+    let messages: ChatMessage[] = [...history(), { role: 'user', content: content as string }];
     if (character) {
       const built = buildCharacterMessages(character.card, messages, { memory: memoryFor(demo, character.id) });
       messages = built.messages.map((m) => ({ role: m.role as ChatMessage['role'], content: typeof m.content === 'string' ? m.content : '' }));
@@ -205,7 +270,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       id,
       model,
       prompt,
-      attachment: paper?.name ?? null,
+      attachment: sentExcerpt ? 'excerpt' : paper?.name ?? null,
       character: character?.card.data.name ?? null,
       content: '',
       status: 'streaming',
@@ -218,11 +283,19 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       crisis: mentionsSelfHarm(prompt),
       ...(searchOn && webSearch && onlineModel(model, true) !== model ? { search: true } : {}),
       ...(photos.length ? { photos, photoCount: photos.length } : {}),
+      ...(sentExcerpt ? { sent: message, excerpt: { page: sentExcerpt.page, image: !!sentExcerpt.image && !character } } : {}),
     };
+    if (proofOn && sentExcerpt?.text) {
+      sources.current.set(id, { name: 'Excerpt', pages: [{ number: sentExcerpt.page ?? 1, text: excerptBody(sentExcerpt) }] });
+    } else if (proofOn && paper && !sentExcerpt) {
+      sources.current.set(id, { name: paper.name, pages: paper.pages.map((p) => ({ number: p.number, text: p.text })) });
+    }
     setTurns((list) => [...list, turn]);
     setText('');
     setPaper(null);
     tray.clear();
+    setExcerpt(null);
+    setPicture(null);
     await run(turn, request);
   }
 
@@ -304,21 +377,81 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     await run(turn, messages);
   }
 
-  async function submit() {
-    const prompt = text.trim();
-    const withPhotos = photosOn && tray.photos.length > 0;
-    if ((!prompt && !withPhotos) || streaming || !key) return;
+  // The preview under review: exactly the text that will be sent, numbered from a copy of this chat's vault.
+  const reviewed = (() => {
+    if (!review) return null;
+    const scratch = vault.current.clone();
+    for (const t of turns) scratch.reserve(t.prompt);
+    const segments = maskSegments(review.draft, review.masks, scratch);
+    const outgoing = segmentsText(segments);
+    const prompt = sanitizedSlice(segments, 0, review.question);
+    return { segments, outgoing, prompt, digest: payloadDigest(outgoing, review.excerpt?.image?.url), scratch };
+  })();
+  const editReview = (masks: Mask[]) => setReview((r) => (r ? { ...r, masks, past: [...r.past, r.masks] } : r));
+
+  /** The exact message for a question, with an approved excerpt when there is one. */
+  const draftFor = (question: string, ex: Excerpt | null) => (ex ? excerptMessage(question, ex) : paper ? paperPrompt(question, paper) : question);
+
+  /** Every send starts here (Enter, the Send button, "Send with it redacted", an excerpt): checked on this device first. */
+  async function submit(source = text, withExcerpt = excerpt) {
+    const prompt = source.trim();
+    if (streaming || !key) return;
+    if (!prompt && !(photosOn && tray.photos.length && !withExcerpt)) return;
     if (model !== 'anonymo-sealed') voice.prepare();
-    if (!prompt) return void send('');
+    const draft = draftFor(prompt, withExcerpt);
+    if (!draft) return send({ prompt, message: '', excerpt: null });
+    if (review && reviewed && review.draft === draft) return confirmReview(reviewed.digest);
     const request = ++pendingScan.current;
-    const result = await scan(prompt);
+    setChecking(true);
+    const result = await scan(draft, { personal: maskOn });
+    setChecking(false);
     if (request !== pendingScan.current) return;
-    const blocking = result.findings.filter((f) => f.severity === 'block');
-    if (blocking.length) {
-      setGuardNote({ redacted: result.redacted, message: blocking[0].message });
+    // A check that could not run sends nothing and offers no "redacted" text: the draft stays as it is.
+    if (scanFailed(result)) {
+      setGuardNote({ redacted: '', message: result.findings[0]?.message ?? 'The content check is unavailable. Nothing has been sent. Try again.' });
       return;
     }
-    void send(prompt);
+    const blocking = result.findings.filter((f) => f.severity === 'block');
+    if (blocking.length) {
+      // A redacted excerpt message cannot be put back in the composer; the person edits the question or the excerpt.
+      setGuardNote(withExcerpt || paper
+        ? { redacted: '', message: `${blocking[0].message} Review your question and attachment before sending.` }
+        : { redacted: result.redacted, message: blocking[0].message });
+      return;
+    }
+    const masks = maskOn ? masksFromFindings(result.personal ?? [], vault.current.knownMasks(draft)) : [];
+    if (masks.length) {
+      setGuardNote(null);
+      setReview({ draft, masks, past: [], question: prompt.length, excerpt: withExcerpt });
+      return;
+    }
+    void send({ prompt, message: draft, excerpt: withExcerpt });
+  }
+
+  /** Sends the reviewed preview, only if it is still exactly what was shown and it passes the secret check again. */
+  async function confirmReview(confirmed: string) {
+    if (!review || !reviewed || streaming || !key) return;
+    if (review.draft !== draftFor(text.trim(), excerpt) || reviewed.digest !== confirmed) {
+      setReview(null);
+      setGuardNote({ redacted: '', message: 'Your draft changed after the review. Review it again before sending.' });
+      return;
+    }
+    const { outgoing, scratch } = reviewed;
+    const request = ++pendingScan.current;
+    setChecking(true);
+    const check = await scan(outgoing);
+    setChecking(false);
+    if (request !== pendingScan.current) return;
+    if (scanFailed(check) || check.findings.some((f) => f.severity === 'block')) {
+      setGuardNote({
+        redacted: '',
+        message: scanFailed(check) ? (check.findings[0]?.message ?? 'The content check is unavailable. Nothing has been sent.') : 'The masked message still contains secret-like material. Edit it before sending.',
+      });
+      return;
+    }
+    vault.current.adopt(scratch);
+    setReview(null);
+    void send({ prompt: reviewed.prompt, message: outgoing, excerpt: review.excerpt }, confirmed);
   }
 
   const composer = (
@@ -326,15 +459,55 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       {guardNote && (
         <div className="notice notice-amber row" role="alert">
           <span style={{ flex: 1, minWidth: 200 }}>{guardNote.message}</span>
-          <button type="button" className="btn btn-small" onClick={() => void send(guardNote.redacted)}>
-            Send with it redacted
-          </button>
+          {guardNote.redacted && (
+            <button type="button" className="btn btn-small" onClick={() => {
+              const redacted = guardNote.redacted;
+              setText(redacted);
+              setGuardNote(null);
+              void submit(redacted);
+            }}>
+              Send with it redacted
+            </button>
+          )}
           <button type="button" className="btn btn-small btn-ghost" onClick={() => { setGuardNote(null); input.current?.focus(); }}>
             Edit
           </button>
         </div>
       )}
       {photosOn && <PhotoTrayView tray={tray} support={support} />}
+      {review && reviewed && (
+        <MaskReview
+          segments={reviewed.segments}
+          masks={review.masks}
+          original={review.draft}
+          busy={checking || streaming}
+          canUndo={review.past.length > 0}
+          onToggle={(index) => editReview(toggleMask(review.masks, index))}
+          onMaskRange={(start, end) => editReview(addMask(review.draft, review.masks, start, end))}
+          onUndo={() => setReview((r) => (r && r.past.length ? { ...r, masks: r.past[r.past.length - 1], past: r.past.slice(0, -1) } : r))}
+          onSend={() => void confirmReview(reviewed.digest)}
+          onEdit={() => { setReview(null); input.current?.focus(); }}
+          extra={review.excerpt?.image && !character ? (
+            // eslint-disable-next-line @next/next/no-img-element -- a local data URL, never fetched
+            <img className="editor-crop" src={review.excerpt.image.url} alt="Crop that will also be sent" />
+          ) : null}
+        />
+      )}
+      {walletRequest && !review && (
+        // 08: a pasted wallet request is reviewed on its own page, on this device, and never sent to a model.
+        <div className="notice row wallet-request-chip">
+          <span style={{ flex: 1, minWidth: 200 }}>This looks like a wallet request. See what it allows before you sign it. It is not sent to a model.</span>
+          <button type="button" className="btn btn-small" onClick={() => {
+            try {
+              sessionStorage.setItem(WALLET_REVIEW_DRAFT, text);
+            } catch {
+              return;
+            }
+            setText('');
+            router.push('/dashboard/wallet-review');
+          }}>Review this request</button>
+        </div>
+      )}
       <form
         className="dock-input"
         onSubmit={(e) => {
@@ -353,8 +526,10 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
           placeholder={key ? (character ? `Write to ${character.card.data.name}…` : 'Ask anything…') : 'Create a key to start chatting'}
           disabled={!ready || !key}
           onChange={(e) => {
+            pendingScan.current++;
             setText(e.target.value);
             setGuardNote(null);
+            setReview(null);
             e.target.style.height = 'auto';
             e.target.style.height = `${Math.min(e.target.scrollHeight, 220)}px`;
           }}
@@ -383,6 +558,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
             beforeRecord={voice.stop} onCharge={refreshBalance} onText={(transcript) => {
               setText((draft) => draft ? `${draft.trimEnd()} ${transcript}` : transcript);
               setGuardNote(null);
+              setReview(null);
               input.current?.focus();
             }} />
         )}
@@ -399,8 +575,96 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       {priceOn && <PriceTag {...price} />}
       {!modelReady && <p className="notice" role="status">{!catalog && !catalogError ? 'Checking your selected model…' : 'Your selected model is unavailable. Choose another model to send.'}</p>}
       {memoryOn && character && <MemorySuggestions {...memory} />}
+      {excerpt && (
+        <div className="excerpt-chip" role="group" aria-label="Approved excerpt">
+          <span className="chip"><Crop size={13} aria-hidden="true" /> {excerpt.image ? 'Cropped image only' : 'Excerpt only'}{excerpt.page ? ` · p. ${excerpt.page}` : ''}</span>
+          <span className="excerpt-chip-text">{excerptBody(excerpt) || 'Image only'}</span>
+          <button type="button" className="link-button" onClick={() => { setExcerpt(null); setReview(null); }}>Remove</button>
+          <span className="faint" style={{ flexBasis: '100%' }}>Only this excerpt is sent{paper ? '. The rest of the PDF stays on this device.' : '.'}</span>
+        </div>
+      )}
+      {editor && (
+        <AttachmentEditor
+          source={editor.source}
+          initialPurpose={editor.purpose}
+          imageModel={visionModel && !character}
+          initialQuestion={text.trim() || DEFAULT_QUESTION[editor.purpose]}
+          onCancel={() => {
+            setEditor(null);
+            // The page behind a modal sheet is inert, so focus goes back once the sheet is gone.
+            setTimeout(() => (opener.current?.isConnected ? opener.current : input.current)?.focus(), 0);
+          }}
+          onUse={(chosen, question) => {
+            setEditor(null);
+            setExcerpt(chosen);
+            setText(question);
+            setGuardNote(null);
+            setReview(null);
+            setTimeout(() => input.current?.focus(), 0);
+            void submit(question, chosen);
+          }}
+        />
+      )}
       <div className="dock-tools">
-        <PaperTrail value={paper} onChange={setPaper} />
+        <PaperTrail value={paper} onChange={(source) => { setPaper(source); setExcerpt(null); setReview(null); }} />
+        {pickOn && paper && (
+          <button type="button" className="tool" onClick={(e) => { opener.current = e.currentTarget; setEditor({ source: { kind: 'pdf', paper }, purpose: 'explain' }); }}>
+            <Crop size={14} aria-hidden="true" /> Select part
+          </button>
+        )}
+        {pickOn && (
+          <>
+            <input ref={pictureInput} type="file" hidden accept="image/png,image/jpeg,image/webp,image/gif" onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (!file) return;
+              setPictureError('');
+              decodeImage(file).then((image) => {
+                setPicture(image);
+                setExcerpt(null);
+                setReview(null);
+                setEditor({ source: { kind: 'image', image }, purpose: 'explain' });
+              }, (error: unknown) => setPictureError(error instanceof Error ? error.message : 'This image could not be opened.'));
+            }} />
+            {picture ? (
+              <span className="tool" style={{ gap: 4 }}>
+                <button type="button" className="link-button" onClick={(e) => { opener.current = e.currentTarget; setEditor({ source: { kind: 'image', image: picture }, purpose: 'explain' }); }}>
+                  <ImageIcon size={14} aria-hidden="true" /> Select part of {picture.name}
+                </button>
+                <button type="button" className="link-button" aria-label="Remove image" onClick={() => { setPicture(null); setExcerpt(null); setReview(null); }}><X size={13} aria-hidden="true" /></button>
+              </span>
+            ) : (
+              <button type="button" className="tool" onClick={(e) => { opener.current = e.currentTarget; pictureInput.current?.click(); }}>
+                <ImageIcon size={14} aria-hidden="true" /> Image
+              </button>
+            )}
+            {pictureError && <span role="alert" className="error-text">{pictureError}</span>}
+          </>
+        )}
+        {safeOn && (
+          <>
+            <input ref={safeInput} type="file" hidden accept="image/png,image/jpeg,image/webp" aria-label="Picture to make safe to post" onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (!file) return;
+              setPictureError('');
+              decodeImage(file).then(setSafePost, (error: unknown) => setPictureError(error instanceof Error ? error.message : 'This image could not be opened.'));
+            }} />
+            <button type="button" className="tool" onClick={(e) => {
+              opener.current = e.currentTarget;
+              if (picture) setSafePost(picture);
+              else safeInput.current?.click();
+            }}>
+              <ShieldCheck size={14} aria-hidden="true" /> Safe to post
+            </button>
+          </>
+        )}
+        {safePost && (
+          <SafePostEditor image={safePost} onClose={() => {
+            setSafePost(null);
+            setTimeout(() => (opener.current?.isConnected ? opener.current : input.current)?.focus(), 0);
+          }} />
+        )}
         {searchOn && <SearchToggle model={model} on={webSearch} onToggle={() => setWebSearch((w) => !w)} disabled={streaming} />}
         {photosOn && <PhotoButton tray={tray} support={support} disabled={streaming} />}
         {model === 'anonymo-council' && (
@@ -519,6 +783,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
                   type="button"
                   onClick={() => {
                     setText(starter);
+                    setReview(null);
                     input.current?.focus();
                   }}
                 >
@@ -544,7 +809,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
                   {AI_REMINDER}
                 </p>
               )}
-              {turn.prompt && <p className="prompt">{turn.prompt}</p>}
+              {turn.prompt && (maskOn ? <MaskedPrompt text={turn.prompt} vault={vault.current} /> : <p className="prompt">{turn.prompt}</p>)}
               {photosOn && <TurnPhotos photos={turn.photos} count={turn.photoCount} />}
               {turn.recap && (
                 <p className="recap-note" role="note">
@@ -553,14 +818,19 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
               )}
               {(turn.attachment || turn.character) && (
                 <div className="prompt-meta">
-                  {turn.attachment && <span className="chip">PDF · {turn.attachment}</span>}
+                  {turn.attachment && (turn.excerpt || turn.attachment === 'excerpt'
+                    ? <span className="chip"><Crop size={12} aria-hidden="true" /> {turn.excerpt?.image ? 'Cropped image' : 'Excerpt only'}{turn.excerpt?.page ? ` · p. ${turn.excerpt.page}` : ''}</span>
+                    : <span className="chip">PDF · {turn.attachment}</span>)}
                   {turn.character && <span className="chip">as {turn.character}</span>}
                 </div>
               )}
               {turn.crisis && <CrisisNotice />}
               <div className="ai-row">
                 <TurnFace faces={character && turn.character === character.card.data.name ? faces : null} turn={turn} />
-                <AnswerCard turn={turn} characterId={character?.id} />
+                <AnswerCard turn={turn} characterId={character?.id} proof={proofOn ? {
+                  source: sources.current.get(turn.id) ?? null,
+                  onForget: () => { sources.current.delete(turn.id); setSourcesVersion((v) => v + 1); },
+                } : null} />
               </div>
             </article>
           ))}

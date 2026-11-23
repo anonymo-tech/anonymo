@@ -1,0 +1,45 @@
+/* 08 What am I signing? */
+.wallet-review-page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; max-width: 640px; min-width: 0; }
+.wallet-review-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+.wallet-review-form > label { font: 600 14px/1.3 var(--sans); }
+.wallet-review-form textarea { width: 100%; min-height: 112px; resize: vertical; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.wallet-review-form .btn-primary { justify-self: stretch; min-height: 48px; }
+.wallet-review-formats summary { width: fit-content; min-height: 40px; align-content: center; color: var(--muted); cursor: pointer; }
+.wallet-review-formats p { margin: 4px 0 10px; color: var(--muted); font-size: 14px; }
+.wallet-review-formats code { overflow-wrap: anywhere; }
+.wallet-review-result h2:focus { outline: none; }
+.wallet-review-result .notice { display: flex; gap: 8px; align-items: flex-start; }
+.wallet-review-approval { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+.wr-summary {
+  display: grid; gap: 8px; padding: 16px 18px; border-radius: 14px;
+  background: #3a2a1c; border: 1px solid #8a6230; color: #f6cf8c;
+}
+.wr-summary.is-calm { background: var(--raised); border-color: var(--line-strong); color: var(--text); }
+.wr-summary strong { font: 650 clamp(18px, 4.8vw, 22px)/1.3 var(--sans); letter-spacing: -.01em; }
+.wr-kind { display: inline-flex; gap: 6px; align-items: center; font: 650 14px/1.2 var(--sans); }
+.wr-label { margin: 10px 0 0; color: var(--muted); font: 650 12px/1.3 var(--sans); letter-spacing: .08em; text-transform: uppercase; }
+.wr-facts { margin: 0; padding: 4px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--raised); }
+.wr-facts > div { display: grid; grid-template-columns: minmax(92px, 34%) 1fr; gap: 10px; padding: 11px 0; }
+.wr-facts > div + div { border-top: 1px solid var(--line); }
+.wr-facts dt { color: var(--muted); }
+.wr-facts dd { margin: 0; display: grid; justify-items: end; gap: 2px; min-width: 0; text-align: right; overflow-wrap: anywhere; }
+.wr-facts small { color: var(--muted); font-size: 12.5px; }
+.wr-link { padding: 0; min-height: 32px; border: 0; background: none; color: var(--text); font: 500 14px/1.3 var(--sans); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.wr-facts .wr-link { min-height: 28px; font-size: 13px; color: var(--muted); }
+.wr-later { margin: 0; }
+.wr-sim { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 14px; }
+.wr-sim .is-muted, .wr-sim.is-muted { margin: 0; color: var(--muted); }
+.wr-sim-result strong { display: block; font: 600 26px/1.2 var(--sans); letter-spacing: -.03em; }
+.wr-sim-result p { margin: 6px 0; }
+.wr-sim-result small { color: var(--muted); }
+.wr-sim .btn { justify-self: stretch; min-height: 44px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: center; }
+.wr-sends { margin: 0; display: grid; gap: 2px; font-size: 12.5px; }
+.wr-sends > div { display: grid; grid-template-columns: minmax(92px, 34%) 1fr; gap: 8px; }
+.wr-sends dt { color: var(--muted); }
+.wr-sends dd { margin: 0; overflow-wrap: anywhere; }
+.wr-preview { display: grid; gap: 6px; }
+.wr-preview .wr-link { justify-self: start; }
+.wr-preview p { margin: 0; }
+.wr-return.btn { width: 100%; min-height: 50px; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 16px; margin-top: 6px; }
+.wr-returned { color: var(--muted); }
+.wallet-review-page :focus-visible { outline: 2px solid var(--pink); outline-offset: 3px; }

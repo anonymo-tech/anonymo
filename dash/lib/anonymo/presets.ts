@@ -169,3 +169,73 @@ export function presetText(preset: Preset, ctx: PresetContext): string {
   const snippet = preset.snippet?.(ctx);
   return [`${preset.name} — ${preset.where}`, ...fields, ...(snippet ? ['', snippet.text] : [])].join('\n');
 }
+
+// ---- Update 05: coding tools over MCP ----------------------------------------------------------------------------
+// Cursor and Claude Code connect to the gateway's MCP server (POST /mcp, Streamable HTTP, JSON replies). Both read the
+// key from the ANONYMO_API_KEY environment variable when they start, so the saved config holds only a reference to
+// it: nothing here ever contains a key, and every snippet is safe to copy to another device or commit with a project.
+
+export type McpClientId = 'cursor' | 'claude-code';
+export type McpSetupStep = { label: string; language: 'shell' | 'json'; text: string; note?: string };
+export type McpClient = {
+  id: McpClientId;
+  name: string;
+  /** The MCP transport both tools use with this server. */
+  transport: 'Streamable HTTP';
+  where: string;
+  steps: (base: string) => McpSetupStep[];
+  /** How to start the tool so it sees the variable. */
+  start: string;
+};
+
+export const MCP_KEY_ENV = 'ANONYMO_API_KEY';
+export const mcpEndpoint = (base: string) => `${base.replace(/\/+$/, '')}/mcp`;
+const exportStep: McpSetupStep = {
+  label: 'Put your key in your shell',
+  language: 'shell',
+  text: `export ${MCP_KEY_ENV}=${KEY_PLACEHOLDER}`,
+  note: 'Replace the placeholder on your computer, or add the line to your shell profile. The key stays on that computer.',
+};
+
+export const MCP_CLIENTS: McpClient[] = [
+  {
+    id: 'cursor',
+    name: 'Cursor',
+    transport: 'Streamable HTTP',
+    where: '.cursor/mcp.json in your project',
+    steps: (base) => [
+      exportStep,
+      {
+        label: 'Add Anonymo to .cursor/mcp.json',
+        language: 'json',
+        // Cursor fills ${env:NAME} from its own environment when it loads the file.
+        text: JSON.stringify({ mcpServers: { anonymo: { url: mcpEndpoint(base), headers: { Authorization: `Bearer \${env:${MCP_KEY_ENV}}` } } } }, null, 2),
+        note: 'Cursor fills in ${env:ANONYMO_API_KEY} when it loads the file, so the file itself never holds the key.',
+      },
+    ],
+    start: 'Start Cursor from that shell (cursor .) so it sees the variable, then turn on anonymo under Settings → MCP.',
+  },
+  {
+    id: 'claude-code',
+    name: 'Claude Code',
+    transport: 'Streamable HTTP',
+    where: '.mcp.json in your project',
+    steps: (base) => [
+      exportStep,
+      {
+        label: 'Add Anonymo to Claude Code',
+        language: 'shell',
+        // Single quotes: the shell must not expand the variable here, or the key would be written into .mcp.json.
+        text: `claude mcp add --transport http --scope project anonymo ${mcpEndpoint(base)} --header 'Authorization: Bearer \${${MCP_KEY_ENV}}'`,
+        note: 'Keep the single quotes. Claude Code saves ${ANONYMO_API_KEY} as written and reads the key each time it starts.',
+      },
+    ],
+    start: 'Start claude in that project from the same shell and approve the anonymo server when it asks.',
+  },
+];
+
+/** The keyless setup a phone copies to finish on a computer: endpoint, every step, then how to start the tool. */
+export function mcpSetupText(client: McpClient, base: string): string {
+  const steps = client.steps(base).map((s, i) => `${i + 1}. ${s.label}\n${s.text}`);
+  return [`Anonymo in ${client.name} (MCP, ${client.transport})`, `Server: ${mcpEndpoint(base)}`, '', ...steps.flatMap((s) => [s, '']), `${client.steps(base).length + 1}. ${client.start}`].join('\n');
+}

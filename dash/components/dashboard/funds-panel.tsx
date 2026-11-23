@@ -6,11 +6,13 @@
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { setupHref, setupReturn } from '@/lib/anonymo/setup-return';
-import { ArrowDownLeft, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronDown, Clock3, KeyRound, RefreshCw, Wallet } from 'lucide-react';
+import { ArrowDownLeft, ArrowLeft, ArrowRight, ArrowUpRight, ChevronDown, Clock3, KeyRound, RefreshCw, Wallet } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
 import { CopyButton } from '../copy-button';
-import { CoinWalletPay, EvmWalletPay } from './wallet-pay';
+import { CoinWalletPay, EvmWalletPay, type TopupProps } from './wallet-pay';
+import { useTopupAttempt, useTopupPolling, type Topup } from './topup-tracker';
+import { heldReason, matchAttempt } from '@/lib/anonymo/topup-attempt';
 import { availableNymoRail } from '@/lib/anonymo/wallet-links';
 import { chainName, shortAddress } from '@/lib/anonymo/chains';
 import { describeError, newIdempotencyKey } from '@/lib/anonymo/client';
@@ -19,9 +21,6 @@ import type { Balance, BtcpayInvoice, DepositInstructions, DepositRow, Deposits 
 
 type Loaded = { balance: Balance | null; deposits: DepositData | null; withdrawals: Withdrawal[] | null; errors: string[] };
 type Target = ReturnType<typeof setupReturn>;
-type WalletCheck = { known: Set<string>; until: number };
-const checkPeriod = 8_000;
-const checkLimit = 120_000;
 
 export function FundsPanel() {
   const { ready, key } = useAnonymo();
@@ -44,9 +43,6 @@ function KeyFunds({ keySuffix, target }: { keySuffix: string; target: Target }) 
   const [data, setData] = useState<Loaded | null>(null);
   const [task, setTask] = useState<'Deposit' | 'Withdraw' | 'Activity'>('Deposit');
   const heading = useRef<HTMLHeadingElement>(null);
-  const [watch, setWatch] = useState<WalletCheck | null>(null);
-  const [confirmed, setConfirmed] = useState<DepositRow | null>(null);
-  const [timedOut, setTimedOut] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -76,44 +72,46 @@ function KeyFunds({ keySuffix, target }: { keySuffix: string; target: Target }) 
     };
   }, [refreshBalance]);
 
-  useEffect(() => {
-    if (!watch) return;
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible' && document.hasFocus()) refreshBalance();
-    }, checkPeriod);
-    const stop = window.setTimeout(() => {
-      setWatch(null);
-      setTimedOut(true);
-    }, Math.max(0, watch.until - Date.now()));
-    return () => {
-      window.clearInterval(timer);
-      window.clearTimeout(stop);
-    };
-  }, [watch, refreshBalance]);
-
-  useEffect(() => {
-    if (!watch) return;
-    const deposit = data?.deposits?.data.find(row => row.status === 'credited' && !watch.known.has(row.ref));
-    if (deposit) {
-      setConfirmed(deposit);
-      setWatch(null);
-    }
-  }, [watch, data]);
-
-  function watchWallet() {
-    if (!data?.deposits) return;
-    setConfirmed(null);
-    setTimedOut(false);
-    const creditedRefs = data.deposits.data.filter(row => row.status === 'credited').map(row => row.ref);
-    setWatch({ known: new Set(creditedRefs), until: Date.now() + checkLimit });
-  }
-
   const balance = data?.balance;
   const instructions = data?.deposits?.instructions;
+  const rows = data?.deposits?.data;
+  // 04: the open top-up on each rail, kept in this browser. While one waits for credit, keep reading the ledger.
+  const evmTopup = useTopupAttempt(instructions && !instructions.paused ? instructions.evm?.key_commit : null, 'evm');
+  const coinTopup = useTopupAttempt(coinOf(instructions)?.key_commit, 'coin');
+  // A held deposit can still be released, so it keeps being checked; a credited one is finished.
+  const waiting = [evmTopup.attempt, coinTopup.attempt].flatMap(a => {
+    if (!a) return [];
+    const m = rows ? matchAttempt(a, rows) : null;
+    return m?.kind === 'found' && m.row.status === 'credited' ? [] : [a.startedAt];
+  });
+  useTopupPolling(waiting.length ? Math.min(...waiting) : null, refreshBalance);
+  const stopTracking = useCallback(async (topup: Topup) => {
+    const attempt = topup.attempt;
+    if (!attempt) return true;
+    if (!attempt.walletOpenedAt && !attempt.hash) {
+      topup.clear(); // nothing ever reached a wallet
+      return true;
+    }
+    // Reconcile before letting go: a payment that already reached the ledger is shown, not forgotten.
+    try {
+      const latest = await client.deposits();
+      if (matchAttempt(attempt, latest.data).kind === 'found') {
+        refreshBalance();
+        return false;
+      }
+    } catch {
+      // the ledger could not be read; the person chose to stop tracking, and any credit still lands on the key
+    }
+    topup.clear();
+    return true;
+  }, [client, refreshBalance]);
   const hasCredit = !!balance && usdToMusd(balance.available_usd) > 0;
   const resume = target ? (!target.needsCredit || hasCredit) : hasCredit;
-  const activity = data?.deposits?.data;
+  const activity = rows;
   const fromChat = target?.href.split('?')[0] === '/dashboard/chat';
+  const back = fromChat && target ? { href: target.href, label: 'Back to chat' }
+    : target ? { href: target.href, label: `Return to ${target.label}` } : { href: '/dashboard/chat', label: 'Continue to chat' };
+  const tracking = !!evmTopup.attempt || !!coinTopup.attempt;
   const title = task === 'Deposit' ? 'Add funds' : task === 'Withdraw' ? 'Withdraw funds' : 'Account activity';
   function switchTask(next: typeof task) {
     setTask(next);
@@ -133,14 +131,12 @@ function KeyFunds({ keySuffix, target }: { keySuffix: string; target: Target }) 
       {balance && usdToMusd(balance.held_usd) > 0 && <p className="funds-credit-detail">{formatUsdAmount(balance.held_usd)} held for active requests.</p>}
       {balance && usdToMusd(balance.usage_only_usd ?? 0) > 0 && <p className="funds-credit-detail">{formatUsdAmount(balance.usage_only_usd)} in usage-only credit from {coinOf(instructions)?.token.symbol ?? 'coin payments'}.</p>}
       {data?.errors.map(message => <p className="notice notice-rose" role="alert" key={message}>{message}</p>)}
-      {(watch || timedOut || confirmed) && <p className="funds-confirmation" role="status">
-        {confirmed ? <><CheckCircle2 size={17} aria-hidden="true" /><span>{formatUsdAmount(confirmed.amount_usd)} credited from {shortAddress(confirmed.from)} on {chainName(confirmed.chain)}.</span></>
-        : watch ? 'Checking for a deposit… Return here after confirming in your wallet.' : 'Automatic checks finished. Refresh to check for a deposit.'}
-      </p>}
-      {resume && !fromChat && <Link className="funds-continue" href={target?.href ?? '/dashboard/chat'}>{target ? `Return to ${target.label}` : 'Continue to chat'} <ArrowRight size={15} aria-hidden="true" /></Link>}
+      {resume && !fromChat && !tracking && <Link className="funds-continue" href={target?.href ?? '/dashboard/chat'}>{target ? `Return to ${target.label}` : 'Continue to chat'} <ArrowRight size={15} aria-hidden="true" /></Link>}
       <div className="funds-body">
         {!data && <p className="muted" role="status">Loading funds…</p>}
-        {instructions && <div hidden={task !== 'Deposit'}><Deposits instructions={instructions} onCredited={refreshBalance} onWalletOpen={watchWallet} /></div>}
+        {instructions && rows && <div hidden={task !== 'Deposit'}>
+          <Deposits instructions={instructions} onCredited={refreshBalance} evmTopup={evmTopup} coinTopup={coinTopup} rows={rows} back={back} stopTracking={stopTracking} />
+        </div>}
         {balance && <div hidden={task !== 'Withdraw'}><Withdrawals balance={balance} onDone={refreshBalance} /></div>}
         {data && task === 'Activity' && <div className="funds-history">
           {activity && activity.length > 0 && <DepositList rows={activity} />}
@@ -167,7 +163,12 @@ const railLabel = (r: Rail, i: DepositInstructions) => {
   return RAIL_LABEL[r];
 };
 
-function Deposits({ instructions, onCredited, onWalletOpen }: { instructions: DepositInstructions; onCredited: () => void; onWalletOpen: () => void }) {
+function Deposits({ instructions, onCredited, evmTopup, coinTopup, rows, back, stopTracking }: Omit<TopupProps, 'topup'> & {
+  instructions: DepositInstructions;
+  onCredited: () => void;
+  evmTopup: Topup;
+  coinTopup: Topup;
+}) {
   const { demo, mock, key } = useAnonymo();
   const rails: Rail[] = [];
   if (!instructions.paused) {
@@ -177,12 +178,15 @@ function Deposits({ instructions, onCredited, onWalletOpen }: { instructions: De
     if (instructions.btc) rails.push('btc');
     if (instructions.coin || instructions.evm?.chains.some(c => c.chain === 'rhc')) rails.push('coin');
   }
-  const [paymentLocked, setPaymentLocked] = useState(false);
+  // An open top-up keeps its currency until it is finished or cancelled.
+  const paymentLocked = !!evmTopup.attempt || !!coinTopup.attempt;
   const [rail, setRail] = useState<Rail | null>(null);
   const [amount, setAmount] = useState('10');
-  const active = rail && rails.includes(rail) ? rail : (rails[0] ?? null);
+  const open: Rail | null = coinTopup.attempt && rails.includes('coin') ? 'coin' : evmTopup.attempt && rails.includes('evm') ? 'evm' : null;
+  const active = open ?? (rail && rails.includes(rail) ? rail : (rails[0] ?? null));
+  const tracked = active === 'coin' ? coinTopup : active === 'evm' ? evmTopup : null;
+  const shared = { rows, back, stopTracking };
   const [note, setNote] = useState('');
-  const credited = useCallback(() => onCredited(), [onCredited]);
 
   const coin = coinOf(instructions);
   const primaryCurrencies = rails.includes('evm') && rails.includes('coin');
@@ -213,9 +217,9 @@ function Deposits({ instructions, onCredited, onWalletOpen }: { instructions: De
           {active && active !== 'evm' && (active !== 'coin' || methodPicker) && <div className="funds-alt-method">
             <strong>{RAIL_LABEL[active]}</strong>{methodPicker}
           </div>}
-          {active === 'evm' && instructions.evm && <EvmWalletPay setPaymentLocked={setPaymentLocked} amount={amount} setAmount={setAmount} evm={instructions.evm} methodPicker={methodPicker} onCredited={credited} onWalletOpen={onWalletOpen} />}
+          {active === 'evm' && instructions.evm && <EvmWalletPay amount={amount} setAmount={setAmount} evm={instructions.evm} methodPicker={methodPicker} topup={evmTopup} {...shared} />}
           {active === 'coin' && (availableNymoRail(coin) && coin.price_usd
-            ? <CoinWalletPay amount={amount} setAmount={setAmount} coin={coin} onWalletOpen={onWalletOpen} />
+            ? <CoinWalletPay amount={amount} setAmount={setAmount} coin={coin} topup={coinTopup} {...shared} />
             : <div className="panel-stack">
                 <p role="status">NYMO payments are currently unavailable. A verified dollar price is needed to calculate your credit.</p>
                 {rails.includes('evm') && <button type="button" className="btn btn-primary" onClick={() => setRail('evm')}>Pay with {railLabel('evm', instructions)}</button>}
@@ -253,13 +257,30 @@ function Deposits({ instructions, onCredited, onWalletOpen }: { instructions: De
               </div>
             </div>
           )}
-          {active === 'btc' && <BtcpayForm onCheckout={onWalletOpen} />}
+          {active === 'btc' && <BtcpayForm />}
 
         </>
       )}
       {demo && mock && key && (
         <div className="notice notice-amber row">
           <span style={{ flex: 1, minWidth: 200 }}>Demo: simulate a confirmed payment to this key.</span>
+          {tracked?.attempt && (() => {
+            const a = tracked.attempt;
+            // Stands in for the wallet sending this top-up and the watcher confirming it.
+            const send = async (held: boolean) => {
+              const hash = a.hash ?? (`0x${Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, '0')).join('')}` as const);
+              if (!a.hash && a.rail === 'coin') tracked.update({ hash, submittedAt: Date.now() });
+              const ref = a.rail === 'coin'
+                ? await mock.simulateCoinPayment(key, a.musd, { hash })
+                : await mock.simulateDeposit(key, a.chain, a.token, a.musd, { hash: a.hash ?? undefined, held: held ? 'screening_unavailable' : undefined });
+              setNote(held ? 'A test payment was received and held for review.' : `Test payment of ${a.amount} ${a.token} confirmed (${ref.slice(0, 14)}…).`);
+              onCredited();
+            };
+            return <>
+              <button type="button" className="btn btn-small" onClick={() => void send(false)}>Confirm test payment</button>
+              {a.rail === 'evm' && <button type="button" className="btn btn-small" onClick={() => void send(true)}>Hold test payment</button>}
+            </>;
+          })()}
           <button
             type="button"
             className="btn btn-small"
@@ -289,7 +310,7 @@ function Deposits({ instructions, onCredited, onWalletOpen }: { instructions: De
   );
 }
 
-function BtcpayForm({ onCheckout }: { onCheckout: () => void }) {
+function BtcpayForm() {
   const { client } = useAnonymo();
   const [amount, setAmount] = useState('10');
   const [refund, setRefund] = useState('');
@@ -333,7 +354,7 @@ function BtcpayForm({ onCheckout }: { onCheckout: () => void }) {
             <span className="mono">{shortAddress(invoice.refund.address)}</span>
           </span>
           {invoice.checkout_link ? (
-            <a className="btn btn-primary" href={invoice.checkout_link} onClick={onCheckout} target="_blank" rel="noreferrer noopener">
+            <a className="btn btn-primary" href={invoice.checkout_link} target="_blank" rel="noreferrer noopener">
               Open the BTCPay checkout
             </a>
           ) : (
@@ -361,7 +382,7 @@ function DepositList({ rows }: { rows: DepositRow[] }) {
               <strong>{chainName(r.chain)}</strong> {r.chain === 'coin' ? '' : r.token}{' '}
               {r.chain === 'coin' && <span className="chip">usage only, can&apos;t be withdrawn</span>}
               {r.from && <small className="funds-from">From {shortAddress(r.from)}</small>}
-              {r.status === 'held' && <span className="chip chip-amber">held{r.reason === 'over_cap' ? ' · over the per-payment cap' : ''}</span>}
+              {r.status === 'held' && <span className="chip chip-amber" title={heldReason(r.reason)}>held{r.reason === 'over_cap' ? ' · over the per-payment cap' : ''}</span>}
             </span>
             <span className="faint">{new Date(r.created_at).toLocaleString()}</span>
             <span className="mono">{formatUsdAmount(r.amount_usd, { sign: true })}</span>

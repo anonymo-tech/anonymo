@@ -5,6 +5,7 @@
 // link cannot send a payment to another contract. No key is stored or needed here, so the credit is shown on the
 // dashboard, not on this page.
 
+import Link from 'next/link';
 import { ArrowUpRight, Copy, Wallet } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useAnonymo } from './anonymo-provider';
@@ -17,6 +18,32 @@ import { depositStablecoin, describeWalletError, formatUnits, injectedProvider, 
 import { nymoCreditText, readNymoQuote, sameNymoQuote } from '@/lib/anonymo/nymo-quote';
 import { nymoQuoteError, useNymoQuote } from './use-nymo-quote';
 import { availableNymoRail, isMobileBrowser, parsePayLink, payUrl, walletAppLinks, type PayLink } from '@/lib/anonymo/wallet-links';
+import { readAttempt, writeAttempt, type TopupRail } from '@/lib/anonymo/topup-attempt';
+import { CopyButton } from './copy-button';
+
+/**
+ * In a wallet app whose browser also holds the dashboard (an in-wallet browser), the top-up that opened /pay is in
+ * this browser's storage: give it the transaction hash so Funds matches the exact deposit. Elsewhere there is none.
+ */
+function recordHash(keyCommit: string, rail: TopupRail, hash: Hex): boolean {
+  if (typeof localStorage === 'undefined') return false;
+  const attempt = readAttempt(localStorage, keyCommit, rail);
+  if (!attempt) return false;
+  if (!attempt.hash) writeAttempt(localStorage, { ...attempt, hash, submittedAt: Date.now() });
+  return true;
+}
+
+/** After a payment: the hash to paste into Funds in another browser, or the way back to Funds in this one. */
+function PaidNext({ hash, linked }: { hash: Hex; linked: boolean }) {
+  return (
+    <div className="wallet-paid-next">
+      {linked
+        ? <Link className="btn btn-primary" href="/dashboard/funds">Back to Funds</Link>
+        : <p className="faint">If Funds is open in another browser, it finds this payment on its own. You can also paste the transaction hash there.</p>}
+      <CopyButton text={hash} label="Copy transaction hash" />
+    </div>
+  );
+}
 
 const STEP_TEXT: Record<PayStep, string> = {
   connecting: 'Connect your wallet…',
@@ -117,6 +144,7 @@ export function PayInWallet() {
   const { step, result, hash, setError } = payment;
   const access = useWalletAccess();
   const hasWallet = access === 'injected';
+  const [linked, setLinked] = useState(false);
 
   useEffect(() => {
     const parsed = parsePayLink(window.location.search);
@@ -167,9 +195,11 @@ export function PayInWallet() {
     if (!musd) return setError('Enter a positive amount in USD.');
     const provider = injectedProvider();
     if (!provider || !network || !entry || !token || !link) return setError('Open this page in your wallet app to pay.');
+    const keyCommit = link.keyCommit;
     void payment.submit((callbacks) => depositStablecoin({
-      provider, network, router: entry.router, token, keyCommit: link.keyCommit,
+      provider, network, router: entry.router, token, keyCommit,
       amount: stableUnits(musd, token.decimals), ...callbacks,
+      onBroadcast: (value) => { callbacks.onBroadcast(value); setLinked(recordHash(keyCommit, 'evm', value)); },
     }));
   }
 
@@ -177,10 +207,13 @@ export function PayInWallet() {
     <div className="panel panel-stack">
       <p className="wallet-network">{token.symbol} on {network.name}</p>
       {result ? (
-        <output className="notice notice-signal" aria-live="polite">
-          Paid. Transaction <span className="mono">{shortAddress(result.hash, 8)}</span> is mined. Return to the original browser tab to see your credit after{' '}
-          {entry.confirmations} confirmations.
-        </output>
+        <>
+          <output className="notice notice-signal" aria-live="polite">
+            Paid. Transaction <span className="mono">{shortAddress(result.hash, 8)}</span> is mined. Your credit appears in Funds after{' '}
+            {entry.confirmations} confirmations.
+          </output>
+          <PaidNext hash={result.hash} linked={linked} />
+        </>
       ) : (
         <form
           className="row"
@@ -230,6 +263,7 @@ function CoinPayInWallet({ client, coin, link, onRefresh }: {
   const understood = !!consent && !!quote && sameNymoQuote(consent, quote);
   const units = quote ? formatUnits(BigInt(quote.amount_raw), coin.token.decimals, coin.token.decimals) : '';
   const [checking, setChecking] = useState(false);
+  const [linked, setLinked] = useState(false);
 
   function pay() {
     const provider = injectedProvider();
@@ -271,6 +305,7 @@ function CoinPayInWallet({ client, coin, link, onRefresh }: {
       return payWithCoin({
         provider, network: evmNetwork('rhc', { chain_id: fresh.chain_id }), coinPay: fresh.coin_pay,
         token: fresh.token, keyCommit: link.keyCommit, amount: BigInt(fresh.amount_raw), beforeBurn: async () => { await verify(true); }, ...callbacks,
+        onBroadcast: (value) => { callbacks.onBroadcast(value); setLinked(recordHash(link.keyCommit, 'coin', value)); },
       });
     });
   }
@@ -279,9 +314,12 @@ function CoinPayInWallet({ client, coin, link, onRefresh }: {
     <div className="panel panel-stack">
       <p className="wallet-network">NYMO on Robinhood Chain</p>
       {result ? (
-        <output className="notice notice-signal" aria-live="polite">
-          Transaction <span className="mono">{shortAddress(result.hash, 8)}</span> is mined. Return to the original Funds tab to see your usage credit after {coin.confirmations} confirmations.
-        </output>
+        <>
+          <output className="notice notice-signal" aria-live="polite">
+            Transaction <span className="mono">{shortAddress(result.hash, 8)}</span> is mined. Your usage credit appears in Funds after {coin.confirmations} confirmations.
+          </output>
+          <PaidNext hash={result.hash} linked={linked} />
+        </>
       ) : (
         <>
           <p>Paying burns NYMO permanently. Your key receives usage-only credit at the confirmed market price. You can spend that credit on requests and cannot withdraw it.</p>
@@ -325,7 +363,10 @@ function CoinPayInWallet({ client, coin, link, onRefresh }: {
   );
 }
 
-/** The app opens its own browser. The original dashboard keeps the key and shows the credited balance. */
+/**
+ * The app opens its own browser. The original dashboard keeps the key and shows the credited balance. Everything here
+ * is visible without unfolding anything: the wallet apps on a phone, and on every device a payment link to copy.
+ */
 export function OpenInWalletApp({ url, showApps = true, onWalletOpen }: {
   url: string;
   showApps?: boolean;
@@ -333,6 +374,7 @@ export function OpenInWalletApp({ url, showApps = true, onWalletOpen }: {
 }) {
   const [copied, setCopied] = useState('');
   const [copyFailed, setCopyFailed] = useState(false);
+  const [opened, setOpened] = useState<{ name: string; href: string } | null>(null);
   const linkInput = useRef<HTMLInputElement>(null);
   async function copyLink() {
     try {
@@ -342,35 +384,48 @@ export function OpenInWalletApp({ url, showApps = true, onWalletOpen }: {
       onWalletOpen?.();
     } catch {
       setCopyFailed(true);
-      linkInput.current?.focus();
-      linkInput.current?.select();
+      requestAnimationFrame(() => { linkInput.current?.focus(); linkInput.current?.select(); });
     }
   }
 
   if (!url) return <p className="muted" role="status">Enter a positive USD amount to open a payment link.</p>;
+  const apps = walletAppLinks(url);
   return (
     <div className="wallet-handoff">
-      {showApps && (
+      {showApps ? (
         <>
           <h3>Open in your wallet</h3>
           <div className="wallet-app-buttons">
-            {walletAppLinks(url).map((app) => (
-              <a key={app.name} href={app.href} target="_blank" rel="noopener noreferrer" onClick={onWalletOpen}>
+            {apps.map((app) => (
+              <a key={app.name} href={app.href} target="_blank" rel="noopener noreferrer" onClick={() => { setOpened(app); onWalletOpen?.(); }}>
                 {app.name}<ArrowUpRight size={16} aria-hidden="true" />
               </a>
             ))}
           </div>
-          <p className="faint">Confirm the payment in your wallet, then return to the original Funds tab to check your credit.</p>
+          {opened && (
+            <p className="wallet-retry" role="status">
+              Wallet didn’t open?{' '}
+              <a href={opened.href} target="_blank" rel="noopener noreferrer" onClick={onWalletOpen}>Try {opened.name} again</a>, or copy the link below.
+            </p>
+          )}
+        </>
+      ) : (
+        <>
+          <h3>Pay from the wallet on your phone</h3>
+          <p className="faint">Copy this payment link and open it in your wallet app’s browser. Your key never leaves this tab.</p>
         </>
       )}
-      <details className="wallet-payment-details">
-        <summary>{showApps ? 'Use another wallet' : 'Pay from a wallet on your phone'}</summary>
-        <p>Copy this link into your wallet’s browser to review the payment. After confirming, return to Funds in the original browser.</p>
-        <input ref={linkInput} className="input" type="url" aria-label="Payment link" readOnly value={url} onFocus={(e) => e.currentTarget.select()} />
+      <div className="wallet-copy-link">
         <button type="button" className="btn" onClick={() => void copyLink()}><Copy size={15} aria-hidden="true" />Copy payment link</button>
-        {copied === url && <p role="status">Payment link copied.</p>}
-        {copyFailed && <p role="status">Select the payment link and use your browser’s Copy action.</p>}
-      </details>
+        <span className="faint">{showApps ? 'For another wallet.' : 'Then return here.'}</span>
+      </div>
+      {copied === url && <p role="status">Payment link copied. Open it in your wallet, confirm, then come back here.</p>}
+      {copyFailed && (
+        <>
+          <input ref={linkInput} className="input" type="url" aria-label="Payment link" readOnly value={url} onFocus={(e) => e.currentTarget.select()} />
+          <p role="status">Select the payment link and use your browser’s Copy action.</p>
+        </>
+      )}
     </div>
   );
 }

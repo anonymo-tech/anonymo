@@ -22,10 +22,20 @@ export function availableNymoRail<T extends PublicCoinInstructions>(coin: T | nu
     coin.confirmations >= 0 && !!parseUsd(coin.max_usd_per_payment);
 }
 
-/** A phone or tablet browser (iPadOS reports itself as a Mac with touch). */
-export function isMobileBrowser(nav: { userAgent: string; maxTouchPoints?: number } | undefined = typeof navigator === 'undefined' ? undefined : navigator): boolean {
+const coarsePointer = () => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+
+/**
+ * A phone or tablet browser (iPadOS reports itself as a Mac with touch). A touch-only screen counts too: Android's
+ * "Desktop site" mode and some in-app browsers drop "Mobile" from the user agent, and treating them as a desktop left
+ * their wallet buttons folded away, so a tap on Continue looked like it did nothing.
+ */
+export function isMobileBrowser(
+  nav: { userAgent: string; maxTouchPoints?: number } | undefined = typeof navigator === 'undefined' ? undefined : navigator,
+  coarse: boolean = coarsePointer(),
+): boolean {
   if (!nav) return false;
-  return /Android|iPhone|iPad|iPod|Mobile/i.test(nav.userAgent) || (/Macintosh/.test(nav.userAgent) && (nav.maxTouchPoints ?? 0) > 1);
+  const touch = nav.maxTouchPoints ?? 0;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(nav.userAgent) || (/Macintosh/.test(nav.userAgent) && touch > 1) || (coarse && touch > 0);
 }
 
 export function payUrl(origin: string, link: PayLink): string {

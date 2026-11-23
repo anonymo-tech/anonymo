@@ -215,6 +215,8 @@ export type ChatMessage = { role: ChatRole; content: string; name?: string };
 /** Update "photos": a user message can carry images as OpenAI `image_url` parts with data URLs (lib/anonymo/photos.ts). */
 export type ChatPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
 export type ChatPhotoMessage = { role: ChatRole; content: string | ChatPart[]; name?: string };
+export type ChatContentPart = ChatPart;
+export type ChatPartsMessage = { role: 'user'; content: ChatPart[] };
 
 export type ChatRequest = {
   dashboard_chat?: true;

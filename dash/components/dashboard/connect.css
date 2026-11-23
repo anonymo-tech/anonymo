@@ -1,0 +1,70 @@
+/* Update 05 "Pair my coding tool" (/dashboard/connect). Built on the tokens and classes in app/globals.css (panel, btn,
+   chip, notice, select, textarea, kv, snippet). Phones first: one column, a full-width primary action. */
+
+.cn { max-width: 720px; }
+.cn-eyebrow, .panel h2.cn-eyebrow { margin: 0; font: 600 12px/1.4 var(--sans); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.cn-label { gap: 8px; }
+.cn-select { min-height: 52px; font-size: 17px; }
+.cn-small { margin: 0; font-size: 13.5px; }
+.cn-wrap { overflow-wrap: anywhere; }
+.cn code { font-family: var(--sans); }
+
+/* ---- the link: tool, dotted line, link, dotted line, Anonymo ------------------------------------------------------ */
+.cn-link { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 4px 0; color: var(--muted); }
+.cn-node { display: grid; place-items: center; width: 68px; height: 68px; border: 1px solid var(--line-strong); border-radius: 16px; background: var(--bg); color: var(--text); }
+.cn-node-brand .mask-glyph { display: block; }
+.cn-dots { flex: 0 1 44px; height: 0; border-top: 2px dotted var(--line-strong); }
+.cn-linked { color: var(--ok); }
+
+/* ---- the two steps ------------------------------------------------------------------------------------------------ */
+.cn-steps { position: relative; display: grid; gap: 18px; margin: 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: #1f0c21; list-style: none; }
+.cn-steps li { display: grid; grid-template-columns: 28px 1fr; gap: 12px; align-items: start; }
+.cn-steps li div { display: grid; gap: 2px; min-width: 0; }
+.cn-steps strong { font-size: 17px; font-weight: 600; }
+.cn-steps .muted { font-size: 14px; }
+.cn-step-mark { display: grid; place-items: center; width: 28px; height: 28px; border: 1.5px solid var(--amber); border-radius: 50%; color: var(--amber); font: 600 13px/1 var(--sans); }
+.cn-steps li[data-done='true'] .cn-step-mark { border-color: var(--ok); color: var(--ok); }
+
+/* ---- setup -------------------------------------------------------------------------------------------------------- */
+.cn-ready { gap: 4px; }
+.cn-phone { display: grid; gap: 10px; }
+.cn-phone p { margin: 0; }
+.cn-phone .btn { justify-self: stretch; justify-content: center; min-height: 44px; }
+.cn-setup-steps { display: grid; gap: 16px; margin: 0; padding: 0; list-style: none; counter-reset: cn; }
+.cn-setup-steps li { display: grid; gap: 8px; min-width: 0; counter-increment: cn; }
+.cn-step-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-weight: 500; }
+.cn-step-head > span::before { content: counter(cn) '. '; color: var(--faint); }
+pre.cn-snippet { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; }
+
+/* ---- the test ----------------------------------------------------------------------------------------------------- */
+.cn-test { gap: 12px; }
+.cn-term { display: grid; gap: 6px; padding: 16px; border-radius: 12px; background: #120513; font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.cn-term code { font-family: inherit; overflow-wrap: anywhere; }
+.cn-term-cmd { color: var(--muted); }
+.cn-term-ask { color: var(--text); }
+.cn-term-state { color: var(--faint); }
+.cn-run { justify-content: center; width: 100%; min-height: 52px; font-size: 17px; }
+.cn-receipt { display: grid; gap: 10px; }
+.cn-receipt .btn { justify-self: start; }
+.cn-result-wrap { display: grid; gap: 12px; }
+.cn-result-wrap:focus { outline: none; }
+.cn-result-wrap:empty { display: none; }
+.cn-result { display: grid; gap: 10px; padding: 14px 16px; border: 1px solid var(--line-strong); border-radius: var(--radius); }
+.cn-result-ok { border-color: #4ade8055; background: var(--ok-soft); }
+.cn-result-warn { border-color: #f6b84b66; background: var(--amber-soft); }
+.cn-result-title { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 16px; font-weight: 600; }
+.cn-result-ok .cn-result-title { color: var(--ok); }
+.cn-result-warn .cn-result-title { color: var(--amber); }
+.cn-kv { grid-template-columns: minmax(96px, 140px) 1fr; font-size: 13.5px; }
+.cn-kv dd { margin: 0; padding: 9px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.cn-reasons { display: grid; gap: 4px; margin: 0; padding-left: 18px; font-size: 14px; }
+
+/* ---- recovery ----------------------------------------------------------------------------------------------------- */
+.cn-recovery { display: grid; gap: 8px; }
+.cn-recovery h2 { color: var(--rose); font-size: 16px; }
+.cn-recovery p { margin: 0; }
+
+@media (max-width: 520px) {
+  .cn-node { width: 60px; height: 60px; }
+  .panel.cn-pair, .panel.cn-setup, .panel.cn-test { padding: 16px; }
+}

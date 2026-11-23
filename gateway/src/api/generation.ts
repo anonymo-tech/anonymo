@@ -5,10 +5,22 @@ import type { Ctx } from "../context.ts";
 import { agentSessions, anchors, facilitatorSettlements, generations } from "../db/schema.ts";
 import { fail } from "../lib/errors.ts";
 import { picoToUsd } from "../lib/money.ts";
+import { sha256 } from "../lib/util.ts";
 import { MerkleTree, receiptLeaf } from "../receipts/merkle.ts";
 import { canonicalBytes, inspectCose, verifyCoseWithRawKey, verifyWithRawKey } from "../receipts/signer.ts";
 import { chainOf, receiptLeafV2 } from "../receipts/v2.ts";
 import { bearer, resolveKey, walletAuth } from "./auth.ts";
+
+/**
+ * The X-Title the MCP server's in-process chat call carries (api/mcp.ts). Chat's app attribution hashes the
+ * HTTP-Referer and X-Title of a call into `generations.app_id` (sha256(referer + "|" + title), first 24 hex chars), so a
+ * generation whose app id is this one came in through POST /mcp. A key's owner could send the same header to
+ * /api/v1/chat/completions themselves; the generation lookup is owner-only, so that can only relabel their own calls.
+ */
+export const MCP_APP_TITLE = "Anonymo MCP";
+export const MCP_APP_ID = sha256(`|${MCP_APP_TITLE}`).slice(0, 24);
+/** Where a generation came in, as far as its stored app attribution says: "mcp" for the MCP chat tool, else null. */
+export const generationOrigin = (appId: string | null) => (appId === MCP_APP_ID ? ("mcp" as const) : null);
 
 /** Rebuild an anchor's tree from the stored leaf positions (v1 leaves, and v2 leaves where a receipt has one). */
 async function anchorTree(ctx: Ctx, anchorIndex: number) {
@@ -119,6 +131,10 @@ export function generationRoutes(app: Hono, ctx: Ctx) {
         model: g.modelId,
         provider_name: g.providerId,
         created_at: g.ts.toISOString(),
+        // "mcp" when the call came through the MCP chat tool (POST /mcp), else null. See MCP_APP_TITLE.
+        origin: generationOrigin(g.appId),
+        // The router's clock when it answered, so a client can compare created_at with a moment on its own clock.
+        checked_at: new Date().toISOString(),
         generation_time: g.generationTimeMs,
         latency: g.latencyMs,
         native_tokens_prompt: g.tokensIn,

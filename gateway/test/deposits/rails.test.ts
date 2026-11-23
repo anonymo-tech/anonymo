@@ -75,6 +75,18 @@ describe("deposit sink", () => {
     expect(await balanceOfKey(k.keyHash)).toBe(0n);
   });
 
+  test("GET /deposits names why a deposit is held, and gives credited rows no reason", async () => {
+    const k = await m.newKey();
+    await m.deposit(k.keyHash, "50", SANCTIONED_EVM);
+    await m.deposit(k.keyHash, "3", "0x00000000000000000000000000000000000000a2");
+    const body = (await (await m.req("/deposits", { headers: k.auth })).json()) as { data: { status: string; reason: string | null; amount_usd: string }[] };
+    const held = body.data.find((r) => r.status === "held");
+    const credited = body.data.find((r) => r.status === "credited");
+    expect(held?.reason).toBe("sanctioned");
+    expect(credited?.reason).toBeNull();
+    expect(body.data.length).toBe(2);
+  });
+
   test("screening that cannot run holds the deposit; a later clean re-screen credits it once", async () => {
     const k = await m.newKey();
     const down = createDepositSink(m.h.ctx.db, { isBlocked: async () => { throw new Error("list down"); } });

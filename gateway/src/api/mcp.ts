@@ -7,7 +7,7 @@ import { ApiError } from "../lib/errors.ts";
 import { picoToUsdString, usdToPico } from "../lib/money.ts";
 import { log } from "../lib/util.ts";
 import { bearer } from "./auth.ts";
-import { verifyReceipt } from "./generation.ts";
+import { MCP_APP_TITLE, verifyReceipt } from "./generation.ts";
 import { labelForReceipt } from "../privacy/resolve.ts";
 
 // Anonymo MCP: a remote Model Context Protocol server (Streamable HTTP, stateless, JSON replies) so an
@@ -225,7 +225,9 @@ export function mcpRoutes(app: Hono, ctx: Ctx) {
     const started = Date.now();
     const out = (await internal("/api/v1/chat/completions", {
       method: "POST",
-      headers: { authorization: c.req.header("authorization")!, "content-type": "application/json" },
+      // X-Title marks the call as MCP-originated: chat's app attribution records it, and /api/v1/generation reports
+      // origin "mcp" to the key's owner. No client header is forwarded, so a client cannot change or drop the mark.
+      headers: { authorization: c.req.header("authorization")!, "content-type": "application/json", "x-title": MCP_APP_TITLE },
       body: JSON.stringify({
         model: a.model,
         messages: a.messages ?? [{ role: "user", content: a.prompt }],

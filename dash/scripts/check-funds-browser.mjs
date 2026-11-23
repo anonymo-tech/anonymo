@@ -84,7 +84,7 @@ test('a phone user sets up Funds, opens a private payment link and sees confirme
     assert.equal(await main.getByRole('link', { name: 'MetaMask', exact: true }).count(), 0);
     await amount.fill('1.000125');
     await main.getByRole('button', { name: 'Continue to wallet' }).tap();
-    await main.getByRole('button', { name: 'Edit amount' }).tap();
+    await main.getByRole('button', { name: 'Cancel top-up' }).tap();
     assert.equal(await amount.inputValue(), '1.000125');
     await main.getByRole('button', { name: 'Continue to wallet' }).tap();
 
@@ -129,16 +129,19 @@ test('a phone user sets up Funds, opens a private payment link and sees confirme
     await walletContext.close();
     await page.bringToFront();
 
-    // Opening a wallet is not a deposit. Only the mock gateway's confirmed deposit should change the balance.
-    await main.getByRole('status').filter({ hasText: /Checking for a deposit/ }).waitFor();
+    // Opening a wallet is not a deposit. Only the mock gateway's confirmed deposit for this top-up finishes it.
+    const status = main.getByRole('region', { name: 'Payment status' });
+    await status.getByRole('listitem').filter({ hasText: 'Waiting for your approval' }).waitFor();
     await expectBalance(main, '$0.00');
-    await main.getByRole('button', { name: 'Send test USDG' }).tap();
-    await expectBalance(main, '$10.00');
-    await main.getByRole('status').filter({ hasText: /\$10\.00 credited from .*Robinhood Chain/ }).waitFor();
+    await main.getByRole('button', { name: 'Confirm test payment' }).tap();
+    await status.getByRole('listitem').filter({ hasText: /\$1\.00\d* added to your balance/ }).waitFor();
+    await expectBalance(main, '$1.00');
+    await main.getByRole('link', { name: 'Continue to chat' }).waitFor();
+    await main.getByRole('button', { name: 'Done' }).tap();
     await main.getByRole('button', { name: 'Account activity', exact: true }).tap();
     await main.getByRole('heading', { name: 'Recent deposits' }).waitFor();
     const credited = main.getByRole('listitem').filter({ hasText: 'USDG' });
-    assert.match(await credited.innerText(), /10\.00/);
+    assert.match(await credited.innerText(), /1\.00/);
     await main.getByRole('button', { name: 'Add funds', exact: true }).tap();
     await main.getByRole('link', { name: /Continue to chat/ }).waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));

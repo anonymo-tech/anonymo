@@ -4,6 +4,7 @@
 
 import { isDemoMode } from './config.ts';
 import { deviceStore } from './device-store.ts';
+import { clearAllAttempts } from './topup-attempt.ts';
 
 const KEY_RE = /^anm_(live|test)_[A-Za-z0-9_-]{16,128}$/;
 
@@ -42,6 +43,7 @@ export function forgetKey(demo: boolean) {
   try {
     localStorage.removeItem(slot(demo));
     sessionStorage.removeItem(slot(demo));
+    clearAllAttempts(localStorage); // an open top-up belongs to the key that started it
   } catch {
     // nothing was stored
   }

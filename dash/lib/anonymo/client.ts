@@ -63,6 +63,7 @@ import type {
   VentureSummary,
 } from './ventures.ts';
 import { usdToMusd } from './money.ts';
+import type { GenerationView } from './connect.ts';
 
 /** Every path the dashboard calls, in one place. */
 export const API_PATHS = {
@@ -109,6 +110,8 @@ export const API_PATHS = {
   ventureRunMode: (id: string) => `/v1/ventures/${encodeURIComponent(id)}/run-mode`,
   ventureRecipe: (id: string) => `/v1/ventures/${encodeURIComponent(id)}/recipe`,
   recipes: '/v1/recipes',
+  // Update 05: the owner-only generation lookup (gateway/src/api/generation.ts). 404 unless this key made the call.
+  generation: (id: string) => `/api/v1/generation?id=${encodeURIComponent(id)}`,
 } as const;
 
 /** `anonymo-council` answers as one JSON body; the gateway refuses `stream: true` for it. */
@@ -215,6 +218,8 @@ export function createAnonymoClient(options: ClientOptions) {
     models: (signal?: AbortSignal) => json<ModelList>(API_PATHS.models, { auth: false, cache: 'no-store', signal }),
     receipt: (id: string) => data<ReceiptView>(API_PATHS.receipt(id), { auth: false }),
     receiptProof: (id: string) => data<ProofView>(API_PATHS.receiptProof(id), { auth: false }),
+    /** One of this key's own generations, with `origin: "mcp"` when it came through the MCP chat tool (update 05). */
+    generation: (id: string, signal?: AbortSignal) => data<GenerationView>(API_PATHS.generation(id), { signal, cache: 'no-store' }),
     manifest: () => json<Manifest>(API_PATHS.manifest, { auth: false, headers: { accept: 'application/json' } }),
     leaderboard: () => json<Leaderboard>(API_PATHS.leaderboard, { auth: false, headers: { accept: 'application/json' } }),
 

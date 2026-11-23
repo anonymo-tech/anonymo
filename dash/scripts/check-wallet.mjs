@@ -310,3 +310,81 @@ void test('NYMO wallet signs the quoted burn for the configured CoinPay, and rej
     assert.deepEqual(call.args, [amount, keyCommit]);
   }
 });
+
+// ---- 04 Track my top-up: the open attempt and what may finish it ---------------------------------------------------
+import { matchAttempt, newAttempt, parseAttempt, refHasTx, topupView, heldReason, pollDelay, attemptSlot, clearAllAttempts, WALLET_DELAY_MS } from '../lib/anonymo/topup-attempt.ts';
+
+const COMMIT_A = '0x' + 'a1'.repeat(32);
+const T0 = Date.parse('2026-11-22T12:00:00Z');
+const hex64 = fc.stringMatching(/^[0-9a-f]{64}$/).map(h => '0x' + h);
+const row = (o) => ({ ref: `rhc:0x${'e'.repeat(64)}:0`, chain: 'rhc', token: 'USDG', amount_usd: '25', from: '0x' + 'cd'.repeat(20), status: 'credited', created_at: new Date(T0 + 60_000).toISOString(), ...o });
+const attempt = (o = {}) => ({ ...newAttempt({ keyCommit: COMMIT_A, rail: 'evm', chain: 'rhc', token: 'USDG', amount: '25', musd: 25_000_000, rows: [], now: T0, id: 'fixed' }), ...o });
+
+void test('04 top-up: only the matching row finishes it; earlier, other-chain, other-token and other-amount rows never do', () => {
+  assert.equal(matchAttempt(attempt(), []).kind, 'none');
+  const exact = row({ ref: 'rhc:0x01:0' });
+  assert.deepEqual(matchAttempt(attempt(), [exact]), { kind: 'found', row: exact, by: 'amount' });
+  for (const other of [
+    row({ amount_usd: '10' }), row({ token: 'USDC' }), row({ chain: 'base' }), row({ chain: 'coin', token: 'NYMO' }),
+    row({ created_at: new Date(T0 - 10 * 60_000).toISOString() }),
+  ]) assert.notEqual(matchAttempt(attempt(), [other]).kind, 'found', JSON.stringify(other));
+  // A row that existed before the top-up started can never finish it, whatever its amount.
+  assert.equal(matchAttempt(attempt({ knownRefs: [exact.ref] }), [exact]).kind, 'none');
+  // Two equal deposits are ambiguous: the person chooses, nothing is assumed.
+  assert.equal(matchAttempt(attempt(), [row({ ref: 'rhc:0x01:0' }), row({ ref: 'rhc:0x02:0' })]).kind, 'candidates');
+  // A coin credit depends on the price at confirmation, so it never matches on amount alone.
+  const coinRow = row({ chain: 'coin', token: 'NYMO', ref: 'coin:0x03:0' });
+  assert.equal(matchAttempt(attempt({ rail: 'coin', token: 'NYMO' }), [coinRow]).kind, 'candidates');
+  assert.deepEqual(matchAttempt(attempt({ rail: 'coin', token: 'NYMO', claimedRef: coinRow.ref }), [coinRow]), { kind: 'found', row: coinRow, by: 'you' });
+});
+
+void test('04 top-up: with a hash only that exact transaction counts (property)', () => {
+  fc.assert(fc.property(hex64, hex64, fc.constantFrom('credited', 'held'), (mine, other, status) => {
+    fc.pre(mine !== other && !other.includes(mine.slice(2)));
+    const a = attempt({ hash: mine, submittedAt: T0 });
+    const theirs = row({ ref: `rhc:${other}:0`, status });
+    // Same chain, token and amount, after the start: still not ours, because the hash differs.
+    if (matchAttempt(a, [theirs]).kind !== 'none') return false;
+    const ours = row({ ref: `rhc:${mine.toUpperCase().replace('0X', '0x')}:3`, status, amount_usd: '1' });
+    const m = matchAttempt(a, [theirs, ours]);
+    return m.kind === 'found' && m.row === ours && m.by === 'hash';
+  }));
+  assert.equal(refHasTx('rhc:0xabc:0', '0xab'), false, 'a hash prefix is not a match');
+});
+
+void test('04 top-up: a matched row decides the stage; time alone only marks it delayed (property)', () => {
+  fc.assert(fc.property(fc.integer({ min: 0, max: 48 * 3600_000 }), fc.boolean(), (elapsed, opened) => {
+    const a = attempt({ walletOpenedAt: opened ? T0 : null });
+    const v = topupView(a, [], T0 + elapsed);
+    return v.stage === 'wallet' && v.row === null && v.delayed === elapsed > WALLET_DELAY_MS;
+  }));
+  const held = row({ ref: 'rhc:0x09:0', status: 'held', reason: 'sanctioned' });
+  assert.equal(topupView(attempt(), [held], T0).stage, 'held');
+  assert.equal(topupView(attempt({ hash: '0x' + '7'.repeat(64), submittedAt: T0 }), [], T0).stage, 'network');
+  for (const reason of ['over_cap', 'sanctioned', 'screening_unavailable', 'market_depth', 'market_transition', 'over_invoice', null, 'new_reason'])
+    assert.ok(heldReason(reason).length > 10);
+  fc.assert(fc.property(fc.integer({ min: 0, max: 10 ** 9 }), ms => pollDelay(ms) >= 5_000 && pollDelay(ms) <= 30_000));
+});
+
+void test('04 top-up: storage holds one nonsecret attempt per key and rail, and rejects anything else', () => {
+  const a = attempt();
+  const raw = JSON.stringify(a);
+  assert.deepEqual(parseAttempt(raw, COMMIT_A, 'evm'), a);
+  assert.equal(parseAttempt(raw, '0x' + 'b2'.repeat(32), 'evm'), null, 'another key never sees it');
+  assert.equal(parseAttempt(raw, COMMIT_A, 'coin'), null, 'another rail never sees it');
+  for (const bad of ['', '{', 'null', JSON.stringify({ ...a, v: 2 }), JSON.stringify({ ...a, musd: 0 }), JSON.stringify({ ...a, hash: '0x12' }), JSON.stringify({ ...a, knownRefs: [1] })])
+    assert.equal(parseAttempt(bad, COMMIT_A, 'evm'), null, bad);
+  assert.ok(!/anm_(live|test)_/.test(raw), 'no key material');
+  assert.equal(attemptSlot(COMMIT_A.toUpperCase().replace('0X', '0x'), 'evm'), attemptSlot(COMMIT_A, 'evm'));
+  const map = new Map([[attemptSlot(COMMIT_A, 'evm'), raw], ['anonymo.key', 'kept']]);
+  const storage = { get length() { return map.size; }, key: i => [...map.keys()][i] ?? null, removeItem: k => map.delete(k) };
+  clearAllAttempts(storage);
+  assert.deepEqual([...map.keys()], ['anonymo.key']);
+});
+
+void test('04 top-up: a touch-only phone in desktop mode still gets wallet apps', () => {
+  const desktopMode = { userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36', maxTouchPoints: 5 };
+  assert.equal(isMobileBrowser(desktopMode, true), true);
+  assert.equal(isMobileBrowser(desktopMode, false), false);
+  assert.equal(isMobileBrowser({ userAgent: desktopMode.userAgent, maxTouchPoints: 0 }, true), false, 'a desktop with no touch stays a desktop');
+});

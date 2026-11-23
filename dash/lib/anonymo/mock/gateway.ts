@@ -66,6 +66,8 @@ type KeyState = {
   usageOnly: number; // NYMO credit: spendable on usage, never withdrawable
   deposits: Row[];
   withdrawals: (Withdrawal & { musd: number; idem: string })[];
+  /** Update 05: this key's recent generations, for the owner-only lookup. The demo has no MCP, so origin is never "mcp". */
+  gens?: { id: string; model: string; created_at: string }[];
   characters: string[];
   /** What this key spent (update "usage"); older saved demo state has none. */
   usage?: UsageEntry[];
@@ -293,25 +295,29 @@ export function createMockGateway(options: MockOptions = {}) {
   }
 
   /** Demo-only: credit a stablecoin deposit as if the watcher had confirmed it (stands in for DepositSink.credit). */
-  async function simulateDeposit(key: string, chain: PayoutChain, token: string, amountMusd: number) {
+  /** `hash` names the transaction (a top-up that knows its hash matches it exactly); `held` records it held, uncredited. */
+  async function simulateDeposit(key: string, chain: PayoutChain, token: string, amountMusd: number, opts: { hash?: string; held?: string } = {}) {
     const k = state.keys[await sha256Hex(key)];
     if (!k) throw new Error('Unknown key.');
     if (!Number.isSafeInteger(amountMusd) || amountMusd <= 0) throw new Error('Amount must be positive.');
     const prior = k.deposits.find((d) => d.chain === chain);
     const from = prior?.from ?? walletFor(chain);
-    const ref = `${chain}:0x${randomHex(32)}:0`;
-    k.deposits.unshift({ ref, chain, token, amount_usd: usd(amountMusd), musd: amountMusd, from, status: 'credited', created_at: new Date().toISOString() });
-    k.balance += amountMusd;
+    const ref = `${chain}:${opts.hash ?? `0x${randomHex(32)}`}:0`;
+    if (k.deposits.some((d) => d.ref === ref)) return ref; // the watcher credits each transaction once
+    const held = opts.held ? { status: 'held' as const, reason: opts.held } : { status: 'credited' as const };
+    k.deposits.unshift({ ref, chain, token, amount_usd: usd(amountMusd), musd: amountMusd, from, ...held, created_at: new Date().toISOString() });
+    if (!opts.held) k.balance += amountMusd;
     persist();
     return ref;
   }
 
   /** Demo-only: credit an NYMO payment (usage-only). Above the per-payment cap it is held, as the gateway does. */
-  async function simulateCoinPayment(key: string, amountMusd: number) {
+  async function simulateCoinPayment(key: string, amountMusd: number, opts: { hash?: string } = {}) {
     const k = state.keys[await sha256Hex(key)];
     if (!k) throw new Error('Unknown key.');
     const over = amountMusd > 250_000_000;
-    const ref = `coin:0x${randomHex(32)}:0`;
+    const ref = `coin:${opts.hash ?? `0x${randomHex(32)}`}:0`;
+    if (k.deposits.some((d) => d.ref === ref)) return ref;
     k.deposits.unshift({
       ref,
       chain: 'coin',
@@ -471,6 +477,7 @@ export function createMockGateway(options: MockOptions = {}) {
 
     const requestId = `gen-${Math.floor(Date.now() / 1000)}-${randomHex(7)}`;
     const ts = new Date().toISOString();
+    k.gens = [...(k.gens ?? []).slice(-49), { id: requestId, model, created_at: ts }];
     const storyText = demoStoryReply(body.messages);
     const memoryReply = demoMemoryReply(body.messages) ?? demoRememberedReply(body.messages);
 
@@ -733,6 +740,12 @@ export function createMockGateway(options: MockOptions = {}) {
 
     const k = await keyState(request);
     if (k instanceof Response) return k;
+    if (method === 'GET' && path === '/api/v1/generation') {
+      // Owner-only, as on the gateway: another key's id is simply not found.
+      const g = k.gens?.find((row) => row.id === url.searchParams.get('id'));
+      if (!g) return fail(404, 'not_found', 'Generation not found.');
+      return json({ data: { ...g, origin: null, provider_name: 'demo', total_cost: 0, checked_at: new Date().toISOString() } });
+    }
     const lapsed = expiredKeyRefusal(k.caps, Date.now(), fail);
     if (lapsed) return lapsed;
     if (method === 'GET' && path === API_PATHS.keyInfo) return json({ first_chat_available: k.firstChatAvailable ?? false, key_hash: k.keyHash, label: null, caps: k.caps, deposit: instructions(k) });

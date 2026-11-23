@@ -1,4 +1,5 @@
 import type { PaperSource } from './paper-trail';
+import { pageLayout, type RawTextItem } from './pdf-layout';
 export async function readPdf(
   file: File,
   signal: AbortSignal,
@@ -12,8 +13,10 @@ export async function readPdf(
     ]);
   if (signal.aborted) throw new Error('PDF reading cancelled.');
   GlobalWorkerOptions.workerSrc = worker;
+  // pdf.js takes ownership of the buffer it is given, so the copy kept for drawing pages is a separate one.
+  const fileBytes = new Uint8Array(await file.arrayBuffer());
   const task = getDocument({
-    data: new Uint8Array(await file.arrayBuffer()),
+    data: fileBytes.slice(),
     useSystemFonts: true,
     stopAtErrors: true,
   });
@@ -31,20 +34,14 @@ export async function readPdf(
       if (signal.aborted) throw new Error('PDF reading cancelled.');
       const page = await document.getPage(number),
         content = await page.getTextContent();
-      const text = content.items
-        .map((item) =>
-          'str' in item
-            ? item.str + ('hasEOL' in item && item.hasEOL ? '\n' : ' ')
-            : '',
-        )
-        .join('')
-        .trim();
+      // The same text as before (item text plus a space or line break, trimmed), now with each item's place kept.
+      const { text, layout } = pageLayout(content.items as RawTextItem[], page.getViewport({ scale: 1 }));
       bytes += new TextEncoder().encode(text).byteLength;
       if (bytes > 8 * 1024 * 1024)
         throw new Error(
           'This PDF contains too much text for one attachment. Split it into smaller documents.',
         );
-      pages.push({ number, text });
+      pages.push({ number, text, layout });
       page.cleanup();
     }
     if (!pages.some((page) => page.text))
@@ -55,7 +52,7 @@ export async function readPdf(
       throw new Error(
         'Some pages have no selectable text. Use a text-based copy so every page can be included.',
       );
-    return { name: file.name.slice(0, 240), pages };
+    return { name: file.name.slice(0, 240), pages, bytes: fileBytes };
   } finally {
     signal.removeEventListener('abort', cancel);
     await task.destroy();

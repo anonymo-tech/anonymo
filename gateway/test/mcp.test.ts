@@ -81,6 +81,41 @@ describe("Anonymo MCP server", () => {
     expect(m.result!.structuredContent.receipt_id).toStartWith("gen-");
   });
 
+  test("05: a chat over MCP is marked origin mcp for its owner only; a direct REST call is not", async () => {
+    const k = await h.fundedKey(2n);
+    // A client's own attribution headers on /mcp are not forwarded, so they can neither change nor drop the mark.
+    const j = await call("chat", { model: LLAMA, prompt: "Reply with ready.", max_tokens: 8 }, { ...k.auth, "x-title": "Some other app", "http-referer": "https://elsewhere.example" });
+    const s = j.result!.structuredContent;
+    expect(s.receipt_id).toStartWith("gen-");
+    const g = await (await h.request(`/api/v1/generation?id=${s.receipt_id}`, { headers: k.auth })).json();
+    expect(g.data).toMatchObject({ id: s.receipt_id, origin: "mcp", model: LLAMA, total_cost: s.cost_usd });
+    expect(Date.parse(g.data.created_at)).toBeGreaterThan(0);
+    // checked_at is the router's clock at lookup time, never before the call it describes.
+    expect(Date.parse(g.data.checked_at)).toBeGreaterThanOrEqual(Date.parse(g.data.created_at));
+    // The same lookup from another account's key is a 404, as before: origin is never shown to anyone else.
+    const other = await h.fundedKey(1n);
+    expect((await h.request(`/api/v1/generation?id=${s.receipt_id}`, { headers: other.auth })).status).toBe(404);
+    expect((await h.request(`/api/v1/generation?id=${s.receipt_id}`)).status).toBe(404);
+    // A call made straight to the REST route (with or without its own app headers) has no MCP origin.
+    for (const extra of [{}, { "x-title": "My app" }]) {
+      const res = await h.request("/api/v1/chat/completions", { method: "POST", headers: { ...k.auth, ...extra }, json: { model: LLAMA, messages: [{ role: "user", content: "hi" }] } });
+      expect(res.status).toBe(200);
+      const id = ((await res.json()) as { id: string }).id;
+      const d = await (await h.request(`/api/v1/generation?id=${id}`, { headers: k.auth })).json();
+      expect(d.data.origin).toBeNull();
+    }
+  });
+
+  test("05: marking the MCP call keeps lane restrictions and billing: an attested-lane refusal charges nothing", async () => {
+    const k = await h.fundedKey(2n);
+    const before = await (await h.request("/api/v1/credits", { headers: k.auth })).json();
+    const r = (await call("chat", { model: LLAMA, prompt: "hi", lane: "attested" }, k.auth)).result!;
+    expect(r.isError).toBe(true);
+    expect([409, 503]).toContain(r.structuredContent.error.code);
+    const after = await (await h.request("/api/v1/credits", { headers: k.auth })).json();
+    expect(after.data.total_usage).toBe(before.data.total_usage);
+  });
+
   test("get_receipt returns the public receipt and verify_receipt reports valid true", async () => {
     const k = await h.fundedKey(2n);
     const id = (await call("chat", { model: LLAMA, prompt: "sign me" }, k.auth)).result!.structuredContent.receipt_id as string;

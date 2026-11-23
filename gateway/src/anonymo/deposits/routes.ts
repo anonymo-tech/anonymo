@@ -87,7 +87,7 @@ export function moneyRoutes(app: Hono, ctx: Ctx, deps: MoneyDeps, o: { jobs?: bo
     const rows = await ctx.db.select().from(anonymoDeposits).where(eq(anonymoDeposits.keyHash, key.keyHash)).orderBy(desc(anonymoDeposits.createdAt)).limit(100);
     return c.json({
       instructions: await depositInstructions(ctx, deps, key.keyHash),
-      data: rows.map((r) => ({ ref: r.ref, chain: r.chain, token: r.token, amount_usd: picoToUsd(r.amountPico), from: r.sourceAddr, status: r.status, created_at: r.createdAt.toISOString() })),
+      data: rows.map((r) => ({ ref: r.ref, chain: r.chain, token: r.token, amount_usd: picoToUsd(r.amountPico), from: r.sourceAddr, status: r.status, reason: r.status === "held" ? r.reason : null, created_at: r.createdAt.toISOString() })),
     });
   });
 

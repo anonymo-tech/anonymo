@@ -26,4 +26,8 @@ export type Turn = {
   citations?: { url: string; title: string }[]; // update "search": the sources the answer cites
   photos?: string[]; // update "photos": the photos sent with this message, as data URLs, in this tab's memory only
   photoCount?: number; // how many photos went with it; saved chats keep this and a "photo not saved" placeholder
+  /** Features 02/03: the exact user text sent for this turn when it is more than `prompt` (an approved excerpt). */
+  sent?: string;
+  /** Features 02/03: this turn sent only an approved excerpt (`attachment` is "excerpt"). */
+  excerpt?: { page: number | null; image: boolean };
 };

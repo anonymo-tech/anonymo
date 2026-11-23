@@ -2,6 +2,12 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 import type { GuardScanResult } from '../../lib/guards/index';
+import type { PersonalFinding } from '../../lib/guards/personal';
+
+export type ContentScan = GuardScanResult & { personal?: PersonalFinding[] };
+
+/** True when the text could not be checked at all (worker missing, crashed, timed out or refused the input). */
+export const scanFailed = (result: GuardScanResult) => result.findings.some((finding) => finding.type === 'input');
 // oxlint-disable-next-line import/default -- Vite's worker URL loader supplies this default export.
 import guardWorkerUrl from './content-guard.worker.ts?worker&url';
 
@@ -12,13 +18,13 @@ export function useContentGuard() {
     new Map<
       string,
       {
-        resolve: (result: GuardScanResult) => void;
+        resolve: (result: ContentScan) => void;
         timer: ReturnType<typeof setTimeout>;
       }
     >(),
   );
   const unavailable = useCallback(
-    (): GuardScanResult => ({
+    (): ContentScan => ({
       findings: [
         {
           start: 0,
@@ -45,12 +51,12 @@ export function useContentGuard() {
   }, [unavailable]);
   useEffect(() => stop, [stop]);
   return useCallback(
-    (text: string): Promise<GuardScanResult> => {
+    (text: string, options: { personal?: boolean } = {}): Promise<ContentScan> => {
       try {
         if (!worker.current) {
           const created = new Worker(guardWorkerUrl, { type: 'module' });
           created.onmessage = (event: MessageEvent<unknown>) => {
-            const result = event.data as GuardScanResult & { id?: string };
+            const result = event.data as ContentScan & { id?: string };
             if (!result || typeof result.id !== 'string') {
               stop();
               return;
@@ -61,7 +67,8 @@ export function useContentGuard() {
             pending.current.delete(result.id);
             if (
               !Array.isArray(result.findings) ||
-              typeof result.redacted !== 'string'
+              typeof result.redacted !== 'string' ||
+              (result.personal !== undefined && !Array.isArray(result.personal))
             )
               request.resolve(unavailable());
             else request.resolve(result);
@@ -74,7 +81,7 @@ export function useContentGuard() {
           const id = crypto.randomUUID();
           const timer = setTimeout(stop, 30000);
           pending.current.set(id, { resolve, timer });
-          worker.current!.postMessage({ id, text });
+          worker.current!.postMessage({ id, text, personal: options.personal === true });
         });
       } catch {
         stop();
