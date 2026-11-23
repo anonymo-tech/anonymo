@@ -1265,7 +1265,8 @@ export function capRefusedChannels(holder: any, budget: number): { left: number;
       cut = true;
       delete holder[field];
     }
-  if (holder.role != null && typeof holder.role !== "string") delete holder.role;
+  // The role is ours to state: a provider's value (any string, any length) would ride along uncounted.
+  if (holder.role != null) holder.role = "assistant";
   if (Array.isArray(holder.reasoning_details)) {
     cut ||= holder.reasoning_details.length > 0;
     delete holder.reasoning_details;
@@ -1277,14 +1278,21 @@ export function capRefusedChannels(holder: any, budget: number): { left: number;
         cut = true;
         break;
       }
+      // Every tool call costs at least one character, so a stream of empty calls still runs out of budget.
+      left -= 1;
+      // An id is kept only when it looks like one, and it counts against the budget: some parsers take it from the
+      // model's own output, so it is a channel too.
+      const id = typeof tc?.id === "string" && REFUSED_ID.test(tc.id) && tc.id.length <= left ? tc.id : undefined;
+      if (id !== undefined) left -= id.length;
+      else if (tc?.id != null) cut = true;
       const fn = tc?.function ?? {};
       const name = typeof fn.name === "string" ? take(fn.name) : undefined;
       const args = typeof fn.arguments === "string" ? take(fn.arguments) : undefined;
       if ((fn.name != null && name === undefined) || (fn.arguments != null && args === undefined)) cut = true; // not a string: dropped
       kept.push({
         ...(typeof tc?.index === "number" ? { index: tc.index } : {}),
-        ...(typeof tc?.id === "string" ? { id: tc.id } : {}),
-        ...(typeof tc?.type === "string" ? { type: tc.type } : {}),
+        ...(id !== undefined ? { id } : {}),
+        ...(tc?.type != null ? { type: "function" } : {}),
         function: { ...(name !== undefined ? { name } : {}), ...(args !== undefined ? { arguments: args } : {}) },
       });
     }
@@ -1301,6 +1309,11 @@ export function capRefusedChannels(holder: any, budget: number): { left: number;
   return { left, cut };
 }
 
+/** The shape a kept id must have on a served refusal (a tool call's id, the response id). */
+const REFUSED_ID = /^[A-Za-z0-9_.:-]{1,64}$/;
+/** The finish reasons a served refusal may report; anything else becomes "stop". */
+const REFUSED_FINISH = new Set(["stop", "length", "content_filter", "tool_calls", "function_call"]);
+
 const REFUSED_MESSAGE_KEYS = new Set(["role", "content", "text", "refusal", "reasoning", "reasoning_content", "tool_calls"]);
 const REFUSED_CHOICE_KEYS = new Set(["index", "message", "delta", "text", "finish_reason"]);
 
@@ -1314,7 +1327,7 @@ export function capRefusedChoice(ch: any, budget: number): { left: number; cut: 
   let left = budget;
   let cut = false;
   if (ch.index != null && typeof ch.index !== "number") delete ch.index;
-  if (ch.finish_reason != null && typeof ch.finish_reason !== "string") delete ch.finish_reason;
+  if (ch.finish_reason != null) ch.finish_reason = REFUSED_FINISH.has(ch.finish_reason) ? ch.finish_reason : "stop";
   if (ch.text != null && typeof ch.text !== "string") {
     cut = true;
     delete ch.text;
@@ -1337,13 +1350,24 @@ export function capRefusedChoice(ch: any, budget: number): { left: number; cut: 
 
 /** The top-level fields a served refusal keeps, in JSON and in each stream chunk. Anything else a provider adds outside
  *  `choices` would ride along unbilled. */
-const REFUSED_TOP_KEYS = new Set(["id", "object", "created", "model", "choices", "usage", "system_fingerprint", "provider"]);
+const REFUSED_TOP_KEYS = new Set(["id", "object", "created", "model", "choices", "usage"]);
+const REFUSED_OBJECT = new Set(["chat.completion", "chat.completion.chunk", "text_completion"]);
+const REFUSED_MODEL = /^[A-Za-z0-9_.:/@+-]{1,128}$/;
 
-/** A served refusal's top-level fields, rebuilt from REFUSED_TOP_KEYS: only `choices` and `usage` may be non-strings. */
+/**
+ * A served refusal's top-level fields, rebuilt from REFUSED_TOP_KEYS. Strings a provider sets outside the budget are
+ * replaced or kept only in a short, known shape: `system_fingerprint` and `provider` are dropped, `created` is ours,
+ * `id` and `model` must look like an id and a model name, and `object` must be one of the known values.
+ */
 export function capRefusedTop(json: any) {
   if (!json || typeof json !== "object") return json;
-  for (const k of Object.keys(json))
-    if (!REFUSED_TOP_KEYS.has(k) || (k !== "choices" && k !== "usage" && k !== "created" && json[k] != null && typeof json[k] !== "string")) delete json[k];
+  for (const k of Object.keys(json)) if (!REFUSED_TOP_KEYS.has(k)) delete json[k];
+  if ("created" in json) json.created = Math.floor(Date.now() / 1000);
+  if (json.id != null && !(typeof json.id === "string" && REFUSED_ID.test(json.id))) delete json.id;
+  if (json.model != null && !(typeof json.model === "string" && REFUSED_MODEL.test(json.model))) delete json.model;
+  if (json.object != null && !REFUSED_OBJECT.has(json.object)) delete json.object;
+  if (json.choices != null && !Array.isArray(json.choices)) delete json.choices;
+  if (json.usage != null && (typeof json.usage !== "object" || Array.isArray(json.usage))) delete json.usage;
   return json;
 }
 

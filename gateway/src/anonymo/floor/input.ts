@@ -8,7 +8,8 @@ import type { FloorInput } from "../seams.ts";
 // Object keys are read too, except the protocol's own field names. Under a key the protocol does not have
 // (`guided_json`, say) everything is read, as in a schema: every key and every string, type tags included.
 // Uploaded media is not text. Only an item of a `content` array is an upload part: its media field is skipped, its
-// other fields are read, and hasUpload is set for the gate's own upload rule. Chat takes no file parts (the other
+// other fields are read, and hasUpload is set. The gate does not classify the media itself (hasUpload is only recorded
+// with a hit, hits.ts), so images sent to chat are not checked by the floor. Chat takes no file parts (the other
 // converters refuse them too).
 
 const UPLOAD_PARTS = new Set(["image_url", "input_image", "input_audio", "image", "audio"]);

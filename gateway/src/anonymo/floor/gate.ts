@@ -71,7 +71,8 @@ export class AnonymoFloorGate implements FloorGate {
   }
 
   async check(input: FloorInput, signal?: AbortSignal): Promise<FloorVerdict> {
-    if (!input.text.trim()) return { ok: true }; // nothing to judge; uploads go through the upload rule
+    // Nothing to judge. Uploaded media is not classified here: hasUpload is only recorded with a hit (hits.ts).
+    if (!input.text.trim()) return { ok: true };
     // A reply is read with the pre-filter's content rules only: its request rules match requests, not what a model wrote.
     if (!this.opts.skipPrefilter) {
       const hit = prefilter(input.text, { reply: input.stage === "reply" });
