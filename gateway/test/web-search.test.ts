@@ -10,6 +10,7 @@ import { usdToPico } from "../src/lib/money.ts";
 import { createWebSearch, parseWebSearchConfig } from "../src/anonymo/search/config.ts";
 import { citationsFor, searchQueryOf, stripOnline, takeWebSearch } from "../src/anonymo/search/chat.ts";
 import { BRAVE_ENDPOINT } from "../src/anonymo/search/brave.ts";
+import { TAVILY_ENDPOINT } from "../src/anonymo/search/tavily.ts";
 import type { FloorGate } from "../src/anonymo/seams.ts";
 import { MODELS, sse, startRouter, type Harness } from "./helpers.ts";
 
@@ -394,5 +395,77 @@ describe("parsing", () => {
     const c = citationsFor("see [2]", [{ title: "a", url: "https://a.example/", snippet: "" }, { title: "b", url: "https://b.example/", snippet: "" }]);
     expect(c[0].url_citation.start_index).toBeUndefined();
     expect(c[1].url_citation).toEqual({ url: "https://b.example/", title: "b", start_index: 4, end_index: 7 });
+  });
+});
+
+describe("tavily", () => {
+  const TAVILY_KEY = "tvly-test-key-not-real";
+  type TCall = { url: string; headers: Headers; method: string; body: any };
+  let tcalls: TCall[] = [];
+  let status = 200;
+  const tavilyFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    tcalls.push({ url: String(input), headers: new Headers(init?.headers), method: init?.method ?? "GET", body: JSON.parse(String(init?.body)) });
+    if (status !== 200) return Response.json({ detail: { error: "upstream says no" } }, { status });
+    return Response.json({
+      query: "echo",
+      results: [
+        { title: `${RESULT_TITLE} one`, url: "https://example.org/one", content: `First ${RESULT_SNIPPET} &amp; more`, score: 0.9 },
+        { title: "Dup", url: "https://example.org/one", content: "dropped", score: 0.8 },
+        { title: "Not a web link", url: "javascript:alert(1)", content: "dropped", score: 0.7 },
+        { title: "Second source", url: "https://example.net/two", content: "Second snippet", score: 0.6 },
+      ],
+      response_time: 0.4,
+    });
+  }) as typeof fetch;
+  const tavily = (extra: Record<string, unknown> = {}) =>
+    createWebSearch({ ANONYMO_WEB_SEARCH: JSON.stringify({ provider: "tavily", apiKey: TAVILY_KEY, maxResults: 3, ...extra }) }, tavilyFetch)!;
+  beforeEach(() => {
+    tcalls = [];
+    status = 200;
+  });
+
+  test("sends only the query, a count, basic depth and safe search, with the key as a bearer token", async () => {
+    h.ctx.anonymo.search = tavily();
+    const res = await chat({ model: `${MODEL}:online`, user: "sample-user" }, { "user-agent": "ProbeAgent/1.0", "x-forwarded-for": "198.51.100.7", cookie: "s=1" });
+    expect(res.status).toBe(200);
+    expect(tcalls.length).toBe(1);
+    const c = tcalls[0];
+    expect(c.url).toBe(TAVILY_ENDPOINT);
+    expect(c.method).toBe("POST");
+    expect(c.body).toEqual({ query: QUERY, max_results: 3, search_depth: "basic", topic: "general", include_answer: false, include_raw_content: false, include_images: false, safe_search: true });
+    expect([...c.headers.keys()].sort()).toEqual(["accept", "authorization", "content-type"]);
+    expect(c.headers.get("authorization")).toBe(`Bearer ${TAVILY_KEY}`);
+    expect(JSON.stringify(c.body)).not.toContain("sample-user");
+    expect(JSON.stringify(c.body)).not.toContain("198.51.100.7");
+    const sys = lastBody().messages.filter((m: any) => m.role === "system");
+    expect(sys[0].content).toContain(`[1] ${RESULT_TITLE} one`);
+    expect(sys[0].content).toContain(`First ${RESULT_SNIPPET} & more`);
+    expect(sys[0].content).toContain("[2] Second source"); // duplicate and javascript: links dropped
+    expect(sys[0].content).not.toContain("dropped");
+    const j = (await res.json()) as any;
+    expect(j.receipt.payload.web_search).toEqual({ provider: "tavily", searches: 1, results: 2, price: "0.005" });
+  });
+
+  test("safesearch off sends safe_search false", async () => {
+    h.ctx.anonymo.search = tavily({ safesearch: "off" });
+    expect((await chat({ model: `${MODEL}:online` })).status).toBe(200);
+    expect(tcalls[0].body.safe_search).toBe(false);
+  });
+
+  test("used-up credits (432) fail the search: 502, nothing sent to a model or charged", async () => {
+    h.ctx.anonymo.search = tavily();
+    status = 432;
+    const [reqs, before] = [providerRequests(), await balance()];
+    const res = await chat({ model: `${MODEL}:online` });
+    expect(res.status).toBe(502);
+    expect(((await res.json()) as any).error.type).toBe("web_search_failed");
+    expect(providerRequests()).toBe(reqs);
+    expect(await balance()).toBe(before);
+    expect(await openHolds()).toBe(0);
+  });
+
+  test("config accepts tavily and still refuses other providers", () => {
+    expect(parseWebSearchConfig(`{"provider":"tavily","apiKey":"k"}`)?.provider).toBe("tavily");
+    expect(() => parseWebSearchConfig(`{"provider":"other","apiKey":"k"}`)).toThrow(/provider/);
   });
 });

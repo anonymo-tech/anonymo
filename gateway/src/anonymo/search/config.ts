@@ -1,5 +1,6 @@
 // ANONYMO_WEB_SEARCH: the web search engine for `:online`, `plugins: [{ id: "web" }]` and `web_search_options`.
 //
+//   ANONYMO_WEB_SEARCH='{"provider":"tavily","apiKey":"<tavily api key>","maxResults":5}'
 //   ANONYMO_WEB_SEARCH='{"provider":"brave","apiKey":"<brave subscription token>","maxResults":5}'
 //
 // Optional fields: `priceUsd` (charged once per served request that searched, default "0.005"), `timeoutMs` (default
@@ -10,13 +11,14 @@
 import { z } from "zod";
 import { usdToPico } from "../../lib/money.ts";
 import { braveSearch } from "./brave.ts";
+import { tavilySearch } from "./tavily.ts";
 import type { WebSearchService } from "./types.ts";
 
 export const WEB_SEARCH_ENV = "ANONYMO_WEB_SEARCH";
 export const DEFAULT_WEB_SEARCH_PRICE_USD = "0.005";
 
 const schema = z.object({
-  provider: z.literal("brave"),
+  provider: z.enum(["brave", "tavily"]),
   apiKey: z.string().trim().min(1),
   maxResults: z.number().int().min(1).max(10).default(5),
   priceUsd: z.string().regex(/^\d+(\.\d{1,12})?$/).default(DEFAULT_WEB_SEARCH_PRICE_USD),
@@ -33,7 +35,7 @@ export function parseWebSearchConfig(raw: unknown): WebSearchConfig | null {
   try {
     json = typeof raw === "string" ? JSON.parse(raw) : raw;
   } catch {
-    throw new Error(`${WEB_SEARCH_ENV} must be JSON like {"provider":"brave","apiKey":"…","maxResults":5}.`);
+    throw new Error(`${WEB_SEARCH_ENV} must be JSON like {"provider":"tavily","apiKey":"…","maxResults":5}.`);
   }
   const parsed = schema.safeParse(json);
   if (!parsed.success) {
@@ -49,7 +51,7 @@ export function createWebSearch(env: Record<string, unknown>, fetchImpl?: typeof
   if (!cfg) return null;
   return {
     provider: cfg.provider,
-    client: braveSearch({ apiKey: cfg.apiKey, safesearch: cfg.safesearch, fetch: fetchImpl }),
+    client: (cfg.provider === "tavily" ? tavilySearch : braveSearch)({ apiKey: cfg.apiKey, safesearch: cfg.safesearch, fetch: fetchImpl }),
     maxResults: cfg.maxResults,
     price: usdToPico(cfg.priceUsd),
     timeoutMs: cfg.timeoutMs,
