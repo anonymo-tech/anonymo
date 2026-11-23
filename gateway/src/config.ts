@@ -314,6 +314,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
       allowed.push("upstream-monitor"); // ON3
       allowed.push("x402-recovery-expire"); // x402 payment recovery retention
       allowed.push("anonymo-canaries", "anonymo-balances", "anonymo-deposits", "anonymo-sanctions"); // Anonymo WS04 and WS05 jobs
+      allowed.push("anonymo-coin-price"); // NYMO price samples on their own clock
       if (!names.length || names.some((n) => !allowed.includes(n))) throw new Error("Worker requires an explicit valid WORKER_JOBS list.");
       const keyJobs = { settlement: "settlement", anchoring: "receipts-anchor", slashing: "slasher" };
       if (Object.values(roleKeys).filter(Boolean).length > 1) throw new Error("Privileged worker signing roles must be isolated.");

@@ -248,10 +248,17 @@ async function storeNymoObservation(db: Db, cfg: CoinConfig, obs: NymoObservatio
     const [row] = await tx.select({ value: kv.value }).from(kv).where(eq(kv.key, historyKey)).for("update");
     const history = row.value as NymoHistory;
     const samples = history.policy === policy && obs ? history.samples.filter(s => s.t >= obs.t - cfg.twapSeconds - MAX_GAP_SECONDS) : [];
+    // Say why a window restarts (no prices or amounts are logged), so a price that never appears can be traced.
+    const restart = (reason: string) => history.samples.length && log.info("anonymo nymo price window restarted", { reason, dropped: history.samples.length });
+    if (history.policy !== policy) restart("settings changed");
+    else if (!obs) restart("no valid market read");
     if (obs) {
       const previous = samples.at(-1);
       if (previous && obs.t < previous.t) return; // a slower overlapping read finished after a newer one
-      if (previous && (previous.phase !== obs.phase || obs.t - previous.t > MAX_GAP_SECONDS)) samples.length = 0;
+      if (previous && (previous.phase !== obs.phase || obs.t - previous.t > MAX_GAP_SECONDS)) {
+        restart(previous.phase !== obs.phase ? "market phase changed" : `samples ${obs.t - previous.t}s apart`);
+        samples.length = 0;
+      }
       if (samples.length && previous && obs.t - previous.t < 5) return;
       samples.push(storedObservation(obs));
     }

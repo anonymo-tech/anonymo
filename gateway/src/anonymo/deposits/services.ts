@@ -6,7 +6,7 @@ import type { SanctionsScreen } from "../seams.ts";
 import { greenfieldClient, type BtcpayClient } from "./btcpay.ts";
 import { loadDepositsConfig, type DepositsConfig, type EvmChain } from "./config.ts";
 import { rpcEvmReader, scanEvmChain, type EvmReader } from "./evm.ts";
-import { rpcCoinReader, scanCoinPayments, type CoinReader } from "./coin.ts";
+import { rpcCoinReader, sampleCoinPrice, scanCoinPayments, type CoinReader } from "./coin.ts";
 import { dbSanctionsScreen, refreshAnonymoSanctions } from "./sanctions.ts";
 import { createDepositSink, rescreenHeld, type AnonymoDepositSink } from "./sink.ts";
 import { rpcSolanaReader, scanSolana, type SolanaReader } from "./solana.ts";
@@ -68,8 +68,16 @@ export async function runMoneyJobs(ctx: Pick<Ctx, "db">, deps: MoneyDeps) {
   return results;
 }
 
+export const COIN_PRICE_EVERY_MS = 10_000;
+
 export function registerMoneyJobs(ctx: Ctx, deps: MoneyDeps) {
   ctx.jobs.register("anonymo-deposits", deps.config.watchEveryMs, () => runMoneyJobs(ctx, deps));
+  // The NYMO price window needs samples at most 60 s apart. The deposit job runs every chain scan, withdrawals and
+  // rescreening in turn, so one slow RPC call there can stretch the gap and restart the 30-minute window. Sample on a
+  // clock of its own (the deposit job still samples too; samples closer than 5 s are dropped).
+  const coin = deps.config.coin;
+  const reader = deps.readers.coin;
+  if (coin?.market && reader) ctx.jobs.register("anonymo-coin-price", COIN_PRICE_EVERY_MS, () => sampleCoinPrice(ctx.db, coin, reader));
   if (deps.config.sanctions.enabled)
     ctx.jobs.register("anonymo-sanctions", 24 * 3_600_000, () => refreshAnonymoSanctions(ctx.db, { listUrl: deps.config.sanctions.listUrl, production: ctx.cfg.production }), { atStart: true });
 }
