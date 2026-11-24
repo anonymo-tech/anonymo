@@ -23,6 +23,7 @@ export function KeyPanel() {
   const fundsHref = setupHref('funds', target?.href);
   const nextHref = target?.href ?? '/dashboard/chat';
   const nextAction = !target || target.href === '/dashboard/chat' ? 'Open chat' : `Return to ${target.label}`;
+  const fromChat = target?.href.split('?')[0] === '/dashboard/chat';
   const [created, setCreated] = useState<CreateKeyResponse | null>(null);
   const [remember, setRemember] = useState(true);
   const [saved, setSaved] = useState(false);
@@ -64,6 +65,13 @@ export function KeyPanel() {
 
   if (!ready) return null;
 
+  function finishCreating(href: string) {
+    if (!created) return;
+    setKey(created.key, remember);
+    setCreated(null);
+    router.push(href);
+  }
+
   if (created)
     return (
       <div className="panel-stack">
@@ -95,15 +103,16 @@ export function KeyPanel() {
             I have stored this key somewhere safe
           </label>
           <div className="row">
+            {fromChat && (
+              <button type="button" className="btn btn-primary" disabled={!saved} onClick={() => finishCreating(fundsHref)}>
+                Add funds
+              </button>
+            )}
             <button
               type="button"
-              className="btn btn-primary"
+              className={fromChat ? 'btn' : 'btn btn-primary'}
               disabled={!saved}
-              onClick={() => {
-                setKey(created.key, remember);
-                setCreated(null);
-                router.push(nextHref);
-              }}
+              onClick={() => finishCreating(nextHref)}
             >
               {nextAction}
             </button>

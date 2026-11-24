@@ -65,6 +65,16 @@ function contentText(content: unknown): string {
 /** What the person set under "customize ChatGPT", as the export carries it inside each conversation. */
 export type ChatGptSetup = { aboutModel?: string; aboutUser?: string; saved?: string[] };
 
+export const emptyChatGptSetup = () => ({ setup: {} as ChatGptSetup, at: -1 });
+
+export function latestChatGptSetup(current: ReturnType<typeof emptyChatGptSetup>, parsed: ReturnType<typeof parseChatGptConversation>) {
+  const { chat, setup } = parsed;
+  const at = chat?.updatedAt ?? chat?.createdAt ?? 0;
+  return (setup.aboutModel || setup.aboutUser || setup.saved) && at >= current.at
+    ? { setup: { ...current.setup, ...setup }, at }
+    : current;
+}
+
 const unfence = (value: string) => {
   const fenced = /```([\s\S]*?)```/.exec(value);
   return (fenced ? fenced[1]! : value).trim();

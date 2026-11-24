@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import test from 'node:test';
 import { watchAutoLock } from '../lib/anonymo/vault-browser.ts';
-import { createVault, historySlot, VaultLocked } from '../lib/anonymo/vault.ts';
+import { aboutYouSlot, createVault, historySlot, VaultLocked } from '../lib/anonymo/vault.ts';
 import {
   createVaultKey, decryptRecord, encryptRecord, unlockVaultKey, VAULT_ITERATIONS, WrongPassphrase,
 } from '../lib/anonymo/vault-crypto.ts';
@@ -126,6 +126,32 @@ test('migration, reload, lock, change passphrase and disabling round-trip both n
   assert.deepEqual(await off.images(true), [[demoImage, png]]);
   assert.match(decoder.decode((await disk.get(historySlot(false)))[0]), /Device-only sample prompt/);
   assert.deepEqual(await disk.get(liveImage), png);
+});
+
+test('About you shares vault encryption, is hidden when locked, and is wiped in both namespaces', async () => {
+  const { disk, spawn } = storage();
+  const profile = { aboutMe: 'Device-only sample profile', answerStyle: '', enabled: true, facts: [] };
+  const vault = spawn();
+  await vault.updateAboutYou(false, () => profile);
+  await vault.updateAboutYou(true, () => ({ ...profile, aboutMe: 'Demo sample profile' }));
+  assert.match(decoder.decode((await disk.get(aboutYouSlot(false)))[0]), /Device-only sample profile/);
+  await vault.enable(first);
+  const [encrypted] = await disk.get(aboutYouSlot(false));
+  assert.ok(encrypted.ciphertext instanceof ArrayBuffer);
+  assert.doesNotMatch(decoder.decode(encrypted.ciphertext), /Device-only sample profile/);
+  const reloaded = spawn();
+  await reloaded.refresh();
+  assert.equal(reloaded.state().mode, 'locked');
+  assert.equal(reloaded.snapshotAboutYou(false), undefined);
+  await assert.rejects(() => reloaded.updateAboutYou(false, () => profile), VaultLocked);
+  await reloaded.unlock(first);
+  assert.deepEqual(reloaded.snapshotAboutYou(false), profile);
+  assert.equal(reloaded.snapshotAboutYou(true).aboutMe, 'Demo sample profile');
+  await reloaded.wipe(() => 0);
+  for (const demo of [false, true]) {
+    assert.equal(reloaded.snapshotAboutYou(demo), undefined);
+    assert.equal(await disk.get(aboutYouSlot(demo)), undefined);
+  }
 });
 
 test('failed encryption can be retried after migration and does not strand or drop records', async () => {

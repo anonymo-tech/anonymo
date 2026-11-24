@@ -46,7 +46,7 @@ export function EvmWalletPay({ evm, ...events }: EvmWalletProps) {
   return <StablecoinPayment evm={{ ...evm, chains }} {...events} />;
 }
 
-function AmountChooser({ amount, setAmount, busy = false }: FundingAmount & { busy?: boolean }) {
+export function AmountChooser({ amount, setAmount, busy = false }: FundingAmount & { busy?: boolean }) {
   const [custom, setCustom] = useState(!['5', '10', '25'].includes(amount));
   const amountInput = useRef<HTMLInputElement>(null);
   return (

@@ -26,7 +26,7 @@ export type PriceTagState = {
   blocked: boolean;
 };
 
-export function usePriceTag({ on, demo, chatId, model, priced, messages, turns, extraUsd }: {
+export function usePriceTag({ on, demo, chatId, model, priced, messages, turns, extraUsd, modeEstimate }: {
   on: boolean;
   demo: boolean;
   chatId: string;
@@ -38,10 +38,11 @@ export function usePriceTag({ on, demo, chatId, model, priced, messages, turns, 
   turns: readonly ChargedTurn[];
   /** A flat price added to the next call (the web search price when search is on). */
   extraUsd?: string;
+  modeEstimate?: Estimate | null;
 }): PriceTagState {
   const limits = useDeviceStore(limitsStore(demo));
   const limit = on ? (limits[chatId] ?? null) : null;
-  const estimate = useMemo(() => (on && messages ? estimateMessage({ model: priced, messages, demo, extraUsd }) : null), [on, messages, priced, demo, extraUsd]);
+  const estimate = useMemo(() => modeEstimate !== undefined ? modeEstimate : (on && messages ? estimateMessage({ model: priced, messages, demo, extraUsd }) : null), [on, messages, priced, demo, extraUsd, modeEstimate]);
   const spend = useMemo(() => chatSpend(turns), [turns]);
   const check: LimitCheck = on && estimate ? checkLimit(limit, spend, estimate) : { blocked: false };
   return { on, demo, chatId, model, estimate, spend, limit, check, blocked: check.blocked };

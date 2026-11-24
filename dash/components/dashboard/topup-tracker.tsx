@@ -72,7 +72,7 @@ export type Topup = {
   clear: () => void;
 };
 
-export function useTopupAttempt(keyCommit: Hex | null | undefined, rail: TopupRail): Topup {
+export function useTopupAttempt(keyCommit: string | null | undefined, rail: TopupRail): Topup {
   const get = useCallback(() => (keyCommit ? snapshot(keyCommit, rail) : null), [keyCommit, rail]);
   const attempt = useSyncExternalStore(subscribe, get, () => null);
   const save = useCallback((next: TopupAttempt) => { if (keyCommit) store(next, keyCommit, rail); }, [keyCommit, rail]);
@@ -127,6 +127,7 @@ export function TopupTracker({
   attempt,
   rows,
   confirmations,
+  network = chainName(attempt.chain),
   wallet,
   back,
   onClaim,
@@ -137,11 +138,12 @@ export function TopupTracker({
   attempt: TopupAttempt;
   rows: DepositRow[];
   confirmations: number;
+  network?: string;
   /** The wallet controls while the payment still needs the wallet (chooser, pay button, progress). */
   wallet: ReactNode;
   back: { href: string; label: string } | null;
   onClaim: (ref: string) => void;
-  onHash: (hash: Hex) => void;
+  onHash?: (hash: Hex) => void;
   onCancel: () => void;
   onDone: () => void;
 }) {
@@ -153,7 +155,7 @@ export function TopupTracker({
   const [pasted, setPasted] = useState('');
   const [pasteError, setPasteError] = useState('');
   const coin = attempt.rail === 'coin';
-  const network = chainName(attempt.chain);
+  const solana = attempt.rail === 'solana';
   const sent = attempt.walletOpenedAt !== null || attempt.hash !== null;
 
   // Focus follows the payment: when the card first appears and when the credit lands.
@@ -164,13 +166,13 @@ export function TopupTracker({
     {
       title: 'Confirm in wallet',
       detail: view.stage === 'wallet'
-        ? (attempt.walletOpenedAt ? 'Waiting for your approval. Come back here after you confirm.' : 'Approve the payment in your wallet.')
+        ? (solana || !attempt.walletOpenedAt ? 'Approve the payment in your wallet.' : 'Waiting for your approval. Come back here after you confirm.')
         : 'Approved in your wallet.',
       state: view.stage === 'wallet' ? 'active' : 'done',
     },
     {
       title: 'Network confirmation',
-      detail: view.stage === 'wallet' ? 'Starts after you confirm.'
+      detail: view.stage === 'wallet' ? (solana ? 'We’ll check for your payment after you confirm.' : 'Starts after you confirm.')
         : view.stage === 'network' ? `Waiting for ${confirmations} confirmation${confirmations === 1 ? '' : 's'} on ${network}.`
         : 'Confirmed on the network.',
       state: view.stage === 'wallet' ? 'next' : view.stage === 'network' ? 'active' : 'done',
@@ -193,7 +195,7 @@ export function TopupTracker({
     const value = pasted.trim();
     if (!HASH.test(value)) return setPasteError('A transaction hash is 0x followed by 64 letters and numbers.');
     setPasteError('');
-    onHash(value.toLowerCase() as Hex);
+    onHash?.(value.toLowerCase() as Hex);
   }
 
   const finished = view.stage === 'credited' || view.stage === 'held';
@@ -259,7 +261,7 @@ export function TopupTracker({
         </div>
       )}
 
-      {!finished && !attempt.hash && sent && (
+      {!finished && onHash && !attempt.hash && sent && (
         <details className="wallet-payment-details">
           <summary>Have the transaction hash?</summary>
           <form className="topup-hash" onSubmit={findByHash}>

@@ -217,7 +217,7 @@ export type Answer = {
   status: 'streaming' | 'done' | 'stopped' | 'error';
   content: string;
   error: string | null;
-  /** The error was a balance too low for the request: offer the Funds page. */
+  /** The balance was too low for the request. Offer the Balance page. */
   needsFunds: boolean;
   receiptId: string | null;
   receipt: Receipt | null;
@@ -323,7 +323,7 @@ function answerRows(answer: Answer, verb = 'answered'): StripRow[] {
   if (answer.status === 'error') return [{ kind: 'pair', label: 'no answer', value: formatUsd(0) }];
   const reroute = rerouteOf(answer.receipt);
   if (!reroute) {
-    if (answer.status === 'stopped') return [{ kind: 'pair', label: 'stopped early', value: answer.receipt ? price : 'see Receipts' }];
+    if (answer.status === 'stopped') return [{ kind: 'pair', label: 'stopped early', value: answer.receipt ? price : 'see History' }];
     return [{ kind: 'pair', label: verb, value: price }];
   }
   const refused: StripRow[] = (reroute.saidNo.length ? reroute.saidNo.map((r) => r.model) : [answer.model]).map((model) => ({

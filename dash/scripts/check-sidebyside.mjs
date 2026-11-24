@@ -435,7 +435,7 @@ test('the receipt strip lists each model with answered or said no, and the total
   // A column that failed or was stopped says so, and a merge that never ran is not printed.
   const rough = play([ask(), { type: 'error', run: 1, slot: 0, message: 'x', needsFunds: true }, { type: 'delta', run: 1, slot: 1, text: 'Half' }, { type: 'stopped', run: 1, slot: 1 }, done(1, 2, 'Gamma.', clean('gen-c', '0.000171'))]);
   const lines = receiptStrip(rough).filter((r) => r.kind === 'pair').map((r) => `${r.label}: ${r.value}`);
-  assert.deepEqual(lines, ['no answer: $0.00', 'stopped early: see Receipts', 'answered: $0.000171', 'Total: $0.000171']);
+  assert.deepEqual(lines, ['no answer: $0.00', 'stopped early: see History', 'answered: $0.000171', 'Total: $0.000171']);
   assert.ok(!receiptStrip(rough).some((r) => r.kind === 'head' && r.label === '+'));
 });
 

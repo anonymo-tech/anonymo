@@ -52,6 +52,7 @@ export function Stage({
   turns,
   streaming,
   notices,
+  renderAnswer,
   onLog,
 }: {
   character: StoredCharacter;
@@ -60,6 +61,7 @@ export function Stage({
   streaming: boolean;
   /** What the thread shows with a turn besides the answer: the AI reminder and the crisis lines. */
   notices: (turn: Turn) => ReactNode;
+  renderAnswer?: (turn: Turn) => ReactNode;
   onLog: () => void;
 }) {
   const { demo, chatId } = useAnonymo();
@@ -123,7 +125,7 @@ export function Stage({
               <p className="stage-you">
                 <span>You</span> {turn.prompt}
               </p>
-              <AnswerCard turn={turn} characterId={character.id} />
+              {renderAnswer ? renderAnswer(turn) : <AnswerCard turn={turn} characterId={character.id} />}
             </>
           ) : greeting ? (
             <div className="answer">

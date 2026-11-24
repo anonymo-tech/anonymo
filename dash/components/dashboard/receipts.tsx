@@ -120,7 +120,7 @@ export function ReceiptViewer({ id }: { id: string }) {
       <section className="panel">
         <h1 className="panel-title">Receipt not found</h1>
         <p className="notice notice-rose">{error}</p>
-        <Link href="/dashboard/receipts">All receipts</Link>
+        <Link href="/dashboard/receipts">Back to History</Link>
       </section>
     );
   if (!data) return <p className="muted">Loading receipt…</p>;
@@ -315,7 +315,7 @@ export function ReceiptViewer({ id }: { id: string }) {
           </>
         )}
       </section>
-      <Link href="/dashboard/receipts">All receipts</Link>
+      <Link href="/dashboard/receipts">Back to History</Link>
     </div>
   );
 }

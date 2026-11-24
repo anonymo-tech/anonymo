@@ -23,7 +23,7 @@ import { CopyButton } from './copy-button';
 
 /**
  * In a wallet app whose browser also holds the dashboard (an in-wallet browser), the top-up that opened /pay is in
- * this browser's storage: give it the transaction hash so Funds matches the exact deposit. Elsewhere there is none.
+ * this browser's storage: give it the transaction hash so Balance matches the exact deposit. Elsewhere there is none.
  */
 function recordHash(keyCommit: string, rail: TopupRail, hash: Hex): boolean {
   if (typeof localStorage === 'undefined') return false;
@@ -33,13 +33,13 @@ function recordHash(keyCommit: string, rail: TopupRail, hash: Hex): boolean {
   return true;
 }
 
-/** After a payment: the hash to paste into Funds in another browser, or the way back to Funds in this one. */
+/** After a payment, show the hash or a link back to Balance. */
 function PaidNext({ hash, linked }: { hash: Hex; linked: boolean }) {
   return (
     <div className="wallet-paid-next">
       {linked
-        ? <Link className="btn btn-primary" href="/dashboard/funds">Back to Funds</Link>
-        : <p className="faint">If Funds is open in another browser, it finds this payment on its own. You can also paste the transaction hash there.</p>}
+        ? <Link className="btn btn-primary" href="/dashboard/funds">Back to Balance</Link>
+        : <p className="faint">If your Balance page is open in another browser, it finds this payment on its own. You can also paste the transaction hash there.</p>}
       <CopyButton text={hash} label="Copy transaction hash" />
     </div>
   );
@@ -171,22 +171,22 @@ export function PayInWallet() {
   if (link === null)
     return (
       <p className="notice notice-amber">
-        This payment link is incomplete. Open Funds on your dashboard and tap the wallet button again to get a fresh one.
+        This payment link is incomplete. Open Balance and tap the wallet button again to get a fresh link.
       </p>
     );
   if (loadError) return <p className="error-text" role="alert">{loadError}</p>;
   if (!contracts) return <p className="muted">Loading the deposit contract…</p>;
   if (contracts.paused) return <p className="notice notice-amber">New deposits are paused right now. Nothing was sent.</p>;
   if (link.token === 'NYMO') {
-    if (demo) return <p className="notice">Open Funds in live mode to pay with NYMO.</p>;
+    if (demo) return <p className="notice">Open Balance in live mode to pay with NYMO.</p>;
     if (!availableNymoRail(contracts.coin))
-      return <p className="notice notice-amber">NYMO payments are unavailable on Robinhood Chain. Return to Funds to choose another payment method.</p>;
+      return <p className="notice notice-amber">NYMO payments are unavailable on Robinhood Chain. Return to Balance to choose another payment method.</p>;
     return <CoinPayInWallet client={client} coin={contracts.coin} link={link} onRefresh={setContracts} />;
   }
   if (!entry || !token || !network)
     return (
       <p className="notice notice-amber">
-        {link.token} on {chainName(link.chain)} is not open for deposits. Open Funds on your dashboard for the chains that are.
+        Deposits are unavailable for {link.token} on {chainName(link.chain)}. Open Balance to see which networks you can use.
       </p>
     );
 
@@ -209,7 +209,7 @@ export function PayInWallet() {
       {result ? (
         <>
           <output className="notice notice-signal" aria-live="polite">
-            Paid. Transaction <span className="mono">{shortAddress(result.hash, 8)}</span> is mined. Your credit appears in Funds after{' '}
+            Paid. Transaction <span className="mono">{shortAddress(result.hash, 8)}</span> is mined. Your credit appears on your Balance page after{' '}
             {entry.confirmations} confirmations.
           </output>
           <PaidNext hash={result.hash} linked={linked} />
@@ -238,7 +238,7 @@ export function PayInWallet() {
       {!hasWallet && !hash && <OpenInWalletApp url={payUrl(window.location.origin, { ...link, amount })} showApps={access === 'app'} />}
       <details className="wallet-payment-details">
         <summary>Payment details</summary>
-        <p>Credit goes to the key with this commitment after {entry.confirmations} confirmations. Compare it with the keyCommit in Funds before paying.</p>
+        <p>Credit goes to the key with this commitment after {entry.confirmations} confirmations. Compare it with the key commitment on your Balance page before paying.</p>
         <code>{link.keyCommit}</code>
       </details>
     </div>
@@ -316,7 +316,7 @@ function CoinPayInWallet({ client, coin, link, onRefresh }: {
       {result ? (
         <>
           <output className="notice notice-signal" aria-live="polite">
-            Transaction <span className="mono">{shortAddress(result.hash, 8)}</span> is mined. Your usage credit appears in Funds after {coin.confirmations} confirmations.
+            Transaction <span className="mono">{shortAddress(result.hash, 8)}</span> is mined. Your usage credit appears on your Balance page after {coin.confirmations} confirmations.
           </output>
           <PaidNext hash={result.hash} linked={linked} />
         </>
@@ -355,7 +355,7 @@ function CoinPayInWallet({ client, coin, link, onRefresh }: {
       )}
       <details className="wallet-payment-details">
         <summary>Payment details</summary>
-        <p>Compare this key commitment with the one in your original Funds tab.</p><code>{link.keyCommit}</code>
+        <p>Compare this key commitment with the one in your original Balance tab.</p><code>{link.keyCommit}</code>
         <p>NYMO token</p><code>{coin.token.address}</code>
         <p>CoinPay contract</p><code>{coin.coin_pay}</code>
       </details>

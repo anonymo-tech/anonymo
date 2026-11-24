@@ -1,0 +1,39 @@
+.install-app { display: grid; gap: 8px; }
+.install-app header { display: flex; align-items: center; gap: 8px; }
+.install-app header > svg { color: var(--pink); }
+.install-app h2 { font-size: 18px; }
+.install-app header button { margin: -4px -8px -4px auto; min-width: 44px; min-height: 44px; }
+.install-app ol { display: grid; gap: 4px; margin: 0; padding-inline-start: 1.4em; }
+.install-app li svg { vertical-align: text-bottom; margin-inline-end: 3px; }
+.install-app > button { justify-self: start; min-height: 44px; }
+.voice-mic-label { display: none; }
+
+html[data-phone-app]:has(.ws), html[data-phone-app]:has(.ws) body { overscroll-behavior: none; }
+[data-phone-app] .ws { min-height: 100dvh; }
+[data-phone-app] .ws-top { padding-top: calc(7px + env(safe-area-inset-top)); }
+[data-phone-app] .ws-side { padding-top: calc(25px + env(safe-area-inset-top)); padding-left: max(17px, env(safe-area-inset-left)); }
+[data-phone-app] .ws :is(.ws-top, .ws-main, .ws-composer) {
+  padding-left: max(var(--app-gutter), env(safe-area-inset-left));
+  padding-right: max(var(--app-gutter), env(safe-area-inset-right));
+}
+[data-phone-app] .ws :is(.ws-top, .ws-main) { --app-gutter: clamp(16px, 3.3vw, 52px); }
+[data-phone-app] .ws .ws-composer { --app-gutter: clamp(16px, 3vw, 36px); }
+
+@media (min-width: 901px) {
+  [data-phone-app] .ws-composer { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+}
+
+@media (max-width: 900px) {
+  [data-phone-app] .ws-top { min-height: calc(53px + env(safe-area-inset-top)); }
+  /* The nav already reserves the home bar inset below the sticky composer. */
+  [data-phone-app] .ws-mobile-nav {
+    padding-left: max(5px, env(safe-area-inset-left));
+    padding-right: max(5px, env(safe-area-inset-right));
+  }
+}
+
+@media (max-width: 720px) {
+  [data-phone-app] .ws .ws-composer { --app-gutter: 12px; }
+  [data-phone-app] .ws-composer .voice-mic-button { width: auto; min-width: 44px; padding-inline: 9px; gap: 5px; }
+  [data-phone-app] .ws-composer .voice-mic-label { display: inline; }
+}

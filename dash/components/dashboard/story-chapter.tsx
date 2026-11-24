@@ -17,6 +17,9 @@ import {
 import { editChapter, editStory } from '@/lib/anonymo/story-store';
 import { ANONYMO_MODEL_IDS, type AnonymoModelId } from '@/lib/anonymo/types';
 import { vault } from '@/lib/anonymo/vault-browser';
+import { withAboutYou } from '@/lib/anonymo/about-you';
+import { currentAboutYouNote, loadAboutYouForChat, useAboutYouNote } from '@/lib/anonymo/about-you-store';
+import { updateOn } from '@/lib/anonymo/updates';
 
 const actions = Object.keys(STORY_ACTIONS) as StoryAction[];
 
@@ -38,7 +41,7 @@ export function StoryChapterEditor({
   saveField: (field: 'title' | 'text', value: string) => void;
   models: StoryModel[];
 }) {
-  const { client, demo, key, liveModels, mock, refreshBalance, rememberReceipt } = useAnonymo();
+  const { client, ready, demo, key, liveModels, mock, refreshBalance, rememberReceipt } = useAnonymo();
   const model = useDeviceStore(modelStore);
   const [selection, setSelection] = useState<(StorySelection & { caret: number }) | null>(null);
   const [instruction, setInstruction] = useState('');
@@ -62,19 +65,21 @@ export function StoryChapterEditor({
   const cursor = selection?.caret ?? chapter.text.length;
   const hasSelection = !!selection && selection.end > selection.start && !!chapter.text.slice(selection.start, selection.end).trim();
   const canWrite = (demo && !!mock) || !!key;
+  const aboutYouNote = useAboutYouNote(ready && updateOn('aboutyou', demo), demo);
   const estimates = useMemo(() => {
     const price = models.find(({ id }) => id === model)?.pricing;
     return actions.map((action) => {
       const range = action !== 'continue' && selection ? selection : { start: cursor, end: cursor };
       const target = storyTarget(chapter, action, range);
       const messages = storyMessages(story, chapter, action, target, instruction);
+      const pricedMessages = withAboutYou(messages, aboutYouNote);
       const max_tokens = storyOutputTokens(action);
       const isCouncil = model === 'anonymo-council' && !demo;
-      const lower = storyEstimate(messages, max_tokens, price, isCouncil ? 4 : 1);
-      const upper = isCouncil ? storyEstimate(messages, max_tokens, price, 5) : lower;
+      const lower = storyEstimate(pricedMessages, max_tokens, price, isCouncil ? 4 : 1);
+      const upper = isCouncil ? storyEstimate(pricedMessages, max_tokens, price, 5) : lower;
       return { action, target, messages, max_tokens, estimate: lower === upper ? lower : `${lower}–${upper}` };
     });
-  }, [chapter, cursor, demo, instruction, model, models, selection, story]);
+  }, [aboutYouNote, chapter, cursor, demo, instruction, model, models, selection, story]);
 
   async function generate({ action, target, messages, max_tokens }: (typeof estimates)[number]) {
     if (!canWrite || controller.current || proposal || applying) return;
@@ -85,9 +90,11 @@ export function StoryChapterEditor({
     setProposal({ id, action, target, sourceText: chapter.text, text: '', status: 'writing' });
     try {
       const gateway = demo && mock && !key ? await storyDemoClient(mock) : client;
+      const loading = loadAboutYouForChat(demo);
+      if (loading) await loading;
       abort.signal.throwIfAborted();
       const result = await gateway.chat(
-        { model, messages, max_tokens },
+        { model, messages: withAboutYou(messages, currentAboutYouNote(demo)), max_tokens },
         {
           signal: abort.signal,
           headers: { refusalCatch: 'on' },

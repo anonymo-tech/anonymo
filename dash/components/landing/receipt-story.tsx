@@ -384,8 +384,8 @@ export function ReceiptStory() {
               </dl>
               {i === STEPS - 1 && (
                 <div className="story-actions">
-                  <Link className="btn btn-primary btn-lg btn-square" href="/dashboard/key">
-                    Get a key
+                  <Link className="btn btn-primary btn-lg btn-square" href="/dashboard/chat">
+                    Start chatting
                   </Link>
                   <Link className="story-link" href="/docs">
                     Read the docs

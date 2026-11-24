@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import bs58 from 'bs58';
+import { solanaPayUrl } from '../lib/anonymo/solana-pay.ts';
+import { attemptSlot, matchAttempt, newAttempt, parseAttempt, topupView } from '../lib/anonymo/topup-attempt.ts';
+import { parseUpdates, RELEASED } from '../lib/anonymo/updates.ts';
 import {
   COMPUTE_BUDGET_PROGRAM,
   SOLANA_NETWORKS,
@@ -1038,4 +1041,79 @@ void test('malformed execution metadata cannot produce a successful or apparentl
       error('invalid_response'),
     );
   }
+});
+
+const payInstructions = {
+  cluster: 'mainnet-beta',
+  recipient_wallet: 'US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx',
+  reference: 'cGfHiC6Kgg3FpFZvgwGcswsCRtp4aBP2fzuXRQPizuN',
+  tokens: [
+    { symbol: 'USDC', mint: SOLANA_NETWORKS['mainnet-beta'].usdcMint, token_account: '7EJSueeCjseYzghxU2XhcGEUn7RJDh43Z2dL6dvGy9mw' }, // gitleaks:allow (public Solana fixture addresses)
+    { symbol: 'USDT', mint: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', token_account: 'MnVorf8KKPzHgQpa6exLfKpam8YkTn8WpeUuuFwgsob' }, // gitleaks:allow (public Solana fixture addresses)
+  ],
+};
+
+void test('Solana Pay uses the wallet owner and the selected mint, with an exact decimal amount and escaped message', () => {
+  const message = 'Top-up & café + tea #1?';
+  const amounts = [['05.000000', '5'], [' $ 10.2500 ', '10.25'], ['0.000001', '0.000001'], ['999999999.999999', '999999999.999999']];
+  for (const token of payInstructions.tokens) {
+    for (const [input, expected] of amounts) {
+      const url = solanaPayUrl(payInstructions, token.mint, input, message);
+      const parsed = new URL(url);
+      assert.equal(parsed.protocol, 'solana:');
+      assert.equal(parsed.pathname, payInstructions.recipient_wallet);
+      assert.deepEqual(Object.fromEntries(parsed.searchParams), {
+        amount: expected, 'spl-token': token.mint, reference: payInstructions.reference, label: 'Anonymo', message,
+      });
+      assert.match(url, /&message=Top-up%20%26%20caf%C3%A9%20%2B%20tea%20%231%3F$/);
+    }
+  }
+});
+
+void test('Solana Pay rejects malformed values, unknown or duplicate mints and a nonmatching treasury token account', () => {
+  const usdc = payInstructions.tokens[0];
+  const build = (patch, selected = usdc.mint, amount = '5', message) =>
+    solanaPayUrl({ ...payInstructions, ...patch }, selected, amount, message);
+  for (const invalid of ['', '0', '-1', '+2', '1e3', '1,000', 'NaN', '1&amount=25', '0.0000001', '1000000000', 5]) {
+    assert.equal(build({}, usdc.mint, invalid), null);
+  }
+  for (const bad of ['0'.repeat(32), '1'.repeat(31), '1'.repeat(33), `${payInstructions.reference}?amount=1`]) {
+    assert.equal(build({ reference: bad }), null);
+    assert.equal(build({ recipient_wallet: bad }), null);
+    assert.equal(build({ tokens: [{ ...usdc, mint: bad }] }, bad), null);
+  }
+  assert.equal(build({}, key()), null);
+  assert.equal(build({ tokens: [usdc, usdc] }), null);
+  assert.equal(build({ tokens: [usdc, { ...payInstructions.tokens[1], symbol: 'USDC' }] }), null);
+  assert.equal(build({ tokens: [{ ...usdc, symbol: 'ABC' }] }), null);
+  assert.equal(build({ tokens: [{ ...usdc, token_account: payInstructions.tokens[1].token_account }] }), null);
+  assert.equal(build({ recipient_wallet: usdc.token_account }), null);
+  assert.equal(build({ reference: usdc.mint }), null);
+  assert.equal(build({ cluster: 'other' }), null);
+  assert.equal(build({}, usdc.mint, '5', '\uD800'), null);
+});
+
+void test('Solana wallet checkout is opt-in', () => {
+  assert.equal(RELEASED.has('solpay'), false);
+  assert.equal(parseUpdates(undefined).has('solpay'), false);
+  assert.equal(parseUpdates('photos, solpay').has('solpay'), true);
+  assert.equal(parseUpdates('all').has('solpay'), true);
+});
+
+void test('Solana arrival tracking survives reload and waits for a fresh matching ledger row', () => {
+  const { reference } = payInstructions;
+  const now = Date.now();
+  const deposit = { chain: 'solana', token: 'USDC', amount_usd: '5', created_at: new Date(now).toISOString(), status: 'credited' };
+  const old = { ...deposit, ref: 'solana:old:0' };
+  const next = { ...deposit, ref: 'solana:new:2' };
+  const attempt = newAttempt({ keyCommit: reference, rail: 'solana', chain: 'solana', token: 'USDC', amount: '5', musd: 5_000_000, rows: [old], now });
+  const raw = JSON.stringify(attempt);
+  assert.deepEqual(parseAttempt(raw, reference, 'solana'), attempt);
+  assert.equal(parseAttempt(raw, reference.toLowerCase(), 'solana'), null);
+  assert.notEqual(attemptSlot(reference, 'solana'), attemptSlot(reference.toLowerCase(), 'solana'));
+  assert.equal(matchAttempt(attempt, [old, { ...next, chain: 'base' }, { ...next, token: 'USDT' }]).kind, 'none');
+  assert.equal(topupView(attempt, [{ ...next, amount_usd: '10' }], now).stage, 'wallet');
+  assert.equal(matchAttempt(attempt, [next, { ...next, ref: 'solana:another:0' }]).kind, 'candidates');
+  assert.equal(topupView(attempt, [old, { ...next, status: 'held' }], now).stage, 'held');
+  assert.equal(topupView(attempt, [old, next], now).stage, 'credited');
 });

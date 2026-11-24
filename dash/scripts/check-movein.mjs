@@ -13,6 +13,7 @@ import { clearArchive, historyOf, loadArchive, memoryDisk, readChat, removeChara
 import { buildCard, detectCard, readCardBytes, ringOf } from '../lib/anonymo/movein/cards.ts';
 import { caiRow, chatsFromRows, detectCaiCharacters, detectCaiRow, detectCharacterAi, isGreeting, parseCaiCharacters, parseCharacterAi } from '../lib/anonymo/movein/characterai.ts';
 import { ASSISTANT_PROMPT, chatGptCharacter, detectChatGptConversation, parseChatGptConversation, threadOf } from '../lib/anonymo/movein/chatgpt.ts';
+import { readChatGptSetup } from '../lib/anonymo/movein/chatgpt-setup.ts';
 import { claudeCharacter, detectClaudeConversation, detectClaudeMemories, parseClaudeConversation, parseClaudeMemories } from '../lib/anonymo/movein/claude.ts';
 import { detectGeneric, genericMessage, parseGeneric, parseGenericLines } from '../lib/anonymo/movein/generic.ts';
 import { importFiles, ImportStopped } from '../lib/anonymo/movein/importer.ts';
@@ -405,6 +406,29 @@ test('ChatGPT: how it was asked to respond becomes the card; what it knew become
   assert.match(ASSISTANT_PROMPT, /You are not \{\{char\}\} itself/);
   assert.equal(chatGptCharacter({}).description, '');
   assert.equal(chatGptCharacter({}).memory, undefined);
+});
+
+test('About you reads setup from split ZIPs and conversations.json, and Move In offers the same preview only when enabled', async () => {
+  const original = gptConversation();
+  const later = { ...gptConversation(), conversation_id: 'conv-0002', update_time: original.update_time + 10 };
+  later.mapping.ctx.message.content.user_instructions = 'Use short headings.';
+  const json = JSON.stringify([later, original]);
+  const zip = zipOf([
+    { name: 'export/conversations-001.json', data: JSON.stringify([later]) },
+    { name: 'export/user.json', data: 'The account file must never be read' },
+    { name: 'export/conversations-000.json', data: JSON.stringify([original]) },
+  ]);
+  const expected = { aboutModel: 'Use short headings.', aboutUser: 'I repair radios.', saved: ['Prefers metric units.', 'Owns a loud workshop clock.'] };
+  assert.deepEqual(await readChatGptSetup({ name: 'export.zip', blob: zip }), expected);
+  assert.deepEqual(await readChatGptSetup({ name: 'conversations.json', blob: new Blob([json]) }), expected);
+  assert.deepEqual(await readChatGptSetup({ name: 'user.json', blob: new Blob([json]) }), {});
+  const files = [{ name: 'export.zip', blob: zip }];
+  assert.equal((await importFiles(files, memoryDisk(), false, options())).aboutYou, undefined);
+  const summary = await importFiles(files, memoryDisk(), false, { ...options(), aboutYou: true });
+  assert.deepEqual(summary.aboutYou.map(({ field, text }) => [field, text]), [
+    ['aboutMe', expected.aboutUser], ['answerStyle', expected.aboutModel],
+    ...expected.saved.map((text) => ['fact', text]),
+  ]);
 });
 
 // ---- Claude -------------------------------------------------------------------------------------------------------

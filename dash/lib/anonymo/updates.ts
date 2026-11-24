@@ -14,9 +14,11 @@
 //   vanish    disappearing saved chats and the Escape panic key
 //   vault     passphrase protection for saved chats and the local image library
 //   ventures  Anonymo Ventures: the crew of Mos builds a business, live (needs the gateway's /v1/ventures routes)
+//   modes     in chat: make pictures, ask three AIs or talk from the same message box
 //   talk      in chat: hold to talk (transcribed by Anonymo) and read replies aloud with a stock voice
 //   story     long-form writing with chapters and a story bible
 //   memory    device-only character facts and suggestions after replies
+//   aboutyou  a device-only profile carried into chats, with a ChatGPT import
 //   faces     Character Studio: customizable plush characters and expressive portraits
 //   voice     Night Call: a voice call page with a sleep timer (speech in stays on the device)
 //   movein    bring characters and chats from other apps, read in the browser
@@ -34,10 +36,12 @@
 //   proof     07 Show me the proof: tap a cited claim to see the exact quote checked against the local document
 //   connect   05 Pair my coding tool: MCP setup for Cursor and Claude Code, verified by a receipt from the tool
 //   walletreview 08 What am I signing?: a read-only review of a pasted token approval
+//   solpay    pay with a Solana wallet from Add funds
+//   app       install the workspace on a phone, with a static offline screen
 //
-// Ventures requires an explicit build opt-in. Demo mode shows the other updates, so each can be tried and filmed without a key or a deploy that has it on.
+// Ventures and the phone app require a build opt-in. Demo mode shows the other updates.
 
-export const UPDATE_IDS = ['history', 'images', 'usage', 'catchup', 'status', 'compare', 'vanish', 'vault', 'video', 'faces', 'talk', 'story', 'memory', 'voice', 'movein', 'sidebyside', 'tickets', 'share', 'pricetag', 'auto', 'search', 'photos', 'ventures', 'mask', 'circle', 'excerpt', 'safepost', 'proof', 'connect', 'walletreview'] as const;
+export const UPDATE_IDS = ['history', 'images', 'usage', 'catchup', 'status', 'compare', 'vanish', 'vault', 'video', 'faces', 'talk', 'story', 'memory', 'voice', 'movein', 'sidebyside', 'tickets', 'share', 'pricetag', 'auto', 'search', 'photos', 'ventures', 'mask', 'circle', 'excerpt', 'safepost', 'proof', 'connect', 'walletreview', 'solpay', 'app', 'aboutyou', 'modes'] as const;
 export type UpdateId = (typeof UPDATE_IDS)[number];
 
 export function parseUpdates(raw: string | undefined): ReadonlySet<UpdateId> {
@@ -55,4 +59,4 @@ export const BUILT_WITH = parseUpdates(process.env.NEXT_PUBLIC_ANONYMO_UPDATES);
 export const RELEASED: ReadonlySet<UpdateId> = new Set(['faces', 'voice', 'movein', 'sidebyside', 'tickets', 'mask', 'circle', 'excerpt', 'safepost', 'proof', 'connect', 'walletreview']);
 
 /** Whether an update is on: released, built with it, or this tab is in demo mode. */
-export const updateOn = (id: UpdateId, demo: boolean) => RELEASED.has(id) || BUILT_WITH.has(id) || (demo && id !== 'ventures');
+export const updateOn = (id: UpdateId, demo: boolean) => RELEASED.has(id) || BUILT_WITH.has(id) || (demo && id !== 'ventures' && id !== 'app');

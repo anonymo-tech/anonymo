@@ -11,13 +11,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
 import { CopyButton } from '../copy-button';
 import { CoinWalletPay, EvmWalletPay, type TopupProps } from './wallet-pay';
+import { SolanaWalletPay } from './solana-wallet-pay';
 import { useTopupAttempt, useTopupPolling, type Topup } from './topup-tracker';
 import { heldReason, matchAttempt } from '@/lib/anonymo/topup-attempt';
 import { availableNymoRail } from '@/lib/anonymo/wallet-links';
 import { chainName, shortAddress } from '@/lib/anonymo/chains';
 import { describeError, newIdempotencyKey } from '@/lib/anonymo/client';
 import { formatUsd, formatUsdAmount, musdToUsdString, parseUsd, usdToMusd } from '@/lib/anonymo/money';
-import type { Balance, BtcpayInvoice, DepositInstructions, DepositRow, Deposits as DepositData, Withdrawal } from '@/lib/anonymo/types';
+import type { Balance, BtcpayInvoice, DepositInstructions, DepositRow, Deposits as DepositData, SolanaInstructions, Withdrawal } from '@/lib/anonymo/types';
+import { updateOn } from '@/lib/anonymo/updates';
 
 type Loaded = { balance: Balance | null; deposits: DepositData | null; withdrawals: Withdrawal[] | null; errors: string[] };
 type Target = ReturnType<typeof setupReturn>;
@@ -25,7 +27,7 @@ type Target = ReturnType<typeof setupReturn>;
 export function FundsPanel() {
   const { ready, key } = useAnonymo();
   const target = setupReturn(useSearchParams().get('returnTo'));
-  if (!ready) return <p className="muted" role="status">Opening funds…</p>;
+  if (!ready) return <p className="muted" role="status">Opening Balance…</p>;
   if (key) return <KeyFunds key={key} keySuffix={key.slice(-4)} target={target} />;
   return (
     <section className="funds-page funds-guest">
@@ -39,7 +41,7 @@ export function FundsPanel() {
 }
 
 function KeyFunds({ keySuffix, target }: { keySuffix: string; target: Target }) {
-  const { client, balanceVersion, refreshBalance } = useAnonymo();
+  const { client, balanceVersion, demo, refreshBalance } = useAnonymo();
   const [data, setData] = useState<Loaded | null>(null);
   const [task, setTask] = useState<'Deposit' | 'Withdraw' | 'Activity'>('Deposit');
   const heading = useRef<HTMLHeadingElement>(null);
@@ -78,8 +80,10 @@ function KeyFunds({ keySuffix, target }: { keySuffix: string; target: Target }) 
   // 04: the open top-up on each rail, kept in this browser. While one waits for credit, keep reading the ledger.
   const evmTopup = useTopupAttempt(instructions && !instructions.paused ? instructions.evm?.key_commit : null, 'evm');
   const coinTopup = useTopupAttempt(coinOf(instructions)?.key_commit, 'coin');
+  const solpay = updateOn('solpay', demo);
+  const solanaTopup = useTopupAttempt(solpay && instructions && !instructions.paused ? instructions.solana?.reference : null, 'solana');
   // A held deposit can still be released, so it keeps being checked; a credited one is finished.
-  const waiting = [evmTopup.attempt, coinTopup.attempt].flatMap(a => {
+  const waiting = [evmTopup.attempt, coinTopup.attempt, solanaTopup.attempt].flatMap(a => {
     if (!a) return [];
     const m = rows ? matchAttempt(a, rows) : null;
     return m?.kind === 'found' && m.row.status === 'credited' ? [] : [a.startedAt];
@@ -111,7 +115,7 @@ function KeyFunds({ keySuffix, target }: { keySuffix: string; target: Target }) 
   const fromChat = target?.href.split('?')[0] === '/dashboard/chat';
   const back = fromChat && target ? { href: target.href, label: 'Back to chat' }
     : target ? { href: target.href, label: `Return to ${target.label}` } : { href: '/dashboard/chat', label: 'Continue to chat' };
-  const tracking = !!evmTopup.attempt || !!coinTopup.attempt;
+  const tracking = !!evmTopup.attempt || !!coinTopup.attempt || !!solanaTopup.attempt;
   const title = task === 'Deposit' ? 'Add funds' : task === 'Withdraw' ? 'Withdraw funds' : 'Account activity';
   function switchTask(next: typeof task) {
     setTask(next);
@@ -133,9 +137,10 @@ function KeyFunds({ keySuffix, target }: { keySuffix: string; target: Target }) 
       {data?.errors.map(message => <p className="notice notice-rose" role="alert" key={message}>{message}</p>)}
       {resume && !fromChat && !tracking && <Link className="funds-continue" href={target?.href ?? '/dashboard/chat'}>{target ? `Return to ${target.label}` : 'Continue to chat'} <ArrowRight size={15} aria-hidden="true" /></Link>}
       <div className="funds-body">
-        {!data && <p className="muted" role="status">Loading funds…</p>}
+        {!data && <p className="muted" role="status">Loading your balance…</p>}
         {instructions && rows && <div hidden={task !== 'Deposit'}>
-          <Deposits instructions={instructions} onCredited={refreshBalance} evmTopup={evmTopup} coinTopup={coinTopup} rows={rows} back={back} stopTracking={stopTracking} />
+          <Deposits instructions={instructions} onCredited={refreshBalance} evmTopup={evmTopup} coinTopup={coinTopup}
+            solpay={solpay} solanaTopup={solanaTopup} rows={rows} back={back} stopTracking={stopTracking} />
         </div>}
         {balance && <div hidden={task !== 'Withdraw'}><Withdrawals balance={balance} onDone={refreshBalance} /></div>}
         {data && task === 'Activity' && <div className="funds-history">
@@ -163,11 +168,13 @@ const railLabel = (r: Rail, i: DepositInstructions) => {
   return RAIL_LABEL[r];
 };
 
-function Deposits({ instructions, onCredited, evmTopup, coinTopup, rows, back, stopTracking }: Omit<TopupProps, 'topup'> & {
+function Deposits({ instructions, onCredited, evmTopup, coinTopup, solpay, solanaTopup, rows, back, stopTracking }: Omit<TopupProps, 'topup'> & {
   instructions: DepositInstructions;
   onCredited: () => void;
   evmTopup: Topup;
   coinTopup: Topup;
+  solpay: boolean;
+  solanaTopup: Topup;
 }) {
   const { demo, mock, key } = useAnonymo();
   const rails: Rail[] = [];
@@ -179,10 +186,11 @@ function Deposits({ instructions, onCredited, evmTopup, coinTopup, rows, back, s
     if (instructions.coin || instructions.evm?.chains.some(c => c.chain === 'rhc')) rails.push('coin');
   }
   // An open top-up keeps its currency until it is finished or cancelled.
-  const paymentLocked = !!evmTopup.attempt || !!coinTopup.attempt;
+  const paymentLocked = !!evmTopup.attempt || !!coinTopup.attempt || !!solanaTopup.attempt;
   const [rail, setRail] = useState<Rail | null>(null);
   const [amount, setAmount] = useState('10');
-  const open: Rail | null = coinTopup.attempt && rails.includes('coin') ? 'coin' : evmTopup.attempt && rails.includes('evm') ? 'evm' : null;
+  const open: Rail | undefined = ([['coin', coinTopup], ['evm', evmTopup], ['solana', solanaTopup]] as const)
+    .find(([method, topup]) => topup.attempt && rails.includes(method))?.[0];
   const active = open ?? (rail && rails.includes(rail) ? rail : (rails[0] ?? null));
   const tracked = active === 'coin' ? coinTopup : active === 'evm' ? evmTopup : null;
   const shared = { rows, back, stopTracking };
@@ -225,26 +233,13 @@ function Deposits({ instructions, onCredited, evmTopup, coinTopup, rows, back, s
                 {rails.includes('evm') && <button type="button" className="btn btn-primary" onClick={() => setRail('evm')}>Pay with {railLabel('evm', instructions)}</button>}
               </div>)}
           {active === 'solana' && instructions.solana && (
-            <div className="address-box">
-              <span className="faint">
-                Send {instructions.solana.tokens.map((t) => t.symbol).join(' or ')} on Solana ({instructions.solana.cluster}). {instructions.solana.how}
-              </span>
-              <dl className="kv">
-                {instructions.solana.tokens.map((t) => (
-                  <div key={t.mint}>
-                    <dt>{t.symbol} token account</dt>
-                    <dd className="hash">{t.token_account} <CopyButton text={t.token_account} label={`Copy ${t.symbol} address`} /></dd>
-                  </div>
-                ))}
-                <div>
-                  <dt>Reference</dt>
-                  <dd className="hash">{instructions.solana.reference}</dd>
-                </div>
-              </dl>
-              <div className="row">
-                <CopyButton text={instructions.solana.reference} label="Copy reference" />
-              </div>
-            </div>
+            solpay ? <>
+              <SolanaWalletPay solana={instructions.solana} topup={solanaTopup} {...shared} />
+              <details className="wallet-payment-details">
+                <summary>Pay by hand instead</summary>
+                <SolanaManual solana={instructions.solana} />
+              </details>
+            </> : <SolanaManual solana={instructions.solana} />
           )}
           {active === 'tron' && instructions.tron && (
             <div className="address-box">
@@ -306,6 +301,31 @@ function Deposits({ instructions, onCredited, evmTopup, coinTopup, rows, back, s
         </div>
       )}
       {note && <output className="notice notice-signal">{note}</output>}
+    </div>
+  );
+}
+
+function SolanaManual({ solana }: { solana: SolanaInstructions }) {
+  return (
+    <div className="address-box">
+      <span className="faint">
+        Send {solana.tokens.map((t) => t.symbol).join(' or ')} on Solana ({solana.cluster}). {solana.how}
+      </span>
+      <dl className="kv">
+        {solana.tokens.map((t) => (
+          <div key={t.mint}>
+            <dt>{t.symbol} token account</dt>
+            <dd className="hash">{t.token_account} <CopyButton text={t.token_account} label={`Copy ${t.symbol} address`} /></dd>
+          </div>
+        ))}
+        <div>
+          <dt>Reference</dt>
+          <dd className="hash">{solana.reference}</dd>
+        </div>
+      </dl>
+      <div className="row">
+        <CopyButton text={solana.reference} label="Copy reference" />
+      </div>
     </div>
   );
 }

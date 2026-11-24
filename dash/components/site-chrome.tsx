@@ -83,7 +83,7 @@ export function SiteFooter() {
         <strong>Trust</strong>
         <Link href="/leaderboard">Refusal leaderboard</Link>
         <StatusLink />
-        <Link href="/dashboard/receipts">Receipts</Link>
+        <Link href="/dashboard/receipts">History</Link>
       </div>
       <div className="foot-note">
         <AdultsOnly />

@@ -4,10 +4,11 @@
 //
 // Nothing in this file sends anything anywhere.
 
+import { mapChatGptSetup, type AboutYouImport } from '../about-you.ts';
 import { cardHash, type CharacterCard } from '../card.ts';
 import { byNewest, loadArchive, sweepOrphans, writeCharacters, writeChats, type ArchiveCharacter, type ArchiveChat, type ArchiveDisk, type ChatHead } from './archive.ts';
 import { buildCard, CardError, detectCard, normalizeCard, readCardBytes } from './cards.ts';
-import { chatGptCharacter, CHATGPT_NAME, detectChatGptConversation, parseChatGptConversation, type ChatGptSetup } from './chatgpt.ts';
+import { chatGptCharacter, CHATGPT_NAME, detectChatGptConversation, emptyChatGptSetup, latestChatGptSetup, parseChatGptConversation } from './chatgpt.ts';
 import { caiRow, chatsFromRows, detectCaiRow, detectCharacterAi, isGreeting, parseCharacterAi, UNNAMED, type CaiRow } from './characterai.ts';
 import { claudeCharacter, CLAUDE_NAME, detectClaudeConversation, detectClaudeMemories, parseClaudeConversation, parseClaudeMemories } from './claude.ts';
 import { detectGeneric, parseGeneric, parseGenericLines } from './generic.ts';
@@ -32,6 +33,7 @@ export type ImportSummary = {
   replaced: { from: string; to: string }[];
   skipped: Skipped[];
   notes: string[];
+  aboutYou?: AboutYouImport[];
 };
 
 export class ImportStopped extends Error {
@@ -83,7 +85,7 @@ export async function importFiles(
   files: DropFile[],
   disk: ArchiveDisk,
   demo: boolean,
-  opts: { onProgress?: (progress: ImportProgress) => void; signal?: AbortSignal; now?: () => number; newId?: () => string } = {},
+  opts: { onProgress?: (progress: ImportProgress) => void; signal?: AbortSignal; now?: () => number; newId?: () => string; aboutYou?: boolean } = {},
 ): Promise<ImportSummary> {
   const now = opts.now ?? Date.now;
   const newId = opts.newId ?? (() => crypto.randomUUID());
@@ -99,8 +101,7 @@ export async function importFiles(
   let chats = 0;
   let messages = 0;
   let current = '';
-  let chatGptSetup: ChatGptSetup = {};
-  let chatGptSetupAt = -1;
+  let newestChatGptSetup = emptyChatGptSetup();
   let claudeMemory = '';
   const caiRows: CaiRow[] = []; // Character.AI's message list names no chat's character, so it waits for every file
 
@@ -189,15 +190,11 @@ export async function importFiles(
   }
 
   async function addChatGpt(conversation: Record<string, unknown>) {
-    const { chat, setup } = parseChatGptConversation(conversation);
+    const parsed = parseChatGptConversation(conversation);
     // The newest conversation's settings are the ones the person last had.
-    const at = chat?.updatedAt ?? chat?.createdAt ?? 0;
-    if ((setup.aboutModel || setup.aboutUser || setup.saved) && at >= chatGptSetupAt) {
-      chatGptSetup = { ...chatGptSetup, ...setup };
-      chatGptSetupAt = at;
-    }
+    newestChatGptSetup = latestChatGptSetup(newestChatGptSetup, parsed);
     sources.add('chatgpt');
-    if (chat) await addChat(chat);
+    if (parsed.chat) await addChat(parsed.chat);
   }
 
   /** A JSON file whose top level is a list: read one element at a time, routed by what its first real element is. */
@@ -381,6 +378,7 @@ export async function importFiles(
     check();
 
     // ---- tie chats to characters --------------------------------------------------------------------------------
+    const chatGptSetup = newestChatGptSetup.setup;
     if (chatGptSetup.aboutModel || chatGptSetup.aboutUser || chatGptSetup.saved || groups.has(`chatgpt|${nameKey(CHATGPT_NAME)}`)) addCharacter(chatGptCharacter(chatGptSetup));
     if (claudeMemory || groups.has(`claude|${nameKey(CLAUDE_NAME)}`)) addCharacter(claudeCharacter(claudeMemory));
 
@@ -467,7 +465,8 @@ export async function importFiles(
     const records = [...out.values()];
     if (records.length || dropped.size) await writeCharacters(disk, demo, records, boards, [...dropped]);
     finished = true;
-    return { ids: [...touched], characters: touched.size, chats, messages, sources: [...sources], replaced, skipped, notes: [...notes] };
+    const aboutYou = opts.aboutYou ? mapChatGptSetup(chatGptSetup) : [];
+    return { ids: [...touched], characters: touched.size, chats, messages, sources: [...sources], replaced, skipped, notes: [...notes], ...(aboutYou.length ? { aboutYou } : {}) };
   } finally {
     // A stopped or failed import leaves no chat text behind that no character lists.
     if (!finished) await sweepOrphans(disk, demo).catch(() => undefined);

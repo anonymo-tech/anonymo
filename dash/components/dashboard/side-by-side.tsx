@@ -49,6 +49,9 @@ import {
   type StripRow,
 } from '@/lib/anonymo/sidebyside';
 import type { ModelInfo } from '@/lib/anonymo/types';
+import { withAboutYou } from '@/lib/anonymo/about-you';
+import { useAboutYouNote } from '@/lib/anonymo/about-you-store';
+import { updateOn } from '@/lib/anonymo/updates';
 import './sidebyside.css';
 
 const STARTERS = [
@@ -103,16 +106,17 @@ export function SideBySide() {
   }, [ready, client, attempt]);
 
   const slots = useMemo(() => (models ? reconcileSlots(chosen, models) : []), [chosen, models]);
+  const aboutYouNote = useAboutYouNote(ready && updateOn('aboutyou', demo), demo);
   const enough = slots.length === SLOTS.length;
   const busy = isBusy(round);
-  const askPrice = useMemo(() => upTo(askEstimate(draft, slots.map((id) => listPrice(models?.find((m) => m.id === id))))), [draft, slots, models]);
+  const askPrice = useMemo(() => upTo(askEstimate(aboutYouNote ? `${aboutYouNote}\n${draft}` : draft, slots.map((id) => listPrice(models?.find((m) => m.id === id))))), [aboutYouNote, draft, slots, models]);
   // A chat that is still streaming cannot be swapped out, so "Continue in chat" waits for it.
   const chatBusy = turns.some((t) => t.status === 'streaming');
 
   function send(text: string) {
     setGuardNote(null);
     if (!key || !enough) return;
-    sideBySide.ask(client, text, slots, refreshBalance);
+    sideBySide.ask(client, text, slots, refreshBalance, demo);
   }
 
   async function submit() {
@@ -264,6 +268,7 @@ export function SideBySide() {
         <div className="sbs-answers" ref={answers}>
           <Answers
             models={models ?? []}
+            aboutYouNote={aboutYouNote}
             chatBusy={chatBusy}
             canPay={!!key}
             onContinue={continueInChat}
@@ -271,7 +276,7 @@ export function SideBySide() {
               edit(round.question);
               question.current?.focus();
             }}
-            onMerge={() => sideBySide.merge(client, refreshBalance)}
+            onMerge={() => sideBySide.merge(client, refreshBalance, demo)}
           />
         </div>
       )}
@@ -298,6 +303,7 @@ function Preview({ slots, models }: { slots: string[]; models: ModelInfo[] }) {
 
 function Answers({
   models,
+  aboutYouNote,
   chatBusy,
   canPay,
   onContinue,
@@ -305,6 +311,7 @@ function Answers({
   onMerge,
 }: {
   models: ModelInfo[];
+  aboutYouNote: string;
   chatBusy: boolean;
   canPay: boolean;
   onContinue: (answer: Answer) => void;
@@ -332,8 +339,8 @@ function Answers({
   const usable = mergeable(round);
   const mergePrice = useMemo(() => {
     if (!canMerge(round)) return null;
-    return upTo(mergeEstimate(mergeRequest(round.question, mergeable(round)), listPrice(models.find((m) => m.id === MERGE_MODEL))));
-  }, [round, models]);
+    return upTo(mergeEstimate(withAboutYou(mergeRequest(round.question, mergeable(round)), aboutYouNote), listPrice(models.find((m) => m.id === MERGE_MODEL))));
+  }, [aboutYouNote, round, models]);
 
   // Phones show one column at a time: the letters above jump between them and mark the one in view.
   const jump = useCallback((index: number) => {
@@ -419,7 +426,7 @@ function Answers({
             {stopped > 0 && (
               <span className="faint">
                 {' '}
-                · {stopped === 1 ? 'the stopped answer is charged for the text that arrived, and its receipt is' : 'stopped answers are charged for the text that arrived, and their receipts are'} on the Receipts page
+                · {stopped === 1 ? 'the stopped answer is charged for the text that arrived, and its receipt is' : 'stopped answers are charged for the text that arrived, and their receipts are'} on the History page
               </span>
             )}
           </p>

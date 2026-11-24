@@ -13,16 +13,14 @@ import {
   Plug,
   ShieldCheck,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
 import { CopyButton } from '../copy-button';
 import { maskKey } from '@/lib/anonymo/key-store';
 import { API_BASE } from '@/lib/anonymo/config';
 import { workspaceStage } from '@/lib/anonymo/workspace-guide';
-import { setupHref } from '@/lib/anonymo/setup-return';
 import './overview.css';
 import { formatUsdAmount, usdToMusd } from '@/lib/anonymo/money';
-import type { Balance } from '@/lib/anonymo/types';
 
 export function Overview() {
   const { ready, key } = useAnonymo();
@@ -36,29 +34,8 @@ export function Overview() {
 }
 
 function WorkspaceOverview() {
-  const { key, client, receipts, balanceVersion } = useAnonymo();
-  const [balance, setBalance] = useState<Balance | null>(null);
-  const [error, setError] = useState(false);
+  const { key, receipts, balance, balanceError } = useAnonymo();
   const [shown, setShown] = useState(false);
-
-  useEffect(() => {
-    if (!key) return;
-    const controller = new AbortController();
-    client.balance(controller.signal).then(
-      (b) => {
-        if (controller.signal.aborted) return;
-        setBalance(b);
-        setError(false);
-      },
-      () => {
-        if (!controller.signal.aborted) {
-          setBalance(null);
-          setError(true);
-        }
-      },
-    );
-    return () => controller.abort();
-  }, [key, client, balanceVersion]);
 
   const stage = workspaceStage(!!key, receipts.length > 0);
   const guide = <WorkspaceGuide stage={stage} />;
@@ -84,7 +61,7 @@ function WorkspaceOverview() {
             <span className="big-num">
               {balance ? (
                 formatUsdAmount(balance.available_usd)
-              ) : error ? (
+              ) : balanceError ? (
                 '—'
               ) : (
                 <span
@@ -103,7 +80,7 @@ function WorkspaceOverview() {
               {formatUsdAmount(balance.held_usd)} held for requests in flight
             </p>
           )}
-          <Link className="link" href="/dashboard/funds">Manage funds</Link>
+          <Link className="link" href="/dashboard/funds">Open Balance</Link>
         </section>
 
         <section className="card span-6" aria-labelledby="key-title">
@@ -141,7 +118,7 @@ function WorkspaceOverview() {
             <h2 id="recent-title">Recent receipts</h2>
             {receipts.length > 0 && (
               <Link className="link" href="/dashboard/receipts">
-                View all receipts{' '}
+                View History{' '}
                 <ArrowRight
                   size={14}
                   aria-hidden="true"
@@ -215,9 +192,9 @@ function timeAgo(iso: string): string {
 const GUIDE = {
   key: {
     title: 'Your private workspace',
-    text: 'Create a key to try chat, or make a character for free on this device.',
+    text: 'Write your first message. You’ll set up a key and balance when you’re ready to send.',
     action: 'Try chat',
-    href: setupHref('key', '/dashboard/chat'),
+    href: '/dashboard/chat',
   },
   'first-chat': {
     title: 'Start your first chat',
@@ -240,6 +217,7 @@ function WorkspaceGuide({
 }) {
   const item = GUIDE[stage];
   const step = stage === 'key' ? 0 : 1;
+  const steps = stage === 'key' ? ['Write a message', 'Set up to send'] : ['Connect a key', 'Send a message'];
   return (
     <section className="guide" aria-labelledby="guide-title">
       <div className="guide-cover">
@@ -264,7 +242,7 @@ function WorkspaceGuide({
       </div>
       {stage !== 'returning' && (
         <ol className="guide-steps" aria-label="Workspace setup">
-          {['Connect a key', 'Send a message'].map((label, i) => (
+          {steps.map((label, i) => (
             <li
               key={label}
               data-state={i < step ? 'done' : i === step ? 'current' : 'later'}

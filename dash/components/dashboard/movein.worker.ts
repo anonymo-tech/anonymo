@@ -5,7 +5,7 @@
 import { idbDisk } from '../../lib/anonymo/movein/archive-idb.ts';
 import { importFiles, type DropFile, type ImportProgress, type ImportSummary } from '../../lib/anonymo/movein/importer.ts';
 
-export type ImportRequest = { files: DropFile[]; demo: boolean };
+export type ImportRequest = { files: DropFile[]; demo: boolean; aboutYou: boolean };
 export type ImportReply = { type: 'progress'; progress: ImportProgress } | { type: 'done'; summary: ImportSummary } | { type: 'failed'; message: string };
 
 declare const self: {
@@ -17,6 +17,7 @@ if (typeof self !== 'undefined' && typeof document === 'undefined') {
   self.onmessage = (event) => {
     let last = 0;
     importFiles(event.data.files, idbDisk, event.data.demo, {
+      aboutYou: event.data.aboutYou,
       onProgress: (progress) => {
         const now = Date.now();
         if (now - last < 120) return;

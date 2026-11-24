@@ -25,6 +25,8 @@ import {
   type SlotId,
 } from '@/lib/anonymo/sidebyside';
 import type { ChatMessage } from '@/lib/anonymo/types';
+import { withAboutYou } from '@/lib/anonymo/about-you';
+import { currentAboutYouNote, loadAboutYouForChat } from '@/lib/anonymo/about-you-store';
 
 export type Session = {
   /** What is typed in the question box. */
@@ -105,27 +107,41 @@ function subscribe(listener: () => void) {
   };
 }
 
-/** One request, streamed into its column (or into the merge), then settled with its receipt. */
-async function stream(client: AnonymoClient, run: number, slot: SlotId, model: string, messages: ChatMessage[], maxTokens: number, settled: () => void) {
+/** One request, streamed into a column or the merge. Both chat and the comparison page use this path. */
+export async function streamComparison({
+  client, run, slot, model, messages, maxTokens, demo, signal, refusalCatch = true, dispatch, onDelta, waitForReceipt = false,
+}: {
+  client: AnonymoClient; run: number; slot: SlotId; model: string; messages: ChatMessage[]; maxTokens: number;
+  demo: boolean; signal: AbortSignal; refusalCatch?: boolean; dispatch: (action: RoundAction) => void;
+  onDelta: (text: string) => void; waitForReceipt?: boolean;
+}) {
+  try {
+    const loading = loadAboutYouForChat(demo);
+    if (loading) await loading;
+    signal.throwIfAborted();
+    const result = await client.chat(
+      { model, messages: withAboutYou(messages, currentAboutYouNote(demo)), max_tokens: maxTokens },
+      { signal, headers: { refusalCatch: refusalCatch ? 'on' : 'off' }, onDelta },
+    );
+    const { receiptId } = result;
+    const fetchReceipt = receiptId && !result.receipt ? client.receipt(receiptId).then((view) => view.receipt, () => null) : null;
+    if (receiptId) rememberReceipt({ id: receiptId, model, at: new Date().toISOString() });
+    const receipt = result.receipt ?? (waitForReceipt ? await fetchReceipt : null);
+    dispatch({ type: 'done', run, slot, content: result.content, receiptId, receipt, cutOff: result.finishReason === 'length' });
+    if (!waitForReceipt && fetchReceipt) void fetchReceipt.then((receipt) => {
+      if (receipt) dispatch({ type: 'receipt', run, slot, receipt });
+    });
+  } catch (error) {
+    if (signal.aborted) dispatch({ type: 'stopped', run, slot });
+    else dispatch({ type: 'error', run, slot, message: describeError(error), needsFunds: isOutOfCredit(error) });
+  }
+}
+
+async function stream(client: AnonymoClient, run: number, slot: SlotId, model: string, messages: ChatMessage[], maxTokens: number, settled: () => void, demo: boolean) {
   const abort = new AbortController();
   controllers.set(slot, abort);
   try {
-    const result = await client.chat(
-      { model, messages, max_tokens: maxTokens },
-      { signal: abort.signal, headers: { refusalCatch: 'on' }, onDelta: (text) => arrive(run, slot, text) },
-    );
-    dispatch({ type: 'done', run, slot, content: result.content, receiptId: result.receiptId, receipt: result.receipt, cutOff: result.finishReason === 'length' });
-    if (result.receiptId) {
-      rememberReceipt({ id: result.receiptId, model, at: new Date().toISOString() });
-      if (!result.receipt)
-        client.receipt(result.receiptId).then(
-          (view) => dispatch({ type: 'receipt', run, slot, receipt: view.receipt }),
-          () => undefined,
-        );
-    }
-  } catch (error) {
-    if (abort.signal.aborted) dispatch({ type: 'stopped', run, slot });
-    else dispatch({ type: 'error', run, slot, message: describeError(error), needsFunds: isOutOfCredit(error) });
+    await streamComparison({ client, run, slot, model, messages, maxTokens, demo, signal: abort.signal, dispatch, onDelta: (text) => arrive(run, slot, text) });
   } finally {
     if (controllers.get(slot) === abort) controllers.delete(slot);
     settled();
@@ -143,7 +159,7 @@ export const sideBySide = {
    * Sends the question to every model at once: one request each, on its own stop switch. `settled` runs after each
    * request ends (the balance has changed). Returns false when nothing was sent.
    */
-  ask(client: AnonymoClient, question: string, models: readonly string[], settled: () => void): boolean {
+  ask(client: AnonymoClient, question: string, models: readonly string[], settled: () => void, demo: boolean): boolean {
     const text = question.trim();
     if (!text || models.length !== SLOTS.length || isBusy(state.round)) return false;
     const run = state.round.run + 1;
@@ -152,17 +168,17 @@ export const sideBySide = {
     dispatch({ type: 'ask', run, question: text, models, aiReminder, crisis: mentionsSelfHarm(text) });
     if (state.round.run !== run) return false;
     set({ ...state, draft: '' });
-    models.forEach((model, slot) => void stream(client, run, slot, model, [{ role: 'user', content: text }], ANSWER_MAX_TOKENS, settled));
+    models.forEach((model, slot) => void stream(client, run, slot, model, [{ role: 'user', content: text }], ANSWER_MAX_TOKENS, settled, demo));
     return true;
   },
   /** One more request: the answers so far, merged by anonymo-1. */
-  merge(client: AnonymoClient, settled: () => void): boolean {
+  merge(client: AnonymoClient, settled: () => void, demo: boolean): boolean {
     const round = state.round;
     if (!canMerge(round)) return false;
     const messages = mergeRequest(round.question, mergeable(round));
     dispatch({ type: 'merge', run: round.run, model: MERGE_MODEL });
     if (state.round.merge?.status !== 'streaming') return false;
-    void stream(client, round.run, 'merge', MERGE_MODEL, messages, MERGE_MAX_TOKENS, settled);
+    void stream(client, round.run, 'merge', MERGE_MODEL, messages, MERGE_MAX_TOKENS, settled, demo);
     return true;
   },
   stop(slot: SlotId) {

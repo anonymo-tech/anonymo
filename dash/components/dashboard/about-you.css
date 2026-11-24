@@ -1,0 +1,30 @@
+.about-you fieldset, .about-you-preview {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.about-you fieldset { border: 0; margin: 0; padding: 0; }
+.about-you textarea { min-width: 0; resize: vertical; }
+.about-you-facts, .about-you-preview ul {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.about-you-facts li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.about-you-facts .input { flex: 1 1 220px; min-width: 0; }
+.about-you-facts [aria-pressed='true'] { border-color: var(--signal); }
+.about-you-preview ol { padding-inline-start: 24px; }
+.about-you-preview ol li + li { margin-block-start: 6px; }
+.about-you-preview ul { max-height: 320px; overflow: auto; }
+.about-you-preview label {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.about-you-text { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }

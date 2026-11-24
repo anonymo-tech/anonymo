@@ -4,13 +4,22 @@ import './globals.css';
 import { AgeGate } from '@/components/age-gate';
 import { AnonymoProvider } from '@/components/anonymo-provider';
 import { MascotChat } from '@/components/mascot-chat';
+import { PhoneApp } from '@/components/phone-app';
 import { RevealOnScroll } from '@/components/reveal';
+import { BUILT_WITH } from '@/lib/anonymo/updates';
+
+const appOn = BUILT_WITH.has('app');
 
 export const metadata: Metadata = {
   title: 'Anonymo — Ask anything. Keep the receipt.',
   description:
     'One OpenAI-compatible key for uncensored and low-refusal models. No refusals for legal adult use, refused attempts refunded, a signed receipt on every call. Adults only.',
-  icons: { icon: '/favicon.svg' },
+  icons: { icon: '/favicon.svg', ...(appOn && { apple: '/app-icons/apple-touch-icon.png' }) },
+  ...(appOn && {
+    manifest: '/app.webmanifest',
+    appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'Anonymo' },
+    other: { 'apple-mobile-web-app-capable': 'yes' },
+  }),
   referrer: 'no-referrer',
   // Link previews in chat apps and social posts.
   openGraph: {
@@ -29,14 +38,17 @@ export const metadata: Metadata = {
 export const viewport: Viewport = { themeColor: '#1b0b1d', colorScheme: 'dark' };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const content = (
+    <AnonymoProvider>
+      <div className="app-root"><MascotChat>{children}</MascotChat></div>
+      <AgeGate />
+      <RevealOnScroll />
+    </AnonymoProvider>
+  );
   return (
-    <html lang="en" data-gated="">
+    <html lang="en" data-gated="" data-phone-app={appOn ? '' : undefined}>
       <body>
-        <AnonymoProvider>
-          <div className="app-root"><MascotChat>{children}</MascotChat></div>
-          <AgeGate />
-          <RevealOnScroll />
-        </AnonymoProvider>
+        {appOn ? <PhoneApp>{content}</PhoneApp> : content}
       </body>
     </html>
   );

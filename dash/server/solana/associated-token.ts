@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import bs58 from 'bs58';
 import {
   address,
@@ -21,7 +21,7 @@ export const ASSOCIATED_TOKEN_PROGRAM =
   'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
 const MAX_SEEDS = 16;
 const MAX_SEED_LENGTH = 32;
-const PDA_MARKER = 'ProgramDerivedAddress';
+const PDA_MARKER = new TextEncoder().encode('ProgramDerivedAddress');
 
 export type AssociatedTokenInput = {
   owner: string;
@@ -43,15 +43,13 @@ export function findProgramAddress(
   );
   const program = base58Bytes(programId, 32);
   for (let bump = 255; bump >= 0; bump--) {
-    const hash = createHash('sha256');
+    const hash = sha256.create();
     for (const seed of seeds) hash.update(seed);
-    const digest = new Uint8Array(
-      hash
-        .update(new Uint8Array([bump]))
-        .update(program)
-        .update(PDA_MARKER)
-        .digest(),
-    );
+    const digest = hash
+      .update(new Uint8Array([bump]))
+      .update(program)
+      .update(PDA_MARKER)
+      .digest();
     if (!onCurve(digest)) return { address: bs58.encode(digest), bump };
   }
   throw new SolanaError('invalid_input');

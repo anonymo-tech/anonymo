@@ -9,14 +9,18 @@ import { setupHref } from '@/lib/anonymo/setup-return';
 import Link from 'next/link';
 import { Photo } from '../photo';
 import { Download, ImageIcon, Loader2, ShieldCheck, Sparkles, Stamp, Trash2 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
-import { AnonymoApiError, describeError, isOutOfCredit } from '@/lib/anonymo/client';
+import { isOutOfCredit } from '@/lib/anonymo/client';
 import { formatUsd, usdToMusd } from '@/lib/anonymo/money';
+import { IMAGE_PROMPT_LIMIT, imageCounts, imageError, imageModels, shapeOf } from '@/lib/anonymo/chat-modes';
+import { takeStudioDraft } from './image-studio-draft';
 import type { MediaImageModel } from '@/lib/anonymo/types';
 import { updateOn } from '@/lib/anonymo/updates';
 import { ImageCompare } from './image-compare';
 import { SaveLibraryImage } from './save-library-image';
+
+export { imageError } from '@/lib/anonymo/chat-modes';
 
 type Shot = { id: string; src: string; prompt: string; model: string; size: string; costUsd: string; requestId: string; at: number };
 type Job = { id: string; n: number; ratio: string; started: number };
@@ -32,19 +36,7 @@ const ratioOf = (size: string) => {
   const [w, h] = size.split('x').map(Number);
   return `${w} / ${h}`;
 };
-const shapeOf = (size: string) => {
-  const [w, h] = size.split('x').map(Number);
-  const r = w / h;
-  return r === 1 ? 'Square' : r >= 1.5 ? 'Wide' : r > 1 ? 'Landscape' : r <= 2 / 3 ? 'Tall' : 'Portrait';
-};
-
-/** Image errors say what happened without the chat's floor wording when the gateway's own message is clearer. */
-export function imageError(error: unknown): string {
-  if (error instanceof AnonymoApiError && (error.code === 'explicit_media_unavailable' || error.code === 'media_blocked' || error.code === 'media_gate_unavailable' || error.code?.startsWith('upstream_')))
-    return error.message;
-  if (error instanceof AnonymoApiError && error.status === 404 && error.code !== 'model_not_found') return 'Images are not switched on for this gateway yet.';
-  return describeError(error);
-}
+const makeJob = (n: number, size: string): Job => ({ id: crypto.randomUUID(), n, ratio: ratioOf(size), started: Date.now() });
 
 export function ImageStudio() {
   const { ready, key, client, refreshBalance, demo } = useAnonymo();
@@ -56,7 +48,7 @@ export function ImageStudio() {
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [modelId, setModelId] = useState('');
   const [chosenSize, setSize] = useState('1024x1024');
-  const [n, setN] = useState(1);
+  const [chosenCount, setN] = useState(1);
   const [prompt, setPrompt] = useState('');
   const [jobs, setJobs] = useState<Job[]>([]);
   const [shots, setShots] = useState<Shot[]>([]);
@@ -70,16 +62,25 @@ export function ImageStudio() {
     client.mediaModels().then(
       (list) => {
         if (stale) return;
-        const images = list.data.filter((m): m is MediaImageModel => m.kind === 'image' && !!m.id && !!m.pricing && !m.edit);
+        const images = imageModels(list);
+        const draft = key && updateOn('modes', demo) ? takeStudioDraft(demo) : null;
+        if (draft) {
+          setPrompt(draft.prompt);
+          setSize(draft.settings.size);
+          setN(draft.settings.n);
+        }
         setModels(images);
-        setModelId((id) => id || images[0]?.id || '');
+        setModelId((id) => {
+          const chosen = draft?.settings.model || id;
+          return images.some((image) => image.id === chosen) ? chosen : (images[0]?.id ?? '');
+        });
       },
       () => !stale && setModelsError('Images are not switched on for this gateway yet.'),
     );
     return () => {
       stale = true;
     };
-  }, [ready, client]);
+  }, [ready, client, demo, key]);
   useEffect(() => () => urls.current.forEach((u) => URL.revokeObjectURL(u)), []);
   useEffect(() => {
     if (!jobs.length) return;
@@ -89,13 +90,15 @@ export function ImageStudio() {
 
   const model = models?.find((m) => m.id === modelId) ?? null;
   const size = model && !model.sizes.includes(chosenSize) ? model.sizes[0] : chosenSize;
-  const cost = useMemo(() => (model ? usdToMusd(model.pricing.usd_per_image) * n : 0), [model, n]);
+  const counts = updateOn('modes', demo) ? imageCounts(model) : [1, 2, 3, 4];
+  const n = counts.includes(chosenCount) ? chosenCount : (counts.at(-1) ?? 1);
+  const cost = model ? usdToMusd(model.pricing.usd_per_image) * n : 0;
 
   async function generate() {
     const text = prompt.trim();
     if (!text || !model || !key) return;
     setError(null);
-    const job: Job = { id: crypto.randomUUID(), n, ratio: ratioOf(size), started: Date.now() };
+    const job = makeJob(n, size);
     setJobs((j) => [job, ...j]);
     try {
       const res = await client.generateImages({ model: model.id, prompt: text, n, size });
@@ -128,10 +131,10 @@ export function ImageStudio() {
   return (<>
     {compareOn && (
       <>
-        <div className="compare-mode" role="group" aria-label="Image studio mode">
+        <fieldset className="compare-mode" aria-label="Image studio mode" style={{ border: 0, margin: 0, padding: 0 }}>
           <button ref={studioModeButton} type="button" className="size-chip" aria-pressed={!comparing} onClick={() => setCompareMode(false)}>Studio</button>
           <button type="button" className="size-chip" aria-pressed={comparing} onClick={() => setCompareMode(true)}>Compare</button>
-        </div>
+        </fieldset>
         <div hidden={!comparing}>
           <ImageCompare
             models={models} modelsError={modelsError} prompt={prompt} setPrompt={setPrompt}
@@ -159,7 +162,7 @@ export function ImageStudio() {
           <textarea
             className="textarea studio-prompt"
             rows={5}
-            maxLength={4000}
+            maxLength={IMAGE_PROMPT_LIMIT}
             value={prompt}
             placeholder="A lighthouse on black rocks at dusk, oil painting"
             onChange={(e) => setPrompt(e.target.value)}
@@ -222,7 +225,7 @@ export function ImageStudio() {
         <fieldset className="field">
           <legend>How many</legend>
           <div className="studio-count">
-            {[1, 2, 3, 4].map((c) => (
+            {counts.map((c) => (
               <button key={c} type="button" className={c === n ? 'size-chip is-on' : 'size-chip'} aria-pressed={c === n} onClick={() => setN(c)}>
                 {c}
               </button>

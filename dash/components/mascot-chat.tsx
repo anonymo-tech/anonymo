@@ -40,12 +40,11 @@ const PageSlots = createContext<{
 } | null>(null);
 
 export function FullPageChat() {
-  const { key } = useAnonymo();
   const { thread, composer, open, close } = useContext(PageSlots)!;
   return (
     <WorkspaceShell
       section="Chat"
-      composer={key ? <div ref={composer} /> : undefined}
+      composer={<div ref={composer} />}
     >
       <div className="chat-page-slot" ref={thread} />
       {open && (

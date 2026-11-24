@@ -8,6 +8,98 @@ const origin = new URL(
 );
 assert.ok(['127.0.0.1', 'localhost', '[::1]'].includes(origin.hostname));
 
+test('sidebar folds remember manual choices and open for the current page', async () => {
+  const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || undefined });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.route('**/*', (route) => new URL(route.request().url()).origin === origin.origin ? route.continue() : route.abort());
+    await page.goto(new URL('/dashboard?demo=1', origin).href);
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === 'I am 18 or older');
+    await page.getByRole('button', { name: 'I am 18 or older' }).click();
+    await page.getByText('Demo mode.', { exact: true }).waitFor();
+
+    const nav = page.getByRole('navigation', { name: 'Workspace', exact: true });
+    const more = nav.locator('summary').filter({ hasText: /^More$/ });
+    const developers = nav.locator('summary').filter({ hasText: /^For developers$/ });
+    const story = nav.getByRole('link', { name: 'Story Studio' });
+    const presets = nav.getByRole('link', { name: 'Frontend presets' });
+    const history = nav.getByRole('link', { name: 'History' });
+    const savedMore = (value) => page.waitForFunction((value) => localStorage.getItem('anonymo:workspace-nav:more') === value, value);
+    assert.deepEqual(await nav.getByRole('link').allTextContents(), ['Overview', 'Chat', 'Characters', 'API key', 'Balance', 'History']);
+    await more.press('Enter');
+    await story.waitFor();
+    await savedMore('open');
+    await page.reload();
+    await story.waitFor();
+    await more.press('Space');
+    await story.waitFor({ state: 'hidden' });
+    await savedMore('closed');
+    await page.reload();
+    await page.getByText('Demo mode.', { exact: true }).waitFor();
+    assert.equal(await story.isVisible(), false);
+
+    await page.goto(new URL('/dashboard/story', origin).href);
+    await story.waitFor();
+    assert.equal(await story.getAttribute('aria-current'), 'page');
+    await more.press('Enter');
+    await story.waitFor({ state: 'hidden' });
+    await page.reload();
+    await story.waitFor();
+    await history.click();
+    await page.getByRole('heading', { name: 'History', exact: true }).waitFor();
+    await page.waitForFunction(() => document.title === 'History — Anonymo');
+    await savedMore('closed');
+    assert.equal(await story.isVisible(), false);
+
+    await page.goto(new URL('/dashboard/presets', origin).href);
+    await presets.waitFor();
+    assert.equal(await presets.getAttribute('aria-current'), 'page');
+    await nav.getByRole('link', { name: 'Balance', exact: true }).click();
+    await page.waitForURL('**/dashboard/funds');
+    await page.waitForFunction(() => document.title === 'Balance — Anonymo');
+    assert.equal(await presets.isVisible(), false);
+    await developers.press('Enter');
+    await presets.waitFor();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole('navigation', { name: 'Quick navigation' }).getByRole('button', { name: 'More' }).click();
+    await page.getByRole('dialog', { name: 'Workspace menu' }).getByRole('link', { name: 'Frontend presets' }).waitFor();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('sidebar folds work when preference storage is blocked', async () => {
+  const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || undefined });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.route('**/*', (route) => new URL(route.request().url()).origin === origin.origin ? route.continue() : route.abort());
+    await page.addInitScript(() => {
+      for (const method of ['getItem', 'setItem']) {
+        const original = Storage.prototype[method];
+        Storage.prototype[method] = function (key, ...args) {
+          if (key.startsWith('anonymo:workspace-nav:')) throw new DOMException('Storage is blocked', 'SecurityError');
+          return original.call(this, key, ...args);
+        };
+      }
+    });
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error));
+    await page.goto(new URL('/dashboard?demo=1', origin).href);
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === 'I am 18 or older');
+    await page.getByRole('button', { name: 'I am 18 or older' }).click();
+    const nav = page.getByRole('navigation', { name: 'Workspace', exact: true });
+    const summary = nav.locator('summary').filter({ hasText: /^More$/ });
+    const call = nav.getByRole('link', { name: 'Night Call' });
+    await summary.click();
+    await call.waitFor();
+    await summary.click();
+    await call.waitFor({ state: 'hidden' });
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('a visitor can connect a key, fund it, chat and inspect the receipt from mobile navigation', async () => {
   const browser = await chromium.launch({
     channel: process.env.BROWSER_CHANNEL || undefined,
@@ -40,6 +132,10 @@ test('a visitor can connect a key, fund it, chat and inspect the receipt from mo
     const more = quick.getByRole('button', { name: 'More' });
     await more.click();
     const menu = page.getByRole('dialog', { name: 'Workspace menu' });
+    for (const name of ['Overview', 'Chat', 'Balance']) {
+      assert.equal(await menu.getByRole('link', { name, exact: true }).count(), 0);
+    }
+    await menu.locator('summary').filter({ hasText: /^More$/ }).click();
     await menu.getByRole('link', { name: 'Usage & limits' }).waitFor();
     await page.keyboard.press('Escape');
     await menu.waitFor({ state: 'hidden' });
@@ -63,7 +159,7 @@ test('a visitor can connect a key, fund it, chat and inspect the receipt from mo
     await page.waitForURL('**/dashboard/chat');
     await quick.getByRole('link', { name: 'Overview' }).click();
     await page.getByRole('heading', { name: 'Start your first chat' }).waitFor();
-    await page.getByRole('link', { name: 'Manage funds' }).click();
+    await page.getByRole('link', { name: 'Open Balance' }).click();
     await page.getByRole('button', { name: 'Withdraw', exact: true }).click();
     await page.getByRole('heading', { name: 'Withdraw funds', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Account activity', exact: true }).click();
@@ -78,7 +174,8 @@ test('a visitor can connect a key, fund it, chat and inspect the receipt from mo
       .getByRole('heading', { name: 'Start your first chat' })
       .waitFor();
     await page.getByRole('link', { name: 'Open chat', exact: true }).click();
-    await page.getByRole('button', { name: 'Choose model: Anonymo 1', exact: true }).waitFor();
+    // With chat modes on, the model picker sits under +; the message box shows the chat is ready.
+    await page.locator('#composer').waitFor();
     assert.equal(await page.locator('.dock-composer .ai-notice').count(), 0);
     await page.locator('#composer').fill('Give me a short greeting.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -95,7 +192,7 @@ test('a visitor can connect a key, fund it, chat and inspect the receipt from mo
     });
     assert.equal(
       await nav
-        .getByRole('link', { name: 'Receipts' })
+        .getByRole('link', { name: 'History' })
         .getAttribute('aria-current'),
       'page',
     );
@@ -106,7 +203,7 @@ test('a visitor can connect a key, fund it, chat and inspect the receipt from mo
     await options.locator('summary').click();
     assert.match(await options.locator('summary').innerText(), /2 images/);
     await page.getByRole('button', { name: /Make 2 images/ }).waitFor();
-    await nav.getByRole('link', { name: 'Receipts' }).click();
+    await nav.getByRole('link', { name: 'History' }).click();
     await page.getByText('Where to find the ID', { exact: true }).click();
     await page.locator('details code').first().waitFor();
     await nav.getByRole('link', { name: 'API key' }).click();
@@ -184,7 +281,7 @@ test('phone onboarding offers a preset template, validates receipt IDs and carri
     await page.getByLabel('I have stored this key somewhere safe').check();
     await page.getByRole('button', { name: 'Open chat', exact: true }).tap();
     await page.waitForURL('**/dashboard/chat');
-    await page.getByRole('navigation', { name: 'Quick navigation' }).getByRole('link', { name: 'Funds' }).tap();
+    await page.getByRole('navigation', { name: 'Quick navigation' }).getByRole('link', { name: 'Balance' }).tap();
     const walletLink = page.getByRole('link', { name: 'MetaMask', exact: true });
     const review = page.getByRole('button', { name: 'Continue to wallet' });
     await review.waitFor();

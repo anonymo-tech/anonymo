@@ -4,7 +4,7 @@
 // conversation (memory only, unless the person turns on keeping chats in this browser: lib/anonymo/history.ts) and
 // the receipt ids this device has seen (ids only, no text).
 
-import { useSearchParams } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createAnonymoClient, type AnonymoClient } from '@/lib/anonymo/client';
 import { API_BASE, DEMO_BY_DEFAULT, isDemoMode } from '@/lib/anonymo/config';
@@ -15,7 +15,7 @@ import { forgetReceipts, receiptsStore, rememberReceipt, type SeenReceipt } from
 import { keepStore } from '@/lib/anonymo/history';
 import { freshTabChats, switchTabChat, type TabChat } from '@/lib/anonymo/tab-chats';
 import { updateOn } from '@/lib/anonymo/updates';
-import type { ModelInfo } from '@/lib/anonymo/types';
+import type { Balance, ModelInfo } from '@/lib/anonymo/types';
 import type { Turn } from './dashboard/chat-types';
 
 const DEMO_BASE = 'https://demo.anonymo.invalid';
@@ -42,6 +42,8 @@ type AnonymoState = {
   receipts: SeenReceipt[];
   rememberReceipt: (receipt: SeenReceipt) => void;
   forgetReceipts: () => void;
+  balance: Balance | null;
+  balanceError: boolean;
   balanceVersion: number;
   refreshBalance: () => void;
   /** Model IDs `GET /v1/models` lists right now, or null until known (then every ID is offered). */
@@ -110,6 +112,26 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
     () => createAnonymoClient({ baseUrl: demo ? DEMO_BASE : API_BASE, key, fetch: demoFetch }),
     [demo, key, demoFetch],
   );
+
+  // Funds reads its own balance alongside deposits and withdrawals.
+  const pathname = usePathname();
+  const inWorkspace = pathname === '/dashboard' || pathname.startsWith('/dashboard/');
+  const balanceClient = ready && key && inWorkspace && pathname !== '/dashboard/funds' ? client : null;
+  const [balanceState, setBalanceState] = useState<{ client: AnonymoClient | null; balance: Balance | null; error: boolean }>({
+    client: balanceClient, balance: null, error: false,
+  });
+  if (balanceState.client !== balanceClient) {
+    setBalanceState({ client: balanceClient, balance: null, error: false });
+  }
+  useEffect(() => {
+    if (!balanceClient) return;
+    const controller = new AbortController();
+    balanceClient.balance(controller.signal).then(
+      (balance) => { if (!controller.signal.aborted) setBalanceState({ client: balanceClient, balance, error: false }); },
+      () => { if (!controller.signal.aborted) setBalanceState({ client: balanceClient, balance: null, error: true }); },
+    );
+    return () => controller.abort();
+  }, [balanceClient, balanceVersion]);
 
   const [catalog, setCatalog] = useState<ModelInfo[] | null>(null);
   const [catalogError, setCatalogError] = useState(false);
@@ -189,11 +211,13 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
       receipts,
       rememberReceipt,
       forgetReceipts,
+      balance: balanceState.balance,
+      balanceError: balanceState.error,
       balanceVersion,
       refreshBalance,
       liveModels, catalog, catalogError, refreshCatalog,
     }),
-    [ready, demo, key, client, mock, setKey, clearKey, turns, setTurns, chatId, chats.recent, resetChats, openChat, receipts, balanceVersion, refreshBalance, liveModels, catalog, catalogError, refreshCatalog],
+    [ready, demo, key, client, mock, setKey, clearKey, turns, setTurns, chatId, chats.recent, resetChats, openChat, receipts, balanceState, balanceVersion, refreshBalance, liveModels, catalog, catalogError, refreshCatalog],
   );
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

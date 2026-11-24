@@ -1,19 +1,20 @@
 // 04 Track my top-up. One open top-up per key and rail, kept in this browser so it survives a reload, a suspended tab
-// and a second tap. It holds nothing secret: the key's public keyCommit (already in every payment link and on chain),
+// and a second tap. It holds nothing secret: the key's public commitment or Solana reference,
 // the amount, and once known the transaction hash. Only a deposit row that matches it can finish it: an approval, a
 // mined transfer, elapsed time, a balance change or some other deposit on the same key never does.
 
 import { usdToMusd } from './money.ts';
 import type { DepositRow, EvmChain, Hex } from './types.ts';
 
-export type TopupRail = 'evm' | 'coin';
+export type TopupRail = 'evm' | 'coin' | 'solana';
+type TopupChain = EvmChain | 'solana';
 
 export type TopupAttempt = {
   v: 1;
   id: string;
-  keyCommit: Hex;
+  keyCommit: string;
   rail: TopupRail;
-  chain: EvmChain;
+  chain: TopupChain;
   token: string;
   /** The amount as the person typed it, and the same in micro-USD. */
   amount: string;
@@ -44,7 +45,9 @@ const CLOCK_SKEW_MS = 2 * 60_000;
 export const WALLET_DELAY_MS = 15 * 60_000;
 export const NETWORK_DELAY_MS = 20 * 60_000;
 
-export const attemptSlot = (keyCommit: string, rail: TopupRail) => `${PREFIX}${keyCommit.toLowerCase()}:${rail}`;
+// Base58 references are case-sensitive. Hex commitments can be written in either case.
+const storageKey = (keyCommit: string, rail: TopupRail) => rail === 'solana' ? keyCommit : keyCommit.toLowerCase();
+export const attemptSlot = (keyCommit: string, rail: TopupRail) => `${PREFIX}${storageKey(keyCommit, rail)}:${rail}`;
 
 const HEX32 = /^0x[0-9a-fA-F]{64}$/;
 const COIN_AMOUNT = /^\d{1,3}(,\d{3})*(\.\d+)?$/;
@@ -60,8 +63,9 @@ export function parseAttempt(raw: string | null, keyCommit: string, rail: TopupR
   } catch {
     return null;
   }
-  if (!a || a.v !== 1 || typeof a.id !== 'string' || typeof a.keyCommit !== 'string' || a.keyCommit.toLowerCase() !== keyCommit.toLowerCase()) return null;
+  if (!a || a.v !== 1 || typeof a.id !== 'string' || typeof a.keyCommit !== 'string' || storageKey(a.keyCommit, rail) !== storageKey(keyCommit, rail)) return null;
   if (a.rail !== rail || typeof a.chain !== 'string' || typeof a.token !== 'string' || typeof a.amount !== 'string') return null;
+  if (rail === 'solana' && (a.chain !== 'solana' || (a.token !== 'USDC' && a.token !== 'USDT') || a.hash !== null)) return null;
   if (!isNum(a.musd) || a.musd <= 0 || !isNum(a.startedAt) || !isNumOrNull(a.walletOpenedAt) || !isNumOrNull(a.submittedAt)) return null;
   if (a.hash !== null && !(typeof a.hash === 'string' && HEX32.test(a.hash))) return null;
   if (!Array.isArray(a.knownRefs) || !a.knownRefs.every(r => typeof r === 'string')) return null;
@@ -106,9 +110,9 @@ export function clearAllAttempts(storage: Storage | undefined) {
 }
 
 export function newAttempt(o: {
-  keyCommit: Hex;
+  keyCommit: string;
   rail: TopupRail;
-  chain: EvmChain;
+  chain: TopupChain;
   token: string;
   amount: string;
   musd: number;
@@ -168,7 +172,7 @@ export function matchAttempt(a: TopupAttempt, rows: DepositRow[]): TopupMatch {
   });
   if (!fresh.length) return { kind: 'none' };
   // A coin payment's credit depends on the price at confirmation, so it never matches by amount alone.
-  if (a.rail === 'evm') {
+  if (a.rail !== 'coin') {
     const exact = fresh.filter(r => usdToMusd(r.amount_usd) === a.musd);
     if (exact.length === 1) return { kind: 'found', row: exact[0], by: 'amount' };
     if (exact.length > 1) return { kind: 'candidates', rows: exact };

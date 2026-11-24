@@ -10,6 +10,7 @@ import { updateOn } from './updates.ts';
 import { chatTiming, hasExpired, sweepExpired } from './vanish.ts';
 import { loadVanishPrefs } from './vanish-prefs.ts';
 import { vault } from './vault-browser.ts';
+import type { ModeResult } from './chat-modes.ts';
 import type { MemoryCharge } from './memory-request.ts';
 export { DEVICE_PREFIX, wipeDevice } from './device-store.ts';
 
@@ -26,6 +27,7 @@ export type SavedTurn = {
   councilMode: 'merge' | 'select' | null;
   recap?: boolean;
   memoryCharge?: MemoryCharge;
+  modeResult?: ModeResult;
   /** Update "photos": how many photos went with the message. The photos themselves are never saved. */
   photoCount?: number;
 };
@@ -54,6 +56,10 @@ export function toSaved(turns: TurnLike[]): SavedTurn[] {
   const out: SavedTurn[] = [];
   for (const t of turns) {
     if (t.status !== 'done' && t.status !== 'stopped' && t.status !== 'error') continue;
+    const result = t.modeResult;
+    // Generated PNGs stay in the tab, even when keeping chats is on.
+    const modeResult = result?.mode === 'picture' ? { ...result, images: undefined } :
+      result?.mode === 'talk' ? { ...result, audioPending: undefined } : result;
     out.push({
       id: t.id,
       model: t.model,
@@ -66,6 +72,7 @@ export function toSaved(turns: TurnLike[]): SavedTurn[] {
       receiptId: t.receiptId,
       councilMode: t.councilMode,
       ...(t.recap ? { recap: true } : {}),
+      ...(modeResult ? { modeResult } : {}),
       ...(t.memoryCharge ? { memoryCharge: t.memoryCharge } : {}),
       ...(t.photoCount ? { photoCount: t.photoCount } : {}),
     });

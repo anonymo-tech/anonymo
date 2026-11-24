@@ -23,6 +23,8 @@ import type { Turn } from './chat-types';
 import { CallStage, CrisisLines, VoicePicker } from './night-call-stage';
 import { useContentGuard } from './use-content-guard';
 import { applyMacros, buildCharacterMessages, greetingsOf } from '@/lib/anonymo/card';
+import { withAboutYou } from '@/lib/anonymo/about-you';
+import { currentAboutYouNote, loadAboutYouForChat } from '@/lib/anonymo/about-you-store';
 import { charactersStore } from '@/lib/anonymo/characters-store';
 import { describeError, isOutOfCredit } from '@/lib/anonymo/client';
 import { useDeviceStore } from '@/lib/anonymo/device-store';
@@ -304,8 +306,11 @@ function Call() {
     let receiptId: string | null = null;
     let haveReceipt = false;
     try {
+      const loading = loadAboutYouForChat(demo);
+      if (loading) await loading;
+      abort.signal.throwIfAborted();
       const result = await client.chat(
-        { model: turn.model, messages },
+        { model: turn.model, messages: withAboutYou(messages, currentAboutYouNote(demo)) },
         {
           signal: abort.signal,
           headers: { refusalCatch: 'on' },

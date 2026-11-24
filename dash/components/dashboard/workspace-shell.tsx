@@ -7,10 +7,12 @@ import {
   AudioLines,
   BarChart3,
   BookOpen,
+  ChevronRight,
   Columns3,
   Drama,
   Ellipsis,
   Headphones,
+  IdCard,
   ImageIcon,
   Images,
   KeyRound,
@@ -37,7 +39,7 @@ import { WipeDevice } from './chat-history';
 import { useVanishWorkspace } from './panic-key';
 import { VaultTopBar } from './vault-controls';
 import { updateOn, type UpdateId } from '@/lib/anonymo/updates';
-import { formatUsd, usdToMusd } from '@/lib/anonymo/money';
+import { formatUsdAmount } from '@/lib/anonymo/money';
 
 type Destination = {
   href: string;
@@ -47,15 +49,26 @@ type Destination = {
 };
 const overview = { href: '/dashboard', label: 'Overview', icon: LayoutGrid };
 const chat = { href: '/dashboard/chat', label: 'Chat', icon: MessageSquare };
-const funds = { href: '/dashboard/funds', label: 'Funds', icon: Wallet };
+const funds = { href: '/dashboard/funds', label: 'Balance', icon: Wallet };
 const shortcuts = [overview, chat, funds];
-const groups: { title: string; links: Destination[] }[] = [
+const folds = ['more', 'developers'] as const;
+type Fold = (typeof folds)[number];
+const groups: { title: string; fold?: Fold; links: Destination[] }[] = [
   {
     title: 'Workspace',
     links: [
       overview,
       chat,
       { href: '/dashboard/characters', label: 'Characters', icon: Drama },
+      { href: '/dashboard/key', label: 'API key', icon: KeyRound },
+      funds,
+      { href: '/dashboard/receipts', label: 'History', icon: ReceiptText },
+    ],
+  },
+  {
+    title: 'More',
+    fold: 'more',
+    links: [
       { href: '/dashboard/story', label: 'Story Studio', icon: BookOpen, feature: 'story' },
       { href: '/dashboard/call', label: 'Night Call', icon: Headphones, feature: 'voice' },
       { href: '/dashboard/side-by-side', label: 'Side by side', icon: Columns3, feature: 'sidebyside' },
@@ -68,14 +81,8 @@ const groups: { title: string; links: Destination[] }[] = [
       { href: '/dashboard/video', label: 'Video studio', icon: Video, feature: 'video' },
       { href: '/dashboard/library', label: 'Library', icon: Images, feature: 'vault' },
       { href: '/dashboard/move-in', label: 'Move in', icon: PackageOpen, feature: 'movein' },
+      { href: '/dashboard/about-you', label: 'About you', icon: IdCard, feature: 'aboutyou' },
       { href: '/dashboard/ventures', label: 'Ventures', icon: Rocket, feature: 'ventures' },
-    ],
-  },
-  {
-    title: 'Account',
-    links: [
-      { href: '/dashboard/key', label: 'API key', icon: KeyRound },
-      funds,
       { href: '/dashboard/tickets', label: 'Tickets', icon: Ticket, feature: 'tickets' },
       {
         href: '/dashboard/usage',
@@ -83,12 +90,12 @@ const groups: { title: string; links: Destination[] }[] = [
         icon: BarChart3,
         feature: 'usage',
       },
-      { href: '/dashboard/receipts', label: 'Receipts', icon: ReceiptText },
       { href: '/dashboard/wallet-review', label: 'Wallet request', icon: ShieldCheck, feature: 'walletreview' },
     ],
   },
   {
-    title: 'Resources',
+    title: 'For developers',
+    fold: 'developers',
     links: [
       { href: '/dashboard/presets', label: 'Frontend presets', icon: Plug },
       { href: '/dashboard/connect', label: 'Pair a coding tool', icon: Link2, feature: 'connect' },
@@ -111,46 +118,110 @@ function matches(path: string, href: string) {
   );
 }
 
+function useNavGroups(pathname: string) {
+  const [preferences, setPreferences] = useState<Partial<Record<Fold, boolean>>>({});
+  const [foldedHere, setFoldedHere] = useState<Fold | null>(null);
+
+  useEffect(() => {
+    const saved: Partial<Record<Fold, boolean>> = {};
+    try {
+      for (const fold of folds) {
+        saved[fold] = localStorage.getItem(`anonymo:workspace-nav:${fold}`) === 'open';
+      }
+    } catch {
+      // The menu still works when browser storage is blocked.
+    }
+    setPreferences(saved);
+  }, []);
+
+  // Reopen the current page's group on navigation without changing the saved choice.
+  useEffect(() => setFoldedHere(null), [pathname]);
+
+  return {
+    isOpen: (fold: Fold, active: boolean) => !!preferences[fold] || (active && foldedHere !== fold),
+    setOpen(fold: Fold, open: boolean, active: boolean) {
+      setPreferences((previous) => ({ ...previous, [fold]: open }));
+      if (active) setFoldedHere(open ? null : fold);
+      try {
+        localStorage.setItem(`anonymo:workspace-nav:${fold}`, open ? 'open' : 'closed');
+      } catch {
+        // Keep the choice in memory for this page.
+      }
+    },
+  };
+}
+
 function WorkspaceNav({
   pathname,
   demo,
+  navGroups,
   close,
 }: {
   pathname: string;
   demo: boolean;
+  navGroups: ReturnType<typeof useNavGroups>;
   close?: (href: string) => void;
 }) {
   return (
     <nav className="ws-nav" aria-label="Workspace">
-      {groups.map(({ title, links }) => (
-        <div className="nav-group" key={title}>
-          <span className="nav-label">{title}</span>
-          {links
-            .filter((item) => !close || !shortcuts.some((shortcut) => shortcut.href === item.href))
-            .filter((item) => !item.feature || updateOn(item.feature, demo))
-            .map(({ href, label, icon: Icon }) => (
-              <Link
-                key={href}
-                href={href}
-                aria-current={matches(pathname, href) ? 'page' : undefined}
-                replace={!!close}
-                onClick={(event) => {
-                  if (!close || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-                  if (href === pathname) event.preventDefault();
-                  close(href);
-                }}
-              >
-                <Icon size={16} strokeWidth={1.65} aria-hidden="true" />
-                {label}
-              </Link>
-            ))}
-        </div>
-      ))}
+      {groups.map(({ title, fold, links }) => {
+        const visible = links
+          .filter((item) => !close || !shortcuts.some((shortcut) => shortcut.href === item.href))
+          .filter((item) => !item.feature || updateOn(item.feature, demo));
+        if (!visible.length) return null;
+        const items = visible.map(({ href, label, icon: Icon }) => (
+          <Link
+            key={href}
+            href={href}
+            aria-current={matches(pathname, href) ? 'page' : undefined}
+            replace={!!close}
+            onClick={(event) => {
+              if (!close || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+              if (href === pathname) event.preventDefault();
+              close(href);
+            }}
+          >
+            <Icon size={16} strokeWidth={1.65} aria-hidden="true" />
+            {label}
+          </Link>
+        ));
+        if (!fold) {
+          return (
+            <div className="nav-group" key={title}>
+              <span className="nav-label">{title}</span>
+              {items}
+            </div>
+          );
+        }
+        const active = visible.some(({ href }) => matches(pathname, href));
+        const open = navGroups.isOpen(fold, active);
+        return (
+          <details
+            className="nav-fold"
+            key={fold}
+            open={open}
+            onToggle={(event) => {
+              const next = event.currentTarget.open;
+              if (next !== open) navGroups.setOpen(fold, next, active);
+            }}
+          >
+            <summary className="nav-label">
+              {title}
+              <ChevronRight size={13} aria-hidden="true" />
+            </summary>
+            <div className="nav-group">{items}</div>
+          </details>
+        );
+      })}
     </nav>
   );
 }
 
-function MobileNav({ pathname, demo }: { pathname: string; demo: boolean }) {
+function MobileNav({ pathname, demo, navGroups }: {
+  pathname: string;
+  demo: boolean;
+  navGroups: ReturnType<typeof useNavGroups>;
+}) {
   const menu = useRef<HTMLDialogElement>(null);
   const [open, setOpen] = useState(false);
   const followingLink = useRef(false);
@@ -234,6 +305,7 @@ function MobileNav({ pathname, demo }: { pathname: string; demo: boolean }) {
           <WorkspaceNav
             pathname={pathname}
             demo={demo}
+            navGroups={navGroups}
             close={(href) => {
               followingLink.current = href !== pathname;
               menu.current?.close();
@@ -260,6 +332,7 @@ export function WorkspaceShell({
   wide?: boolean;
 }) {
   const pathname = usePathname();
+  const navGroups = useNavGroups(pathname);
   const inFunds = pathname === '/dashboard/funds';
   const { ready, demo, key } = useAnonymo();
   if (useVanishWorkspace()) return null;
@@ -270,7 +343,7 @@ export function WorkspaceShell({
       </a>
       <aside className="ws-side">
         <Wordmark href="/" />
-        <WorkspaceNav pathname={pathname} demo={ready && demo} />
+        <WorkspaceNav pathname={pathname} demo={ready && demo} navGroups={navGroups} />
       </aside>
       <div className="ws-body">
         <header className="ws-top">
@@ -290,9 +363,9 @@ export function WorkspaceShell({
           <div className="ws-top-right">
             {!inFunds && <ContractAddressChip />}
             <AdultsOnly compact />
-            {ready && key && !inFunds && <Purse key={key} />}
+            {ready && key && !inFunds && <Purse />}
             {ready && updateOn('vault', demo) && <VaultTopBar />}
-            {ready && (updateOn('history', demo) || updateOn('vault', demo) || updateOn('faces', demo)) && <WipeDevice />}
+            {ready && (updateOn('history', demo) || updateOn('vault', demo) || updateOn('faces', demo) || updateOn('aboutyou', demo)) && <WipeDevice />}
           </div>
         </header>
         <main
@@ -317,32 +390,18 @@ export function WorkspaceShell({
           </footer>
         )}
       </div>
-      <MobileNav pathname={pathname} demo={ready && demo} />
+      <MobileNav pathname={pathname} demo={ready && demo} navGroups={navGroups} />
     </div>
   );
 }
 
 function Purse() {
-  const { client, balanceVersion } = useAnonymo();
-  const [available, setAvailable] = useState<number | null>(null);
-  useEffect(() => {
-    const controller = new AbortController();
-    client.balance(controller.signal).then(
-      (b) => {
-        if (!controller.signal.aborted)
-          setAvailable(usdToMusd(b.available_usd));
-      },
-      () => {
-        if (!controller.signal.aborted) setAvailable(null);
-      },
-    );
-    return () => controller.abort();
-  }, [client, balanceVersion]);
+  const { balance } = useAnonymo();
   return (
     <Link className="ws-purse" href="/dashboard/funds">
       <Wallet size={15} aria-hidden="true" />
       <span className="sr-only">Balance </span>
-      {available === null ? 'Unavailable' : formatUsd(available)}
+      {balance === null ? 'Unavailable' : formatUsdAmount(balance.available_usd)}
     </Link>
   );
 }

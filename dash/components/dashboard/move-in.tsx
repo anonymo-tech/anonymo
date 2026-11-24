@@ -7,12 +7,15 @@
 import './movein.css';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { PackageOpen, Square } from 'lucide-react';
-import { useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useAnonymo } from '../anonymo-provider';
 import { MoveInFace } from './move-in-face';
 import { startImport, type RunningImport } from './move-in-import';
 import { MemoryBoard } from './move-in-memory';
 import { useVault } from './vault-controls';
+import { AboutYouImportPreview } from './about-you-import';
+import type { AboutYouImport } from '@/lib/anonymo/about-you';
+import { vault as deviceVault } from '@/lib/anonymo/vault-browser';
 import { greetingsOf } from '@/lib/anonymo/card';
 import { MAX_CARDS } from '@/lib/anonymo/characters-store';
 import { readChat, type ArchiveCharacter, type ChatHead } from '@/lib/anonymo/movein/archive';
@@ -55,22 +58,33 @@ export function MoveIn() {
   const [over, setOver] = useState(false);
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const [result, setResult] = useState<ImportSummary | null>(null);
+  const [aboutYou, setAboutYou] = useState<{ items: AboutYouImport[]; reviewing: boolean } | null>(null);
+  const [profileSaved, setProfileSaved] = useState(false);
   const [problem, setProblem] = useState('');
   const requestedCharacter = useSearchParams().get('character');
   const [boardFor, setBoardFor] = useState<string | null>(requestedCharacter);
   const [confirmAll, setConfirmAll] = useState(false);
   const reading = progress !== null;
   const streaming = turns.some((turn) => turn.status === 'streaming');
+  const aboutYouOn = updateOn('aboutyou', demo);
+  useEffect(() => {
+    if (aboutYouOn) return deviceVault.onLock(() => { setAboutYou(null); setProfileSaved(false); });
+  }, [aboutYouOn]);
 
   async function read(files: { name: string; blob: Blob }[]) {
     if (!files.length || running.current) return;
     setProblem('');
     setResult(null);
+    setAboutYou(null);
+    setProfileSaved(false);
     setProgress({ file: files[0]!.name, chats: 0, messages: 0 });
     const run = startImport(files, demo, setProgress);
+    const session = deviceVault.session();
     running.current = run;
     try {
-      setResult(await run.done);
+      const { aboutYou: items, ...summary } = await run.done;
+      setResult(summary);
+      if (aboutYouOn && items && session === deviceVault.session()) setAboutYou({ items, reviewing: false });
     } catch (error) {
       setProblem(error instanceof ImportStopped ? 'Stopped. Nothing from that drop was kept.' : 'That could not be read. Nothing from it was kept.');
     } finally {
@@ -179,6 +193,18 @@ export function MoveIn() {
           </output>
         )}
         {result && <Outcome result={result} />}
+        {aboutYouOn && aboutYou && (aboutYou.reviewing
+          ? <AboutYouImportPreview items={aboutYou.items} demo={demo} onClose={(saved) => {
+            if (saved) {
+              setAboutYou(null);
+              setProfileSaved(true);
+            } else setAboutYou({ ...aboutYou, reviewing: false });
+          }} />
+          : <div className="row">
+            <button type="button" className="btn" onClick={() => setAboutYou({ ...aboutYou, reviewing: true })}>Use as About you</button>
+            <span className="faint">Choose which ChatGPT settings and memories to use in all chats.</span>
+          </div>)}
+        {aboutYouOn && profileSaved && <output>About you was saved on this device.</output>}
         {problem && (
           <p className="error-text" role="alert">
             {problem}
@@ -243,6 +269,8 @@ export function MoveIn() {
                     setBoardFor(null);
                     setConfirmAll(false);
                     setResult(null);
+                    setAboutYou(null);
+                    setProfileSaved(false);
                     void forgetAll(demo);
                   }}
                 >

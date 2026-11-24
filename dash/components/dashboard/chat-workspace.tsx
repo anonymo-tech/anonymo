@@ -1,14 +1,16 @@
 'use client';
 
 import { characterDestination, setupHref } from '@/lib/anonymo/setup-return';
+import { chatSetupStep, clearSetupDraft, readSetupMessage, writeSetupDraft, type ChatSetupStep } from '@/lib/anonymo/chat-setup';
 
 import { MascotSprite } from '../mascot-sprite';
 import { Photo } from '@/components/photo';
+import { InstallAppCard } from '@/components/phone-app';
 import Link from 'next/link';
-import { ArrowUp, Crop, Drama, ImageIcon, ShieldCheck, Square, X } from 'lucide-react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { ArrowUp, Crop, Drama, ImageIcon, ShieldCheck, SlidersHorizontal, Square, X } from 'lucide-react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { mightBeWalletRequest, parseWalletRequest, WALLET_REVIEW_DRAFT } from '@/lib/anonymo/wallet-request';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { isLiveModel, useAnonymo } from '../anonymo-provider';
 import { AnswerCard } from './answer-card';
 import { ChatVoiceContext, VoiceSettings, useChatVoice } from './chat-voice';
@@ -37,31 +39,65 @@ import { describeError, isOutOfCredit } from '@/lib/anonymo/client';
 import { useDeviceStore } from '@/lib/anonymo/device-store';
 import { chatModels, isAnonymoModel, publishedPpqChat } from '@/lib/anonymo/chat-models';
 import { chatModelStore, setChatModel } from '@/lib/anonymo/prefs';
-import type { ChatMessage, ChatPhotoMessage } from '@/lib/anonymo/types';
+import type { ChatMessage, ChatPhotoMessage, MediaImageModel } from '@/lib/anonymo/types';
 import { attachPhotos, photoHint, photoSupport, withPhotoNote } from '@/lib/anonymo/photos';
 import { paperPrompt, type PaperSource } from '@/lib/paper-trail';
 import { AI_REMINDER, CRISIS_LINES, mentionsSelfHarm, reminderDue } from '@/lib/anonymo/safety';
 import { keepStore, saveChat } from '@/lib/anonymo/history';
 import { canRecap, recapContext, recapRequest, suggestRecap, threadTokens } from '@/lib/anonymo/catchup';
-import { updateOn } from '@/lib/anonymo/updates';
+import { BUILT_WITH, updateOn } from '@/lib/anonymo/updates';
+import { setChatLimit } from '@/lib/anonymo/pricetag-store';
 import { PriceTag, usePriceTag } from './price-tag';
 import { isAutoModel } from '@/lib/anonymo/auto';
 import { onlineModel, WEB_SEARCH_PRICE_USD } from '@/lib/anonymo/search';
 import { SearchToggle } from './web-sources';
 import { chatInputOn } from '@/lib/anonymo/chat-inputs';
 import { MaskVault, addMask, maskSegments, masksFromFindings, payloadDigest, sanitizedSlice, segmentsText, toggleMask, type Mask } from '@/lib/anonymo/masking';
+import { withAboutYou } from '@/lib/anonymo/about-you';
+import { currentAboutYouNote, loadAboutYouForChat, useAboutYouNote } from '@/lib/anonymo/about-you-store';
+
+import { ChatModeComposer, type ActiveTool } from './chat-mode-composer';
+import { ChatModeSettings, MODE_LABELS } from './chat-mode-settings';
+import { ChatModeTurn, modeCharges } from './chat-mode-turn';
+import { giveStudioDraft } from './image-studio-draft';
+import { streamComparison } from './side-by-side-session';
+import { ANSWER_MAX_TOKENS, EMPTY_ROUND, MERGE_MAX_TOKENS, MERGE_MODEL, SLOTS, canMerge, mergeRequest, mergeable, reconcileSlots, roundReducer, slotModels, type RoundAction, type SlotId } from '@/lib/anonymo/sidebyside';
+import { IMAGE_PROMPT_LIMIT, flatEstimate, imageError, imageModels, modeHint, pictureEstimate, reconcilePicture, recordingEstimate, threeEstimate, type ChatMode, type ModePrefs, type ModeResult } from '@/lib/anonymo/chat-modes';
+import { setModePrefs, useModePrefs } from '@/lib/anonymo/chat-mode-prefs';
+import { speechRate, transcriptionRate } from '@/lib/anonymo/talk';
+import { checkLimit, estimateMessage, parseUsdAtto, priceLabel, spentLabel, usdText, type Atto } from '@/lib/anonymo/pricetag';
+
+const MODE_STARTERS: Record<ChatMode, string> = {
+  picture: 'Draw a fox in the rain, moody and cinematic.',
+  three: 'Which AI is best at writing poems?',
+  talk: 'Can we talk out loud for a bit?',
+};
 
 const STARTERS = [
   'Give me three ideas for a short mystery story.',
   'Help me turn a rough idea into a plan.',
 ];
 
+function takeReminder(mark: { current: number }) {
+  const due = reminderDue(mark.current);
+  if (due) mark.current = Date.now();
+  return due;
+}
+
+function tabStorage() {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
 export function ChatWorkspace({ compact, threadHost, composerHost }: {
   compact: boolean;
   threadHost: HTMLDivElement | null;
   composerHost: HTMLDivElement | null;
 }) {
-  const { ready, demo, key, client, turns, setTurns, chatId, openChat, rememberReceipt, refreshBalance, liveModels, catalog, catalogError, refreshCatalog } = useAnonymo();
+  const { ready, demo, key, client, turns, setTurns, chatId, openChat, rememberReceipt, balance, refreshBalance, liveModels, catalog, catalogError, refreshCatalog } = useAnonymo();
   const stored = useDeviceStore(chatModelStore);
   const directModels = useMemo(() => chatModels(catalog ?? []), [catalog]);
   // Update "auto": Auto is offered only while the update is on; a stored Auto choice falls back to anonymo-1 otherwise.
@@ -81,8 +117,63 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     const last = turns.at(-1);
     return last?.needsFunds && !last.attachment && !last.recap ? last.prompt : '';
   });
+  const modesOn = ready && !compact && updateOn('modes', demo);
+  const [selectedMode, setSelectedMode] = useState<ChatMode | null>(null);
+  const [menu, setMenu] = useState(false);
+  const [audioCosts, setAudioCosts] = useState<(string | null)[]>([]);
+  const [imageCatalog, setImageCatalog] = useState<{ client: typeof client; models: MediaImageModel[] } | null>(null);
+  const prefs = useModePrefs(demo);
+  const imagesOn = modesOn && !compact && model !== 'anonymo-sealed' && updateOn('images', demo);
+  useEffect(() => {
+    if (!imagesOn) return;
+    let current = true;
+    client.mediaModels().then((list) => {
+      if (current) setImageCatalog({ client, models: imageModels(list) });
+    }, () => {
+      if (current) setImageCatalog(null);
+    });
+    return () => { current = false; };
+  }, [client, imagesOn]);
+  const images = imagesOn && imageCatalog?.client === client ? imageCatalog.models : [];
+  const comparisonModels = useMemo(() => slotModels((catalog ?? []).filter((entry) =>
+    entry.id !== 'anonymo-sealed' && entry.availability !== 'temporarily_unavailable')), [catalog]);
+  const slots = reconcileSlots(prefs.three.models, comparisonModels);
+  const mergeReady = comparisonModels.some((entry) => entry.id === MERGE_MODEL);
+  const [setupSheet, setSetupSheet] = useState<{ step: ChatSetupStep; hasAttachment: boolean; saved: boolean } | null>(null);
+  const [waitingDraft, setWaitingDraft] = useState(false);
+  const setupAction = useRef<HTMLAnchorElement>(null);
   const voiceOn = ready && updateOn('talk', demo);
-  const voice = useChatVoice({ enabled: voiceOn && !!key, client, chatId, turns, refreshBalance });
+  const voice = useChatVoice({
+    enabled: voiceOn && !!key, discover: voiceOn && (!!key || (modesOn && !compact)), client, chatId, turns, refreshBalance,
+    onAudio: (id, change) => update(id, (turn) => {
+      const result = turn.modeResult;
+      if (result?.mode !== 'talk') return {};
+      return { modeResult: {
+        ...result,
+        audioPending: change.pending ?? result.audioPending,
+        audioReceipts: change.receipt ? [...(result.audioReceipts ?? []), change.receipt] : result.audioReceipts,
+        audioCosts: change.cost === undefined ? result.audioCosts : [...result.audioCosts, change.cost],
+      } };
+    }),
+    canRead: (turn, quote) => price.limit === null ||
+      (!!turn.receipt && !checkLimit(price.limit, price.spend, flatEstimate(quote)).blocked),
+  });
+  const availableModes: ChatMode[] = [];
+  if (modesOn && !compact && model !== 'anonymo-sealed') {
+    if (images.length) availableModes.push('picture');
+    if (updateOn('sidebyside', demo) && slots.length === SLOTS.length) availableModes.push('three');
+    if (modelReady && voice.transcription && voice.speech?.voices.length) availableModes.push('talk');
+  }
+  const mode = modesOn && model !== 'anonymo-sealed' ? selectedMode : null;
+  const modeReady = !mode || availableModes.includes(mode);
+  const refusalTool = branded || mode === 'three';
+  const settings: ModePrefs = {
+    picture: reconcilePicture(prefs.picture, images),
+    three: { models: slots, merged: prefs.three.merged && mergeReady },
+    talk: { ...prefs.talk, voice: voice.speech?.voices.includes(prefs.talk.voice) ? prefs.talk.voice : (voice.speech?.voices[0] ?? '') },
+  };
+  const hint = modesOn && !mode ? modeHint(text, availableModes) : null;
+  const imageModel = images.find((image) => image.id === settings.picture.model);
   const [paper, setPaper] = useState<PaperSource | null>(null);
   // Update "photos": only a model that lists image input gets them; the tray lives in this tab's memory only.
   const photosOn = ready && updateOn('photos', demo);
@@ -95,7 +186,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   // Feature 01 "Mask my details": the draft under review, its masks and an undo stack. The vault maps this chat's
   // placeholders back to the original values, in memory only.
   const maskOn = ready && chatInputOn('01', demo);
-  const vault = useRef(new MaskVault());
+  const [vault, setVault] = useState(() => new MaskVault());
   // `draft` is the exact message under review; with an excerpt it is the whole excerpt message, and `question` is the
   // length of the question at its start (kept as the turn's prompt).
   const [review, setReview] = useState<{ draft: string; masks: Mask[]; past: Mask[][]; question: number; excerpt: Excerpt | null } | null>(null);
@@ -114,18 +205,27 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   // Feature 07 "Show me the proof": the document behind each turn, kept in this tab's memory only so citations can be
   // checked. It lives no longer than the attachment's chat: cleared on chat, key and mode change, or on request.
   const proofOn = ready && chatInputOn('07', demo);
-  const sources = useRef(new Map<string, ProofSource>());
-  const [, setSourcesVersion] = useState(0);
+  const [sources, setSources] = useState(() => new Map<string, ProofSource>());
+  const privacyScope = useMemo(() => ({ chatId, key, demo }), [chatId, key, demo]);
+  const [sourceScope, setSourceScope] = useState(privacyScope);
+  if (sourceScope !== privacyScope) {
+    setSourceScope(privacyScope);
+    setVault(new MaskVault());
+    setSources(new Map());
+  }
   const [checking, setChecking] = useState(false);
   const controller = useRef<AbortController | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const end = useRef<HTMLDivElement>(null);
   // Track the last in-thread reminder independently of the AI label on the model picker.
-  const noticedAt = useRef(Date.now());
+  const [startedAt] = useState(() => Date.now());
+  const noticedAt = useRef(startedAt);
   const scan = useContentGuard();
   const streaming = turns.some((t) => t.status === 'streaming');
   // A character card is only a system prompt, so it works with any model, not just anonymo-rp.
   const character = characters.find((c) => c.id === characterId) ?? null;
+  const pathname = usePathname();
+  const destination = characterDestination('chat', character?.id);
   const memoryOn = ready && updateOn('memory', demo);
   const router = useRouter();
   const walletRequest = ready && updateOn('walletreview', demo) && mightBeWalletRequest(text) && parseWalletRequest(text).ok;
@@ -142,18 +242,24 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const keep = useDeviceStore(keepStore);
   const [historyOpen, setHistoryOpen] = useState(false);
   useEffect(() => {
-    if (historyOn && keep && !streaming && turns.length) saveChat(demo, chatId, turns);
+    if (historyOn && keep && !streaming && turns.length) void saveChat(demo, chatId, turns);
   }, [historyOn, keep, streaming, turns, demo, chatId]);
 
   const [lastCharacter, setLastCharacter] = useState(requestedCharacter);
   if (requestedCharacter !== lastCharacter) {
     setLastCharacter(requestedCharacter);
     if (requestedCharacter) setCharacterId(requestedCharacter);
+    setSetupSheet(null);
   }
   const [draftChat, setDraftChat] = useState(chatId);
   if (draftChat !== chatId) {
     setDraftChat(chatId);
     setText('');
+    setSelectedMode(null);
+    setAudioCosts([]);
+    setMenu(false);
+    setSetupSheet(null);
+    setWaitingDraft(false);
     setPaper(null);
     setGuardNote(null);
     tray.clear();
@@ -163,24 +269,42 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     setEditor(null);
     setSafePost(null);
   }
+  useEffect(() => {
+    if (!ready || !key || pathname !== '/dashboard/chat' || !composerHost) return;
+    const frame = requestAnimationFrame(() => {
+      const storage = tabStorage();
+      const scope = { destination, demo };
+      const draft = readSetupMessage(storage, scope);
+      if (draft === null) return;
+      clearSetupDraft(storage, scope);
+      setText(draft.text);
+      setSelectedMode(draft.mode);
+      setWaitingDraft(true);
+      setSetupSheet(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [ready, key, pathname, composerHost, destination, demo]);
+  useEffect(() => {
+    if (!waitingDraft || !input.current) return;
+    input.current.style.height = 'auto';
+    input.current.style.height = `${Math.min(input.current.scrollHeight, 220)}px`;
+    input.current.focus({ preventScroll: true });
+  }, [waitingDraft, composerHost]);
+  useEffect(() => {
+    if (setupSheet) setupAction.current?.focus({ preventScroll: true });
+  }, [setupSheet, composerHost]);
   // A picture's decoded pixels are released as soon as it is replaced or the chat moves on.
   useEffect(() => () => picture?.bitmap.close(), [picture]);
   useEffect(() => () => { if (safePost && safePost !== picture) safePost.bitmap.close(); }, [safePost, picture]);
   const pendingScan = useRef(0);
   useEffect(() => { pendingScan.current++; }, [chatId]);
-  // Original values never outlive the chat, the key or the mode they were typed in.
-  useEffect(() => {
-    const restore = vault.current;
-    const kept = sources.current;
-    return () => {
-      restore.clear();
-      kept.clear();
-    };
-  }, [chatId, key, demo]);
+  useLayoutEffect(() => {
+    if (modesOn) pendingScan.current++;
+  }, [modesOn, mode, model, client, prefs, catalog, imageCatalog, paper, tray.photos]);
   useEffect(() => () => controller.current?.abort(), [key, demo]);
   useEffect(() => {
     const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (compact && threadHost) threadHost.scrollTop = threadHost.scrollHeight;
+    if (compact && threadHost) threadHost.scrollTo(0, threadHost.scrollHeight);
     else end.current?.scrollIntoView({ block: 'end', behavior: still ? 'auto' : 'smooth' });
   }, [turns.length, threadHost, compact]);
   const followReply = useRef(true);
@@ -192,10 +316,44 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     return () => threadHost.removeEventListener('scroll', onScroll);
   }, [compact, threadHost]);
   useEffect(() => {
-    if (compact && threadHost && followReply.current) threadHost.scrollTop = threadHost.scrollHeight;
+    if (compact && threadHost && followReply.current) threadHost.scrollTo(0, threadHost.scrollHeight);
   }, [turns, compact, threadHost]);
 
-  const chooseModel = (id: string) => setChatModel(id);
+  const chooseModel = (id: string) => {
+    setChatModel(id);
+    if (modesOn) {
+      if (id === 'anonymo-sealed') setSelectedMode(null);
+      setMenu(false);
+      setReview(null);
+    }
+  };
+
+  function pickMode(next: ChatMode | null) {
+    if (next && !availableModes.includes(next)) return;
+    pendingScan.current++;
+    setSelectedMode(next);
+    setMenu(false);
+    setGuardNote(null);
+    setReview(null);
+    setSetupSheet(null);
+    input.current?.focus({ preventScroll: true });
+  }
+
+  function changeSettings<K extends ChatMode>(id: K, next: ModePrefs[K]) {
+    pendingScan.current++;
+    setReview(null);
+    setModePrefs(demo, id, next);
+  }
+
+  function redo(turn: Turn, result: ModeResult) {
+    if (streaming || !availableModes.includes(result.mode)) return;
+    if (result.mode === 'talk') chooseModel(turn.model);
+    changeSettings(result.mode, result.settings);
+    setText(turn.prompt);
+    setWaitingDraft(false);
+    setAudioCosts([]);
+    pickMode(result.mode);
+  }
 
   const update = (id: string, patch: Partial<Turn> | ((t: Turn) => Partial<Turn>)) =>
     setTurns((list) => list.map((t) => (t.id === id ? { ...t, ...(typeof patch === 'function' ? patch(t) : patch) } : t)));
@@ -204,6 +362,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     const out: ChatMessage[] = [];
     for (const t of turns) {
       if (t.status !== 'done' && t.status !== 'stopped') continue;
+      if (t.modeResult?.mode === 'picture' || (t.modeResult?.mode === 'three' && !t.content)) continue;
       if (t.recap) {
         // Update "catchup": a recap turn starts the thread as context, not as something the person said.
         if (t.content) out.push(...recapContext(t.content));
@@ -216,8 +375,8 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   }
 
   // Update "pricetag": what send() would send for this draft (keep in step with it), priced before it goes.
-  function outgoing(prompt: string): ChatMessage[] {
-    let messages: ChatMessage[] = [...history(), { role: 'user', content: excerpt ? excerptMessage(prompt, excerpt) : paper ? paperPrompt(prompt, paper) : prompt }];
+  function outgoing(prompt: string, content: string): ChatMessage[] {
+    let messages: ChatMessage[] = [...history(), { role: 'user', content }];
     if (character) {
       const built = buildCharacterMessages(character.card, messages, { memory: memoryFor(demo, character.id) });
       messages = built.messages.map((m) => ({ role: m.role as ChatMessage['role'], content: typeof m.content === 'string' ? m.content : '' }));
@@ -228,9 +387,138 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     }
     return messages;
   }
+  // Price the same text context the request carries, including the profile.
+  const aboutYouNote = useAboutYouNote(ready && updateOn('aboutyou', demo), demo);
   const priceOn = ready && updateOn('pricetag', demo);
-  const priceDraft = priceOn ? text.trim() : '';
-  const price = usePriceTag({ on: priceOn, demo, chatId, model, priced: catalog?.find((m) => m.id === model) ?? null, messages: priceDraft ? outgoing(priceDraft) : null, turns, extraUsd: searchOn && webSearch && onlineModel(model, true) !== model ? WEB_SEARCH_PRICE_USD : undefined });
+  const priceDraft = priceOn || modesOn ? text.trim() : '';
+  const priced = catalog?.find((m) => m.id === model) ?? null;
+  const extraUsd = searchOn && webSearch && onlineModel(model, true) !== model ? WEB_SEARCH_PRICE_USD : undefined;
+  const priceMessages = priceDraft || (priceOn && aboutYouNote && tray.photos.length)
+    ? withAboutYou(outgoing(priceDraft, draftFor(priceDraft, excerpt)), aboutYouNote)
+    : null;
+  const modeEstimate = mode === 'picture' ? pictureEstimate(imageModel, settings.picture.n)
+    : mode === 'three' ? (priceDraft ? threeEstimate(priceDraft, settings.three, comparisonModels, demo, aboutYouNote) : null)
+      : undefined;
+  const charges = useMemo(() => modesOn ? turns.flatMap(modeCharges) : turns, [modesOn, turns]);
+  const price = usePriceTag({ on: priceOn, demo, chatId, model, priced, messages: priceMessages, turns: charges, extraUsd, modeEstimate });
+  const setupForBalance = chatSetupStep(!!key, balance?.available_usd);
+  const hasAttachment = !!(excerpt || paper || picture || tray.photos.length);
+  const standalone = mode === 'picture' || mode === 'three';
+
+  function showSetup(step: ChatSetupStep, source: string, withExcerpt: Excerpt | null) {
+    const saved = writeSetupDraft(tabStorage(), { destination, demo }, source, mode);
+    setSetupSheet({ step, saved, hasAttachment: !!(withExcerpt || paper || picture || tray.photos.length) });
+  }
+
+  function openSetup(source: string, withExcerpt: Excerpt | null, capture = false) {
+    let step = setupForBalance;
+    if (!step && balance) {
+      const draft = source.trim();
+      const estimate = capture ? flatEstimate(perMinute) : mode === 'three' ?
+        threeEstimate(draft, settings.three, comparisonModels, demo, aboutYouNote) : modeEstimate ??
+        (priced ? estimateMessage({ model: priced, messages: withAboutYou(outgoing(draft, draftFor(draft, withExcerpt)), aboutYouNote), demo, extraUsd }) : null);
+      step = chatSetupStep(!!key, balance.available_usd, estimate?.known ? estimate.typical : undefined);
+    }
+    if (!step) return false;
+    showSetup(step, source, withExcerpt);
+    return true;
+  }
+
+  const perMinute = parseUsdAtto(voice.transcription?.pricing.usd_per_started_minute);
+  const transcriptionCost = recordingEstimate(perMinute, voice.transcription?.max_seconds ?? 0);
+  const pendingVoiceCost = audioCosts.reduce<Atto>((sum, cost) => sum + (parseUsdAtto(cost) ?? 0n), 0n);
+  const audioSpend = { charged: price.spend.charged + pendingVoiceCost };
+  const voiceBusy = modesOn && price.limit !== null && voice.playing !== null;
+  const voiceOverLimit = (estimate: ReturnType<typeof flatEstimate>) => checkLimit(price.limit, audioSpend, estimate).blocked;
+  const offer = price.estimate ?? (modesOn && priceMessages ? estimateMessage({ model: priced, messages: priceMessages, demo, extraUsd }) : null);
+  const estimateBlocked = price.blocked || (mode === 'talk' && offer !== null && voiceOverLimit(offer));
+  const shownPrice = mode === 'talk' && voice.transcription
+    ? (perMinute === null ? '' : transcriptionRate(voice.transcription))
+    : offer?.known
+      ? mode === 'picture' ? spentLabel(offer.typical) : `${mode === 'three' ? 'up to' : 'about'} ${priceLabel(offer.typical, mode === 'three' ? 'up' : 'nearest')}`
+      : '';
+
+  function clearDraft() {
+    clearSetupDraft(tabStorage(), { destination, demo });
+    setText('');
+    setAudioCosts([]);
+    setWaitingDraft(false);
+    setSetupSheet(null);
+    setGuardNote(null);
+    setPaper(null);
+    tray.clear();
+    setExcerpt(null);
+    setPicture(null);
+  }
+
+  async function runMode(result: Extract<ModeResult, { mode: 'picture' | 'three' }>, prompt: string, message: string) {
+    const id = crypto.randomUUID();
+    const abort = new AbortController();
+    controller.current = abort;
+    const aiReminder = takeReminder(noticedAt);
+    const turn: Turn = {
+      id, model: result.mode === 'picture' ? result.settings.model : result.settings.models[0],
+      prompt, attachment: null, character: null, content: '', status: 'streaming', error: null,
+      receiptId: null, receipt: null, council: null, councilMode: null, modeResult: result,
+      aiReminder, crisis: mentionsSelfHarm(prompt),
+    };
+    setTurns((list) => [...list, turn]);
+    const previousDraft = text;
+    clearDraft();
+    let needsFunds = false;
+    let errorText: string | null = null;
+    try {
+      if (result.mode === 'picture') {
+        const response = await client.generateImages({ ...result.settings, prompt: message }, abort.signal);
+        const { cost_usd, receipt } = response.anonymo;
+        const pictures = response.data.flatMap((image) => image.b64_json ? [`data:image/png;base64,${image.b64_json}`] : []);
+        update(id, { modeResult: { ...result, images: pictures, costUsd: String(cost_usd), receipt } });
+      } else {
+        let round = result.round;
+        const dispatch = (action: RoundAction) => {
+          round = roundReducer(round, action);
+          update(id, { modeResult: { ...result, round } });
+        };
+        dispatch({ type: 'ask', run: 1, question: message, models: result.settings.models, aiReminder, crisis: !!turn.crisis });
+        const ask = (slot: SlotId, id: string, messages: ChatMessage[], maxTokens: number) => streamComparison({
+          client, run: 1, slot, model: id, messages, maxTokens, demo, signal: abort.signal, refusalCatch,
+          dispatch, waitForReceipt: true, onDelta: (value) => dispatch({ type: 'delta', run: 1, slot, text: value }),
+        });
+        await Promise.all(result.settings.models.map((id, slot) => ask(slot, id, [{ role: 'user', content: message }], ANSWER_MAX_TOKENS)));
+        if (result.settings.merged && !abort.signal.aborted) {
+          const usable = mergeable(round).filter(({ label }) => {
+            const answer = round.columns[SLOTS.findIndex((slot) => slot === label)];
+            return !!answer?.receipt;
+          });
+          if (usable.length >= 2 && canMerge(round)) {
+            const messages = mergeRequest(message, usable);
+            const check = await scan(messages.map(({ content }) => content).join('\n'));
+            if (!abort.signal.aborted && !scanFailed(check) && !check.findings.some((finding) => finding.severity === 'block')) {
+              dispatch({ type: 'merge', run: 1, model: MERGE_MODEL });
+              await ask('merge', MERGE_MODEL, messages, MERGE_MAX_TOKENS);
+            } else if (!abort.signal.aborted) {
+              update(id, { modeResult: { ...result, round, mergeNote: 'The merge did not pass the content check.' } });
+            }
+          } else {
+            update(id, { modeResult: { ...result, round, mergeNote: 'A merge needs at least two usable answers.' } });
+          }
+        }
+        needsFunds = round.columns.some((answer) => answer.needsFunds) || !!round.merge?.needsFunds;
+        if (round.merge?.status === 'done') update(id, { content: round.merge.content, receiptId: round.merge.receiptId, receipt: round.merge.receipt, sent: message });
+      }
+    } catch (error) {
+      needsFunds = !abort.signal.aborted && isOutOfCredit(error);
+      if (!abort.signal.aborted) errorText = result.mode === 'picture' ? imageError(error) : describeError(error);
+    } finally {
+      if (controller.current === abort) controller.current = null;
+      update(id, { status: abort.signal.aborted ? 'stopped' : errorText ? 'error' : 'done', error: errorText });
+      if (needsFunds && !abort.signal.aborted) {
+        setText((draft) => draft || previousDraft);
+        showSetup('funds', previousDraft, null);
+      }
+      refreshBalance();
+    }
+  }
 
   /**
    * Sends one turn. Call it only after the content check passed. `confirmed` is the digest of a reviewed preview:
@@ -241,31 +529,32 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     const message = out.message.trim();
     const sentExcerpt = out.excerpt;
     const photos = photosOn && !sentExcerpt ? tray.photos.map((p) => p.dataUrl) : [];
-    if ((!message && !photos.length) || streaming || controller.current || !key || !modelReady || tray.busy || price.blocked) return;
+    if ((!message && !photos.length) || !modeReady || streaming || controller.current || !key || tray.busy || estimateBlocked || voiceBusy) return;
+    if (confirmed !== undefined && payloadDigest(message, sentExcerpt?.image?.url) !== confirmed) return;
+    if (standalone) {
+      if (!message || hasAttachment) return;
+      if (mode === 'picture' && imageModel) {
+        if (message.length <= IMAGE_PROMPT_LIMIT) return runMode({ mode, settings: settings.picture, name: imageModel.name }, prompt, message);
+        setGuardNote({ redacted: '', message: `Use ${IMAGE_PROMPT_LIMIT.toLocaleString()} characters or fewer for a picture.` });
+      }
+      if (mode === 'three') return runMode({ mode, settings: settings.three, round: EMPTY_ROUND }, prompt, message);
+      return;
+    }
+    if (!modelReady) return;
     if ((photos.length || sentExcerpt?.image) && !support.ok) {
       setGuardNote({ redacted: '', message: photoHint(support) });
       return;
     }
-    if (confirmed !== undefined && payloadDigest(message, sentExcerpt?.image?.url) !== confirmed) return;
-    if (model !== 'anonymo-sealed') voice.prepare();
+    if (model !== 'anonymo-sealed') voice.prepare(mode === 'talk' ? settings.talk.aloud : undefined);
     setGuardNote(null);
     // An excerpt is a fresh payload built from what the person approved: the whole-document prompt is never used.
     const content = sentExcerpt ? excerptContent(message, character ? null : sentExcerpt.image) : message;
     // The chat path takes content parts; ChatMessage stays text-only for every other caller, so the one image message
     // is passed through as is (the client serialises the body unchanged).
-    let messages: ChatMessage[] = [...history(), { role: 'user', content: content as string }];
-    if (character) {
-      const built = buildCharacterMessages(character.card, messages, { memory: memoryFor(demo, character.id) });
-      messages = built.messages.map((m) => ({ role: m.role as ChatMessage['role'], content: typeof m.content === 'string' ? m.content : '' }));
-      if (memoryOn) {
-        const recent = turns.filter((turn) => !turn.attachment && turn.status === 'done').slice(-2);
-        messages = memory.addToPrompt(messages, [prompt, ...recent.flatMap((turn) => [turn.prompt, turn.content.slice(-800)])]);
-      }
-    }
+    const messages = outgoing(prompt, content as string);
     const request = photos.length ? attachPhotos(messages, photos) : messages;
     const id = crypto.randomUUID();
-    const aiReminder = reminderDue(noticedAt.current);
-    if (aiReminder) noticedAt.current = Date.now();
+    const aiReminder = takeReminder(noticedAt);
     const turn: Turn = {
       id,
       model,
@@ -281,21 +570,20 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       councilMode: model === 'anonymo-council' ? councilMode : null,
       aiReminder,
       crisis: mentionsSelfHarm(prompt),
+      ...(mode === 'talk' && voice.speech ? { modeResult: { mode, settings: settings.talk, speechModel: voice.speech.id, audioCosts } } : {}),
       ...(searchOn && webSearch && onlineModel(model, true) !== model ? { search: true } : {}),
       ...(photos.length ? { photos, photoCount: photos.length } : {}),
       ...(sentExcerpt ? { sent: message, excerpt: { page: sentExcerpt.page, image: !!sentExcerpt.image && !character } } : {}),
     };
     if (proofOn && sentExcerpt?.text) {
-      sources.current.set(id, { name: 'Excerpt', pages: [{ number: sentExcerpt.page ?? 1, text: excerptBody(sentExcerpt) }] });
+      const source = { name: 'Excerpt', pages: [{ number: sentExcerpt.page ?? 1, text: excerptBody(sentExcerpt) }] };
+      setSources((map) => new Map(map).set(id, source));
     } else if (proofOn && paper && !sentExcerpt) {
-      sources.current.set(id, { name: paper.name, pages: paper.pages.map((p) => ({ number: p.number, text: p.text })) });
+      const source = { name: paper.name, pages: paper.pages.map((p) => ({ number: p.number, text: p.text })) };
+      setSources((map) => new Map(map).set(id, source));
     }
     setTurns((list) => [...list, turn]);
-    setText('');
-    setPaper(null);
-    tray.clear();
-    setExcerpt(null);
-    setPicture(null);
+    clearDraft();
     await run(turn, request);
   }
 
@@ -310,8 +598,11 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     let receiptId: string | null = null;
     let haveReceipt = false;
     try {
+      const loading = loadAboutYouForChat(demo);
+      if (loading) await loading;
+      abort.signal.throwIfAborted();
       const result = await client.chat(
-        { model: onlineModel(model, !!turn.search), messages, ...(plainChat && !turn.attachment && !turn.recap && !turn.search && !turn.photoCount ? { dashboard_chat: true as const } : {}) },
+        { model: onlineModel(model, !!turn.search), messages: withAboutYou(messages, currentAboutYouNote(demo)), ...(plainChat && !turn.attachment && !turn.recap && !turn.search && !turn.photoCount ? { dashboard_chat: true as const } : {}) },
         {
           signal: abort.signal,
           headers: {
@@ -331,6 +622,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       const needsFunds = !stopped && isOutOfCredit(error);
       update(id, { status: stopped ? 'stopped' : 'error', error: stopped ? null : describeError(error), needsFunds });
       if (needsFunds && !turn.attachment && !turn.recap) setText(draft => draft || turn.prompt);
+      if (needsFunds && turn.modeResult?.mode === 'talk') showSetup('funds', turn.prompt, null);
     } finally {
       if (controller.current === abort) controller.current = null;
       refreshBalance();
@@ -380,7 +672,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   // The preview under review: exactly the text that will be sent, numbered from a copy of this chat's vault.
   const reviewed = (() => {
     if (!review) return null;
-    const scratch = vault.current.clone();
+    const scratch = vault.clone();
     for (const t of turns) scratch.reserve(t.prompt);
     const segments = maskSegments(review.draft, review.masks, scratch);
     const outgoing = segmentsText(segments);
@@ -390,15 +682,26 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const editReview = (masks: Mask[]) => setReview((r) => (r ? { ...r, masks, past: [...r.past, r.masks] } : r));
 
   /** The exact message for a question, with an approved excerpt when there is one. */
-  const draftFor = (question: string, ex: Excerpt | null) => (ex ? excerptMessage(question, ex) : paper ? paperPrompt(question, paper) : question);
+  function draftFor(question: string, ex: Excerpt | null) {
+    return ex ? excerptMessage(question, ex) : paper ? paperPrompt(question, paper) : question;
+  }
 
   /** Every send starts here (Enter, the Send button, "Send with it redacted", an excerpt): checked on this device first. */
   async function submit(source = text, withExcerpt = excerpt) {
     const prompt = source.trim();
-    if (streaming || !key) return;
+    if (!ready || !modeReady || streaming || controller.current || tray.busy || voiceBusy) return;
+    if (standalone && (hasAttachment || withExcerpt)) {
+      setGuardNote({ redacted: '', message: 'Remove the attachment or return to Chat to send it.' });
+      return;
+    }
+    if (mode === 'picture' && prompt.length > IMAGE_PROMPT_LIMIT) {
+      setGuardNote({ redacted: '', message: `Use ${IMAGE_PROMPT_LIMIT.toLocaleString()} characters or fewer for a picture.` });
+      return;
+    }
     if (!prompt && !(photosOn && tray.photos.length && !withExcerpt)) return;
-    if (model !== 'anonymo-sealed') voice.prepare();
-    const draft = draftFor(prompt, withExcerpt);
+    if (openSetup(source, withExcerpt) || !key) return;
+    if (!standalone && model !== 'anonymo-sealed') voice.prepare(mode === 'talk' ? settings.talk.aloud : undefined);
+    const draft = standalone ? prompt : draftFor(prompt, withExcerpt);
     if (!draft) return send({ prompt, message: '', excerpt: null });
     if (review && reviewed && review.draft === draft) return confirmReview(reviewed.digest);
     const request = ++pendingScan.current;
@@ -419,7 +722,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
         : { redacted: result.redacted, message: blocking[0].message });
       return;
     }
-    const masks = maskOn ? masksFromFindings(result.personal ?? [], vault.current.knownMasks(draft)) : [];
+    const masks = maskOn ? masksFromFindings(result.personal ?? [], vault.knownMasks(draft)) : [];
     if (masks.length) {
       setGuardNote(null);
       setReview({ draft, masks, past: [], question: prompt.length, excerpt: withExcerpt });
@@ -436,6 +739,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       setGuardNote({ redacted: '', message: 'Your draft changed after the review. Review it again before sending.' });
       return;
     }
+    if (openSetup(text, review.excerpt)) return;
     const { outgoing, scratch } = reviewed;
     const request = ++pendingScan.current;
     setChecking(true);
@@ -449,13 +753,272 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       });
       return;
     }
-    vault.current.adopt(scratch);
+    setVault(scratch);
     setReview(null);
     void send({ prompt: reviewed.prompt, message: outgoing, excerpt: review.excerpt }, confirmed);
   }
 
+  const textarea = (
+    <>
+      <label className="sr-only" htmlFor="composer">
+        Message
+      </label>
+      <textarea
+        id="composer"
+        ref={input}
+        rows={1}
+        value={text}
+        placeholder={mode ? MODE_LABELS[mode].placeholder : character ? `Write to ${character.card.data.name}…` : 'Ask anything…'}
+        disabled={!ready}
+        onChange={(e) => {
+          pendingScan.current++;
+          setText(e.target.value);
+          if (!e.target.value.trim()) {
+            clearSetupDraft(tabStorage(), { destination, demo });
+            setSetupSheet(null);
+            setWaitingDraft(false);
+          }
+          setGuardNote(null);
+          setReview(null);
+          if (!modesOn) {
+            e.target.style.height = 'auto';
+            e.target.style.height = `${Math.min(e.target.scrollHeight, 220)}px`;
+          }
+        }}
+        onDragOver={photosOn ? (e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); } : undefined}
+        onDrop={photosOn ? (e) => {
+          if (!e.dataTransfer.files.length) return;
+          e.preventDefault();
+          void tray.add(e.dataTransfer.files);
+        } : undefined}
+        onPaste={photosOn ? (e) => {
+          if (!e.clipboardData.files.length) return;
+          e.preventDefault();
+          void tray.add(e.clipboardData.files);
+        } : undefined}
+        onKeyDown={(e) => {
+          if (e.key === 'Tab' && !e.shiftKey && hint && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            pickMode(hint.mode);
+          } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            void submit();
+          }
+        }}
+      />
+    </>
+  );
+  const modelPicker = (
+    <ModelPicker value={model} onChange={chooseModel} live={liveModels} models={directModels}
+          catalogError={catalogError} onRefresh={refreshCatalog} auto={autoOn} />
+  );
+  const composerTools = (
+    <>
+      <PaperTrail value={paper} onChange={(source) => { setPaper(source); setExcerpt(null); setReview(null); if (modesOn && source) setMenu(false); }} />
+      {pickOn && paper && (
+        <button type="button" className="tool" onClick={(e) => { opener.current = e.currentTarget; setEditor({ source: { kind: 'pdf', paper }, purpose: 'explain' }); }}>
+          <Crop size={14} aria-hidden="true" /> Select part
+        </button>
+      )}
+      {pickOn && (
+        <>
+          <input ref={pictureInput} type="file" hidden accept="image/png,image/jpeg,image/webp,image/gif" onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (!file) return;
+            setPictureError('');
+            decodeImage(file).then((image) => {
+              setPicture(image);
+              setExcerpt(null);
+              setReview(null);
+              setEditor({ source: { kind: 'image', image }, purpose: 'explain' });
+            }, (error: unknown) => setPictureError(error instanceof Error ? error.message : 'This image could not be opened.'));
+          }} />
+          {picture ? (
+            <span className="tool" style={{ gap: 4 }}>
+              <button type="button" className="link-button" onClick={(e) => { opener.current = e.currentTarget; setEditor({ source: { kind: 'image', image: picture }, purpose: 'explain' }); }}>
+                <ImageIcon size={14} aria-hidden="true" /> Select part of {picture.name}
+              </button>
+              <button type="button" className="link-button" aria-label="Remove image" onClick={() => { setPicture(null); setExcerpt(null); setReview(null); }}><X size={13} aria-hidden="true" /></button>
+            </span>
+          ) : (
+            <button type="button" className="tool" onClick={(e) => { opener.current = e.currentTarget; pictureInput.current?.click(); }}>
+              <ImageIcon size={14} aria-hidden="true" /> Image
+            </button>
+          )}
+          {pictureError && <span role="alert" className="error-text">{pictureError}</span>}
+        </>
+      )}
+      {safeOn && (
+        <>
+          <input ref={safeInput} type="file" hidden accept="image/png,image/jpeg,image/webp" aria-label="Picture to make safe to post" onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (!file) return;
+            setPictureError('');
+            decodeImage(file).then(setSafePost, (error: unknown) => setPictureError(error instanceof Error ? error.message : 'This image could not be opened.'));
+          }} />
+          <button type="button" className="tool" onClick={(e) => {
+            opener.current = e.currentTarget;
+            if (picture) setSafePost(picture);
+            else safeInput.current?.click();
+          }}>
+            <ShieldCheck size={14} aria-hidden="true" /> Safe to post
+          </button>
+        </>
+      )}
+      {searchOn && <SearchToggle model={model} on={webSearch} onToggle={() => setWebSearch((w) => !w)} disabled={streaming} />}
+      {photosOn && <PhotoButton tray={tray} support={support} disabled={streaming} />}
+      {model === 'anonymo-council' && (
+        <button
+          type="button"
+          className="tool"
+          aria-pressed={councilMode === 'select'}
+          title="merge: an aggregator merges the replies. select: a judge picks the best single reply (cheaper)."
+          onClick={() => setCouncilMode((m) => (m === 'merge' ? 'select' : 'merge'))}
+        >
+          Council: {councilMode}
+        </button>
+      )}
+      {characters.length > 0 && (
+        <label className="tool">
+          <Drama size={14} aria-hidden="true" />
+          <select
+            className="select"
+            style={{ minHeight: 0, padding: 0, border: 0, background: 'transparent', width: 'auto', font: 'inherit', color: 'inherit' }}
+            value={characterId ?? ''}
+            onChange={(e) => { setCharacterId(e.target.value || null); setSetupSheet(null); }}
+            aria-label="Character"
+          >
+            <option value="">No character</option>
+            {characters.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.card.data.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {shareOn && turns.length > 0 && <ShareChat turns={turns} disabled={streaming} />}
+      {facesOn && character && <StageTools on={stage} onToggle={() => setStage((s) => !s)} character={character} faces={faces} />}
+      {memoryOn && character && memory.memory?.enabled && (
+        <button type="button" className="tool" aria-pressed={memory.extractionOn} disabled={memory.busy}
+          title="Use a separate paid chat request to suggest facts after replies."
+          onClick={memory.toggleExtraction}>Memory suggestions: {memory.extractionOn ? 'on' : 'off'}</button>
+      )}
+      {refusalTool && <button
+        type="button"
+        className="tool"
+        aria-pressed={!refusalCatch}
+        title="The refusal catch holds back the first tokens to catch a refusal and reroute it. Turning it off streams sooner."
+        onClick={() => setRefusalCatch((r) => !r)}
+      >
+        Refusal catch: {refusalCatch ? 'on' : 'off'}
+      </button>}
+    </>
+  );
+  const safeEditor = (
+    <>
+      {safePost && (
+        <SafePostEditor image={safePost} onClose={() => {
+          setSafePost(null);
+          setTimeout(() => (opener.current?.isConnected ? opener.current : input.current)?.focus(), 0);
+        }} />
+      )}
+    </>
+  );
+
+  const activeTools: ActiveTool[] = [];
+  if (paper) activeTools.push({ label: paper.name, remove: () => { setPaper(null); setExcerpt(null); setReview(null); } });
+  if (picture) activeTools.push({ label: picture.name, remove: () => { setPicture(null); setExcerpt(null); setReview(null); } });
+  if (photosOn && tray.photos.length) activeTools.push({ label: 'Photos', remove: tray.clear });
+  if (searchOn && webSearch && onlineModel(model, true) !== model) activeTools.push({ label: standalone ? 'Chat web search' : 'Search the web', remove: () => setWebSearch(false) });
+  // The chat model only applies to chat: a mode shows its own model in its settings row.
+  if (!mode && model !== 'anonymo-1') activeTools.push({ label: `Model: ${model}`, remove: () => chooseModel('anonymo-1') });
+  if (refusalTool && !refusalCatch) activeTools.push({ label: 'Refusal catch off', remove: () => setRefusalCatch(true) });
+  if (!mode && model === 'anonymo-council' && councilMode === 'select') activeTools.push({ label: 'Council: select', remove: () => setCouncilMode('merge') });
+  if (character) activeTools.push({ label: character.card.data.name, remove: () => { setCharacterId(null); setSetupSheet(null); } });
+  if (voiceOn && voice.autoRead) activeTools.push({ label: 'Auto-read replies', remove: () => voice.toggleAutoRead(false) });
+  if (stage && character) activeTools.push({ label: 'Stage', remove: () => setStage(false) });
+  if (memoryOn && character && memory.extractionOn) activeTools.push({ label: 'Memory suggestions', remove: memory.toggleExtraction });
+  if (price.limit !== null) activeTools.push({ label: `Limit ${usdText(price.limit)}`, remove: () => setChatLimit(demo, chatId, null) });
+
+  const composerPrice = { ...price, estimate: null };
+  const sendDisabled = !modeReady || checking || tray.busy || voiceBusy || (!text.trim() && (standalone || !photosOn || !tray.photos.length))
+    || (!setupForBalance && ((!standalone && !modelReady) || estimateBlocked));
+  const verb = mode === 'picture' || mode === 'three' ? MODE_LABELS[mode].verb : null;
+  const sendButton = (
+    <button type="button" className={verb ? 'mode-send mode-send-wide' : 'mode-send'} aria-label={verb ?? 'Send'}
+      title={mode === 'talk' && offer?.known ? `Chat reply about ${priceLabel(offer.typical, 'nearest')}` : undefined}
+      disabled={sendDisabled} onClick={() => void submit()}>
+      {verb && <span>{verb}</span>}<ArrowUp size={17} aria-hidden="true" />
+    </button>
+  );
+  const modeAction = streaming ? (
+    <button type="button" className="mode-send" aria-label="Stop" onClick={() => controller.current?.abort()}>
+      <Square size={14} fill="currentColor" aria-hidden="true" />
+    </button>
+  ) : mode === 'talk' && voice.transcription ? (
+    <div className="mode-actions">
+      {(text.trim() || (photosOn && tray.photos.length > 0)) && sendButton}
+      {setupForBalance ? (
+        <button type="button" className="mode-send mode-send-wide" onClick={() => openSetup(text, excerpt, true)}>Hold to talk</button>
+      ) : (
+        <VoiceMic key={chatId} mode model={voice.transcription} client={client} demo={demo}
+          disabled={!modeReady || checking || voiceBusy}
+          beforeRecord={() => {
+            if (openSetup(text, excerpt, true)) return false;
+            if (voiceOverLimit(flatEstimate(transcriptionCost))) {
+              setGuardNote({ redacted: '', message: 'Recording could exceed this chat’s limit.' });
+              return false;
+            }
+            voice.stop();
+            return true;
+          }}
+          onCharge={refreshBalance} onFunds={() => showSetup('funds', text, excerpt)}
+          onCost={(cost) => setAudioCosts((costs) => [...costs, cost])}
+          onText={(transcript) => {
+            pendingScan.current++;
+            setText((draft) => draft ? `${draft.trimEnd()} ${transcript}` : transcript);
+            setGuardNote(null);
+            setReview(null);
+            input.current?.focus();
+          }} />
+      )}
+    </div>
+  ) : sendButton;
+
   const composer = (
-    <div className="dock-composer">
+    <div className={modesOn ? 'dock-composer dock-composer-modes' : 'dock-composer'}>
+      {setupSheet ? (
+        <section className="notice notice-action" aria-label="Set up chat">
+          <output>
+            <span>{setupSheet.step === 'key'
+              ? 'Your message is ready. To send it, make a free key and add a little balance. No account, no email, about a minute.'
+              : 'Add a little balance to send this.'}</span>
+            {setupSheet.hasAttachment && <><br /><small className="muted">Add your photos or attachments again after setup.</small></>}
+            {!setupSheet.saved && <><br /><small className="muted">This browser couldn’t save your draft.</small></>}
+          </output>
+          <div className="row">
+            <Link className="btn btn-primary btn-small" ref={setupAction} href={setupHref(setupSheet.step, destination)} onClick={() => {
+              writeSetupDraft(tabStorage(), { destination, demo }, text, mode);
+              setSetupSheet(null);
+              setWaitingDraft(false);
+              setReview(null);
+              setPaper(null);
+              setExcerpt(null);
+              setPicture(null);
+              tray.clear();
+            }}>
+              {setupSheet.step === 'key' ? 'Create a free key' : 'Add funds'}
+            </Link>
+            <button type="button" className="btn btn-ghost btn-small" onClick={() => {
+              setSetupSheet(null);
+              input.current?.focus();
+            }}>Not now</button>
+          </div>
+        </section>
+      ) : waitingDraft && <output className="ai-notice">Your message is waiting. Press send.</output>}
       {guardNote && (
         <div className="notice notice-amber row" role="alert">
           <span style={{ flex: 1, minWidth: 200 }}>{guardNote.message}</span>
@@ -503,85 +1066,75 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
             } catch {
               return;
             }
+            clearSetupDraft(tabStorage(), { destination, demo });
+            setSetupSheet(null);
+            setWaitingDraft(false);
             setText('');
             router.push('/dashboard/wallet-review');
           }}>Review this request</button>
         </div>
       )}
-      <form
-        className="dock-input"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void submit();
-        }}
-      >
-        <label className="sr-only" htmlFor="composer">
-          Message
-        </label>
-        <textarea
-          id="composer"
-          ref={input}
-          rows={1}
-          value={text}
-          placeholder={key ? (character ? `Write to ${character.card.data.name}…` : 'Ask anything…') : 'Create a key to start chatting'}
-          disabled={!ready || !key}
-          onChange={(e) => {
-            pendingScan.current++;
-            setText(e.target.value);
-            setGuardNote(null);
-            setReview(null);
-            e.target.style.height = 'auto';
-            e.target.style.height = `${Math.min(e.target.scrollHeight, 220)}px`;
-          }}
-          onDragOver={photosOn ? (e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); } : undefined}
-          onDrop={photosOn ? (e) => {
-            if (!e.dataTransfer.files.length) return;
+      {modesOn ? (
+        <ChatModeComposer text={text} textarea={textarea} mode={mode} hint={hint} available={availableModes}
+          menu={menu} setMenu={setMenu} price={shownPrice} onMode={pickMode} action={modeAction} active={activeTools}
+          options={mode && <ChatModeSettings mode={mode} settings={settings} images={images} models={comparisonModels}
+            voices={voice.speech?.voices ?? []} canMerge={mergeReady} onChange={changeSettings}
+            studio={() => {
+              giveStudioDraft(demo, text, settings.picture);
+              router.push('/dashboard/images');
+            }} />}
+          tools={<>
+            <div className="mode-model-tool"><SlidersHorizontal size={15} aria-hidden="true" /> <span>Chat model</span>{modelPicker}</div>
+            {composerTools}
+            {voiceOn && <VoiceSettings sealed={model === 'anonymo-sealed'} />}
+            {priceOn && <details className="mode-price-tools"><summary>Chat spending</summary><PriceTag {...composerPrice} /></details>}
+            <span className="mode-menu-note">{historyOn && keep ? 'Chat history is saved on this device.' : 'Chat history is off on this device.'}</span>
+          </>} />
+      ) : (
+        <form
+          className="dock-input"
+          onSubmit={(e) => {
             e.preventDefault();
-            void tray.add(e.dataTransfer.files);
-          } : undefined}
-          onPaste={photosOn ? (e) => {
-            if (!e.clipboardData.files.length) return;
-            e.preventDefault();
-            void tray.add(e.clipboardData.files);
-          } : undefined}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              void submit();
-            }
+            void submit();
           }}
-        />
-        <ModelPicker value={model} onChange={chooseModel} live={liveModels} models={directModels}
-          catalogError={catalogError} onRefresh={refreshCatalog} auto={autoOn} />
-        {voiceOn && voice.transcription && model !== 'anonymo-sealed' && (
-          <VoiceMic key={chatId} model={voice.transcription} client={client} demo={demo} disabled={streaming}
-            beforeRecord={voice.stop} onCharge={refreshBalance} onText={(transcript) => {
-              setText((draft) => draft ? `${draft.trimEnd()} ${transcript}` : transcript);
-              setGuardNote(null);
-              setReview(null);
-              input.current?.focus();
-            }} />
-        )}
-        {streaming ? (
-          <button type="button" className="send send-stop" aria-label="Stop" onClick={() => controller.current?.abort()}>
-            <Square size={14} fill="currentColor" aria-hidden="true" />
-          </button>
-        ) : (
-          <button type="submit" className="send" aria-label="Send" disabled={!key || !modelReady || (!text.trim() && !(photosOn && tray.photos.length)) || (photosOn && tray.busy) || price.blocked}>
-            <ArrowUp size={18} aria-hidden="true" />
-          </button>
-        )}
-      </form>
-      {priceOn && <PriceTag {...price} />}
-      {!modelReady && <p className="notice" role="status">{!catalog && !catalogError ? 'Checking your selected model…' : 'Your selected model is unavailable. Choose another model to send.'}</p>}
+        >
+          {textarea}
+          {modelPicker}
+          {voiceOn && voice.transcription && model !== 'anonymo-sealed' && (
+            <VoiceMic key={chatId} model={voice.transcription} client={client} demo={demo} disabled={streaming}
+              beforeRecord={voice.stop} onCharge={refreshBalance} onText={(transcript) => {
+                setText((draft) => draft ? `${draft.trimEnd()} ${transcript}` : transcript);
+                setGuardNote(null);
+                setReview(null);
+                input.current?.focus();
+              }} />
+          )}
+          {streaming ? (
+            <button type="button" className="send send-stop" aria-label="Stop" onClick={() => controller.current?.abort()}>
+              <Square size={14} fill="currentColor" aria-hidden="true" />
+            </button>
+          ) : (
+            <button type="submit" className="send" aria-label="Send" disabled={!ready || (!text.trim() && !(photosOn && tray.photos.length)) || (photosOn && tray.busy) || (!setupForBalance && (!modelReady || price.blocked))}>
+              <ArrowUp size={18} aria-hidden="true" />
+            </button>
+          )}
+        </form>
+      )}
+      {priceOn && !modesOn && <PriceTag {...price} />}
+      {modesOn && estimateBlocked && <output className="notice notice-amber">This message could exceed this chat’s limit. Open Chat spending to change the limit.</output>}
+      {mode && !modeReady && <output className="mode-detail">{MODE_LABELS[mode].label} is unavailable right now.</output>}
+      {mode === 'talk' && settings.talk.aloud && voice.speech && parseUsdAtto(voice.speech.pricing.usd_per_1k_chars) !== null && (
+        <output className="mode-detail">Read replies · {speechRate(voice.speech)}</output>
+      )}
+      {key && !modelReady && !standalone && <output className="notice">{!catalog && !catalogError ? 'Checking your selected model…' : 'Your selected model is unavailable. Choose another model to send.'}</output>}
       {memoryOn && character && <MemorySuggestions {...memory} />}
       {excerpt && (
-        <div className="excerpt-chip" role="group" aria-label="Approved excerpt">
+        <fieldset className="excerpt-chip" aria-label="Approved excerpt" style={{ minInlineSize: 0, margin: 0 }}>
           <span className="chip"><Crop size={13} aria-hidden="true" /> {excerpt.image ? 'Cropped image only' : 'Excerpt only'}{excerpt.page ? ` · p. ${excerpt.page}` : ''}</span>
           <span className="excerpt-chip-text">{excerptBody(excerpt) || 'Image only'}</span>
-          <button type="button" className="link-button" onClick={() => { setExcerpt(null); setReview(null); }}>Remove</button>
+          <button type="button" className="link-button" onClick={() => { pendingScan.current++; setExcerpt(null); setReview(null); }}>Remove</button>
           <span className="faint" style={{ flexBasis: '100%' }}>Only this excerpt is sent{paper ? '. The rest of the PDF stays on this device.' : '.'}</span>
-        </div>
+        </fieldset>
       )}
       {editor && (
         <AttachmentEditor
@@ -605,120 +1158,13 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
           }}
         />
       )}
-      <div className="dock-tools">
-        <PaperTrail value={paper} onChange={(source) => { setPaper(source); setExcerpt(null); setReview(null); }} />
-        {pickOn && paper && (
-          <button type="button" className="tool" onClick={(e) => { opener.current = e.currentTarget; setEditor({ source: { kind: 'pdf', paper }, purpose: 'explain' }); }}>
-            <Crop size={14} aria-hidden="true" /> Select part
-          </button>
-        )}
-        {pickOn && (
-          <>
-            <input ref={pictureInput} type="file" hidden accept="image/png,image/jpeg,image/webp,image/gif" onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = '';
-              if (!file) return;
-              setPictureError('');
-              decodeImage(file).then((image) => {
-                setPicture(image);
-                setExcerpt(null);
-                setReview(null);
-                setEditor({ source: { kind: 'image', image }, purpose: 'explain' });
-              }, (error: unknown) => setPictureError(error instanceof Error ? error.message : 'This image could not be opened.'));
-            }} />
-            {picture ? (
-              <span className="tool" style={{ gap: 4 }}>
-                <button type="button" className="link-button" onClick={(e) => { opener.current = e.currentTarget; setEditor({ source: { kind: 'image', image: picture }, purpose: 'explain' }); }}>
-                  <ImageIcon size={14} aria-hidden="true" /> Select part of {picture.name}
-                </button>
-                <button type="button" className="link-button" aria-label="Remove image" onClick={() => { setPicture(null); setExcerpt(null); setReview(null); }}><X size={13} aria-hidden="true" /></button>
-              </span>
-            ) : (
-              <button type="button" className="tool" onClick={(e) => { opener.current = e.currentTarget; pictureInput.current?.click(); }}>
-                <ImageIcon size={14} aria-hidden="true" /> Image
-              </button>
-            )}
-            {pictureError && <span role="alert" className="error-text">{pictureError}</span>}
-          </>
-        )}
-        {safeOn && (
-          <>
-            <input ref={safeInput} type="file" hidden accept="image/png,image/jpeg,image/webp" aria-label="Picture to make safe to post" onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = '';
-              if (!file) return;
-              setPictureError('');
-              decodeImage(file).then(setSafePost, (error: unknown) => setPictureError(error instanceof Error ? error.message : 'This image could not be opened.'));
-            }} />
-            <button type="button" className="tool" onClick={(e) => {
-              opener.current = e.currentTarget;
-              if (picture) setSafePost(picture);
-              else safeInput.current?.click();
-            }}>
-              <ShieldCheck size={14} aria-hidden="true" /> Safe to post
-            </button>
-          </>
-        )}
-        {safePost && (
-          <SafePostEditor image={safePost} onClose={() => {
-            setSafePost(null);
-            setTimeout(() => (opener.current?.isConnected ? opener.current : input.current)?.focus(), 0);
-          }} />
-        )}
-        {searchOn && <SearchToggle model={model} on={webSearch} onToggle={() => setWebSearch((w) => !w)} disabled={streaming} />}
-        {photosOn && <PhotoButton tray={tray} support={support} disabled={streaming} />}
-        {model === 'anonymo-council' && (
-          <button
-            type="button"
-            className="tool"
-            aria-pressed={councilMode === 'select'}
-            title="merge: an aggregator merges the replies. select: a judge picks the best single reply (cheaper)."
-            onClick={() => setCouncilMode((m) => (m === 'merge' ? 'select' : 'merge'))}
-          >
-            Council: {councilMode}
-          </button>
-        )}
-        {characters.length > 0 && (
-          <label className="tool">
-            <Drama size={14} aria-hidden="true" />
-            <select
-              className="select"
-              style={{ minHeight: 0, padding: 0, border: 0, background: 'transparent', width: 'auto', font: 'inherit', color: 'inherit' }}
-              value={characterId ?? ''}
-              onChange={(e) => setCharacterId(e.target.value || null)}
-              aria-label="Character"
-            >
-              <option value="">No character</option>
-              {characters.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.card.data.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        {shareOn && turns.length > 0 && <ShareChat turns={turns} disabled={streaming} />}
-        {facesOn && character && <StageTools on={stage} onToggle={() => setStage((s) => !s)} character={character} faces={faces} />}
-        {memoryOn && character && memory.memory?.enabled && (
-          <button type="button" className="tool" aria-pressed={memory.extractionOn} disabled={memory.busy}
-            title="Use a separate paid chat request to suggest facts after replies."
-            onClick={memory.toggleExtraction}>Memory suggestions: {memory.extractionOn ? 'on' : 'off'}</button>
-        )}
-        {branded && <button
-          type="button"
-          className="tool"
-          aria-pressed={!refusalCatch}
-          title="The refusal catch holds back the first tokens to catch a refusal and reroute it. Turning it off streams sooner."
-          onClick={() => setRefusalCatch((r) => !r)}
-        >
-          Refusal catch: {refusalCatch ? 'on' : 'off'}
-        </button>}
-      </div>
-      {voiceOn && <VoiceSettings sealed={model === 'anonymo-sealed'} />}
-      <div className="dock-meta">
+      {safeEditor}
+      {!modesOn && <div className="dock-tools">{composerTools}</div>}
+      {!modesOn && voiceOn && <VoiceSettings sealed={model === 'anonymo-sealed'} />}
+      {!modesOn && <div className="dock-meta">
         <span>Enter to send · Shift+Enter for a new line</span>
         <span>{historyOn && keep ? 'Chat history is saved on this device.' : 'Chat history is off on this device.'}</span>
-      </div>
+      </div>}
     </div>
   );
 
@@ -734,6 +1180,25 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     </>
   );
 
+  const installAfter = BUILT_WITH.has('app') && !compact
+    ? turns.find((turn) => turn.status === 'done' && turn.content.trim())?.id
+    : undefined;
+
+  function turnAnswer(turn: Turn) {
+    const proof = proofOn ? {
+      source: sources.get(turn.id) ?? null,
+      onForget: () => setSources((map) => {
+        const next = new Map(map);
+        next.delete(turn.id);
+        return next;
+      }),
+    } : null;
+    const result = turn.modeResult;
+    if (result) return <ChatModeTurn turn={{ ...turn, modeResult: result }} characterId={character?.id} proof={proof}
+      redo={!streaming && availableModes.includes(result.mode) ? () => redo(turn, result) : undefined} />;
+    return <AnswerCard turn={turn} characterId={character?.id} proof={proof} />;
+  }
+
   const thread = (
     <>
       {(historyOn || catchupOn) && (
@@ -748,12 +1213,12 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
         </>
       )}
       {facesOn && stage && character ? (
-        <Stage character={character} faces={faces} turns={turns} streaming={streaming} notices={notices} onLog={() => setStage(false)} />
+        <Stage character={character} faces={faces} turns={turns} streaming={streaming} notices={notices} renderAnswer={modesOn ? turnAnswer : undefined} onLog={() => setStage(false)} />
       ) : compact && !turns.length ? (
         <div className="mascot-welcome">
           {hasFace(faces) ? <FaceAvatar faces={faces} /> : <MascotSprite mood="greet" />}
           <h3>{character?.card.data.name ?? 'What’s on your mind?'}</h3>
-          {key ? <p>Start a conversation here.</p> : <Link className="btn btn-primary btn-small" href={setupHref('key', characterDestination('chat', character?.id))}>Create a key to chat</Link>}
+          <p>Start a conversation here.</p>
         </div>
       ) : turns.length === 0 ? (
         <section className="empty chat-col">
@@ -763,21 +1228,14 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
               <h1>{character ? character.card.data.name : 'Start a conversation'}</h1>
               <p className="muted">
                 {character
-                  ? 'This AI character is saved on this device. Switch characters below the message box.'
+                  ? modesOn ? 'This AI character is saved on this device. Use + to switch characters.' : 'This AI character is saved on this device. Switch characters below the message box.'
                   : 'Write a message or start with one of these ideas.'}
               </p>
             </div>
           </div>
-          {ready && !key ? (
-            <div className="chat-entry">
-              <span>Connect a key to send your first message.</span>
-              <Link className="btn btn-primary btn-small" href={setupHref('key', characterDestination('chat', character?.id))}>
-                Create a key
-              </Link>
-            </div>
-          ) : character ? null : (
+          {!character && (
             <div className="starters">
-              {STARTERS.map((starter) => (
+              {(availableModes.length ? [STARTERS[0], ...availableModes.map((id) => MODE_STARTERS[id])] : STARTERS).map((starter) => (
                 <button
                   key={starter}
                   type="button"
@@ -809,7 +1267,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
                   {AI_REMINDER}
                 </p>
               )}
-              {turn.prompt && (maskOn ? <MaskedPrompt text={turn.prompt} vault={vault.current} /> : <p className="prompt">{turn.prompt}</p>)}
+              {turn.prompt && (maskOn ? <MaskedPrompt text={turn.prompt} vault={vault} /> : <p className="prompt">{turn.prompt}</p>)}
               {photosOn && <TurnPhotos photos={turn.photos} count={turn.photoCount} />}
               {turn.recap && (
                 <p className="recap-note" role="note">
@@ -827,11 +1285,9 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
               {turn.crisis && <CrisisNotice />}
               <div className="ai-row">
                 <TurnFace faces={character && turn.character === character.card.data.name ? faces : null} turn={turn} />
-                <AnswerCard turn={turn} characterId={character?.id} proof={proofOn ? {
-                  source: sources.current.get(turn.id) ?? null,
-                  onForget: () => { sources.current.delete(turn.id); setSourcesVersion((v) => v + 1); },
-                } : null} />
+                {turnAnswer(turn)}
               </div>
+              {turn.id === installAfter && <InstallAppCard />}
             </article>
           ))}
           <div ref={end} />
@@ -839,7 +1295,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       )}
     </>
   );
-  return <ChatVoiceContext.Provider value={voiceOn ? voice : null}>{threadHost && createPortal(thread, threadHost)}{key && composerHost && createPortal(composer, composerHost)}</ChatVoiceContext.Provider>;
+  return <ChatVoiceContext.Provider value={voiceOn ? voice : null}>{threadHost && createPortal(thread, threadHost)}{composerHost && createPortal(composer, composerHost)}</ChatVoiceContext.Provider>;
 }
 
 /** Shown with any message that mentions suicide or self-harm. It never blocks the chat. */

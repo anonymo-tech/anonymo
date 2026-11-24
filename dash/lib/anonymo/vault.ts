@@ -12,10 +12,10 @@ export const historySlot = (demo: boolean) => demo ? 'anonymo.demo.history.v1' :
 const historySlots = [historySlot(false), historySlot(true)];
 export const storySlot = (demo: boolean) => demo ? 'anonymo.demo.stories.v1' : 'anonymo.stories.v1';
 export const memorySlot = (demo: boolean) => demo ? 'anonymo.demo.memory.v1' : 'anonymo.memory.v1';
-// Saved chats and stories live in localStorage while the vault is off (as before it existed); memory always lives
-// in the vault's IndexedDB store. Every record list is re-encrypted, unlocked and wiped together.
+export const aboutYouSlot = (demo: boolean) => demo ? 'anonymo.demo.aboutyou.v1' : 'anonymo.aboutyou.v1';
+// Chats and stories can live in legacy localStorage. Memory and About you always use the vault's IndexedDB store.
 const legacySlots = [...historySlots, storySlot(false), storySlot(true)];
-const recordSlots = [...legacySlots, memorySlot(false), memorySlot(true)];
+const recordSlots = [...legacySlots, memorySlot(false), memorySlot(true), aboutYouSlot(false), aboutYouSlot(true)];
 const configSlot = 'config';
 const imagePrefix = 'image:';
 const utf8 = new TextEncoder();
@@ -191,6 +191,7 @@ export function createVault({ disk, legacy, exclusive, announce }: Options) {
 
   return {
     state: () => state,
+    session: () => epoch,
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => { listeners.delete(listener); };
@@ -274,6 +275,15 @@ export function createVault({ disk, legacy, exclusive, announce }: Options) {
     },
     updateMemory(demo: boolean, update: (records: unknown[]) => unknown[]) {
       return updateList(memorySlot(demo), update);
+    },
+    snapshotAboutYou(demo: boolean) {
+      return histories.get(aboutYouSlot(demo))?.[0];
+    },
+    updateAboutYou(demo: boolean, update: (profile: unknown) => unknown) {
+      return updateList(aboutYouSlot(demo), (records) => {
+        const next = update(records[0]);
+        return next === records[0] ? records : next === undefined ? [] : [next];
+      });
     },
     clearChats() {
       return run(async () => {

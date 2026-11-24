@@ -32,7 +32,7 @@ for (const [width, height, outfit] of [[320, 667, 'Pilot'], [360, 844, 'Astronau
       assert.ok(await preview.evaluate((el) => document.activeElement === el));
 
       await page.getByRole('link', { name: 'Try chat' }).tap();
-      await page.waitForURL((url) => url.pathname === '/dashboard/key' && url.searchParams.get('returnTo') === '/dashboard/chat');
+      await page.waitForURL((url) => url.pathname === '/dashboard/chat');
       await page.goBack();
       await preview.tap();
       await page.keyboard.press('Escape');

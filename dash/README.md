@@ -4,9 +4,9 @@ The web workspace for Anonymo (Backend §2 "dash", Overview §2): create a key, 
 see every council seat, read receipts and their inclusion proofs, import character cards, copy frontend presets, and the
 public `/manifest` and `/leaderboard` pages. No email, name or identity fields anywhere, and no analytics.
 
-The workspace groups destinations by task on desktop. On phones, Overview, Chat and Funds have dedicated shortcuts and
-the full navigation opens from More. The overview guides the visitor from a key to funding and a first chat. The site uses
-Space Grotesk and the felt sleep-mask mascot from `public/mascot/`.
+The workspace shows six main destinations on desktop, with more links under More and For developers. On phones, Overview,
+Chat and Balance have dedicated shortcuts and the rest of the navigation opens from More. The overview guides the visitor
+from a key to funding and a first chat. The site uses Space Grotesk and the felt sleep-mask mascot from `public/mascot/`.
 
 ## Run
 
@@ -34,7 +34,7 @@ With the local demo server running (leave the API origin unset), set `WORKSPACE_
 | `NEXT_PUBLIC_ANONYMO_EVM_NETWORKS='{"rhc":{"chainId":…,"rpcUrl":"…"}}'` | Override the chain id, RPC or name the wallet is switched to, per EVM chain (testnets, local chains). |
 
 Demo mode serves every endpoint from an in-browser mock gateway (`lib/anonymo/mock/`) with fixtures that follow the
-gateway's shapes. The same client code runs in both modes; only `fetch` differs. In demo mode the funds page can simulate
+gateway's shapes. The same client code runs in both modes; only `fetch` differs. In demo mode the Balance page can simulate
 a confirmed USDG deposit or an ANMO payment, and a prompt containing the word "reroute" shows a refused-then-rerouted
 answer.
 

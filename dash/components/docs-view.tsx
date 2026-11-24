@@ -365,7 +365,7 @@ export function DocsView() {
                 <tr>
                   <td className="mono">402</td>
                   <td><code>insufficient_balance</code></td>
-                  <td>Open Funds to check your balance and the deposit methods available for your key.</td>
+                  <td>Open Balance to see your credit and the deposit methods available for your key.</td>
                 </tr>
                 <tr>
                   <td className="mono">429</td>
@@ -383,7 +383,7 @@ export function DocsView() {
             <li>
               <code>POST /keys</code> creates a key and returns it once, with its deposit instructions. Optional caps: daily,
               monthly and lifetime spend, a model allowlist, an IP allowlist, sealed only and an expiry. Check{' '}
-              <Link href="/dashboard/funds">Funds</Link> for the tokens and networks currently available for your key.
+              <Link href="/dashboard/funds">Balance</Link> for the tokens and networks currently available for your key.
             </li>
             <li>
               <code>GET /balance</code> shows available, held and usage-only credit.

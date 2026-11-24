@@ -159,6 +159,7 @@ export type ChargedTurn = {
   receiptId: string | null;
   receipt: Receipt | null;
   needsFunds?: boolean;
+  costUsd?: string | null;
   memoryCharge?: { cost: string | null; receiptId: string | null };
 };
 
@@ -173,6 +174,10 @@ export function chargeOf(turn: ChargedTurn): TurnCharge {
   if (turn.receipt) {
     if (turn.receipt.refused) return { kind: 'refused' };
     const atto = parseUsdAtto(turn.receipt.cost);
+    return atto === null ? { kind: 'unknown' } : { kind: 'charged', atto };
+  }
+  if (turn.costUsd !== undefined) {
+    const atto = parseUsdAtto(turn.costUsd);
     return atto === null ? { kind: 'unknown' } : { kind: 'charged', atto };
   }
   if (turn.status === 'streaming' || turn.receiptId) return { kind: 'pending' };

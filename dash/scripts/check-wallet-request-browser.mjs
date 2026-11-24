@@ -157,6 +157,11 @@ test('08 from chat and More: a pasted request opens the review without reaching 
     // Both new destinations are listed under More on a phone (switched on in demo mode).
     await page.getByRole('button', { name: 'More', exact: true }).tap();
     const menu = page.getByRole('dialog', { name: 'Workspace menu' });
+    // Wallet request sits in the folded More group, Pair a coding tool in For developers.
+    for (const name of ['More', 'For developers']) {
+      const fold = menu.locator('details.nav-fold').filter({ has: page.locator('summary', { hasText: new RegExp(`^${name}$`) }) });
+      if (!(await fold.evaluate((el) => el.open))) await fold.locator('summary').tap();
+    }
     await menu.getByRole('link', { name: 'Pair a coding tool' }).waitFor();
     await menu.getByRole('link', { name: 'Wallet request' }).waitFor();
     await menu.getByRole('button', { name: 'Close menu' }).tap();

@@ -2,32 +2,41 @@
 
 import { Mic } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import type { AnonymoClient } from '@/lib/anonymo/client';
+import { isOutOfCredit, type AnonymoClient } from '@/lib/anonymo/client';
 import { demoVoiceWav } from '@/lib/anonymo/mock/talk';
 import { captureVoice, microphoneError } from '@/lib/anonymo/voice-capture';
 import { createVoiceRecorder, type RecorderState } from '@/lib/anonymo/voice-recorder';
 import { transcriptionRate, type TranscriptionModel } from '@/lib/anonymo/talk';
+import { BUILT_WITH } from '@/lib/anonymo/updates';
 
-export function VoiceMic({ model, client, demo, disabled, onText, beforeRecord, onCharge }: {
+export function VoiceMic({ model, client, demo, disabled, onText, beforeRecord, onCharge, mode = false, onCost, onFunds }: {
   model: TranscriptionModel;
   client: AnonymoClient;
   demo: boolean;
   disabled: boolean;
   onText: (text: string) => void;
-  beforeRecord: () => void;
+  beforeRecord: () => void | boolean;
   onCharge: () => void;
+  mode?: boolean;
+  onCost?: (cost: string | null) => void;
+  onFunds?: () => void;
 }) {
   const [state, setState] = useState<RecorderState>('idle');
   const [reading, setReading] = useState({ level: 0, seconds: 0 });
   const [error, setError] = useState('');
-  const callbacks = useRef({ onText, onCharge });
+  const callbacks = useRef({ onText, onCharge, onCost, onFunds });
   const recorder = useRef<ReturnType<typeof createVoiceRecorder> | null>(null);
   const held = useRef<number | string | null>(null);
-  useEffect(() => { callbacks.current = { onText, onCharge }; }, [onText, onCharge]);
+  useEffect(() => { callbacks.current = { onText, onCharge, onCost, onFunds }; }, [onText, onCharge, onCost, onFunds]);
 
-  useEffect(() => {
+  const [scope, setScope] = useState({ client, demo, model, mode });
+  if (scope.client !== client || scope.demo !== demo || scope.model !== model || scope.mode !== mode) {
+    setScope({ client, demo, model, mode });
     setState('idle');
     setError('');
+  }
+
+  useEffect(() => {
     const onLevel = (level: number, seconds: number) => setReading({ level, seconds });
     const engine = createVoiceRecorder({
       async capture(signal, onLimit) {
@@ -44,7 +53,15 @@ export function VoiceMic({ model, client, demo, disabled, onText, beforeRecord, 
         return { async stop() { stop(); return new File([demoVoiceWav()], 'clip.wav', { type: 'audio/wav' }); } };
       },
       async transcribe(file, signal) {
-        try { return (await client.transcribe(file, signal)).text; }
+        try {
+          if (!mode) return (await client.transcribe(file, signal)).text;
+          const result = await client.transcribeWithCost(file, signal);
+          callbacks.current.onCost?.(result.costUsd);
+          return result.text;
+        } catch (error) {
+          if (!signal.aborted && isOutOfCredit(error)) callbacks.current.onFunds?.();
+          throw error;
+        }
         finally { callbacks.current.onCharge(); }
       },
       onState(phase) {
@@ -74,7 +91,7 @@ export function VoiceMic({ model, client, demo, disabled, onText, beforeRecord, 
       window.removeEventListener('blur', cancel);
       document.removeEventListener('visibilitychange', hide);
     };
-  }, [client, demo, model]);
+  }, [client, demo, model, mode]);
 
   useEffect(() => {
     if (disabled) {
@@ -84,7 +101,10 @@ export function VoiceMic({ model, client, demo, disabled, onText, beforeRecord, 
   }, [disabled]);
 
   const press = () => {
-    beforeRecord();
+    if (beforeRecord() === false) {
+      held.current = null;
+      return;
+    }
     setError('');
     void recorder.current?.press();
   };
@@ -107,7 +127,7 @@ export function VoiceMic({ model, client, demo, disabled, onText, beforeRecord, 
         </span>
       )}
       <button
-        type="button" className="btn btn-ghost voice-mic-button" aria-label="Hold to talk"
+        type="button" className={mode ? 'mode-send mode-send-wide' : 'btn btn-ghost voice-mic-button'} aria-label="Hold to talk"
         title={`Hold to talk · ${transcriptionRate(model)}`} disabled={disabled || state === 'transcribing'}
         aria-pressed={state === 'requesting' || state === 'recording'}
         onPointerDown={(event) => {
@@ -140,10 +160,11 @@ export function VoiceMic({ model, client, demo, disabled, onText, beforeRecord, 
         }}
       >
         <Mic size={17} aria-hidden="true" />
+        {mode ? <span>Hold to talk</span> : BUILT_WITH.has('app') && <span className="voice-mic-label" aria-hidden="true">Talk</span>}
       </button>
-      <span className="voice-mic-status" role="status">
+      <output className="voice-mic-status">
         {error || (state === 'requesting' ? 'Waiting for microphone…' : state === 'transcribing' ? 'Transcribing…' : '')}
-      </span>
+      </output>
     </div>
   );
 }

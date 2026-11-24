@@ -4,12 +4,58 @@ import { characterDestination, setupHref, setupReturn, storyDestination } from '
 import { dashboardSignup } from '../lib/anonymo/dashboard-signup.ts';
 import { wipeDevice } from '../lib/anonymo/device-store.ts';
 import { workspaceStage } from '../lib/anonymo/workspace-guide.ts';
+import { chatSetupStep, clearSetupDraft, readSetupDraft, writeSetupDraft } from '../lib/anonymo/chat-setup.ts';
+import { parseUsdAtto } from '../lib/anonymo/pricetag.ts';
 
 test('overview offers chat to connected keys regardless of prepaid credit', () => {
   assert.equal(workspaceStage(false, false), 'key');
   assert.equal(workspaceStage(false, true), 'key');
   assert.equal(workspaceStage(true, false), 'first-chat');
   assert.equal(workspaceStage(true, true), 'returning');
+});
+
+test('send asks for a key first and only asks for funds when credit is known to be too low', () => {
+  const price = parseUsdAtto('0.00005');
+  assert.equal(chatSetupStep(false, undefined), 'key');
+  assert.equal(chatSetupStep(false, 0), 'key');
+  assert.equal(chatSetupStep(true, 0), 'funds');
+  assert.equal(chatSetupStep(true, 0.000000000001, price), 'funds');
+  assert.equal(chatSetupStep(true, 0.00004, price), 'funds');
+  assert.equal(chatSetupStep(true, 0.00005, price), null);
+  assert.equal(chatSetupStep(true, 0.00006, price), null);
+  assert.equal(chatSetupStep(true, 0.00004), null);
+  assert.equal(chatSetupStep(true, undefined, price), null);
+  assert.equal(chatSetupStep(true, NaN, price), null);
+});
+
+test('the setup slot keeps only text in the supplied tab storage and matches the chat destination and mode', () => {
+  const rows = new Map();
+  const storage = {
+    getItem: (key) => rows.get(key) ?? null,
+    setItem: (key, value) => rows.set(key, value),
+    removeItem: (key) => rows.delete(key),
+  };
+  const main = { destination: '/dashboard/chat', demo: false };
+  const character = { destination: characterDestination('chat', '0123456789abcdef'), demo: false };
+  const demo = { ...character, demo: true };
+  const text = '  A first line.\nAnother line.  ';
+  assert.equal(writeSetupDraft(storage, { ...character, attachment: 'sample.pdf' }, text), true);
+  assert.deepEqual([...rows.values()].map(JSON.parse), [{ ...character, text }]);
+  assert.equal(readSetupDraft(storage, main), null);
+  assert.equal(readSetupDraft(storage, demo), null);
+  clearSetupDraft(storage, main);
+  assert.equal(readSetupDraft(storage, character), text);
+  assert.equal(writeSetupDraft(storage, character, '  '), true);
+  assert.equal(readSetupDraft(storage, character), null);
+  assert.equal(writeSetupDraft(storage, character, text), true);
+  clearSetupDraft(storage, character);
+  assert.equal(rows.size, 0);
+  assert.equal(writeSetupDraft(null, main, text), false);
+  assert.equal(readSetupDraft(null, main), null);
+  const blocked = new Proxy({}, { get() { throw new Error('storage unavailable'); } });
+  assert.equal(writeSetupDraft(blocked, main, text), false);
+  assert.equal(readSetupDraft(blocked, main), null);
+  assert.doesNotThrow(() => clearSetupDraft(blocked, main));
 });
 
 test('setup retains only supported tools and opaque workspace IDs across the key and funds pages', () => {
@@ -58,15 +104,15 @@ test('dashboard signup remains stable over key mints and resets with Wipe, inclu
     assert.equal(second, first);
     assert.match(first, /^[a-f0-9-]{14}4[a-f0-9-]{4}[89ab][a-f0-9-]{16}$/);
     assert.notEqual(await dashboardSignup(true), first);
-    wipeDevice([storage]);
+    void wipeDevice([storage]);
     assert.notEqual(await dashboardSignup(false), first);
     Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new Error('storage unavailable'); } });
     const temporary = await dashboardSignup(false);
     assert.equal(await dashboardSignup(false), temporary);
-    wipeDevice([storage]);
+    void wipeDevice([storage]);
     assert.notEqual(await dashboardSignup(false), temporary);
   } finally {
-    wipeDevice([storage]);
+    void wipeDevice([storage]);
     if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor);
     else delete globalThis.localStorage;
   }

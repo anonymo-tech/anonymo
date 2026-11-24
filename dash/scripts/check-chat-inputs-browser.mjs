@@ -21,9 +21,13 @@ async function launch() {
   return chromium.launch({ channel: process.env.BROWSER_CHANNEL || undefined, executablePath: process.env.CHROMIUM_PATH || undefined });
 }
 
+async function openTools(page) {
+  const plus = page.getByRole('button', { name: 'Modes and tools' });
+  if (await plus.count() && await plus.getAttribute('aria-expanded') === 'false') await plus.click();
+}
+
 async function openChat(page) {
   await page.goto(new URL('/dashboard/chat', origin).href);
-  await page.getByRole('button', { name: /^Choose model:/ }).waitFor();
   const composer = page.locator('#composer');
   await page.waitForFunction(() => { const c = document.querySelector('#composer'); return c && !c.disabled; });
   return composer;
@@ -138,7 +142,8 @@ async function attachPdf(page) {
   const path = join(await mkdtemp(join(tmpdir(), 'anonymo-inputs-')), FILE);
   await writeFile(path, pdf);
   await page.locator('input[type=file][accept="application/pdf,.pdf"]').setInputFiles(path);
-  await page.getByRole('button', { name: `${FILE} · 2 pages`, exact: false }).waitFor();
+  await page.getByRole('button', { name: new RegExp(FILE) }).waitFor();
+  await openTools(page);
 }
 /** Source-space centre of a left-column line on page 2 of the fixture (612 × 792, 11 pt, 18 pt apart from y=720). */
 const lineY = (i) => (792 - (720 - i * 18) - 4) / 792;
@@ -231,6 +236,7 @@ test('02 Circle anything: nearby lines are a separate, visible choice; empty ext
 
 /** Picks an image through the composer's Image tool, as a person would. */
 async function attachImage(page, path) {
+  await openTools(page);
   const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: 'Image', exact: true }).click()]);
   await chooser.setFiles(path);
 }
@@ -350,6 +356,7 @@ async function receiptPng(page) {
 }
 
 async function openSafePost(page, file) {
+  await openTools(page);
   const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: 'Safe to post' }).click()]);
   await chooser.setFiles(file);
   const sheet = page.getByRole('dialog', { name: 'Make this safe to post' });
@@ -421,7 +428,7 @@ test('06 Make this safe to post: the saved copy is flattened, covered, unreadabl
   await sheet.getByText('Clean copy downloaded as safe-to-post.png. Your original picture is unchanged.').waitFor();
   // Metadata: only image chunks, no text, EXIF or time chunks, and no sentinel bytes.
   const chunks = pngChunks(new Uint8Array(out));
-  assert.deepEqual(chunks.filter((c) => !ALLOWED_CHUNKS.has(c)), [], `unexpected chunks ${chunks}`);
+  assert.deepEqual(chunks.filter((c) => !ALLOWED_CHUNKS.has(c)), [], `unexpected chunks ${chunks.join(', ')}`);
   assert.ok(!out.includes('METADATA-SENTINEL') && !out.includes('FILENAME-SENTINEL'));
   // Pixels: the covered address and QR are solid black, the rest of the picture is still there.
   const q = QR_AT;
@@ -493,7 +500,7 @@ test('07 Show me the proof: streamed citations are checked locally, failures are
   const path = join(await mkdtemp(join(tmpdir(), 'anonymo-inputs-')), 'service-terms.pdf');
   await writeFile(path, pdf);
   await page.locator('input[type=file][accept="application/pdf,.pdf"]').setInputFiles(path);
-  await page.getByRole('button', { name: /service-terms\.pdf · 2 pages/ }).waitFor();
+  await page.getByRole('button', { name: /service-terms\.pdf/ }).waitFor();
   await composer.fill('Can they charge the fee every month?');
   await composer.press('Enter');
   // Whole-document sends review identifiers in the document as well as the question.

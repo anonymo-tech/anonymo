@@ -93,7 +93,10 @@ for (const width of [1250, 390]) {
         assert.deepEqual(poses, ['40%', '0%', '20%', '0%', '100%']);
       }
       await launcher.click();
-      await pop.getByRole('link', { name: 'Create a key to chat' }).click();
+      const input = pop.getByRole('textbox', { name: 'Message', exact: true });
+      await input.fill('A quiet morning in the park');
+      await pop.getByRole('button', { name: 'Send', exact: true }).click();
+      await pop.getByRole('link', { name: 'Create a free key' }).click();
       await btn('Create key').click();
       await page.getByLabel('I have stored this key somewhere safe').check();
       await btn('Open chat').click();
@@ -102,7 +105,6 @@ for (const width of [1250, 390]) {
       await btn('Send test USDG').click();
       await page.getByRole('link', { name: 'Continue to chat', exact: true }).waitFor();
       await launcher.click();
-      const input = pop.getByRole('textbox', { name: 'Message', exact: true });
       assert.equal(
         await pop
           .locator('.mascot-head .mascot-sprite')
@@ -123,6 +125,9 @@ for (const width of [1250, 390]) {
       await pop.locator('.prompt').waitFor();
       await btn('Minimize chat').click();
       if (width === 390) await btn('More').click();
+      // Docs sits in the folded "For developers" group of the sidebar.
+      const developers = page.locator('details.nav-fold').filter({ visible: true }).filter({ hasText: 'For developers' }).first();
+      if (!(await developers.evaluate((el) => el.open))) await developers.locator('summary').click();
       await page
         .getByRole('link', { name: 'Docs', exact: true })
         .filter({ visible: true })

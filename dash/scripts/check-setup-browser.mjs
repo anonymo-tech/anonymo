@@ -25,23 +25,25 @@ test('character chat survives key creation, funding, and reloading the original 
     const destination = await chat.getAttribute('href');
     assert.match(destination, /^\/dashboard\/chat\?character=[a-f0-9]{16}$/);
     await chat.tap();
-    await page.locator('main').getByRole('link', { name: 'Create a key', exact: true }).tap();
+    const composer = page.getByRole('textbox', { name: 'Message', exact: true });
+    const draft = 'Where should we travel next?';
+    await composer.fill(draft);
+    await page.getByRole('button', { name: 'Send', exact: true }).tap();
+    await page.getByRole('link', { name: 'Create a free key', exact: true }).tap();
     await page.waitForURL(url => url.pathname === '/dashboard/key');
     assert.equal(new URL(page.url()).searchParams.get('returnTo'), destination);
     await page.getByRole('button', { name: 'Create key', exact: true }).tap();
     await page.getByLabel('I have stored this key somewhere safe').check();
-    await page.getByRole('button', { name: 'Return to character chat' }).tap();
-    await page.waitForURL(new URL(destination, origin).href);
-    const funds = new URL('/dashboard/funds', origin);
-    funds.searchParams.set('returnTo', destination);
-    await page.goto(funds.href);
+    await page.getByRole('button', { name: 'Add funds', exact: true }).tap();
+    await page.waitForURL(url => url.pathname === '/dashboard/funds');
     await page.getByRole('heading', { name: 'Add funds', exact: true }).waitFor();
     assert.equal(new URL(page.url()).searchParams.get('returnTo'), destination);
     await page.reload();
     await page.getByRole('button', { name: 'Send test USDG' }).tap();
     await page.getByRole('link', { name: 'Back to chat' }).tap();
     await page.waitForURL(new URL(destination, origin).href);
-    await page.getByRole('button', { name: 'Send', exact: true }).waitFor();
+    await page.getByText('Your message is waiting. Press send.').waitFor();
+    assert.equal(await composer.inputValue(), draft);
   } finally {
     await browser.close();
   }

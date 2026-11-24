@@ -196,6 +196,15 @@ export function createAnonymoClient(options: ClientOptions) {
   }
   const data = <T>(path: string, init: RequestInit & { auth?: boolean } = {}) => json<{ data: T }>(path, init).then((r) => r.data);
 
+  async function transcribeWithCost(file: File, signal?: AbortSignal) {
+    const body = new FormData();
+    body.set('file', file);
+    body.set('model', TRANSCRIPTION_MODEL);
+    const response = await request(API_PATHS.transcriptions, { method: 'POST', body, signal });
+    const { text } = (await response.json()) as { text: string };
+    return { text, costUsd: response.headers.get('x-anonymo-cost-usd') };
+  }
+
   return {
     hasKey: key !== null,
 
@@ -261,12 +270,8 @@ export function createAnonymoClient(options: ClientOptions) {
       });
       return res.arrayBuffer();
     },
-    transcribe(file: File, signal?: AbortSignal) {
-      const body = new FormData();
-      body.set('file', file);
-      body.set('model', TRANSCRIPTION_MODEL);
-      return json<{ text: string }>(API_PATHS.transcriptions, { method: 'POST', body, signal });
-    },
+    transcribe: async (file: File, signal?: AbortSignal) => ({ text: (await transcribeWithCost(file, signal)).text }),
+    transcribeWithCost,
     /** The speech models the gateway lists (`kind: "speech"`): none until a voice worker is configured. */
     async speechModels(signal?: AbortSignal): Promise<MediaSpeechModel[]> {
       const list = await data<(Partial<Omit<MediaSpeechModel, 'kind'>> & { kind: string })[]>(API_PATHS.mediaModels, { auth: false, signal });
@@ -287,6 +292,7 @@ export function createAnonymoClient(options: ClientOptions) {
       return {
         audio,
         requestId: response.headers.get('x-anonymo-request-id') ?? receipt?.payload.request_id ?? null,
+        costUsd: charged,
         costMusd: Number.isFinite(cost) && cost >= 0 ? usdToMusd(cost) : null,
         provenance: response.headers.get('x-anonymo-provenance'),
         receipt,

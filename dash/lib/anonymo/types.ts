@@ -426,7 +426,7 @@ export type ImageRequest = { model: string; prompt: string; n?: number; size?: s
 export type ImageGeneration = {
   created: number;
   data: { b64_json?: string; url?: string; expires_at?: number }[];
-  anonymo: { request_id: string; model: string; cost_usd: string; provenance: { c2pa: boolean; watermark: boolean } };
+  anonymo: { request_id: string; model: string; cost_usd: string; provenance: { c2pa: boolean; watermark: boolean }; receipt?: SpeechReceipt };
 };
 
 /** GET /v1/media/models: one speech model as listed (`kind: "speech"`). Stock voices only; priced per 1,000 characters. */
@@ -471,6 +471,7 @@ export type SpeechReceipt = {
 export type SpeechResult = {
   audio: ArrayBuffer;
   requestId: string | null; // x-anonymo-request-id
+  costUsd?: string | null;
   costMusd: MicroUsd | null; // x-anonymo-cost-usd, in micro-USD; null when the header is missing
   provenance: string | null; // x-anonymo-provenance ("c2pa+watermark"; "demo" from the mock gateway)
   receipt: SpeechReceipt | null;
