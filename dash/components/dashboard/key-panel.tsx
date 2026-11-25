@@ -13,19 +13,25 @@ import { CopyButton } from '../copy-button';
 import { describeError } from '@/lib/anonymo/client';
 import { dashboardSignup } from '@/lib/anonymo/dashboard-signup';
 import { isApiKey, maskKey } from '@/lib/anonymo/key-store';
+import { REFERRAL_RE } from '@/lib/anonymo/creators';
 import { updateOn } from '@/lib/anonymo/updates';
 import { musdToUsdString, parseUsd } from '@/lib/anonymo/money';
 import type { CreateKeyResponse, DepositContracts, KeyCapsInput } from '@/lib/anonymo/types';
 import { KeySafeControls } from './key-safe-controls';
+import { TelegramLink } from './telegram-link';
+import { TELEGRAM_SESSION } from '@/lib/anonymo/telegram';
 
 /** Create a key (shown once), paste an existing one, or forget it on this device. No identity fields anywhere. */
 export function KeyPanel() {
   const { ready, demo, key, client, setKey, clearKey } = useAnonymo();
   const router = useRouter();
-  const target = setupReturn(useSearchParams().get('returnTo'));
+  const params = useSearchParams();
+  const target = setupReturn(params.get('returnTo'));
+  const ref = params.get('ref');
+  const invite = updateOn('creators', demo) && ref && REFERRAL_RE.test(ref) ? `/dashboard/creators?ref=${ref}` : null;
   const fundsHref = setupHref('funds', target?.href);
-  const nextHref = target?.href ?? '/dashboard/chat';
-  const nextAction = !target || target.href === '/dashboard/chat' ? 'Open chat' : `Return to ${target.label}`;
+  const nextHref = invite ?? target?.href ?? '/dashboard/chat';
+  const nextAction = invite ? 'Continue to invite' : !target || target.href === '/dashboard/chat' ? 'Open chat' : `Return to ${target.label}`;
   const fromChat = target?.href.split('?')[0] === '/dashboard/chat';
   const [created, setCreated] = useState<CreateKeyResponse | null>(null);
   const [busy, setBusy] = useState(false);
@@ -66,6 +72,18 @@ export function KeyPanel() {
 
   if (!ready) return null;
   const keySafe = updateOn('keysafe', demo);
+  const telegram = updateOn('telegram', demo);
+
+  if (telegram && key && TELEGRAM_SESSION.test(key)) return (
+    <section className="panel">
+      <h2>Telegram chat session</h2>
+      <p className="lede">This session uses the linked key’s chat credit for up to one hour. Use your original key to manage funds and settings.</p>
+      <div className="row">
+        <Link className="btn btn-primary" href={nextHref}>{nextAction}</Link>
+        <button type="button" className="btn" onClick={clearKey}>End Telegram session</button>
+      </div>
+    </section>
+  );
 
   function finishCreating(href: string, remember: boolean) {
     if (!created) return;
@@ -80,7 +98,7 @@ export function KeyPanel() {
         <NewKeyReveal secret={created.key} action={nextAction}
           remember={remember} onRememberChange={setRemember}
           onContinue={(remember) => finishCreating(nextHref, remember)}
-          onAddFunds={fromChat ? (remember) => finishCreating(fundsHref, remember) : undefined}
+          onAddFunds={fromChat && !invite ? (remember) => finishCreating(fundsHref, remember) : undefined}
           safe={keySafe ? (markSaved) => <KeySafeControls client={client} demo={demo} apiKey={created.key} onSaved={markSaved} /> : undefined}
         />
       </div>
@@ -242,6 +260,7 @@ export function KeyPanel() {
           )}
         </section>
       )}
+      {telegram && key && <TelegramLink key={key} />}
     </div>
   );
 }

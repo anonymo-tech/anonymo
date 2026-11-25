@@ -13,7 +13,8 @@ import type { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
 import type { Ctx } from "../../context.ts";
-import { requireKey } from "../../api/auth.ts";
+import { SESSION_KEY } from "../telegram/identity.ts";
+import { bearer, requireKey } from "../../api/auth.ts";
 import { readJson } from "../../api/common.ts";
 import { balanceOf } from "../../ledger/ledger.ts";
 import { ApiError, fail } from "../../lib/errors.ts";
@@ -26,7 +27,7 @@ import { coinTargetRoute } from "./coin-target.ts";
 import { depositInstructions, evmContracts, publicCoinContract } from "./instructions.ts";
 import { anonymoBtcpayInvoices, anonymoDeposits, anonymoWithdrawals } from "./schema.ts";
 import { registerMoneyJobs, type MoneyDeps } from "./services.ts";
-import { attemptPayout, codeCreditPico, coinCreditPico, recentBitcoinCreditPico, requestWithdrawal, withdrawalJson, withdrawDestinations } from "./withdraw.ts";
+import { attemptPayout, codeCreditPico, coinCreditPico, recentBitcoinCreditPico, starsCreditPico, requestWithdrawal, withdrawalJson, withdrawDestinations } from "./withdraw.ts";
 
 const withdrawBody = z
   .object({
@@ -49,11 +50,14 @@ export function moneyRoutes(app: Hono, ctx: Ctx, deps: MoneyDeps, o: { jobs?: bo
   app.get("/balance", async (c) => {
     const key = await requireKey(ctx, c.req.header("authorization"));
     const b = await balanceOf(ctx.db, key.accountId);
-    const dests = await withdrawDestinations(ctx.db, key.keyHash);
     const available = b.available > 0n ? b.available : 0n;
+    if (ctx.cfg.features.telegram && SESSION_KEY.test(bearer(c.req.header("authorization")) ?? ""))
+      return c.json({ balance_usd: picoToUsd(b.balance), held_usd: picoToUsd(b.held), available_usd: picoToUsd(available),
+        usage_only_usd: picoToUsd(available), withdraw_to: [] });
+    const dests = await withdrawDestinations(ctx.db, key.keyHash);
     const coin = await coinCreditPico(ctx.db, key.accountId);
     const code = await codeCreditPico(ctx.db, key.accountId);
-    const usageOnly = coin + code;
+    const usageOnly = coin + code + await starsCreditPico(ctx.db, key.accountId);
     const settling = await recentBitcoinCreditPico(ctx.db, key.accountId);
     const cashable = available > usageOnly + settling ? available - usageOnly - settling : 0n;
     return c.json({

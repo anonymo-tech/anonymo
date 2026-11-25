@@ -19,10 +19,14 @@ import type { MediaImageModel } from '@/lib/anonymo/types';
 import { updateOn } from '@/lib/anonymo/updates';
 import { ImageCompare } from './image-compare';
 import { SaveLibraryImage } from './save-library-image';
+import { charactersStore } from '@/lib/anonymo/characters-store';
+import { useDeviceStore } from '@/lib/anonymo/device-store';
+import { IMAGE_PRESETS, studioPrompt, type ImagePreset } from '@/lib/anonymo/studio-presets';
+import { StudioCharacter } from './studio-character';
 
 export { imageError } from '@/lib/anonymo/chat-modes';
 
-type Shot = { id: string; src: string; prompt: string; model: string; size: string; costUsd: string; requestId: string; at: number };
+type Shot = { id: string; src: string; prompt: string; model: string; size: string; costUsd: string; requestId: string; at: number; preset?: ImagePreset; characterId?: string };
 type Job = { id: string; n: number; ratio: string; started: number };
 
 const IDEAS = [
@@ -41,6 +45,11 @@ const makeJob = (n: number, size: string): Job => ({ id: crypto.randomUUID(), n,
 export function ImageStudio() {
   const { ready, key, client, refreshBalance, demo } = useAnonymo();
   const compareOn = updateOn('compare', demo);
+  const studioOn = updateOn('studio', demo);
+  const characters = useDeviceStore(charactersStore);
+  const [preset, setPreset] = useState<ImagePreset | ''>('');
+  const [characterId, setCharacterId] = useState('');
+  const character = characters.find((entry) => entry.id === characterId);
   const [compareMode, setCompareMode] = useState(false);
   const studioModeButton = useRef<HTMLButtonElement>(null);
   const comparing = compareOn && compareMode;
@@ -90,13 +99,15 @@ export function ImageStudio() {
 
   const model = models?.find((m) => m.id === modelId) ?? null;
   const size = model && !model.sizes.includes(chosenSize) ? model.sizes[0] : chosenSize;
-  const counts = updateOn('modes', demo) ? imageCounts(model) : [1, 2, 3, 4];
+  const stickerPack = studioOn && preset === 'stickers';
+  const counts = stickerPack ? [1] : studioOn || updateOn('modes', demo) ? imageCounts(model) : [1, 2, 3, 4];
   const n = counts.includes(chosenCount) ? chosenCount : (counts.at(-1) ?? 1);
   const cost = model ? usdToMusd(model.pricing.usd_per_image) * n : 0;
+  const text = studioOn ? studioPrompt(prompt, preset, character?.card.data) : prompt.trim();
+  const tooLong = studioOn && text.length > IMAGE_PROMPT_LIMIT;
 
   async function generate() {
-    const text = prompt.trim();
-    if (!text || !model || !key) return;
+    if (!text || tooLong || !model || !key) return;
     setError(null);
     const job = makeJob(n, size);
     setJobs((j) => [job, ...j]);
@@ -107,7 +118,7 @@ export function ImageStudio() {
         const bytes = Uint8Array.from(atob(d.b64_json), (c) => c.charCodeAt(0));
         const src = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }));
         urls.current.push(src);
-        return [{ id: `${res.anonymo.request_id}-${i}`, src, prompt: text, model: model.name, size, costUsd: res.anonymo.cost_usd, requestId: res.anonymo.request_id, at: Date.now() }];
+        return [{ id: `${res.anonymo.request_id}-${i}`, src, prompt: prompt.trim(), model: model.name, size, costUsd: res.anonymo.cost_usd, requestId: res.anonymo.request_id, at: Date.now(), preset: preset || undefined, characterId: character?.id }];
       });
       setShots((s) => [...made, ...s]);
     } catch (e) {
@@ -157,6 +168,24 @@ export function ImageStudio() {
           void generate();
         }}
       >
+        {studioOn && (
+          <>
+            <fieldset className="field">
+              <legend>Preset</legend>
+              <div className="studio-sizes">
+                <button type="button" className={preset === '' ? 'size-chip is-on' : 'size-chip'} aria-pressed={preset === ''} onClick={() => setPreset('')}>Custom</button>
+                {(Object.keys(IMAGE_PRESETS) as ImagePreset[]).map((id) => (
+                  <button key={id} type="button" className={preset === id ? 'size-chip is-on' : 'size-chip'} aria-pressed={preset === id} onClick={() => setPreset(id)}>
+                    {IMAGE_PRESETS[id].label}
+                  </button>
+                ))}
+                <Link href="/dashboard/video" className="size-chip">Short clip</Link>
+              </div>
+              {stickerPack && <small className="muted">Four expressions on one sticker sheet.</small>}
+            </fieldset>
+            <StudioCharacter characters={characters} selected={character?.id ?? ''} onChange={setCharacterId} />
+          </>
+        )}
         <label className="field">
           <span>Describe the image</span>
           <textarea
@@ -174,7 +203,8 @@ export function ImageStudio() {
             }}
           />
         </label>
-        {!prompt && (
+        {tooLong && <p className="muted">Shorten your description to leave room for the preset and character details.</p>}
+        {!prompt && !preset && (
           <div className="studio-ideas">
             {IDEAS.map((idea) => (
               <button key={idea} type="button" className="chip" onClick={() => setPrompt(idea)}>
@@ -222,7 +252,7 @@ export function ImageStudio() {
           </fieldset>
         )}
 
-        <fieldset className="field">
+        {!stickerPack && <fieldset className="field">
           <legend>How many</legend>
           <div className="studio-count">
             {counts.map((c) => (
@@ -231,13 +261,13 @@ export function ImageStudio() {
               </button>
             ))}
           </div>
-        </fieldset>
+        </fieldset>}
 
           </div>
         </details>
 
-        <button type="submit" className="btn btn-primary studio-go" disabled={!model || !prompt.trim() || !key}>
-          <ImageIcon size={18} aria-hidden="true" /> Make {n === 1 ? 'image' : `${n} images`}
+        <button type="submit" className="btn btn-primary studio-go" disabled={!model || !text || tooLong || !key}>
+          <ImageIcon size={18} aria-hidden="true" /> Make {stickerPack ? 'sticker pack' : n === 1 ? 'image' : `${n} images`}
           {model && <span className="studio-cost">{formatUsd(cost)}</span>}
         </button>
         <p className="studio-note">
@@ -277,9 +307,9 @@ export function ImageStudio() {
           )}
           {shots.map((s) => (
             <figure key={s.id} className="shot">
-              <Photo src={s.src} alt={s.prompt} style={{ aspectRatio: ratioOf(s.size) }} />
+              <Photo src={s.src} alt={s.prompt || (s.preset ? IMAGE_PRESETS[s.preset].label : 'Generated image')} style={{ aspectRatio: ratioOf(s.size) }} />
               <figcaption>
-                <p title={s.prompt}>{s.prompt}</p>
+                <p title={s.prompt}>{s.prompt || (s.preset && IMAGE_PRESETS[s.preset].label)}</p>
                 <div className="shot-meta">
                   <span className="chip chip-signal">
                     <Stamp size={12} aria-hidden="true" /> C2PA + watermark
@@ -292,7 +322,11 @@ export function ImageStudio() {
                     <Download size={15} aria-hidden="true" /> Download PNG
                   </a>
                   {updateOn('vault', demo) && <SaveLibraryImage demo={demo} src={s.src} title={s.model} />}
-                  <button type="button" className="btn btn-ghost btn-small" onClick={() => setPrompt(s.prompt)}>
+                  <button type="button" className="btn btn-ghost btn-small" onClick={() => {
+                    setPrompt(s.prompt);
+                    setPreset(s.preset ?? '');
+                    setCharacterId(s.characterId ?? '');
+                  }}>
                     Reuse prompt
                   </button>
                   <button

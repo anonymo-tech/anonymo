@@ -8,6 +8,7 @@
 //   images    the image studio (needs the gateway's media routes on: ANONYMO_FEATURE_MEDIA)
 //   compare   side-by-side image model comparisons (needs the image studio)
 //   video     the video studio (needs the gateway's media routes on: ANONYMO_FEATURE_MEDIA)
+//   studio    character portraits, avatars, stickers, scenes and clips (needs ANONYMO_FEATURE_STUDIO)
 //   usage     usage, statements and spending limits for the key
 //   catchup   "catch me up": a long chat summarized into a fresh one
 //   status    the public status page
@@ -21,16 +22,19 @@
 //   vaultsync encrypted Vault Memory and optional cross-device sync
 //   aboutyou  a device-only profile carried into chats, with a ChatGPT import
 //   faces     Character Studio: customizable plush characters and expressive portraits
+//   movoice   Mo Voice calls and text-designed voices (needs ANONYMO_FEATURE_MO_VOICE)
 //   voice     Night Call: a voice call page with a sleep timer (speech in stays on the device)
 //   movein    bring characters and chats from other apps, read in the browser
 //   lifeboat  bring cards and chats with floor-checked card imports (needs ANONYMO_FEATURE_LIFEBOAT)
 //   sidebyside one question answered by three models at once, then merged
 //   tickets   hand someone a funded key as a link, a QR code or a printed ticket
+//   creators  publish characters, browse Discover, tip, invite and vote (needs ANONYMO_FEATURE_CREATORS)
 //   codes     redeem a voucher for chat credit (needs ANONYMO_FEATURE_CODES on the gateway)
 //   share     Sealed Share: a chat shared as a link that Anonymo can't read (sealed in the browser)
 //   pricetag  in chat: the estimated price of a message before sending, this chat's charges so far, and a per-chat limit
 //   auto      in chat: the Auto model (anonymo-auto) picks a model for each message and shows which one answered
 //   search    in chat: "Search the web" sends the model as :online and shows the sources under the answer
+//   party     Group adventures with an AI game master and verifiable dice
 //   askmo     Ask Mo with web sources, topic checklists and a council Second Opinion
 //   photos    in chat: attach up to 4 photos for models that take images (shrunk in the browser, never saved)
 //   mask      01 Mask my details: personal details in a draft are masked on the device before sending
@@ -43,11 +47,15 @@
 //   solpay    pay with a Solana wallet from Add funds
 //   free      daily moderated chat messages without a key (needs ANONYMO_FEATURE_FREE_TIER)
 //   app       install the workspace on a phone, with a static offline screen
+//   telegram  Telegram Mini App and a one-time handoff to workspace chat (needs ANONYMO_FEATURE_TELEGRAM)
 //   keysafe   back up and restore your API key and memory secret with a passkey (needs ANONYMO_FEATURE_KEY_SAFE)
+//
+//   passes    buy a 30-day Pass or Pass+ on Balance (needs ANONYMO_FEATURE_PASSES)
+//   stake     stake $NYMO for daily credits and pay for passes with $NYMO (needs ANONYMO_FEATURE_STAKE)
 //
 // Ventures and the phone app require a build opt-in. Demo mode shows the other updates.
 
-export const UPDATE_IDS = ['history', 'images', 'usage', 'catchup', 'status', 'compare', 'vanish', 'vault', 'video', 'faces', 'talk', 'story', 'memory', 'voice', 'movein', 'sidebyside', 'tickets', 'share', 'pricetag', 'auto', 'search', 'photos', 'ventures', 'mask', 'circle', 'excerpt', 'safepost', 'proof', 'connect', 'walletreview', 'solpay', 'app', 'aboutyou', 'modes', 'keysafe', 'codes', 'creators', 'passes', 'stake', 'lifeboat', 'free', 'askmo', 'compliance', 'vaultsync'] as const;
+export const UPDATE_IDS = ['history', 'images', 'usage', 'catchup', 'status', 'compare', 'vanish', 'vault', 'video', 'faces', 'talk', 'story', 'memory', 'voice', 'movein', 'sidebyside', 'tickets', 'share', 'pricetag', 'auto', 'search', 'photos', 'ventures', 'mask', 'circle', 'excerpt', 'safepost', 'proof', 'connect', 'walletreview', 'solpay', 'app', 'aboutyou', 'modes', 'keysafe', 'codes', 'creators', 'passes', 'stake', 'lifeboat', 'free', 'askmo', 'compliance', 'vaultsync', 'studio', 'movoice', 'telegram', 'party'] as const;
 export type UpdateId = (typeof UPDATE_IDS)[number];
 
 export function parseUpdates(raw: string | undefined): ReadonlySet<UpdateId> {

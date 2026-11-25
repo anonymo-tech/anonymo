@@ -67,10 +67,17 @@ export async function coinCreditPico(db: Db | Tx, accountId: string): Promise<Pi
   return BigInt(row?.total ?? 0);
 }
 
-/** Voucher credit has no source wallet, even on an account with a SIWE refund destination. */
+/** Voucher and referral credit have no source wallet, even on an account with a SIWE refund destination. */
 export async function codeCreditPico(db: Db | Tx, accountId: string): Promise<Pico> {
   const [row] = await db.select({ total: sql<string | null>`sum(${ledger.amount})` }).from(ledger)
-    .where(and(eq(ledger.accountId, accountId), eq(ledger.kind, "code")));
+    .where(and(eq(ledger.accountId, accountId), inArray(ledger.kind, ["code", "referral_credit"])));
+  return BigInt(row?.total ?? 0);
+}
+
+/** Stars credit can be spent on chat and returned only through a Stars refund. */
+export async function starsCreditPico(db: Db | Tx, accountId: string): Promise<Pico> {
+  const [row] = await db.select({ total: sql<string | null>`sum(${ledger.amount})` }).from(ledger)
+    .where(and(eq(ledger.accountId, accountId), inArray(ledger.kind, ["stars_credit", "stars_refund"])));
   return BigInt(row?.total ?? 0);
 }
 
@@ -164,7 +171,7 @@ export async function requestWithdrawal(db: Db, o: { minPico: Pico }, w: Withdra
     const [acct] = await tx.select().from(accounts).where(eq(accounts.id, w.accountId)).for("update");
     const settling = await recentBitcoinCreditPico(tx, w.accountId);
     const available = (acct ? acct.balance - acct.held : 0n) - (await coinCreditPico(tx, w.accountId)) -
-      (await codeCreditPico(tx, w.accountId)) - settling;
+      (await codeCreditPico(tx, w.accountId)) - (await starsCreditPico(tx, w.accountId)) - settling;
     const dests = await withdrawDestinations(tx, w.keyHash);
     const d = dests.get(dest(chain, to));
     if (!d) fail(403, "Withdrawals go only to an address this key's deposits came from, on the same chain.", "not_source_address", { allowed: [...dests.values()].map((x) => ({ chain: x.chain, address: x.address })) });

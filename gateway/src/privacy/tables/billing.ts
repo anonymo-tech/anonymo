@@ -3,6 +3,8 @@ import { CREATED, JSON_FIELDS, KEPT, rv } from "./common.ts";
 
 // Billing: money in pico-USD (1e-12 USD) unless a column says USDG base units. Nothing here refers to what a call said.
 
+export const standardHoldReview = JSON_FIELDS("Written only by settle() and release() in ledger.ts as { charged, uncovered, expired } amounts.");
+
 export const billingTables: Record<string, TableDoc> = {
   accounts: {
     category: "billing",
@@ -56,7 +58,7 @@ export const billingTables: Record<string, TableDoc> = {
       kind: "What the hold was for; usage for a call, tool_call for a paid x402 tool, data_tool for a market-data tool call.",
       result: {
         purpose: "How the hold ended: the amount charged and any uncovered amount, as strings in pico-USD, and expired: true when the hold timed out.",
-        review: JSON_FIELDS("Written only by settle() and release() in ledger.ts as { charged, uncovered, expired } amounts."),
+        review: JSON_FIELDS("Written by reserve(), settle() and release() in ledger.ts. With Everyday limits enabled, coverage metadata includes only a UTC day or order digest, a unit count, a limit and covered pico-USD."),
       },
       created_at: CREATED,
       expires_at: "When an unsettled hold is released automatically (the holds-expire job).",

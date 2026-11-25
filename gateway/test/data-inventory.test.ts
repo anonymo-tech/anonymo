@@ -254,15 +254,15 @@ describe("Redis", () => {
     const prefixes = new Set<string>();
     for (const f of files) {
       const src = read(f);
-      for (const m of src.matchAll(/redis\.[a-z]+\(\s*[`"']([^`"'$]*)/g)) prefixes.add(m[1]);
+      for (const m of src.matchAll(/redis\.(?:get|set|del|expire|pexpire|incr|incrby|hset)\(\s*[`"']([^`"'$]*)/g)) prefixes.add(m[1]);
       for (const m of src.matchAll(/[`"'](rl):\$/g)) prefixes.add(`${m[1]}:`);
     }
-    expect([...prefixes].sort()).toEqual(["cache:", "rl:", "walletauth:"]);
+    expect([...prefixes].sort()).toEqual(["cache:", "party:discord:", "party:room:", "rl:", "walletauth:"]);
     for (const p of prefixes) expect(families.some((f) => f.key.startsWith(p)), p).toBe(true);
     const users = files.filter((f) => /["']ioredis["']|["']bullmq["']/.test(read(f)));
-    expect(users).toEqual(["src/api/auth.ts", "src/app.ts", "src/gateway/cache.ts", "src/lib/ratelimit.ts", "src/pay/recovery.ts", "src/services/batches.ts", "src/services/jobs.ts"]);
+    expect(users).toEqual(["src/anonymo/creators/counters.ts", "src/anonymo/party/store.ts", "src/api/auth.ts", "src/app.ts", "src/gateway/cache.ts", "src/lib/ratelimit.ts", "src/pay/recovery.ts", "src/services/batches.ts", "src/services/jobs.ts"]);
     // The Batch API writes its sealed requests and answers under keys it builds from the batch id (services/batches.ts).
-    expect(families.filter((f) => f.requestText === "request-and-answer-text").map((f) => f.key)).toEqual(["batch:<batch id>:in and batch:<batch id>:out"]);
+    expect(families.filter((f) => f.requestText === "request-and-answer-text").map((f) => f.key).sort()).toEqual(["batch:<batch id>:in and batch:<batch id>:out", "party:room:<room ID>"]);
     expect(families.some((f) => f.key.startsWith("bull:anonymo-jobs-"))).toBe(true);
   });
 

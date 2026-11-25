@@ -1,3 +1,4 @@
+import { everydayCoverage, keyEntitlements, type Entitlements } from "../anonymo/everyday/entitlements.ts";
 import { safeAskMoFinish } from "../anonymo/askmo/answer.ts";
 import { inheritRoutePlan, routeResponseHeaders } from "../router/explain.ts"; // V84
 import { randomBytes } from "node:crypto";
@@ -158,7 +159,7 @@ function maxOutFor(ctx: Ctx, targets: RouteTarget[], body: Record<string, unknow
 }
 
 /** Reserve every hold or none: a failure part-way releases what was already held. */
-async function reserveAll(ctx: Ctx, billing: Chat.Billing, holds: { holdId: string; hold: Pico; targets: RouteTarget[]; body: Record<string, unknown>; promptTokens: number }[], paywithNote: string | undefined, _lane: "public" | "attested" | "unlinkable") {
+async function reserveAll(ctx: Ctx, billing: Chat.Billing, holds: { holdId: string; hold: Pico; targets: RouteTarget[]; body: Record<string, unknown>; promptTokens: number }[], paywithNote: string | undefined, _lane: "public" | "attested" | "unlinkable", rights?: Entitlements) {
   const held: string[] = [];
   try {
     for (const h of holds) {
@@ -168,6 +169,7 @@ async function reserveAll(ctx: Ctx, billing: Chat.Billing, holds: { holdId: stri
         keyHash: billing.key?.keyHash ?? null,
         amount: h.hold,
         kind: "usage",
+        ...(billing.key && rights ? { cover: everydayCoverage(billing.key.keyHash, rights, "credits", h.hold) } : {}),
         ttlMs: ctx.cfg.routing.providerTimeoutMs * (ctx.cfg.routing.maxAttempts + 1) * 2,
       });
       held.push(h.holdId);
@@ -499,6 +501,10 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
   refuseConfidentialOutsideEnclave(ctx.anonymo.floor, sealed || disc.lane !== "public" || namesPrivateModel(body) || (body.provider as { private?: unknown } | undefined)?.private === true);
   // The floor gate first: a blocked prompt is never priced, held, sent or rerouted.
   await councilFloorCheck(ctx, body);
+  const rights = await keyEntitlements(ctx, key?.keyHash);
+  if (rights && !rights.limits.council)
+    fail(403, "Council is available with Pass+, Pro or Black.", "council_tier_required");
+  if (rights?.limits.priority && !prefs.sort && !prefs.order?.length) prefs = { ...prefs, sort: "latency" };
   if (sealed && disc.lane === "public") {
     disc = { max: "none", lane: "attested" };
     prefs = { ...prefs, disclosure: "none", lane: "attested" };
@@ -635,6 +641,7 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
     [...legs, { holdId: aggHoldId, hold: aggHold, targets: aggPlan.targets, body: aggBase, promptTokens: aggWorstTokens }, { holdId: premiumHoldId, hold: premiumHold, targets: [], body: {}, promptTokens: 0 }],
     paywithNote,
     disc.lane,
+    rights,
   );
   const open = new Set([...legs.map((l) => l.holdId), aggHoldId, premiumHoldId]);
   const abort = new AbortController();
@@ -767,8 +774,9 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
       fins.push(aggFin);
     } else await dropHold(aggHoldId);
 
-    const proposerCharges = answered.map((a) => finOf.get(a.leg)!.charged);
-    const price = councilPremium({ charges: fins.map((f) => f.charged), baseline: maxPico(...proposerCharges), multiplier: cfg.councilMultiplier });
+    const billedUsage = (fin: Fin) => fin.charged + fin.creditCovered;
+    const proposerCharges = answered.map((a) => billedUsage(finOf.get(a.leg)!));
+    const price = councilPremium({ charges: fins.map(billedUsage), baseline: maxPico(...proposerCharges), multiplier: cfg.councilMultiplier });
     const premium = (await settle(ctx.db, premiumHoldId, price.premium, { description: `${ANONYMO_COUNCIL_MODEL} premium (${cfg.councilMultiplier}x one call)`, generationId: aggFin?.id ?? null })).charged;
     open.delete(premiumHoldId);
     const charged = fins.reduce((s, f) => s + f.charged, 0n) + premium;

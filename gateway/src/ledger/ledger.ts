@@ -70,6 +70,26 @@ function periodStart(reset: string | null, at: Date): Date | null {
   return d;
 }
 
+export type UsageCoverage = {
+  bucket: string;
+  units: number;
+  limit?: number;
+  covered: string;
+  full?: true;
+};
+
+export async function usageInBucket(db: Db | Tx, keyHash: string, bucket: string, except = "") {
+  const data = sql`${holds.result}->'everyday'`;
+  const [row] = await db.select({
+    units: sql<string>`coalesce(sum((${data}->>'units')::bigint), 0)`,
+    covered: sql<string>`coalesce(sum((${data}->>'covered')::bigint), 0)`,
+  }).from(holds).where(and(
+    eq(holds.keyHash, keyHash), sql`${holds.id} <> ${except}`, sql`${data} IS NOT NULL`,
+    sql`${data}->>'bucket' = ${bucket}`,
+  ));
+  return { units: Number(row.units), covered: BigInt(row.covered) };
+}
+
 export type ReserveInput = {
   id: string;
   accountId: string;
@@ -77,6 +97,7 @@ export type ReserveInput = {
   amount: Pico;
   kind?: string;
   ttlMs?: number;
+  cover?: (tx: Tx) => Promise<UsageCoverage | undefined>;
 };
 
 export async function reserve(db: Db, r: ReserveInput): Promise<Pico> {
@@ -84,15 +105,17 @@ export async function reserve(db: Db, r: ReserveInput): Promise<Pico> {
   const out = await db.transaction(async (tx): Promise<{ value: Pico } | { refusal: ApiError }> => {
     const [acct] = await tx.select().from(accounts).where(eq(accounts.id, r.accountId)).for("update");
     if (!acct) fail(402, "This key has no balance. Deposit USDG to its key hash or pay per call.", "insufficient_credits");
+    const cover = await r.cover?.(tx);
+    const amount = r.amount - BigInt(cover?.covered ?? 0);
     const available = acct.balance - acct.held;
-    if (available < r.amount)
+    if (available < amount)
       fail(
         402,
-        `Insufficient balance: this request may cost up to $${picoToUsd(r.amount)} and $${picoToUsd(
+        `Insufficient balance: this request may cost up to $${picoToUsd(amount)} and $${picoToUsd(
           acct.balance - acct.held < 0n ? 0n : acct.balance - acct.held,
         )} is available. Deposit USDG, lower max_tokens, or pay per call.`,
         "insufficient_credits",
-        { required_usd: picoToUsd(r.amount), available_usd: picoToUsd(acct.balance - acct.held) },
+        { required_usd: picoToUsd(amount), available_usd: picoToUsd(acct.balance - acct.held) },
       );
     if (r.keyHash) {
       const [k] = await tx.select().from(keys).where(eq(keys.keyHash, r.keyHash)).for("update");
@@ -112,9 +135,9 @@ export async function reserve(db: Db, r: ReserveInput): Promise<Pico> {
         // Auto top-up: a key that its budget would refuse, with less than its rule's threshold left, tops up first
         // (src/ledger/topup.ts). The top-up, or the note saying why there was none, is kept even when the request is
         // still refused, so a stalled key resumes once the account or the week allows.
-        const topup = spent + BigInt(inflight) + r.amount > budget ? await applyTopup(tx, { ...k, spent }, `reserve:${r.id}`) : null;
+        const topup = spent + BigInt(inflight) + amount > budget ? await applyTopup(tx, { ...k, spent }, `reserve:${r.id}`) : null;
         if (topup) budget = topup.limitAfter;
-        if (spent + BigInt(inflight) + r.amount > budget) {
+        if (spent + BigInt(inflight) + amount > budget) {
           const refusal = new ApiError(
             402,
             `This key would exceed its budget of $${picoToUsd(budget)}${k.budgetReset ? ` per ${k.budgetReset.replace(/ly$/, "")}` : ""}.`,
@@ -132,34 +155,49 @@ export async function reserve(db: Db, r: ReserveInput): Promise<Pico> {
       id: r.id,
       accountId: r.accountId,
       keyHash: r.keyHash ?? null,
-      amount: r.amount,
+      amount,
+      ...(cover ? { result: { everyday: cover } } : {}),
       kind: r.kind ?? "usage",
       expiresAt: new Date(Date.now() + (r.ttlMs ?? 15 * 60_000)),
     });
-    return { value: r.amount };
+    return { value: amount };
   });
   if ("refusal" in out) throw out.refusal;
   return out.value;
 }
 
-export type SettleResult = { charged: Pico; uncovered: Pico; alreadySettled?: boolean };
+export type SettleResult = { charged: Pico; uncovered: Pico; creditCovered?: Pico; alreadySettled?: boolean };
 
 /** Close a hold, charging `actual`. Idempotent: a closed hold returns its stored result. */
 export async function settle(
   db: Db,
   holdId: string,
   actual: Pico,
-  meta: { description?: string; generationId?: string | null; kind?: string } = {},
+  meta: { description?: string; generationId?: string | null; kind?: string; consumeCoverage?: boolean; coverageUnits?: number; onCharge?: (tx: Tx, charged: Pico) => Promise<void> } = {},
 ): Promise<SettleResult> {
   if (actual < 0n) fail(502, "Usage cost could not be verified.", "invalid_cost");
   return db.transaction(async (tx) => {
     const [h] = await tx.select().from(holds).where(eq(holds.id, holdId)).for("update");
     if (!h) fail(500, "Unknown hold.", "internal");
     if (h.status !== "held") {
-      const res = (h.result ?? {}) as { charged?: string; uncovered?: string };
-      return { charged: BigInt(res.charged ?? 0), uncovered: BigInt(res.uncovered ?? 0), alreadySettled: true };
+      const res = (h.result ?? {}) as { charged?: string; uncovered?: string; everyday?: UsageCoverage };
+      return { charged: BigInt(res.charged ?? 0), uncovered: BigInt(res.uncovered ?? 0), ...(res.everyday ? { creditCovered: BigInt(res.everyday.covered) } : {}), alreadySettled: true };
     }
     const [acct] = await tx.select().from(accounts).where(eq(accounts.id, h.accountId)).for("update");
+    const cover = (h.result as { everyday?: UsageCoverage } | null)?.everyday;
+    let used: UsageCoverage | undefined;
+    if (cover && (meta.consumeCoverage ?? actual > 0n)) {
+      const units = meta.coverageUnits ?? cover.units;
+      if (cover.limit != null && units > cover.units) {
+        const already = await usageInBucket(tx, h.keyHash!, cover.bucket, h.id);
+        if (already.units + units > cover.limit)
+          fail(429, "The remaining included voice time is too short for this request.", "included_voice_limit");
+      }
+      const prepaid = BigInt(cover.covered);
+      const covered = cover.full || actual < prepaid ? actual : prepaid;
+      actual -= covered;
+      used = { ...cover, units, covered: String(covered) };
+    }
     let charged = actual;
     if (actual > h.amount) {
       // Spare balance outside this hold may cover the overage.
@@ -171,7 +209,7 @@ export async function settle(
     if (uncovered > 0n) log.warn("usage exceeded reservation; uncovered amount absorbed by operator", { holdId, uncovered });
     await tx
       .update(holds)
-      .set({ status: "settled", result: { charged: charged.toString(), uncovered: uncovered.toString() } })
+      .set({ status: "settled", result: { charged: charged.toString(), uncovered: uncovered.toString(), ...(used ? { everyday: used } : {}) } })
       .where(eq(holds.id, holdId));
     if (charged > 0n) {
       await post(tx, {
@@ -193,7 +231,8 @@ export async function settle(
         if (k?.topup) await applyTopup(tx, k, `settle:${holdId}`);
       }
     }
-    return { charged, uncovered };
+    if (charged > 0n) await meta.onCharge?.(tx, charged);
+    return { charged, uncovered, ...(used ? { creditCovered: BigInt(used.covered) } : {}) };
   });
 }
 

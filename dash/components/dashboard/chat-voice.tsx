@@ -173,7 +173,8 @@ export function VoiceReply({ turn }: { turn: Turn }) {
       <button type="button" className="btn btn-small btn-ghost" aria-label={active ? label : `${label}, ${amount}`}
         onClick={() => active ? voice.stop() : void voice.read(turn)}>
         {active ? <Square size={13} aria-hidden="true" /> : <Volume2 size={16} aria-hidden="true" />}
-        {active ? label : amount}
+        {/* A bare price beside a speaker read like a charge for the turn; it is the price to have it read aloud. */}
+        {active ? label : <>Read aloud <span className="muted">{amount}</span></>}
       </button>
       {voice.failure?.id === turn.id && <output>{voice.failure.message}</output>}
     </span>

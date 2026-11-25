@@ -174,6 +174,10 @@ export function parseSubmission(ctx: Ctx, body: Record<string, unknown>): { api:
     if (typeof b.model !== "string" || !b.model) { bad(r.line, "invalid_body", "`body.model` is required."); continue; }
     if (b.stream === true) { bad(r.line, "invalid_body", "Batch lines cannot stream."); continue; }
     if (lineApi === "chat") {
+      if (ctx.cfg.features.creators && Object.hasOwn(b, "characterId")) {
+        bad(r.line, "invalid_body", "Published character chats cannot run in a batch.");
+        continue;
+      }
       if (b.verify != null || b.model === COUNCIL_MODEL || b.model === RETIRED_COUNCIL_MODEL) { bad(r.line, "invalid_body", "Council mode and dual verification cannot run in a batch."); continue; }
       if (!Array.isArray(b.messages) || !b.messages.length) { bad(r.line, "invalid_body", "`body.messages` must be a non-empty array."); continue; }
     } else if (b.input == null) { bad(r.line, "invalid_body", "`body.input` is required."); continue; }

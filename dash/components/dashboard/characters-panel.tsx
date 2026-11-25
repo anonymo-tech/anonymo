@@ -16,7 +16,9 @@ import {
 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
+import { CreatorPublish } from './creator-publish';
 import { FacePainter, FaceThumb } from './face-painter';
+import { MoVoiceLink } from './mo-voice-link';
 import { MemoryPanel } from './memory-panel';
 import { PlushMaker } from './plush-maker';
 import type { Plush } from '@/lib/anonymo/plush';
@@ -52,6 +54,8 @@ export function CharactersPanel() {
   // ones. `?face=<id>` (the chat's "Give them a face" link) opens that character's Face panel.
   const facesOn = ready && updateOn('faces', demo);
   const memoryOn = ready && (updateOn('memory', demo) || updateOn('vaultsync', demo));
+  const [publishing, setPublishing] = useState<StoredCharacter | null>(null);
+  const creatorsOn = ready && updateOn('creators', demo);
   const [memoryFor, setMemoryFor] = useState<string | null>(null);
   const [art, setArt] = useState<Blob | null>(null);
   const params = useSearchParams();
@@ -372,6 +376,7 @@ export function CharactersPanel() {
       )}
       {active === 'collection' && (
         <section className="character-collection">
+          {creatorsOn && publishing && <CreatorPublish key={publishing.hash} character={publishing} close={() => setPublishing(null)} />}
           {facesOn && (
             <button
               type="button"
@@ -403,6 +408,7 @@ export function CharactersPanel() {
                     >
                       Chat <ArrowUpRight size={14} />
                     </Link>
+                    <MoVoiceLink character={c.id} />
                     {facesOn && (
                       <button
                         type="button"
@@ -419,6 +425,7 @@ export function CharactersPanel() {
                       setMemoryFor(c.id);
                       go('memory');
                     }}>Memory</button>}
+                    {creatorsOn && <button className="btn btn-small" type="button" onClick={() => setPublishing(c)}>Publish</button>}
                     <details className="character-options">
                       <summary>Manage</summary>
                       <div>

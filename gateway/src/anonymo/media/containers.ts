@@ -55,6 +55,31 @@ function riffChunks(b: Uint8Array): { end: number; chunks: RiffChunk[] } {
   }
   return { end, chunks };
 }
+/** Count frames in a PCM WAV using its format and audio chunks. */
+export function wavDuration(bytes: Uint8Array) {
+  const { chunks } = riffChunks(bytes);
+  const fmt = chunks.find((chunk) => chunk.id === "fmt ")?.data;
+  const data = chunks.filter((chunk) => chunk.id === "data");
+  if (!fmt || fmt.length < 16 || data.length !== 1) throw new Error("invalid WAV");
+  const view = new DataView(fmt.buffer, fmt.byteOffset, fmt.byteLength);
+  const format = view.getUint16(0, true);
+  const rate = view.getUint32(4, true);
+  const align = view.getUint16(12, true);
+  const channels = view.getUint16(2, true);
+  const size = data[0].data.length;
+  if ((format !== 1 && format !== 0xfffe) || !rate || !align || !channels || align !== 2 * channels ||
+      view.getUint16(14, true) !== 16 || view.getUint32(8, true) !== rate * align || !size || size % align) throw new Error("invalid PCM WAV");
+  return { samples: size / align, rate };
+}
+
+export function wavSeconds(bytes: Uint8Array) {
+  const { chunks } = riffChunks(bytes);
+  const fmt = chunks.find((chunk) => chunk.id === "fmt ")?.data;
+  const samples = chunks.find((chunk) => chunk.id === "data")?.data;
+  const bytesPerSecond = fmt && fmt.length >= 16 ? readU32le(fmt, 8) : 0;
+  if (!bytesPerSecond || !samples?.length) throw new Error("WAV duration is unavailable.");
+  return Math.ceil(samples.length / bytesPerSecond);
+}
 const withRiffSize = (body: Uint8Array) => {
   const out = new Uint8Array(body);
   out.set(u32le(out.length - 8), 4);

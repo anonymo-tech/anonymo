@@ -16,7 +16,7 @@ import {
 import { editMemory, getMemory } from '@/lib/anonymo/memory-store';
 import { VaultButton } from './vault-controls';
 import { PairDevices } from './vault-memory-pair';
-import { useVaultMemory, vaultMemoryTransport } from './vault-memory-state';
+import { useMemoryCapacity, useVaultMemory, vaultMemoryTransport } from './vault-memory-state';
 import type { MemorySnapshot } from '@/lib/anonymo/vault-memory/store';
 
 function download(name: string, data: string, type: string) {
@@ -74,8 +74,11 @@ function MemoryBoard({ snapshot, status, setStatus, error, setError }: {
     finally { setBusy(false); }
   }
 
+  const capacityKey = useMemoryCapacity(demo);
+  const capacity = capacityKey === undefined ? undefined : { key: capacityKey };
+
   async function sync() {
-    if (demo || !await syncVaultMemory(vaultMemoryTransport)) return false;
+    if (demo || !await syncVaultMemory(vaultMemoryTransport, undefined, capacity)) return false;
     return true;
   }
 
@@ -251,7 +254,7 @@ function MemoryBoard({ snapshot, status, setStatus, error, setError }: {
             <button className="btn btn-small btn-danger" type="button" disabled={busy} onClick={() => {
               if (action !== 'wipe') { setAction('wipe'); return; }
               void run(async () => {
-                const synced = !demo && snapshot.stored.sync && await reconcileBeforeWipe(vaultMemoryTransport);
+                const synced = !demo && snapshot.stored.sync && await reconcileBeforeWipe(vaultMemoryTransport, capacity);
                 await wipeVaultMemory(demo);
                 setEditing(null);
                 setDraft('');

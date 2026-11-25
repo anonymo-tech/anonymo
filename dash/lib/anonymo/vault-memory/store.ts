@@ -1,3 +1,5 @@
+import type { CampaignSave } from '../party.ts';
+import { campaignMemory } from './party.ts';
 import { AnonymoApiError } from '../client.ts';
 import { loadCharacters } from '../characters-store.ts';
 import { currentMemorySecret, decodeMemorySecret, encodeMemorySecret, ensureMemorySecret, readMemorySecret } from '../memory-secret.ts';
@@ -221,6 +223,18 @@ async function patch(stored: StoredVault, keys: MemoryKeys, changes: Map<string,
   return { ...stored, rows: [...rows.values()], pending: [...pending], sources };
 }
 
+export function saveVaultCampaign(demo: boolean, save: CampaignSave) {
+  return change(demo, async (stored, keys) => {
+    const items = await campaignMemory(save);
+    const scope = items[0].characterId;
+    const changes = new Map<string, MemoryItem | null>(items.map((item) => [item.id, item]));
+    for (const row of stored.rows) {
+      if (!changes.has(row.id) && (await openItem(keys, row))?.characterId === scope) changes.set(row.id, null);
+    }
+    return { stored: await patch(stored, keys, changes) };
+  });
+}
+
 export function updateMemoryItem(demo: boolean, id: string, edit: (item: MemoryItem) => MemoryItem | null) {
   return change(demo, async (stored, keys) => {
     const current = stored.rows.find((row) => row.id === id);
@@ -283,20 +297,20 @@ export async function enableVaultSync(demo: boolean, transport: Transport, apiKe
 }
 
 let syncing: Promise<boolean> | null = null;
-export function syncVaultMemory(transport: Transport, signal?: AbortSignal): Promise<boolean> {
+export function syncVaultMemory(transport: Transport, signal?: AbortSignal, everyday?: { key: string | null }): Promise<boolean> {
   if (syncing) return syncing;
-  syncing = runSync(transport, signal);
+  syncing = runSync(transport, signal, true, everyday);
   const done = () => { syncing = null; };
   void syncing.then(done, done);
   return syncing;
 }
 
-export async function reconcileBeforeWipe(transport: Transport) {
+export async function reconcileBeforeWipe(transport: Transport, everyday?: { key: string | null }) {
   await syncing?.catch(() => false);
-  return runSync(transport, undefined, false);
+  return runSync(transport, undefined, false, everyday);
 }
 
-async function runSync(transport: Transport, signal?: AbortSignal, uploadPending = true) {
+async function runSync(transport: Transport, signal?: AbortSignal, uploadPending = true, everyday?: { key: string | null }) {
   const snapshot = await loadVaultMemory(false);
   const secret = currentMemorySecret(false);
   if (!snapshot?.stored.sync || !secret) return false;
@@ -310,7 +324,7 @@ async function runSync(transport: Transport, signal?: AbortSignal, uploadPending
   let remote: MemoryBlob[];
   try {
     current();
-    remote = await transport.read(keys, signal);
+    remote = await transport.read(keys, signal, !!everyday);
   } catch (error) {
     if (error instanceof AnonymoApiError && error.code === 'vault_sync_not_enabled') return false;
     throw error;
@@ -324,7 +338,8 @@ async function runSync(transport: Transport, signal?: AbortSignal, uploadPending
   const rows = merged.stored.rows.filter(({ id }) => pending.has(id));
   const existing = rows.filter(({ id }) => remoteIds.has(id));
   const additions = rows.filter(({ id }) => !remoteIds.has(id)).sort((a, b) => Number(a.deleted) - Number(b.deleted));
-  const space = 512 - remoteIds.size;
+  const cap = everyday?.key && additions.length + remoteIds.size > 512 ? await transport.capacity(everyday.key, keys, signal) : 512;
+  const space = cap == null ? additions.length : Math.max(0, cap - remoteIds.size);
   for (const upload of [existing, additions.slice(0, space)]) {
     for (let i = 0; i < upload.length; i += 16) {
       current();
@@ -333,6 +348,6 @@ async function runSync(transport: Transport, signal?: AbortSignal, uploadPending
       await change(false, async (stored) => ({ stored: await merge(stored, keys, response, true) }), keys.id);
     }
   }
-  if (additions.slice(space).some((row) => !row.deleted)) throw new Error('The sync limit is 512 items, including deleted items. Extra memories stay on this device.');
+  if (additions.slice(space).some((row) => !row.deleted)) throw new Error(`The sync limit is ${cap} items, including deleted items. Extra memories stay on this device.`);
   return true;
 }

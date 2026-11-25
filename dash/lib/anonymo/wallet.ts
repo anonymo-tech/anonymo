@@ -256,7 +256,7 @@ export async function ensureChain(provider: Eip1193Provider, network: EvmNetwork
   if ((await walletChainId(provider)) !== network.chainId) throw new Error(`Switch your wallet to ${network.name} and try again.`);
 }
 
-function clients(provider: Eip1193Provider, network: EvmNetwork, account: Address) {
+export function walletClients(provider: Eip1193Provider, network: EvmNetwork, account: Address) {
   const chain = {
     id: network.chainId,
     name: network.name,
@@ -320,7 +320,7 @@ async function pay(plan: PayPlan): Promise<PayResult> {
   const account = await connectWallet(plan.provider);
   step('switching');
   await ensureChain(plan.provider, plan.network);
-  const { pub, wallet } = clients(plan.provider, plan.network, account);
+  const { pub, wallet } = walletClients(plan.provider, plan.network, account);
 
   step('checking');
   // A call to an address with no code "succeeds" and moves nothing, so a wrong address in the instructions or a wallet

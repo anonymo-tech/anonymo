@@ -7,10 +7,10 @@ import type { ReactNode } from 'react';
 import { useAnonymo } from '../anonymo-provider';
 import { updateOn, type UpdateId } from '@/lib/anonymo/updates';
 
-export function UpdateGate({ id, children }: { id: UpdateId; children: ReactNode }) {
+export function UpdateGate({ id, also, children }: { id: UpdateId; also?: UpdateId; children: ReactNode }) {
   const { ready, demo } = useAnonymo();
   if (!ready) return null;
-  if (updateOn(id, demo)) return <>{children}</>;
+  if (updateOn(id, demo) || (also && updateOn(also, demo))) return <>{children}</>;
   return (
     <div className="notice row">
       <span style={{ flex: 1 }}>This isn’t switched on yet. It’s coming soon.</span>

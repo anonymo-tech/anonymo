@@ -1,3 +1,5 @@
+import { telegramTables } from "./tables/telegram.ts";
+import { creatorTables } from "./tables/creators.ts";
 import { freeAddressReader, freeTables } from "../anonymo/freetier/inventory.ts";
 import { describeAbuse } from "../anonymo/abuse/privacy.ts"; // Anonymo WS02
 import { complianceTables } from "../anonymo/region/inventory.ts";
@@ -12,16 +14,21 @@ import { refusalTables } from "./refusal.ts"; // Anonymo WS03
 import { canonicalJson, sha256 } from "../lib/util.ts";
 import { columnFlags, informationSchemaType } from "./rules.ts";
 import { schemaTables, type SchemaTable } from "./schema.ts";
-import { EXTERNAL, freeRateLimit, lifeboatAddressReader, lifeboatBodyReader } from "./outside.ts";
-import { billingTables } from "./tables/billing.ts";
+import { EXTERNAL, creatorBodyReader, creatorRedisFamilies, freeRateLimit, lifeboatAddressReader, lifeboatBodyReader, memoryCapacityReader, passOrderReader, partyBodyReaders, partyMemory, partyRedis, stakeLinkReader, studioBodyReader, telegramBodyReader, telegramRateLimit } from "./outside.ts";
+import { voiceAddressReaders, voiceBodyReader, voiceStore } from "./outside.ts";
+import { passTables, stakeTables } from "./tables/everyday.ts";
+import { billingTables, standardHoldReview } from "./tables/billing.ts";
 import { chainTables } from "./tables/chain.ts";
 import { characterTables } from "./tables/characters.ts";
 import { keyTables } from "./tables/keys.ts";
-import { operationTables } from "./tables/operations.ts";
+import { everydayStoreNotes, operationTables } from "./tables/operations.ts";
 import { providerTables } from "./tables/providers.ts";
 import { receiptTables } from "./tables/receipts.ts";
 import { anonymoReceiptTables } from "./tables/anonymo-receipts.ts"; // WS09
 import { describeAnonymoMoney } from "./anonymo-money.ts"; // WS05
+import { voiceTables } from "./tables/voice.ts";
+import { memorySyncTables } from "./tables/memory-sync.ts";
+import { partyTables } from "./tables/party.ts";
 import { requestTables } from "./tables/request.ts";
 import { CATEGORIES, CATEGORY_INFO, type AboutRequest, type ColumnDoc, type ExternalDoc, type Review, type TableDoc } from "./types.ts";
 
@@ -33,7 +40,7 @@ import { CATEGORIES, CATEGORY_INFO, type AboutRequest, type ColumnDoc, type Exte
 
 export const INVENTORY_FORMAT = "anonymo.data-inventory/1";
 
-export const TABLE_DOCS: Record<string, TableDoc> = { ...webhookTables, ...requestTables, ...billingTables, ...receiptTables, ...keyTables, ...providerTables, ...chainTables, ...operationTables, ...characterTables, ...x402RecoveryTables, ...facilitatorTables, ...refusalTables, ...mediaTables, ...anonymoReceiptTables, ...ventureTables, ...keySafeTables, ...codesTables, ...freeTables, ...complianceTables };
+export const TABLE_DOCS: Record<string, TableDoc> = { ...webhookTables, ...requestTables, ...billingTables, ...receiptTables, ...keyTables, ...providerTables, ...chainTables, ...operationTables, ...characterTables, ...x402RecoveryTables, ...facilitatorTables, ...refusalTables, ...mediaTables, ...anonymoReceiptTables, ...ventureTables, ...keySafeTables, ...codesTables, ...freeTables, ...complianceTables, ...memorySyncTables, ...voiceTables, ...telegramTables, ...passTables, ...stakeTables, ...creatorTables, ...partyTables };
 describeAnonymoMoney(TABLE_DOCS); // WS05: keys, deposits, withdrawals
 describeAbuse(TABLE_DOCS); // Anonymo WS02: abuse inbox, hash blocks, preservation vault
 export { EXTERNAL };
@@ -205,11 +212,15 @@ export function summarize(tables: TableOut[], ext: ExternalDoc, schemaLabel = "d
       title: "A call paid with x402 keeps its answer for 24 hours, so a lost answer is never paid for twice",
       text: `Where x402 is switched on, the answer to a call paid with x402 is kept, sealed with AES-256-GCM, in Redis (or the router's memory without Redis), never in the database, so the payer can have it sent again with PAYMENT-RECOVERY if it was lost on the way. ${f.ttl} For that time the database keeps only the payer, the authorization nonce, two hashes and the name of the Redis key.`,
     });
-  for (const f of ext.redis.families.filter((x) => x.requestText === "request-and-answer-text"))
+  for (const f of ext.redis.families.filter((x) => x.requestText === "request-and-answer-text" && x.key.startsWith("batch:")))
     caveats.push({
       title: "The Batch API keeps a batch's requests and answers until its results expire",
       text: `A batch sent to POST /api/v1/batches has its requests and answers kept, sealed with AES-256-GCM, in Redis (or the router's memory without Redis), never in the database. ${f.ttl} Calls that are not part of a batch leave nothing here.`,
     });
+  if (ext.otherStores.includes(partyMemory)) caveats.push({
+    title: "Party keeps the live room while it is open",
+    text: "Party scenes and turns live in gateway memory or encrypted in dedicated Redis with persistence disabled. Closing the room clears the state, and idle rooms expire after two hours. The host saves the campaign on their device and can sync it with encrypted Vault Memory. Discord keeps messages sent in Discord.",
+  });
   if (fragments.length)
     caveats.push({
       title: "A failed provider attempt can keep a short piece of the provider's own error message",
@@ -289,27 +300,46 @@ export function buildInventory(schema: SchemaTable[] = schemaTables(), docs: Rec
 /** The deployed inventory describes the schema and stores used by enabled routes. The build still audits every table. */
 // Optional features: what each one adds to the deployed inventory only while its switch is on.
 const OPTIONAL = {
+  studio: { tables: {}, address: [], body: [studioBodyReader], limiters: [] },
+  passes: { tables: passTables, address: [], body: [passOrderReader], limiters: ["pass-order:"] },
+  stake: { tables: stakeTables, address: [], body: [stakeLinkReader], limiters: ["stake-link:"] },
+  everydayMemory: { tables: {}, address: [], body: [memoryCapacityReader], limiters: ["memory-sync:capacity:"] },
+  creators: { tables: creatorTables, address: [], body: [creatorBodyReader], limiters: ["creators:write:"], redis: creatorRedisFamilies },
   keySafe: { tables: keySafeTables, address: [keySafeAddressReader], body: [keySafeBodyReader], limiters: ["key-safe:"] },
   codes: { tables: codesTables, address: [codesAddressReader], body: [codesBodyReader], limiters: ["codes:"] },
   lifeboat: { tables: {}, address: [lifeboatAddressReader], body: [lifeboatBodyReader], limiters: ["lifeboat:check:"] },
   freeTier: { tables: freeTables, address: [freeAddressReader], body: [], limiters: [freeRateLimit.limiterPrefix ?? ""] },
+  moVoice: { tables: voiceTables, address: voiceAddressReaders, body: [voiceBodyReader], limiters: [], stores: [voiceStore] },
+  memorySync: { tables: memorySyncTables, address: [], body: [], bodyFiles: ["src/anonymo/memory-sync/routes.ts"], limiters: ["memory-sync:grant:", "memory-sync:vault:"] },
+  telegram: { tables: telegramTables, address: [], body: [telegramBodyReader], limiters: [telegramRateLimit.limiterPrefix ?? ""] },
   compliance: { tables: complianceTables, address: [], body: [], bodyFiles: ["src/anonymo/region/compliance.ts"], limiters: ["age-proof:"] },
-} satisfies Record<string, { tables: Record<string, unknown>; address: unknown[]; body: unknown[]; bodyFiles?: string[]; limiters: string[] }>;
+  party: { tables: partyTables, address: [], body: partyBodyReaders, limiters: ["party:"], redisKeys: partyRedis.map(({ key }) => key), stores: [partyMemory] },
+} satisfies Record<string, { tables: Record<string, unknown>; address: unknown[]; body: unknown[]; bodyFiles?: string[]; limiters: string[]; stores?: ExternalDoc["otherStores"]; redis?: typeof creatorRedisFamilies; redisKeys?: string[] }>;
 
-export function deployedInventory(features: { ventures: boolean } & Partial<Record<keyof typeof OPTIONAL, boolean>>): InventoryDocument {
+export function deployedInventory(features: { ventures: boolean } & Partial<Record<Exclude<keyof typeof OPTIONAL, "everydayMemory"> | "memorySync", boolean>>): InventoryDocument {
   const venturesEnabled = features.ventures;
-  const off = (Object.keys(OPTIONAL) as (keyof typeof OPTIONAL)[]).filter((name) => !features[name]).map((name) => OPTIONAL[name]);
+  const enabled = { ...features, everydayMemory: !!(features.memorySync && (features.passes || features.stake)) };
+  const off = (Object.keys(OPTIONAL) as (keyof typeof OPTIONAL)[]).filter((name) => !enabled[name]).map((name) => OPTIONAL[name]);
   if (venturesEnabled && off.length === 0) return buildInventory();
-  const active = (name: string) => (venturesEnabled || !Object.hasOwn(ventureTables, name)) && off.every((o) => !Object.hasOwn(o.tables, name));
+  const active = (name: string) => (venturesEnabled || !Object.hasOwn(ventureTables, name)) && (off.every((o) => !Object.hasOwn(o.tables, name)) ||
+    (features.telegram && name === "free_tokens"));
+  const docs = Object.fromEntries(Object.entries(TABLE_DOCS).filter(([name]) => active(name)));
+  const hiddenNotes = Object.entries(everydayStoreNotes).filter(([feature]) => !enabled[feature as keyof typeof everydayStoreNotes]).map(([, note]) => note);
+  docs.kv = { ...docs.kv, notes: docs.kv.notes?.filter((note) => !hiddenNotes.includes(note)) };
+  if (!features.passes && !features.stake) {
+    const result = docs.holds.columns.result as Exclude<ColumnDoc, string>;
+    docs.holds = { ...docs.holds, columns: { ...docs.holds.columns, result: { ...result, review: standardHoldReview } } };
+  }
   return buildInventory(
     schemaTables().filter((table) => active(table.name)),
-    Object.fromEntries(Object.entries(TABLE_DOCS).filter(([name]) => active(name))),
+    docs,
     {
       ...EXTERNAL,
-      redis: { ...EXTERNAL.redis, families: EXTERNAL.redis.families.filter((family) => off.every((o) => !o.limiters.includes(family.limiterPrefix ?? ""))) },
+      redis: { ...EXTERNAL.redis, families: EXTERNAL.redis.families.filter((family) => off.every((o) => !(o.limiters as readonly string[]).includes(family.limiterPrefix ?? "") &&
+        (!("redis" in o) || !(o.redis as unknown[]).includes(family)) && (!("redisKeys" in o) || !(o.redisKeys as string[]).includes(family.key)))) },
       addressReaders: EXTERNAL.addressReaders.filter((reader) => off.every((o) => !(o.address as unknown[]).includes(reader))),
       bodyReaders: EXTERNAL.bodyReaders.filter((reader) => (venturesEnabled || reader !== ventureBodyReader) && off.every((o) => !(o.body as unknown[]).includes(reader) && !("bodyFiles" in o && o.bodyFiles.includes(reader.file)))),
-      otherStores: EXTERNAL.otherStores.filter((store) => venturesEnabled || !ventureStores.includes(store)),
+      otherStores: EXTERNAL.otherStores.filter((store) => (venturesEnabled || !ventureStores.includes(store)) && off.every((o) => !("stores" in o && (o.stores as unknown[]).includes(store)))),
     },
     venturesEnabled ? undefined : "active gateway schema",
   );

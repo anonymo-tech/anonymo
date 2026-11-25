@@ -1,3 +1,6 @@
+import { VOICE_PATH, type DesignedVoice, type VoiceListing, type VoicePreview, type VoiceTicket } from './mo-voice.ts';
+import type { EverydayAccess, PassOffer, PassOrder, PassSku, StakeContract, StakeSummary } from './everyday.ts';
+import { PARTY_BASE, type PartyAction, type PartyCreate, type PartyResult, type PartyRoom, type PartySeat } from './party.ts';
 // Typed client for the Anonymo gateway. It works against any `fetch`: the real gateway at NEXT_PUBLIC_ANONYMO_API, or
 // the in-browser mock gateway (lib/anonymo/mock) in demo mode, so both paths run the same request and parsing code.
 // Paths and shapes follow the gateway routes named in lib/anonymo/types.ts.
@@ -70,6 +73,8 @@ import type { GenerationView } from './connect.ts';
 import type { KeySafeIds, KeySafeUpload, WrappedKeySafe } from './key-safe.ts';
 
 /** Every path the dashboard calls, in one place. */
+import { CREATOR_API, discoverQuery, type CreatorCard, type CreatorClaim, type CreatorContracts, type CreatorStats, type CreatorVotes, type PublishCharacter } from './creators.ts';
+
 export const API_PATHS = {
   keys: '/keys',
   keySafe: '/v1/key-safe',
@@ -200,7 +205,7 @@ export function createAnonymoClient(options: ClientOptions) {
   const doFetch = options.fetch ?? ((input, init) => fetch(input, init));
   const key = options.key ?? null;
 
-  async function request(path: string, init: RequestInit & { auth?: boolean; onResponse?: (response: Response) => void } = {}): Promise<Response> {
+  async function request(path: string, init: RequestInit & { auth?: boolean; onResponse?: (response: Response) => void; acceptStatus?: number } = {}): Promise<Response> {
     const headers = new Headers(init.headers);
     if (options.declaredRegion && /^\/(?:api\/)?v1\//.test(path)) headers.set('x-anonymo-declared-region', options.declaredRegion);
     if (init.body && !(init.body instanceof FormData) && !headers.has('content-type')) headers.set('content-type', 'application/json');
@@ -208,10 +213,10 @@ export function createAnonymoClient(options: ClientOptions) {
       if (!key) throw new AnonymoApiError(401, 'missing_key', 'Create or paste an API key first.');
       headers.set('authorization', `Bearer ${key}`);
     }
-    const { auth: _auth, onResponse, ...rest } = init;
+    const { auth: _auth, onResponse, acceptStatus, ...rest } = init;
     const response = await doFetch(`${base}${path}`, { ...rest, headers, credentials: 'omit', referrerPolicy: 'no-referrer' });
     onResponse?.(response);
-    if (!response.ok) throw await toError(response);
+    if (!response.ok && response.status !== acceptStatus) throw await toError(response);
     return response;
   }
 
@@ -232,6 +237,28 @@ export function createAnonymoClient(options: ClientOptions) {
   return {
     hasKey: key !== null,
 
+    moVoiceList: (signal?: AbortSignal) => json<VoiceListing>(`${VOICE_PATH}/voices`, { signal, cache: 'no-store' }),
+    moVoicePreview: (description: string, signal?: AbortSignal) =>
+      json<VoicePreview>(`${VOICE_PATH}/voices/preview`, { method: 'POST', body: JSON.stringify({ description }), signal }),
+    moVoiceSave: (previewId: string, name: string, signal?: AbortSignal) =>
+      json<DesignedVoice>(`${VOICE_PATH}/voices`, { method: 'POST', body: JSON.stringify({ preview_id: previewId, name }), signal }),
+    moVoiceConnect: (signal?: AbortSignal) =>
+      json<VoiceTicket>(`${VOICE_PATH}/sessions`, { method: 'POST', body: JSON.stringify({ transport: 'websocket' }), signal }),
+    partyOptions: () => json<{ art: boolean; discord: boolean }>(PARTY_BASE, { auth: key !== null, cache: 'no-store' }),
+    createParty: (body: PartyCreate) =>
+      json<PartySeat>(`${PARTY_BASE}/rooms`, { method: 'POST', body: JSON.stringify(body) }),
+    joinParty: (id: string, invite: string) =>
+      json<PartySeat>(`${PARTY_BASE}/rooms/${encodeURIComponent(id)}/join`, { method: 'POST', auth: key !== null, body: JSON.stringify({ adult: true, invite }) }),
+    partyState: (id: string, token: string, signal?: AbortSignal) =>
+      json<PartyRoom>(`${PARTY_BASE}/rooms/${encodeURIComponent(id)}/state`, { method: 'POST', auth: key !== null, signal, body: JSON.stringify({ token }) }),
+    partyAction: (id: string, token: string, action: PartyAction) =>
+      json<PartyResult>(`${PARTY_BASE}/rooms/${encodeURIComponent(id)}/action`, { method: 'POST', auth: key !== null, body: JSON.stringify({ ...action, token }) }),
+    partySocket: (id: string) => {
+      const url = new URL(`${base}${PARTY_BASE}/rooms/${encodeURIComponent(id)}/socket`);
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+      return new WebSocket(url);
+    },
+
     regionCompliance: (signal?: AbortSignal) =>
       json<RegionCompliance>(API_PATHS.regionCompliance, { signal, auth: key !== null, cache: 'no-store', headers: { accept: 'application/json' } }),
     submitAgeProof: (proof: string, signal?: AbortSignal) =>
@@ -249,6 +276,39 @@ export function createAnonymoClient(options: ClientOptions) {
     },
     redeemCode: (code: string) =>
       json<CodeRedemption>(API_PATHS.redeemCode, { method: 'POST', body: JSON.stringify({ code }), auth: key !== null, cache: 'no-store' }),
+    telegramLinkCode: () => json<{ code: string; expires_in: number }>('/v1/telegram/link-code', { method: 'POST', cache: 'no-store' }),
+    telegramHandoff: (token: string, signal?: AbortSignal) =>
+      json<{ key: string; key_hash: string; expires_at: string }>('/v1/telegram/handoff', {
+        method: 'POST', auth: false, cache: 'no-store', body: JSON.stringify({ token }), signal,
+      }),
+    telegramMini<T>(initData: string, action: string, input: object, signal?: AbortSignal) {
+      return json<T>('/v1/telegram/mini', {
+        method: 'POST', auth: false, cache: 'no-store', body: JSON.stringify({ action, init_data: initData, ...input }), signal,
+      });
+    },
+    passes: (signal?: AbortSignal) => json<PassOffer>('/v1/everyday/passes', { signal, cache: 'no-store' }),
+    passOrder: (sku: PassSku, wallet: string) =>
+      json<PassOrder>('/v1/everyday/passes/order', { method: 'POST', body: JSON.stringify({ sku, wallet }) }),
+    everydayAccess: (signal?: AbortSignal) => json<EverydayAccess>('/v1/everyday/access', { signal, cache: 'no-store' }),
+    stakeContract: (signal?: AbortSignal) =>
+      json<StakeContract>('/v1/everyday/stake/contract', { signal, auth: false, cache: 'no-store' }),
+    stakeSummary: (signal?: AbortSignal) => json<StakeSummary>('/v1/everyday/stake', { signal, cache: 'no-store' }),
+    stakeLinkChallenge: (wallet: string) => json<{ message: string; expires: number }>('/v1/everyday/stake/link',
+      { method: 'POST', body: JSON.stringify({ wallet }) }),
+    stakeLink: (wallet: string, expires: number, signature: string) => json<{ wallet: string }>('/v1/everyday/stake/link',
+      { method: 'POST', body: JSON.stringify({ wallet, expires, signature }) }),
+    discover: (q: string, tag: string, adult: boolean, signal?: AbortSignal) =>
+      json<{ data: CreatorCard[]; mature: boolean }>(`${CREATOR_API}/discover?${discoverQuery(q, tag, adult)}`, { auth: adult && key !== null, signal, cache: 'no-store' }),
+    publishCreator: (body: string, walletAuth: string) =>
+      data<CreatorCard>(`${CREATOR_API}/publish`, { method: 'POST', body, headers: { 'x-wallet-auth': walletAuth } }),
+    creatorStats: (body: string, walletAuth: string) =>
+      data<CreatorStats[]>(`${CREATOR_API}/stats`, { method: 'POST', body, headers: { 'x-wallet-auth': walletAuth } }),
+    creatorClaims: (wallet: PublishCharacter['creatorWallet']) =>
+      data<CreatorClaim[]>(`${CREATOR_API}/claims?${new URLSearchParams({ wallet })}`, { auth: false, cache: 'no-store' }),
+    creatorContracts: () => json<CreatorContracts>(`${CREATOR_API}/contracts`, { auth: false, cache: 'no-store' }),
+    creatorVotes: (signal?: AbortSignal) => json<CreatorVotes>(`${CREATOR_API}/votes`, { auth: false, signal, cache: 'no-store' }),
+    referralLink: () => json<{ code: string }>(`${CREATOR_API}/referral-link`, { method: 'POST' }),
+    acceptReferral: (code: string) => json<{ accepted: true }>(`${CREATOR_API}/referral-accept`, { method: 'POST', body: JSON.stringify({ code }) }),
     keyInfo: () => json<KeyInfo>(API_PATHS.keyInfo),
     balance: (signal?: AbortSignal) => json<Balance>(API_PATHS.balance, { signal }),
     deposits: (signal?: AbortSignal) => json<Deposits>(API_PATHS.deposits, { signal }),
@@ -346,7 +406,13 @@ export function createAnonymoClient(options: ClientOptions) {
     },
     generateVideo: (body: VideoRequest, signal?: AbortSignal) =>
       json<VideoJob>(API_PATHS.videos, { method: 'POST', body: JSON.stringify(body), signal }),
-    videoStatus: (id: string, signal?: AbortSignal) => json<VideoJob>(API_PATHS.video(id), { signal, cache: 'no-store' }),
+    async videoStatus(id: string, signal?: AbortSignal): Promise<VideoJob> {
+      const response = await request(API_PATHS.video(id), { signal, cache: 'no-store', acceptStatus: 451 });
+      if (response.ok) return response.json();
+      const job = await response.clone().json().catch(() => null) as VideoJob | null;
+      if (job?.object === 'video.generation' && job.id === id && job.status === 'failed') return job;
+      throw await toError(response);
+    },
     videoMediaUrl: (url: string) => url.startsWith('/v1/media/') ? `${base}${url}` : url,
 
     // Update "ventures": the crew's runs. Every call but the Recipe list carries the key.

@@ -8,8 +8,11 @@ import { readJson } from "../../api/common.ts";
 import type { Ctx } from "../../context.ts";
 import type { RateLimiter } from "../../lib/ratelimit.ts";
 import { kv, ledger } from "../../db/schema.ts";
+import { decrypt, encrypt } from "../../lib/util.ts";
 import { ApiError, fail } from "../../lib/errors.ts";
 import { blindSign, memoryIssuer, verifyGrant } from "./grant.ts";
+import { keyEntitlements } from "../everyday/entitlements.ts";
+import { utcDay } from "../everyday/policy.ts";
 import { memoryBlobs } from "./schema.ts";
 
 const base = "/v1/memory-sync";
@@ -19,6 +22,8 @@ const batchSize = 16;
 const encoded = (max: number) => z.string().max(max).regex(/^[A-Za-z0-9_-]*$/);
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const grant = z.object({ prefix: encoded(43), signature: encoded(512) }).strict();
+const cursor = z.string().uuid();
+const capacity = grant.extend({ day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), level: z.enum(["large", "unlimited"]) }).strict();
 const rowSpec = z.object({
   id: z.string().regex(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/),
   version: z.number().int().min(1).max(2_147_483_647),
@@ -41,6 +46,27 @@ export function memoryWins(incoming: Row, current?: Row) {
 
 export function memorySyncRoutes(app: Hono, ctx: Ctx) {
   const issuer = memoryIssuer(ctx.cfg.memorySyncIssuer);
+  const everyday = ctx.cfg.features.passes || ctx.cfg.features.stake;
+  const cached = new Map<string, { day: string; signer: ReturnType<typeof memoryIssuer> }>();
+  async function capacitySigner(level: "large" | "unlimited", day: string, create: boolean) {
+    const current = cached.get(level);
+    if (current?.day === day) return current.signer;
+    // A different key each day prevents blind-signing a future day's grant while eligible today.
+    const slot = `memory-sync:capacity-signer:${level}`;
+    const signer = await ctx.db.transaction(async (tx) => {
+      if (create) await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${slot}, 0))`);
+      const [row] = await tx.select({ value: kv.value }).from(kv).where(eq(kv.key, slot));
+      const stored = row?.value as { day: string; pem: string } | undefined;
+      if (stored?.day === day) return memoryIssuer(decrypt(ctx.cfg.appSecret, stored.pem));
+      if (!create || utcDay() !== day) return null;
+      const fresh = memoryIssuer(undefined);
+      const value = { day, pem: encrypt(ctx.cfg.appSecret, fresh.key.export({ type: "pkcs8", format: "pem" }).toString()) };
+      await tx.insert(kv).values({ key: slot, value }).onConflictDoUpdate({ target: kv.key, set: { value, updatedAt: new Date() } });
+      return fresh;
+    });
+    if (signer) cached.set(level, { day, signer });
+    return signer;
+  }
   app.use(`${base}/*`, bodyLimit({ maxSize: 192 * 1024 }));
   const route = (path: string, handler: (c: Context) => Response | Promise<Response>) => {
     const safe: Handler = async (c) => {
@@ -87,11 +113,31 @@ export function memorySyncRoutes(app: Hono, ctx: Ctx) {
     const key = await requireKey(ctx, c.req.header("authorization"));
     const [funded] = await ctx.db.select({ ref: ledger.ref }).from(ledger)
       .where(and(eq(ledger.accountId, key.accountId), inArray(ledger.kind, ["deposit", "credit"]), gt(ledger.amount, 0n))).limit(1);
-    if (!funded) fail(402, "Top up an Anonymo key to enable memory sync.", "memory_sync_funding_required");
+    const rights = await keyEntitlements(ctx, key.keyHash);
+    if (!funded && (!rights || rights.limits.memoryItems === MEMORY_ITEM_CAP)) fail(402, "Top up an Anonymo key to enable memory sync.", "memory_sync_funding_required");
     const { blinded } = z.object({ blinded: encoded(512) }).strict().parse(await readJson(c));
     await limit(ctx.limiter.take(`memory-sync:grant:${key.accountId}`, 1, 10, 86_400_000));
     const signed = blindSign(issuer, Buffer.from(blinded, "base64url"));
     if (!signed) fail(400, "Invalid blinded grant request.");
+    return c.json({ signed: signed.toString("base64url") });
+  });
+
+  if (everyday) route("capacity", async (c) => {
+    const key = await requireKey(ctx, c.req.header("authorization"));
+    const rights = await keyEntitlements(ctx, key.keyHash);
+    const level = rights?.limits.memoryItems === null ? "unlimited" : "large";
+    if (!rights || rights.limits.memoryItems === MEMORY_ITEM_CAP)
+      fail(403, "This key has standard Vault Memory capacity.", "vault_standard_capacity");
+    const day = utcDay();
+    const input = z.object({ blinded: encoded(512).optional(), level: z.enum(["large", "unlimited"]).optional(),
+      day: z.string().optional() }).strict().parse(await readJson(c));
+    await limit(ctx.limiter.take(`memory-sync:capacity:${key.accountId}`, 1, 30, 86_400_000));
+    const signingKey = await capacitySigner(level, day, true);
+    if (!signingKey || (input.blinded && (input.level !== level || input.day !== day)))
+      fail(409, "Refresh the Vault Memory capacity grant.", "vault_capacity_changed");
+    if (!input.blinded) return c.json({ ...signingKey.publicKey, level, day, limit: rights.limits.memoryItems });
+    const signed = blindSign(signingKey, Buffer.from(input.blinded, "base64url"));
+    if (!signed) fail(400, "Invalid blinded capacity request.");
     return c.json({ signed: signed.toString("base64url") });
   });
 
@@ -114,9 +160,27 @@ export function memorySyncRoutes(app: Hono, ctx: Ctx) {
     return c.json({ items: items.map(serialize) });
   });
 
+  if (everyday) route("read-page", async (c) => {
+    const { vaultId } = await authenticate(c);
+    const { after } = z.object({ after: cursor.optional() }).strict().parse(await readJson(c));
+    const items = await ctx.db.select().from(memoryBlobs)
+      .where(and(eq(memoryBlobs.vaultId, vaultId), after ? gt(memoryBlobs.itemId, after) : undefined))
+      .orderBy(asc(memoryBlobs.itemId)).limit(128);
+    return c.json({ items: items.map(serialize), next: items.length === 128 ? items.at(-1)!.itemId : null });
+  });
+
   route("write", async (c) => {
-    const { id, vaultId } = await authenticate(c);
-    const { items } = z.object({ items: z.array(rowSpec).min(1).max(batchSize) }).strict().parse(await readJson(c));
+    const { id, vaultId, verifier } = await authenticate(c);
+    const { items, proof } = z.object({ items: z.array(rowSpec).min(1).max(batchSize),
+      ...(everyday ? { proof: capacity.optional() } : {}),
+    }).strict().parse(await readJson(c));
+    const token = proof as z.infer<typeof capacity> | undefined;
+    let cap = MEMORY_ITEM_CAP;
+    const signer = token && token.day === utcDay() && (token.level === "large" || ctx.cfg.features.stake)
+      ? await capacitySigner(token.level, token.day, false) : null;
+    if (token && signer && verifyGrant(signer.pub, id, verifier.toString("hex"),
+      Buffer.from(token.prefix, "base64url"), Buffer.from(token.signature, "base64url"), `${token.level}:${token.day}`))
+      cap = token.level === "unlimited" ? Infinity : 2048;
     const ids = items.map((row) => row.id);
     if (new Set(ids).size !== ids.length) fail(400, "A batch cannot repeat an item ID.");
     for (const row of items) {
@@ -131,9 +195,9 @@ export function memorySyncRoutes(app: Hono, ctx: Ctx) {
       const where = eq(memoryBlobs.vaultId, vaultId);
       const previous = await tx.select().from(memoryBlobs).where(and(where, inArray(memoryBlobs.itemId, ids)));
       const byId = new Map(previous.map((row) => [row.itemId, serialize(row)]));
-      if (items.length !== byId.size) {
+      if (Number.isFinite(cap) && items.length !== byId.size) {
         const [count] = await tx.select({ count: sql<number>`count(*)::int` }).from(memoryBlobs).where(where);
-        if (count!.count + items.length - byId.size > MEMORY_ITEM_CAP)
+        if (count!.count + items.length - byId.size > cap)
           fail(409, "This vault has reached its sync item limit.", "vault_sync_cap");
       }
       for (const row of items) {

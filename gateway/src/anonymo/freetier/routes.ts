@@ -55,6 +55,11 @@ export async function verifyFreeChat(ctx: Ctx, c: Context) {
     await limit(ctx, `invalid:${address}`, 100);
     fail(403, "Solve a current free chat challenge first.", "invalid_free_proof");
   }
+  return admitFreeProof(ctx, proof, now);
+}
+
+export async function admitFreeProof(ctx: Ctx, proof: FreeProof, now = Date.now()) {
+  const device = proof.device;
   const used = await usedToday(ctx, device, proof.day);
   if (used >= ctx.cfg.freeTier.daily) exhausted(nextDay(now));
   if (used !== proof.expected) stale();
@@ -94,17 +99,19 @@ export function freeTierRoutes(app: Hono, ctx: Ctx) {
     const requested = Number(c.req.query("batch") ?? "1");
     if (!Number.isInteger(requested) || requested < 1 || requested > MAX_BATCH)
       fail(400, `Batch size must be between 1 and ${MAX_BATCH}.`, "invalid_free_batch");
-    const used = await usedToday(ctx, device, utcDay(now));
-    const remaining = Math.max(0, ctx.cfg.freeTier.daily - used);
-    const resets_at = nextDay(now);
-    if (!remaining) return c.json({ challenge: null, difficulty: 0, expires: resets_at, batch: 0, remaining, resets_at, model: null });
-
-    await ctx.catalog.ensureFresh();
-    const model = freeChatModel(ctx);
-    if (!model) fail(503, "Free chat is temporarily unavailable.", "free_unavailable");
-    const failures = await limit(ctx, `invalid:${address}`, 100, 0);
-    const batch = Math.min(requested, remaining);
-    const difficulty = workDifficulty(ctx.cfg.freeTier.difficulty, load, failures, batch);
-    return c.json({ ...issueChallenge(ctx.cfg.appSecret, device, used, batch, difficulty, now), remaining, resets_at, model });
+    return c.json(await freeChallengeFor(ctx, device, requested, load, () => limit(ctx, `invalid:${address}`, 100, 0), now));
   });
+}
+
+export async function freeChallengeFor(ctx: Ctx, device: Buffer, requested: number, load: number, failures: () => Promise<number>, now = Date.now()) {
+  const used = await usedToday(ctx, device, utcDay(now));
+  const remaining = Math.max(0, ctx.cfg.freeTier.daily - used);
+  const resets_at = nextDay(now);
+  if (!remaining) return { challenge: null, difficulty: 0, expires: resets_at, batch: 0, remaining, resets_at, model: null };
+  await ctx.catalog.ensureFresh();
+  const model = freeChatModel(ctx);
+  if (!model) fail(503, "Free chat is temporarily unavailable.", "free_unavailable");
+  const batch = Math.min(requested, remaining);
+  const difficulty = workDifficulty(ctx.cfg.freeTier.difficulty, load, await failures(), batch);
+  return { ...issueChallenge(ctx.cfg.appSecret, device, used, batch, difficulty, now), remaining, resets_at, model };
 }

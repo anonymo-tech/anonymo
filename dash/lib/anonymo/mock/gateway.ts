@@ -1,3 +1,4 @@
+import { createDemoParty } from './party.ts';
 import { ASK_TOPICS, type AskMoRequest } from '../askmo.ts';
 // An in-browser stand-in for the Anonymo gateway, used in demo mode and by the dash checks. It answers the same paths
 // with the same shapes as the real gateway (lib/anonymo/types.ts names the gateway route behind each), keeps state per
@@ -44,6 +45,8 @@ import { createDemoSpeech, demoStoryReply as bedtimeStoryReply, DEMO_SPEECH_MODE
 import { activityCsv, runway, sampleHistory, spendReport, spentWindows, type UsageEntry } from './usage.ts';
 import { COUNCIL_MERGED, DEMO_NYMO, DEMO_COIN_PAY, DEMO_LEADERBOARD, DEMO_MANIFEST, DEMO_MODELS, DEMO_PRICES, DEMO_ROUTER, DEMO_ROUTES, DEMO_VIDEO_MODELS, demoReply } from './fixtures.ts';
 import { listPricing, sideBySideReply } from './sidebyside.ts';
+import { CREATOR_API, REFERRAL_RE, type CreatorStats, type PublishCharacter } from '../creators.ts';
+import { creatorContracts, creatorFixtures, demoClaims, demoList, demoVotes } from './creator-actions.ts';
 import { updateOn } from '../updates.ts';
 import { createDemoVentures } from './ventures.ts';
 import { createDemoKeySafe } from './key-safe.ts';
@@ -83,6 +86,9 @@ type State = {
   keys: Record<string, KeyState>;
   receipts: Record<string, StoredReceipt>;
   redeemedCodes?: string[];
+  creatorCards?: CreatorStats[];
+  creatorInvites?: Record<string, string>;
+  creatorReferrals?: Record<string, { inviter: string; credited: boolean }>;
   free?: Record<string, { resetsAt: number; used: number }>;
 };
 
@@ -484,6 +490,9 @@ export function createMockGateway(options: MockOptions = {}) {
     } : (await request.json().catch(() => null)) as (PhotoChatRequest & { stream?: boolean; council?: { mode?: string } }) | null;
     if (!raw || typeof raw.model !== 'string' || !Array.isArray(raw.messages) || raw.messages.length === 0)
       return fail(400, 'invalid_request', 'Invalid request: model and messages are required.');
+    const publication = raw.characterId ? (state.creatorCards ?? creatorFixtures).find((card) => card.id === raw.characterId) : null;
+    if (raw.characterId && (!publication || (publication.adult && !(raw.creatorAdult && (k.deposits.length || k.codeCredit)))))
+      return fail(404, 'character_not_found', 'This character is unavailable.');
     // Update "photos": image parts are checked as the gateway checks them; the rest of the demo reads the text.
     const photos = readPhotoParts(raw.messages);
     if (!photos.ok) return fail(photos.status, photos.type, photos.message);
@@ -594,7 +603,9 @@ export function createMockGateway(options: MockOptions = {}) {
     const servers = DEMO_ROUTES.filter((r) => (sealed ? r.attested && r.serves.includes('anonymo-sealed') : r.serves.includes(model) || r.model === model));
     const first = servers[0] ?? DEMO_ROUTES[0];
     const other = servers.find((r) => r.family !== first.family) ?? DEMO_ROUTES[2];
-    let text = storyText ?? (lastUser === DEMO_TRANSCRIPT ? DEMO_VOICE_REPLY : demoReply(model));
+    let text = storyText ?? (publication
+      ? `Come in. There’s a little more to this place than meets the eye. What brought you here?`
+      : lastUser === DEMO_TRANSCRIPT ? DEMO_VOICE_REPLY : demoReply(model));
     // Update "sidebyside": a direct model id answers in its own words, and a merge request gets a merged reply.
     if (!storyText) text = sideBySideReply(model, body.messages, text);
     // Update "catchup": a recap request gets recap-shaped notes built from what the person said.
@@ -625,6 +636,12 @@ export function createMockGateway(options: MockOptions = {}) {
       const cost = Math.min(maxCost - searchMusd, Math.ceil((tin * p.in + tout * p.out) / 1_000_000)) + searchMusd;
       k.held -= maxCost;
       spend(k, cost, { model, kind: 'call', requestId });
+      if (publication && cost > 0 && (k.deposits.length || k.codeCredit)) {
+        const rows = state.creatorCards ??= [...creatorFixtures];
+        state.creatorCards = rows.map((card) => card.id === publication.id
+          ? { ...card, chats: card.chats + 1, spend: musdToUsdString(usdToMusd(card.spend) + cost) }
+          : card);
+      }
       const served = rerouted ? other : first;
       const routes = [
         ...(rerouted ? [routeEntry(first.id, 'single', 0, { in: 0, out: 0 }, 'refused', sealed)] : []),
@@ -715,6 +732,9 @@ export function createMockGateway(options: MockOptions = {}) {
         !/^(0|[1-9]\d{0,9})$/.test(nonce) || !(await hasFreeWork(challenge, Number(nonce), freeDifficulty)))
       return fail(403, 'invalid_free_proof', 'Solve a current free chat challenge first.');
     const body = await request.json().catch(() => null) as (ChatRequest & { stream?: boolean }) | null;
+    const publication = body?.characterId ? (state.creatorCards ?? creatorFixtures).find((card) => card.id === body.characterId) : null;
+    if (body?.characterId && (!publication || publication.adult))
+      return fail(404, 'character_not_found', 'This character is unavailable.');
     if (!body || body.model !== model || !Array.isArray(body.messages) ||
         body.messages.some((message) => typeof message?.content !== 'string') ||
         !body.messages.some((message) => message.role === 'user' && message.content.trim()))
@@ -822,10 +842,81 @@ export function createMockGateway(options: MockOptions = {}) {
     return json({ created: Math.floor(Date.now() / 1000), data, anonymo: { request_id: requestId, model: model.id, cost_usd: costUsd, provenance: { c2pa: true, watermark: true }, receipt } });
   }
 
+  const party = createDemoParty(async (authorization, scene) => {
+    const request = new Request('https://example.invalid' + API_PATHS.images, {
+      method: 'POST', headers: { authorization },
+      body: JSON.stringify({ model: DEMO_IMAGE_MODELS[0].id, prompt: scene }),
+    });
+    const key = await keyState(request);
+    if (key instanceof Response) return null;
+    const result = await images(request, key);
+    if (!result.ok) return null;
+    const output = await result.json();
+    return { image: output.data[0].b64_json, receipt: output.anonymo.receipt };
+  });
+
   async function handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method.toUpperCase();
+    if (path === '/v1/party' || path.startsWith('/v1/party/')) {
+      const response = await party(request, path);
+      if (response) return response;
+    }
+
+    if (path.startsWith(`${CREATOR_API}/`)) {
+      const cards = state.creatorCards ??= [...creatorFixtures];
+      const action = path.slice(CREATOR_API.length + 1);
+      if (method === 'GET' && action === 'contracts') return json(creatorContracts);
+      if (method === 'GET' && action === 'claims') return json({ data: demoClaims(url.searchParams.get('wallet') ?? '') });
+      if (method === 'GET' && action === 'votes') return json(demoVotes());
+      if (method === 'GET' && action === 'discover') {
+        const k = request.headers.has('authorization') ? await keyState(request) : null;
+        const mature = url.searchParams.get('adult') === '1' && !!k && !(k instanceof Response) && (k.deposits.length > 0 || !!k.codeCredit);
+        const q = (url.searchParams.get('q') ?? '').toLowerCase();
+        const tag = (url.searchParams.get('tag') ?? '').toLowerCase();
+        return json({ data: demoList(cards, q, tag, mature), mature });
+      }
+      const k = await keyState(request);
+      if (k instanceof Response) return k;
+      if (method === 'POST' && action === 'publish') {
+        const input = await request.json() as PublishCharacter;
+        if (!Number.isInteger(input.shareBps) || input.shareBps < 0 || input.shareBps > 1500)
+          return fail(400, 'invalid_request', 'Enter a share between 0% and 15%.');
+        const prior = cards.find((card) => card.seed === input.cardHash.slice(0, 12));
+        if (prior) return json({ data: prior });
+        const card: CreatorStats = {
+          id: crypto.randomUUID(), name: input.name, description: input.description, tags: [...new Set(input.tags.map((tag) => tag.toLowerCase()))],
+          adult: input.adult, wallet: input.creatorWallet, shareBps: input.shareBps, seed: input.cardHash.slice(0, 12),
+          chats: 0, spend: '0', held: '0', frozen: '0', audience: { unique: 0, week2: null },
+        };
+        cards.unshift(card);
+        persist();
+        return json({ data: card }, 201);
+      }
+      if (method === 'POST' && action === 'stats') {
+        const { creatorWallet } = await request.json() as { creatorWallet: string };
+        return json({ data: cards.filter((card) => card.wallet === creatorWallet) });
+      }
+      const links = state.creatorInvites ??= {};
+      const referrals = state.creatorReferrals ??= {};
+      if (method === 'POST' && action === 'referral-link') {
+        const code = links[k.keyHash] ??= crypto.randomUUID();
+        persist();
+        return json({ code });
+      }
+      if (method === 'POST' && action === 'referral-accept') {
+        const { code } = await request.json() as { code: string };
+        const inviter = Object.entries(links).find(([, value]) => value === code)?.[0];
+        const prior = referrals[k.keyHash];
+        if (prior?.inviter === inviter && inviter) return json({ accepted: true });
+        if (!REFERRAL_RE.test(code) || !inviter || inviter === k.keyHash || prior || k.deposits.length || k.codeCredit)
+          return fail(409, 'referral_ineligible', 'This invite needs a new, unfunded key.');
+        referrals[k.keyHash] = { inviter, credited: false };
+        persist();
+        return json({ accepted: true });
+      }
+    }
 
     // Auto first, as the gateway lists it. Every model Auto can pick in the demo is billed at anonymo-1's price, so that is its list price here.
     if (method === 'GET' && path === API_PATHS.models)
@@ -880,6 +971,15 @@ export function createMockGateway(options: MockOptions = {}) {
     const lapsed = expiredKeyRefusal(k.caps, Date.now(), fail);
     if (lapsed) return lapsed;
     if (method === 'GET' && path === API_PATHS.keyInfo) return json({ first_chat_available: k.firstChatAvailable ?? false, key_hash: k.keyHash, label: null, caps: k.caps, deposit: instructions(k) });
+    const referral = state.creatorReferrals?.[k.keyHash];
+    if (referral && !referral.credited && (k.deposits.length || k.codeCredit)) {
+      k.balance += 500_000;
+      k.usageOnly += 500_000;
+      const inviter = state.keys[referral.inviter];
+      if (inviter) { inviter.balance += 500_000; inviter.usageOnly += 500_000; }
+      referral.credited = true;
+      persist();
+    }
     if (method === 'GET' && path === API_PATHS.balance) return json(balanceOf(k));
     if (method === 'GET' && path === API_PATHS.deposits)
       return json({ instructions: instructions(k), data: k.deposits.map(({ musd: _m, ...d }) => d) });

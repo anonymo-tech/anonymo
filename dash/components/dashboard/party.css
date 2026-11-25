@@ -1,0 +1,40 @@
+.party { display: grid; gap: 1rem; max-width: 68rem; }
+.party-entry,
+.party-scene,
+.party-panel { padding: clamp(1rem, 3vw, 1.65rem); }
+.party-entry { display: grid; justify-items: start; gap: 1rem; max-width: 38rem; }
+.party-entry h2,
+.party-scene h2 { margin: .2rem 0 .55rem; }
+.party-entry p,
+.party-bar p,
+.party-panel p { margin: 0; }
+.party-fields { display: grid; gap: .65rem; width: 100%; }
+.party-fields label { display: flex; gap: .55rem; align-items: baseline; }
+.party-rules,
+.party-mode,
+.party-receipt { display: inline-flex; align-items: center; gap: .45rem; }
+.party-bar,
+.party-room-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
+.party-bar { justify-content: space-between; }
+.party-table { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
+.party-scene,
+.party-side { display: grid; gap: 1rem; min-width: 0; }
+.party-scene h2 { font-size: var(--text-2xl, 1.6rem); }
+.party-scene header p,
+.party-scene header h2 { margin: 0; }
+.party-narration { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font-size: 1.125rem; line-height: 1.6; }
+.party-turn { display: grid; justify-items: start; gap: .55rem; }
+.party-turn textarea { width: 100%; }
+.party-panel { display: grid; gap: .65rem; }
+.party-panel h2 { font-size: 1rem; display: flex; align-items: center; gap: .45rem; margin: 0; }
+.party-panel h2 span { margin-left: auto; font-variant-numeric: tabular-nums; }
+.party-panel ul { padding-inline-start: 1.15rem; margin: 0; }
+.party-hash { font-size: .72rem; overflow-wrap: anywhere; display: block; }
+.party-roll { font-weight: 600; }
+.party-log p { overflow-wrap: anywhere; margin: .25rem 0; }
+.party-art { margin: 0; }
+.party-art img { display: block; width: 100%; max-height: 25rem; object-fit: contain; }
+.party-art figcaption { display: flex; align-items: center; gap: .45rem; margin-top: .5rem; }
+@media (max-width: 700px) {
+  .party-table { grid-template-columns: minmax(0, 1fr); }
+}

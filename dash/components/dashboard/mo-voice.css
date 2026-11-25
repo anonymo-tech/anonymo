@@ -1,0 +1,47 @@
+.mv-workspace { max-width: 860px; margin-inline: auto; }
+.mv-stage {
+  display: grid;
+  grid-template-columns: minmax(175px, .8fr) minmax(0, 1.2fr);
+  gap: clamp(24px, 5vw, 56px);
+  min-height: 320px;
+  padding: clamp(20px, 4vw, 42px);
+  background: var(--surface);
+}
+.mv-call-heading { align-self: start; display: grid; justify-items: start; gap: 10px; }
+.mv-call-heading svg, .mv-design header svg { color: var(--pink); }
+.mv-call-heading h2 { font-size: clamp(36px, 7vw, 70px); overflow-wrap: anywhere; }
+.mv-call-heading [role="status"] { display: flex; align-items: center; gap: 8px; }
+.mv-call-heading [role="status"]::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.mv-stage[data-live="true"] [role="status"]::before { background: var(--ok); }
+.mv-controls { min-width: 0; display: grid; align-content: start; justify-items: start; gap: 14px; }
+.mv-controls .field { width: 100%; }
+.mv-controls .row { flex-wrap: wrap; }
+.mv-captions {
+  width: 100%;
+  min-height: 140px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 14px 18px;
+  border-inline-start: 2px solid var(--line-strong);
+  background: var(--bg);
+  overflow-wrap: anywhere;
+}
+.mv-captions p + p { margin-top: 12px; }
+.mv-captions strong { display: block; color: var(--faint); font-size: 13px; }
+.mv-receipt > header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.mv-receipt dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 0; }
+.mv-receipt dl > div { padding: 10px 0; border-top: 1px solid var(--line-strong); }
+.mv-receipt dt { color: var(--muted); font-size: 13px; }
+.mv-receipt dd { margin: 0; font-size: 21px; font-variant-numeric: tabular-nums; }
+.mv-receipt ol, .mv-saved ul { margin: 0; padding-inline-start: 20px; overflow-wrap: anywhere; }
+.mv-voices { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(200px, 1fr); align-items: start; gap: 16px; }
+.mv-design, .mv-saved { display: grid; gap: 18px; justify-items: stretch; }
+.mv-design header { display: flex; align-items: center; gap: 10px; }
+.mv-design button, .mv-saved a { justify-self: start; }
+.mv-preview { display: grid; gap: 12px; padding-top: 16px; border-top: 1px solid var(--line-strong); }
+.mv-preview audio { width: 100%; }
+@media (max-width: 640px) {
+  .mv-stage, .mv-voices { grid-template-columns: minmax(0, 1fr); }
+  .mv-call-heading { gap: 6px; }
+  .mv-captions { min-height: 100px; }
+}

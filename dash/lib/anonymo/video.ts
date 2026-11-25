@@ -10,6 +10,8 @@ export type VideoModel = {
 };
 
 export type VideoRequest = { model: string; prompt: string; seconds: number; size: string };
+type StudioVerdict = 'safe' | 'unsafe' | 'unavailable';
+
 export type VideoReceipt = {
   payload: {
     v: 1;
@@ -21,7 +23,8 @@ export type VideoReceipt = {
     unit: 'second';
     cost_usd: number;
     outputs_sha256: string[];
-    provenance: 'c2pa+watermark' | 'demo';
+    provenance: 'c2pa+watermark' | 'demo' | null;
+    safety?: { prompt: StudioVerdict; outputs: { shieldgemma2: StudioVerdict; llavaguard: StudioVerdict }[] };
     ts: string;
   };
   key_id: string | null;

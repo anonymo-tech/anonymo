@@ -25,7 +25,9 @@ export function blindSign(issuer: ReturnType<typeof memoryIssuer>, blinded: Buff
   }
 }
 
-export function verifyGrant(pub: KeyObject, vaultId: string, verifier: string, prefix: Buffer, signature: Buffer) {
-  const message = Buffer.concat([prefix, Buffer.from(`anonymo-vault-sync-v1:${vaultId}:${verifier}`)]);
+export function verifyGrant(pub: KeyObject, vaultId: string, verifier: string, prefix: Buffer, signature: Buffer, scope?: string) {
+  const message = Buffer.concat([prefix, Buffer.from(scope
+    ? `anonymo-vault-capacity-v1:${scope}:${vaultId}:${verifier}`
+    : `anonymo-vault-sync-v1:${vaultId}:${verifier}`)]);
   return verify("sha384", message, { key: pub, padding: constants.RSA_PKCS1_PSS_PADDING, saltLength: 48 }, signature);
 }

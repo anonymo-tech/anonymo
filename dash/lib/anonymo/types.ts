@@ -220,6 +220,8 @@ export type ChatContentPart = ChatPart;
 export type ChatPartsMessage = { role: 'user'; content: ChatPart[] };
 
 export type ChatRequest = {
+  characterId?: string;
+  creatorAdult?: boolean;
   dashboard_chat?: true;
   model: string;
   messages: ChatMessage[];

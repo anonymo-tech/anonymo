@@ -4,6 +4,8 @@ import type { Ctx } from "../context.ts";
 import type { Config } from "../config.ts";
 import type { Tx } from "../db/client.ts";
 import { accounts, chainEvents, keys } from "../db/schema.ts";
+import { SESSION_KEY } from "../anonymo/telegram/identity.ts";
+import { resolveTelegramKey } from "../anonymo/telegram/store.ts";
 import { deriveKey, KEY_RE } from "../chain/keys.ts";
 import { fail } from "../lib/errors.ts";
 import { ensureAccount } from "../ledger/ledger.ts";
@@ -72,6 +74,7 @@ export async function registerRootKey(ctx: Ctx, secret: string, name = "") {
 /** Look up a presented API key. Unknown but well-formed keys that already have on-chain deposits
  *  are registered on the spot: deposit first, call immediately, no account needed. */
 export async function resolveKey(ctx: Ctx, secret: string): Promise<KeyRow | null> {
+  if (ctx.cfg.features.telegram && SESSION_KEY.test(secret)) return resolveTelegramKey(ctx.db, secret);
   if (!KEY_RE.test(secret)) return null;
   const keyHash = sha256(secret);
   const [row] = await ctx.db.select().from(keys).where(eq(keys.keyHash, keyHash));

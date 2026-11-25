@@ -7,7 +7,7 @@ export const metadata = { title: 'Video studio — Anonymo' };
 export default function VideoPage() {
   return (
     <WorkspaceShell section="Video" title="Video studio" lede="Turn a text prompt into a silent clip.">
-      <UpdateGate id="video">
+      <UpdateGate id="video" also="studio">
         <VideoStudio />
       </UpdateGate>
     </WorkspaceShell>

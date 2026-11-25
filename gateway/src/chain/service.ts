@@ -27,6 +27,8 @@ import { log } from "../lib/util.ts";
 import {
   CallPayAbi,
   CreditsAbi,
+  CreatorPayoutsAbi,
+  ReferralsAbi,
   ProviderBondAbi,
   ReceiptAnchorAbi,
   RoyaltyAbi,
@@ -54,7 +56,7 @@ const usdg3009Abi = [
   { type: "function", name: "transferWithAuthorization", stateMutability: "nonpayable", inputs: [{ name: "from", type: "address" }, { name: "to", type: "address" }, { name: "value", type: "uint256" }, { name: "validAfter", type: "uint256" }, { name: "validBefore", type: "uint256" }, { name: "nonce", type: "bytes32" }, { name: "signature", type: "bytes" }], outputs: [] },
 ] as const;
 
-export type Role = "router" | "settlement" | "anchorer" | "slasher" | "faucet" | "facilitator";
+export type Role = "router" | "settlement" | "anchorer" | "slasher" | "faucet" | "facilitator" | "creatorPayouts";
 
 export class ChainService {
   readonly chain: Chain;
@@ -77,6 +79,7 @@ export class ChainService {
       anchorer: cfg.chain.anchorerKey,
       slasher: cfg.chain.slasherKey,
       faucet: cfg.chain.faucetKey,
+      creatorPayouts: cfg.creators.payoutSigner,
       facilitator: cfg.facilitator.relayKey, // v6 F: pays relay gas and nothing else
     };
     for (const [role, key] of Object.entries(keys) as [Role, Hex | undefined][]) {
@@ -120,13 +123,28 @@ export class ChainService {
     return this.client.getBlockNumber({ cacheTime: 0 });
   }
 
-  private async send(role: Role, to: Hex, abi: Abi, functionName: string, args: unknown[]) {
+  private async send(role: Role, to: Hex, abi: Abi, functionName: string, args: unknown[], confirmations = 1) {
     const w = this.wallet(role);
     const { request } = await this.client.simulateContract({ account: w.account, address: to, abi, functionName, args } as never);
     const hash = await w.writeContract(request as never);
-    const receipt = await this.client.waitForTransactionReceipt({ hash, confirmations: 1, timeout: 120_000 });
+    const receipt = await this.client.waitForTransactionReceipt({ hash, confirmations, timeout: 120_000 });
     if (receipt.status !== "success") fail(502, `Transaction ${hash} reverted.`, "chain_reverted");
     return { hash, receipt };
+  }
+
+  async postCreatorRoot(address: Hex, week: bigint, root: Hex, total: bigint) {
+    // Recheck funding immediately before simulating the write.
+    const funded = await this.client.readContract({ address, abi: CreatorPayoutsAbi, functionName: "funded", args: [week] });
+    if (funded !== total) throw new Error("Creator payout funding does not match the root total.");
+    const { hash } = await this.oneAtATime("creatorPayouts", () =>
+      this.send("creatorPayouts", address, CreatorPayoutsAbi, "postRoot", [week, root], this.cfg.chain.confirmations));
+    return hash;
+  }
+
+  async registerCreatorReferral(address: Hex, inviterHash: Hex) {
+    const { hash } = await this.oneAtATime("creatorPayouts", () =>
+      this.send("creatorPayouts", address, ReferralsAbi, "register", [inviterHash], this.cfg.chain.confirmations));
+    return hash;
   }
 
   decode(contract: ContractName, logEntry: { address: Hex; topics: Hex[]; data: Hex; transactionHash: Hex | null; logIndex: number | null; blockNumber: bigint | null }): DecodedLog | null {
@@ -228,6 +246,13 @@ export class ChainService {
   }
 
   private relayTails = new Map<Role, Promise<unknown>>();
+
+  private oneAtATime<T>(role: Role, work: () => Promise<T>) {
+    const run = (this.relayTails.get(role) ?? Promise.resolve()).then(work);
+    this.relayTails.set(role, run.catch(() => undefined));
+    return run;
+  }
+
   /** x402 settlement: relay the payer's signed USDG transferWithAuthorization straight to `to` (no contract in
    *  between; the relaying role, the router or the facilitator's relay key, only pays gas). Relays run one at a time
    *  per process and role so a key's nonce never races. Resolves once the transfer of exactly `value` is mined with
@@ -239,9 +264,8 @@ export class ChainService {
       const { r, s, yParity } = parseSignature(a.signature);
       args = [...head, 27 + (yParity ?? 0), r, s];
     }
-    const run = (this.relayTails.get(role) ?? Promise.resolve()).then(() => this.send(role, this.cfg.chain.usdg, usdg3009Abi as unknown as Abi, "transferWithAuthorization", args));
-    this.relayTails.set(role, run.catch(() => undefined));
-    const { hash, receipt } = await run;
+    const { hash, receipt } = await this.oneAtATime(role,
+      () => this.send(role, this.cfg.chain.usdg, usdg3009Abi as unknown as Abi, "transferWithAuthorization", args));
     const moved = receipt.logs.some((l) => {
       if (l.address.toLowerCase() !== this.cfg.chain.usdg.toLowerCase()) return false;
       try {

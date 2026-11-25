@@ -1,19 +1,25 @@
-import { and, eq, gt, inArray } from "drizzle-orm";
+import { and, eq, gt, inArray, isNotNull, notExists, sql } from "drizzle-orm";
 import type { KeyRow } from "../../api/auth.ts";
 import type { Candidate, ModelRow } from "../../catalog/catalog.ts";
 import type { Ctx } from "../../context.ts";
-import { ledger } from "../../db/schema.ts";
+import { ledger, starsOrders } from "../../db/schema.ts";
 import { fail } from "../../lib/errors.ts";
 import { inferredVariant, isRestricted } from "../../router/lane.ts";
 import { offerLane } from "../../router/regular-ppq.ts";
 import { ANONYMO_COUNCIL, ANONYMO_RP, ANONYMO_SEALED, routeIdOf } from "../models.ts";
 
+export const FUNDING_KINDS = ["deposit", "credit", "code", "code_credit", "ticket_credit", "stars_credit"];
+
 export async function hasFundedKey(ctx: Pick<Ctx, "db">, key: KeyRow | null) {
   if (!key) return false;
   // A ticket is a key funded by its giver. Use credited ledger entries, which survive spending and withdrawals.
+  const reversedStars = ctx.db.select({ charge: starsOrders.chargeId }).from(starsOrders).where(and(
+    eq(ledger.ref, sql`'stars:payment:' || ${starsOrders.chargeId}`), isNotNull(starsOrders.refundedAt),
+  ));
   const [funding] = await ctx.db.select({ id: ledger.id }).from(ledger).where(and(
     eq(ledger.accountId, key.accountId), eq(ledger.keyHash, key.keyHash), gt(ledger.amount, 0n),
-    inArray(ledger.kind, ["deposit", "credit", "code", "code_credit", "ticket_credit", "stars_credit"]),
+    inArray(ledger.kind, FUNDING_KINDS),
+    notExists(reversedStars),
   )).limit(1);
   return !!funding;
 }

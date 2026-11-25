@@ -13,7 +13,8 @@ import { keys, ledger } from "../../db/schema.ts";
 import { ApiError } from "../../lib/errors.ts";
 import { type Pico, picoToUsd, usdToPico } from "../../lib/money.ts";
 import { sha256 } from "../../lib/util.ts";
-import { bearer } from "../../api/auth.ts";
+import { SESSION_KEY } from "../telegram/identity.ts";
+import { bearer, requireKey } from "../../api/auth.ts";
 import { clientIp } from "../../api/common.ts";
 import { anonymoKeys } from "../deposits/schema.ts";
 import { ipAllowed, parseCidr } from "./ip.ts";
@@ -113,7 +114,7 @@ export async function spentByKey(db: Db, keyHash: string, now = new Date()): Pro
       life: sql<string>`coalesce(sum(-${ledger.amount}), 0)`,
     })
     .from(ledger)
-    .where(and(eq(ledger.keyHash, keyHash), lt(ledger.amount, 0n), ne(ledger.kind, "withdraw")));
+    .where(and(eq(ledger.keyHash, keyHash), lt(ledger.amount, 0n), ne(ledger.kind, "withdraw"), ne(ledger.kind, "stars_refund")));
   return { day: BigInt(r?.day ?? 0), month: BigInt(r?.month ?? 0), life: BigInt(r?.life ?? 0) };
 }
 
@@ -166,7 +167,9 @@ export function keyPolicyMiddleware(ctx: Ctx): MiddlewareHandler {
     if (c.req.method !== "POST" || !INFERENCE_PATH.test(c.req.path)) return next();
     const secret = bearer(c.req.header("authorization")) ?? c.req.header("x-api-key")?.trim();
     if (!secret) return next();
-    const row = await readKeyPolicy(ctx.db, sha256(secret));
+    const keyHash = ctx.cfg.features.telegram && SESSION_KEY.test(secret)
+      ? (await requireKey(ctx, `Bearer ${secret}`)).keyHash : sha256(secret);
+    const row = await readKeyPolicy(ctx.db, keyHash);
     if (!row) return next();
     let model: string | null = null;
     if (row.sealedOnly) {

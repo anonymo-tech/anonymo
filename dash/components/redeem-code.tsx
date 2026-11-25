@@ -6,6 +6,8 @@ import { ArrowRight } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useAnonymo } from './anonymo-provider';
 import { NewKeyReveal } from './dashboard/new-key-reveal';
+import { KeySafeControls } from './dashboard/key-safe-controls';
+import { updateOn } from '@/lib/anonymo/updates';
 import { AnonymoApiError, describeError } from '@/lib/anonymo/client';
 import { canonicalCode, codeFromFragment, DEMO_CODE, formatCodeInput, type CodeRedemption } from '@/lib/anonymo/codes';
 import { useDeviceStore } from '@/lib/anonymo/device-store';
@@ -77,7 +79,8 @@ export function RedeemCode() {
       <h1 className="redeem-amount" ref={success} tabIndex={-1}>${result.added_usd} added</h1>
       {result.key ? (
         <NewKeyReveal secret={result.key} action={nextAction} remember={remember} onRememberChange={setRemember}
-          onContinue={(keep) => { setKey(result.key!, keep); router.push(nextHref); }} />
+          onContinue={(keep) => { setKey(result.key!, keep); router.push(nextHref); }}
+          safe={updateOn('keysafe', demo) ? (markSaved) => <KeySafeControls client={client} demo={demo} apiKey={result.key!} onSaved={markSaved} /> : undefined} />
       ) : (
         <div className="row"><Link className="btn btn-primary" href={nextHref}>{nextAction} <ArrowRight size={17} aria-hidden="true" /></Link></div>
       )}

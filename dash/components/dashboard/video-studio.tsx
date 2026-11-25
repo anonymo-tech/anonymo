@@ -7,9 +7,15 @@ import { Download, Film, ShieldCheck } from 'lucide-react';
 import { useEffect, useState, useSyncExternalStore, type FormEvent } from 'react';
 import { AnonymoApiError, describeError, isOutOfCredit, type AnonymoClient } from '@/lib/anonymo/client';
 import { formatVideoUsd, pollWhileVisible, videoBlocked, videoCost, videoDurations, videoPending, type VideoJob, type VideoModel } from '@/lib/anonymo/video';
+import { charactersStore } from '@/lib/anonymo/characters-store';
+import { useDeviceStore } from '@/lib/anonymo/device-store';
+import { studioPrompt } from '@/lib/anonymo/studio-presets';
+import { updateOn } from '@/lib/anonymo/updates';
+import { StudioCharacter } from './studio-character';
 import { MUSD_PER_USD } from '@/lib/anonymo/money';
 import { useAnonymo } from '../anonymo-provider';
 
+const VIDEO_PROMPT_LIMIT = 2000;
 const SAMPLE_PROMPT = 'A ribbon of pink and amber light drifting across a deep violet sky, slow camera movement.';
 const EMPTY_JOBS: VideoJob[] = [];
 const sessions = new WeakMap<AnonymoClient, ReturnType<typeof createSession>>();
@@ -63,6 +69,10 @@ export function VideoStudio() {
 
 function VideoWorkspace({ client, session }: { client: AnonymoClient; session: ReturnType<typeof createSession> }) {
   const { refreshBalance, demo } = useAnonymo();
+  const studioOn = updateOn('studio', demo);
+  const characters = useDeviceStore(charactersStore);
+  const [characterId, setCharacterId] = useState('');
+  const character = characters.find((entry) => entry.id === characterId);
   const [models, setModels] = useState<VideoModel[] | null>(null);
   const [modelError, setModelError] = useState(false);
   const [modelId, setModelId] = useState('');
@@ -88,15 +98,17 @@ function VideoWorkspace({ client, session }: { client: AnonymoClient; session: R
   const size = model?.sizes.includes(shapeSize) ? shapeSize : model?.sizes[0];
   const quote = model ? formatVideoUsd(videoCost(model, seconds) / MUSD_PER_USD) : null;
 
+  const text = studioOn ? studioPrompt(prompt, 'clip', character?.card.data) : prompt.trim();
+  const tooLong = studioOn && text.length > VIDEO_PROMPT_LIMIT;
+
   async function generate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const text = prompt.trim();
-    if (!model || !seconds || !size || !text || sending) return;
+    if (!model || !seconds || !size || !text || tooLong || sending) return;
     setSending(true);
     setError(null);
     try {
       session.save(await client.generateVideo({ model: model.id, prompt: text, seconds, size }));
-      setPrompt((draft) => draft.trim() === text ? '' : draft);
+      setPrompt((draft) => draft.trim() === prompt.trim() ? '' : draft);
     } catch (cause) {
       const text = cause instanceof AnonymoApiError && cause.status === 451
         ? 'Video request blocked. Nothing was charged.'
@@ -111,10 +123,12 @@ function VideoWorkspace({ client, session }: { client: AnonymoClient; session: R
   return (
     <div className="studio video-studio">
       <form className="studio-panel" onSubmit={generate}>
+        {studioOn && <StudioCharacter characters={characters} selected={character?.id ?? ''} onChange={setCharacterId} />}
         <label className="field">
           <span>Prompt</span>
-          <textarea className="textarea studio-prompt" value={prompt} maxLength={2000} placeholder={SAMPLE_PROMPT} onChange={(event) => setPrompt(event.target.value)} />
+          <textarea className="textarea studio-prompt" value={prompt} maxLength={VIDEO_PROMPT_LIMIT} placeholder={SAMPLE_PROMPT} onChange={(event) => setPrompt(event.target.value)} />
         </label>
+        {tooLong && <p className="muted">Shorten your description to leave room for the clip and character details.</p>}
         {demo && !prompt && <div className="studio-ideas"><button type="button" className="chip" onClick={() => setPrompt(SAMPLE_PROMPT)}>Use a sample prompt</button></div>}
 
         <label className="field">
@@ -145,7 +159,7 @@ function VideoWorkspace({ client, session }: { client: AnonymoClient; session: R
           </div>
         )}
 
-        <button className="btn btn-primary studio-go" type="submit" disabled={!model || !prompt.trim() || sending}>
+        <button className="btn btn-primary studio-go" type="submit" disabled={!model || !text || tooLong || sending}>
           {sending ? 'Submitting…' : 'Generate video'} {quote && <span className="studio-cost" aria-label={`Estimated cost ${quote}`}>{quote}</span>}
         </button>
         {error && (

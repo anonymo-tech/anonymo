@@ -1,6 +1,7 @@
 // Only known workspace tools and their opaque local IDs can be carried through setup.
 const tools = new Map([
-  ['/dashboard/chat', 'chat'], ['/dashboard/ask', 'Ask Mo'], ['/dashboard/call', 'Night Call'],
+  ['/dashboard/chat', 'chat'], ['/dashboard/party', 'Party'], ['/dashboard/ask', 'Ask Mo'], ['/dashboard/call', 'Night Call'],
+  ['/dashboard/mo-voice', 'Mo Voice'], ['/dashboard/voices', 'Voices'],
   ['/dashboard/images', 'Image studio'], ['/dashboard/video', 'Video studio'],
   ['/dashboard/side-by-side', 'Side by side'], ['/dashboard/story', 'Story Studio'],
   ['/dashboard/characters', 'Character studio'], ['/dashboard/move-in', 'Move in'],
@@ -11,7 +12,7 @@ const tools = new Map([
 const characterId = /^[a-f0-9]{16}$/;
 const storyId = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 
-const characterParam = { chat: 'character', call: 'character', characters: 'face', 'move-in': 'character' } as const;
+const characterParam = { chat: 'character', call: 'character', 'mo-voice': 'character', characters: 'face', 'move-in': 'character' } as const;
 
 export function characterDestination(tool: keyof typeof characterParam, id?: string | null) {
   const path = `/dashboard/${tool}`;
@@ -39,7 +40,7 @@ export function setupReturn(value: string | null | undefined): { href: string; l
       if (value !== storyDestination(params.get('story') ?? '', params.get('chapter') ?? '')) return null;
     } else {
       const tool = path.slice('/dashboard/'.length);
-      if (tool !== 'chat' && tool !== 'call' && tool !== 'characters' && tool !== 'move-in') return null;
+      if (tool !== 'chat' && tool !== 'call' && tool !== 'mo-voice' && tool !== 'characters' && tool !== 'move-in') return null;
       if (value !== characterDestination(tool, params.get(characterParam[tool]))) return null;
     }
   }

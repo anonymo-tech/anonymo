@@ -1,3 +1,4 @@
+import type { CreatorCounters } from "./anonymo/creators/counters.ts";
 import type { Catalog } from "./catalog/catalog.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db/client.ts";
@@ -13,6 +14,7 @@ import type { AnonymoServices } from "./anonymo/services.ts";
 
 export type Ctx = {
   cfg: Config;
+  creatorCounters?: CreatorCounters;
   db: Db;
   dbKind: "pglite" | "postgres";
   catalog: Catalog;

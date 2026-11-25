@@ -15,7 +15,8 @@ export const memorySlot = (demo: boolean) => demo ? 'anonymo.demo.memory.v1' : '
 export const aboutYouSlot = (demo: boolean) => demo ? 'anonymo.demo.aboutyou.v1' : 'anonymo.aboutyou.v1';
 // Chats and stories can live in legacy localStorage. Memory and About you always use the vault's IndexedDB store.
 const legacySlots = [...historySlots, storySlot(false), storySlot(true)];
-const recordSlots = [...legacySlots, memorySlot(false), memorySlot(true), aboutYouSlot(false), aboutYouSlot(true)];
+const partySlot = (demo: boolean) => demo ? 'anonymo.demo.party.v1' : 'anonymo.party.v1';
+const recordSlots = [...legacySlots, memorySlot(false), memorySlot(true), aboutYouSlot(false), aboutYouSlot(true), partySlot(false), partySlot(true)];
 const memorySecretSlot = (demo: boolean) => demo ? 'anonymo.demo.memory-secret.v1' : 'anonymo.memory-secret.v1';
 recordSlots.push(memorySecretSlot(false), memorySecretSlot(true));
 const configSlot = 'config';
@@ -283,6 +284,12 @@ export function createVault({ disk, legacy, exclusive, announce }: Options) {
     },
     updateStories(demo: boolean, update: (stories: unknown[]) => unknown[]) {
       return updateList(storySlot(demo), update);
+    },
+    snapshotParty(demo: boolean) {
+      return histories.get(partySlot(demo)) ?? [];
+    },
+    updateParty(demo: boolean, update: (records: unknown[]) => unknown[]) {
+      return updateList(partySlot(demo), update);
     },
     snapshotMemory(demo: boolean) {
       return histories.get(memorySlot(demo)) ?? [];

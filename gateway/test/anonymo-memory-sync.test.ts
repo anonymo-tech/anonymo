@@ -144,3 +144,39 @@ test("row shape, ciphertext size, batch size and total count are capped", async 
   expect((await upload([{ id: rows[0]!.id, version: 2, deleted: true, ciphertext: "" }])).status).toBe(200);
   expect((await upload([await fill(randomUUID())])).status).toBe(409);
 }, 20_000);
+
+test("a Pass grants expanded sync through a day-scoped blind signature without connecting the vault to the key", async () => {
+  const now = new Date();
+  const orderId = randomBytes(32).toString("hex");
+  const { passOrders, passes } = await import("../src/anonymo/everyday/schema.ts");
+  await database.db.update(keys).set({ disabled: false }).where(eq(keys.keyHash, key.keyHash));
+  await database.db.insert(passOrders).values({ orderId, keyHash: key.keyHash, sku: "PASS30" });
+  await database.db.insert(passes).values({ orderId, keyHash: key.keyHash, sku: "PASS30", starts: now, ends: new Date(now.getTime() + 86_400_000) });
+  const everyday = await createApp({ database, env: { ...env, ANONYMO_FEATURE_MEMORY_SYNC: true, ANONYMO_FEATURE_PASSES: true }, startJobs: false });
+  const call = (path: string, authorization: string, data: object) => everyday.app.request(`${base}/${path}`, {
+    method: "POST", headers: { authorization, "content-type": "application/json" }, body: JSON.stringify(data),
+  });
+  try {
+    const authorize = `Bearer ${apiKey}`;
+    const offered = await call("capacity", authorize, {});
+    expect(offered.status).toBe(200);
+    const { n, e, day, level, limit } = await offered.json();
+    expect(level).toBe("large");
+    expect(limit).toBe(2048);
+    const row = await sealItem(deviceA, { ...first, id: randomUUID() }, 1);
+    expect((await call("write", deviceA.authorization, { items: [row] })).status).toBe(409);
+    const blind = await blindGrant({ n, e }, deviceA.id, deviceA.verifier, `${level}:${day}`);
+    const signed = (await (await call("capacity", authorize, { blinded: blind.blinded, day, level })).json()).signed;
+    const proof = { ...await blind.finalize(signed), day, level };
+    expect((await call("write", deviceA.authorization, { items: [row], proof: { ...proof, level: "unlimited" } })).status).toBe(409);
+    expect((await call("write", deviceA.authorization, { items: [row], proof })).status).toBe(200);
+    const readable = await call("read-page", deviceA.authorization, {});
+    expect(readable.status).toBe(200);
+    expect((await readable.json()).items).toHaveLength(128);
+    const persisted = await database.db.select().from(kv).where(like(kv.key, "memory-sync:capacity-signer:%"));
+    expect(persisted.map((entry) => entry.key)).toEqual(["memory-sync:capacity-signer:large"]);
+    expect(JSON.stringify(persisted)).not.toContain(deviceA.id);
+    expect(JSON.stringify(persisted)).not.toContain(key.keyHash);
+    expect(JSON.stringify(persisted)).not.toContain(proof.signature);
+  } finally { await everyday.close(); }
+}, 20_000);

@@ -9,6 +9,7 @@ import { setupHref, setupReturn } from '@/lib/anonymo/setup-return';
 import { ArrowDownLeft, ArrowLeft, ArrowRight, ArrowUpRight, ChevronDown, Clock3, KeyRound, RefreshCw, Wallet } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
+import { PassesPanel } from './passes-panel';
 import { CopyButton } from '../copy-button';
 import { CoinWalletPay, EvmWalletPay, type TopupProps } from './wallet-pay';
 import { SolanaWalletPay } from './solana-wallet-pay';
@@ -152,6 +153,7 @@ function KeyFunds({ keySuffix, target }: { keySuffix: string; target: Target }) 
           {activity?.length === 0 && data.withdrawals?.length === 0 && <p className="muted">Deposits and withdrawals will appear here.</p>}
         </div>}
       </div>
+      {task === 'Deposit' && updateOn('passes', demo) && <PassesPanel />}
       <nav className="funds-secondary" aria-label="Fund actions">
         {updateOn('codes', demo) && <Link className="funds-back" href={setupHref('redeem', target?.href)}>Have a code?</Link>}
         {task !== 'Deposit' && <button onClick={() => switchTask('Deposit')} type="button"><ArrowDownLeft size={15} aria-hidden="true" /> Add funds</button>}

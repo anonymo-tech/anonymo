@@ -28,13 +28,13 @@ function inverse(value: bigint, modulus: bigint) {
 }
 
 // RFC 9474 (RSABSSA-SHA384-PSS-Randomized). Web Crypto verifies the finalized signature.
-export async function blindGrant(jwk: { n: string; e: string }, id: string, verifier: string) {
+export async function blindGrant(jwk: { n: string; e: string }, id: string, verifier: string, scope?: string) {
   if (jwk.n.length !== 512 || jwk.e !== 'AQAB') throw new Error('Invalid vault grant issuer.');
   const modulus = decode(jwk.n);
   if (modulus[0]! < 128 || !(modulus.at(-1)! & 1)) throw new Error('Invalid vault grant issuer.');
   const n = integer(modulus);
   const prefix = crypto.getRandomValues(new Uint8Array(32));
-  const message = concat(prefix, utf8.encode(`anonymo-vault-sync-v1:${id}:${verifier}`));
+  const message = concat(prefix, utf8.encode(scope ? `anonymo-vault-capacity-v1:${scope}:${id}:${verifier}` : `anonymo-vault-sync-v1:${id}:${verifier}`));
   const salt = crypto.getRandomValues(new Uint8Array(hashLength));
   const digest = await hash(concat(new Uint8Array(8), await hash(message), salt));
   const db = new Uint8Array(size - hashLength - 1);

@@ -1,0 +1,9 @@
+.telegram-page {
+  width: min(100% - 32px, 480px);
+  margin: clamp(24px, 8vh, 72px) auto;
+}
+.telegram-page header { display: grid; gap: 8px; }
+.telegram-page h1 { font-size: clamp(28px, 6vw, 40px); line-height: 1.05; }
+.telegram-page textarea { width: 100%; min-height: 90px; resize: vertical; }
+.telegram-answer { overflow-wrap: anywhere; white-space: pre-wrap; }
+.telegram-page .btn { justify-content: center; }

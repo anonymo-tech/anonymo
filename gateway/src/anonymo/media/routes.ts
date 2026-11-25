@@ -1,3 +1,4 @@
+import { everydayCoverage, keyEntitlements } from "../everyday/entitlements.ts";
 // WS06 · Media endpoints, OpenAI-shaped, ported from Anonyma's /v1 media routes (Express/SQLite) to Hono/Drizzle.
 //
 //   POST /v1/images/generations   POST /v1/images/edits        POST /v1/audio/speech
@@ -28,16 +29,17 @@ import { picoToUsd, usdToPico, type Pico } from "../../lib/money.ts";
 import { log } from "../../lib/util.ts";
 import type { FloorInput } from "../seams.ts";
 import { DEFAULT_MAX_IMAGES, type ImageModel, type MediaModel, type SpeechModel, type VideoModel } from "./catalog.ts";
-import { containerFor } from "./containers.ts";
+import { containerFor, wavDuration, wavSeconds } from "./containers.ts";
 import type { GateReason } from "./gate.ts";
 import { ProvenanceError } from "./provenance.ts";
 import { countryOf } from "./region.ts";
 import { mediaJobs } from "./schema.ts";
 import { mediaServices, regionRulesOf, type MediaServices } from "./services.ts";
 import { checkMediaSignature, signedMediaPath, StoreFullError } from "./store.ts";
+import { isStudioVerdict, stricterVerdict, type StudioSafety } from "./studio.ts";
 import { readTranscription, transcriptionMinutes } from "./transcription.ts";
-import { TRANSCRIPTION_FORMATS, TRANSCRIPTION_MAX_BYTES, TRANSCRIPTION_MAX_SECONDS } from "./voice-models.ts";
-import { UpstreamError, type Media } from "./upstreams.ts";
+import { TRANSCRIPTION_FORMATS, TRANSCRIPTION_MAX_BYTES, TRANSCRIPTION_MAX_SECONDS, WHISPER_ID } from "./voice-models.ts";
+import { UpstreamError, type Media, type SpeechUpstream } from "./upstreams.ts";
 
 const MAX_PROMPT = 4000;
 const MAX_VIDEO_PROMPT = 2000;
@@ -50,7 +52,7 @@ const SOUND_REFERENCE_FIELD = /reference|clone|speaker(?:id|wav|audio|file|sampl
 const VIDEO_UPLOAD_FIELD = /^(?:(?:input|reference|first|last|start|end|source)?(?:image|video|audio)s?(?:url|dataurl|attachmentid|file)?|inputreference|(?:first|last|start|end)frame|references?)$/i;
 
 class MediaBlocked extends Error {
-  constructor(readonly reason: GateReason) {
+  constructor(readonly reason: GateReason | "studio_unsafe") {
     super(reason);
   }
 }
@@ -80,11 +82,15 @@ function modelOr404<T extends MediaModel>(m: T | null, kind: string): T {
 
 async function caller(ctx: Ctx, c: Context): Promise<KeyRow> {
   const key = await requireKey(ctx, c.req.header("authorization"));
+  await limitMediaCaller(ctx, key);
+  return key;
+}
+
+async function limitMediaCaller(ctx: Ctx, key: KeyRow) {
   await requireRole(ctx, key, ["owner", "admin", "member"]);
   const limit = key.rpm ?? ctx.cfg.limits.defaultRpm;
   const r = await ctx.limiter.take(`k:${key.keyHash}`, 1, limit, 60_000);
   if (!r.ok) fail(429, `Rate limit exceeded (${limit} requests/min). Retry in ${Math.ceil(r.retryAfterMs / 1000)}s.`, "rate_limited", { retry_after_ms: r.retryAfterMs }, { "retry-after": String(Math.ceil(r.retryAfterMs / 1000)) });
-  return key;
 }
 
 /** The floor gate, exactly as chat runs it: 451 with the category and no text on a block, 503 if it cannot answer. */
@@ -102,6 +108,17 @@ async function floorCheck(ctx: Ctx, input: FloorInput) {
 async function nudityCheck(s: MediaServices, prompt: string, signal: AbortSignal) {
   const v = await s.promptCheck.check(prompt, signal);
   if (!v.ok) throw new ApiError(451, "Anonymo makes no nude or sexual images or video. Nothing was sent or charged.", "explicit_media_unavailable", { stage: "prompt" });
+}
+
+async function checkVisualPrompt(ctx: Ctx, s: MediaServices, c: Context, input: FloorInput, o: ReceiptInput) {
+  try {
+    await floorCheck(ctx, input);
+    await nudityCheck(s, input.text, c.req.raw.signal);
+  } catch (error) {
+    if (s.studio && error instanceof ApiError)
+      throw studioFailure(ctx, error, o, { prompt: error.status === 451 ? "unsafe" : "unavailable", outputs: [] });
+    throw error;
+  }
 }
 
 function regionPolicy(ctx: Ctx, c: Context, s: MediaServices) {
@@ -129,8 +146,14 @@ const stripped = (m: Media) => {
 };
 
 /** Gate, then stamp: the only way an upstream's bytes become something we return. */
-async function finishOutput(s: MediaServices, out: Media, o: { requestId: string; model: string; fromUpload?: boolean; prompt?: string; visual: boolean; signal?: AbortSignal }): Promise<Media> {
+async function finishOutput(s: MediaServices, out: Media, o: { requestId: string; model: string; fromUpload?: boolean; prompt?: string; visual: boolean; signal?: AbortSignal; safety?: StudioSafety }): Promise<Media> {
   if (o.visual) {
+    if (s.studio && o.safety) {
+      const verdicts = await s.studio.output({ bytes: stripped(out), mime: out.mime }, o.signal);
+      o.safety.outputs.push(verdicts);
+      const verdict = stricterVerdict(verdicts.shieldgemma2, verdicts.llavaguard);
+      if (verdict !== "safe") throw new MediaBlocked(verdict === "unsafe" ? "studio_unsafe" : "unscored");
+    }
     // explicitAllowed is always false: no explicit image or video frame is ever returned (see the header).
     const verdict = await s.gate.assess(out.bytes, out.mime, { explicitAllowed: false, fromUpload: o.fromUpload, signal: o.signal });
     if (!verdict.ok) throw new MediaBlocked(verdict.reason);
@@ -144,6 +167,7 @@ async function finishOutput(s: MediaServices, out: Media, o: { requestId: string
 /** Errors after the hold, mapped to OpenAI-shaped responses that never echo the prompt or upstream text. */
 function mediaError(e: unknown, what: string): unknown {
   if (e instanceof MediaBlocked) {
+    if (e.reason === "studio_unsafe") return new ApiError(451, `The ${what} did not pass the safe-for-work check. Nothing was charged.`, "media_blocked", { reason: e.reason, stage: "output" });
     if (e.reason === "unscored") return new ApiError(503, `The ${what} could not be safety-checked, so it was not returned. Nothing was charged; try again shortly.`, "media_gate_unavailable");
     if (e.reason === "explicit") return new ApiError(451, `Anonymo makes no explicit images or video. Nothing was returned or charged.`, "explicit_media_unavailable");
     return new ApiError(451, `The ${what} crossed a line Anonymo blocks for everyone. Nothing was returned, stored or charged.`, "media_blocked", { reason: e.reason });
@@ -155,7 +179,9 @@ function mediaError(e: unknown, what: string): unknown {
   return e;
 }
 
-function receipt(ctx: Ctx, o: { requestId: string; model: MediaModel; units: number; unit: string; charged: Pico; outputs: Media[]; at?: Date }) {
+type ReceiptInput = { requestId: string; model: MediaModel; units: number; unit: string };
+
+function receipt(ctx: Ctx, o: ReceiptInput & { charged: Pico; outputs: Media[]; at?: Date; safety?: StudioSafety }) {
   const payload = {
     v: 1,
     kind: "media",
@@ -166,17 +192,27 @@ function receipt(ctx: Ctx, o: { requestId: string; model: MediaModel; units: num
     unit: o.unit,
     cost_usd: picoToUsd(o.charged),
     outputs_sha256: o.outputs.map((m) => new Bun.CryptoHasher("sha256").update(m.bytes).digest("hex")),
-    provenance: "c2pa+watermark",
+    provenance: o.outputs.length ? "c2pa+watermark" : null,
+    ...(o.safety ? { safety: o.safety } : {}),
     ts: (o.at ?? new Date()).toISOString(),
   };
   const s = ctx.signer.sign(payload);
   return { payload, key_id: s.keyId, sig: s.sig };
 }
-const receiptHeader = (r: ReturnType<typeof receipt>) => Buffer.from(JSON.stringify(r)).toString("base64url");
+export type StudioReceipt = ReturnType<typeof receipt>;
+const receiptHeader = (r: StudioReceipt) => Buffer.from(JSON.stringify(r)).toString("base64url");
+function studioFailure(ctx: Ctx, error: ApiError, o: ReceiptInput, safety: StudioSafety) {
+  const r = receipt(ctx, { ...o, charged: 0n, outputs: [], safety });
+  return new ApiError(error.status, error.message, error.type, error.metadata, {
+    ...error.headers,
+    "x-anonymo-receipt": receiptHeader(r),
+    "x-anonymo-request-id": o.requestId,
+  });
+}
 const absolute = (ctx: Ctx, path: string) => (ctx.cfg.publicUrl ? ctx.cfg.publicUrl + path : path);
 
-async function charge(ctx: Ctx, holdId: string, amount: Pico, kind: string, description: string) {
-  const r = await settle(ctx.db, holdId, amount, { kind, description });
+async function charge(ctx: Ctx, holdId: string, amount: Pico, kind: string, description: string, coverageUnits?: number) {
+  const r = await settle(ctx.db, holdId, amount, { kind, description, consumeCoverage: true, coverageUnits });
   return r.charged;
 }
 
@@ -233,19 +269,35 @@ async function readEditRequest(s: MediaServices, c: Context): Promise<ImageInput
   return { ...readImageFields(s, body, true), upload: uploadOf(new Uint8Array(Buffer.from(m[1], "base64"))) };
 }
 
-async function runImages(ctx: Ctx, c: Context, key: KeyRow, s: MediaServices, input: ImageInput): Promise<Response> {
+async function runImages(ctx: Ctx, c: Context, key: KeyRow, s: MediaServices, input: ImageInput, maxInlineBytes?: number): Promise<Response> {
   const edit = !!input.upload;
-  await floorCheck(ctx, { text: input.prompt, modality: "image", hasUpload: edit });
-  await nudityCheck(s, input.prompt, c.req.raw.signal);
-  regionPolicy(ctx, c, s);
-  // No NSFW edits of uploaded photos: an explicit (or unscorable) upload is refused before any model sees it.
-  if (input.upload) {
-    const v = await s.gate.assess(input.upload.bytes, input.upload.mime, { explicitAllowed: true, fromUpload: true });
-    if (!v.ok) throw mediaError(new MediaBlocked(v.reason), "image");
-  }
   const id = requestId();
+  const receiptInput = { requestId: id, model: input.model, units: input.n, unit: "image" };
+  const safety: StudioSafety | undefined = s.studio ? { prompt: "safe", outputs: [] } : undefined;
+  await checkVisualPrompt(ctx, s, c, { text: input.prompt, modality: "image", hasUpload: edit }, receiptInput);
+  regionPolicy(ctx, c, s);
+  if (input.upload) {
+    if (s.studio && safety) {
+      safety.upload = await s.studio.upload(input.upload, c.req.raw.signal);
+      if (safety.upload !== "safe") {
+        const error = safety.upload === "unsafe"
+          ? new ApiError(451, "Anonymo refuses edits of real people's photos. Nothing was charged.", "floor_blocked", { category: "real_person" })
+          : new ApiError(503, "The upload could not be safety-checked. Nothing was charged.", "media_gate_unavailable");
+        throw studioFailure(ctx, error, receiptInput, safety);
+      }
+    }
+    // An explicit or unscorable upload is refused before any generation.
+    const verdict = await s.gate.assess(input.upload.bytes, input.upload.mime, { explicitAllowed: true, fromUpload: true });
+    if (!verdict.ok) {
+      const error = mediaError(new MediaBlocked(verdict.reason), "image");
+      if (safety && error instanceof ApiError) throw studioFailure(ctx, error, receiptInput, { ...safety, upload: verdict.reason === "unscored" ? "unavailable" : "unsafe" });
+      throw error;
+    }
+  }
   const price = priceOf(input.model.usdPerImage, input.n);
-  await reserve(ctx.db, { id, accountId: key.accountId, keyHash: key.keyHash, amount: price, kind: "media_image", ttlMs: IMAGE_DEADLINE_MS + 60_000 });
+  const rights = await keyEntitlements(ctx, key.keyHash);
+  await reserve(ctx.db, { id, accountId: key.accountId, keyHash: key.keyHash, amount: price, kind: "media_image", ttlMs: IMAGE_DEADLINE_MS + 60_000,
+    cover: everydayCoverage(key.keyHash, rights, "image", price, input.n) });
   const stored: string[] = [];
   try {
     const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(IMAGE_DEADLINE_MS)]);
@@ -255,7 +307,9 @@ async function runImages(ctx: Ctx, c: Context, key: KeyRow, s: MediaServices, in
     if (raw.length !== input.n) throw new UpstreamError("wrong number of images", 502);
     // Every image passes the gate and gets provenance before any of them is delivered: one block stops the batch.
     const outputs: Media[] = [];
-    for (const out of raw) outputs.push(await finishOutput(s, out, { requestId: id, model: input.model.id, fromUpload: edit, prompt: input.prompt, visual: true, signal }));
+    for (const out of raw) outputs.push(await finishOutput(s, out, { requestId: id, model: input.model.id, fromUpload: edit, prompt: input.prompt, visual: true, signal, safety }));
+    if (maxInlineBytes && outputs.some((output) => output.bytes.length > maxInlineBytes))
+      fail(503, "Turn art is too large for the room.", "studio_image_too_large");
     const data = outputs.map((o) => {
       if (input.format === "b64_json") return { b64_json: Buffer.from(o.bytes).toString("base64") };
       const put = s.store.put({ bytes: o.bytes, mime: o.mime, accountId: key.accountId }, s.ttlMs);
@@ -263,22 +317,42 @@ async function runImages(ctx: Ctx, c: Context, key: KeyRow, s: MediaServices, in
       return { url: absolute(ctx, signedMediaPath(ctx.cfg.appSecret, put.id, put.expiresAt)), expires_at: Math.floor(put.expiresAt / 1000) };
     });
     const charged = await charge(ctx, id, price, "media_image", `${edit ? "Image edit" : "Image"}: ${input.model.name}`);
-    const r = receipt(ctx, { requestId: id, model: input.model, units: input.n, unit: "image", charged, outputs });
+    const r = receipt(ctx, { ...receiptInput, charged, outputs, safety });
     return c.json({ created: Math.floor(Date.now() / 1000), data, anonymo: { request_id: id, model: input.model.id, cost_usd: usd(charged), provenance: { c2pa: true, watermark: true }, receipt: r } }, 200, { "x-anonymo-receipt": receiptHeader(r), "x-anonymo-request-id": id });
   } catch (e) {
     for (const m of stored) s.store.delete(m);
     await release(ctx.db, id).catch(() => undefined);
     if (e instanceof MediaBlocked) log.warn("media output blocked", { kind: "image", reason: e.reason, model: input.model.id });
-    throw mediaError(e, "image");
+    const error = mediaError(e, "image");
+    if (e instanceof MediaBlocked && safety && error instanceof ApiError) throw studioFailure(ctx, error, receiptInput, safety);
+    throw error;
   }
 }
 
+// Party uses the Studio image pipeline and returns the gated bytes inline.
+export async function partyTurnArt(ctx: Ctx, c: Context, key: KeyRow, prompt: string) {
+  if (!ctx.cfg.features.media) fail(503, "Studio is unavailable.", "studio_unavailable");
+  await limitMediaCaller(ctx, key);
+  const s = mediaServices(ctx);
+  const model = s.catalog.models.find((m) => m.kind === "image" && !m.edit &&
+    (!s.offered || s.offered.has(m.upstream)) && (!key.allowedModels?.length || key.allowedModels.includes(m.id)));
+  if (!model) fail(503, "Studio is unavailable.", "studio_unavailable");
+  return runImages(ctx, c, key, s, readImageFields(s, { model: model.id, prompt, response_format: "b64_json" }, false), 2_000_000);
+}
+
 // ---- Speech --------------------------------------------------------------------------------------------------------
-async function runSpeech(ctx: Ctx, c: Context): Promise<Response> {
+const SPEECH_PICO_PER_SECOND = usdToPico("0.0005");
+const MAX_LIVE_SPEECH_SECONDS = 45;
+
+export async function runSpeech(ctx: Ctx, c: Context, live?: { body?: Record<string, unknown>; upstream?: SpeechUpstream }): Promise<Response> {
   const key = await caller(ctx, c);
   const s = mediaServices(ctx);
   if (!(c.req.header("content-type") ?? "application/json").startsWith("application/json")) fail(415, "Send a JSON body. Voice uploads are not accepted: stock voices only.", "unsupported_media_type");
-  const body = await readJson(c);
+  const body = live?.body ?? await readJson(c);
+  if (ctx.cfg.features.moVoice && (!Object.keys(body).every((key) => ["model", "input", "voice", "speed", "response_format"].includes(key)) ||
+      (body.speed != null && typeof body.speed !== "number" && typeof body.speed !== "string") ||
+      (typeof body.input === "string" && /^\s*data:audio\//i.test(body.input))))
+    fail(400, "Speech accepts text and a stock voice ID.", "voice_clone_not_supported");
   const model = modelOr404(s.catalog.get("speech", body.model), "speech");
   if (Object.keys(body).some((f) => CLONE_FIELDS.includes(f) || SOUND_REFERENCE_FIELD.test(f.replace(/[_-]/g, ""))) || (body.voice != null && typeof body.voice !== "string"))
     fail(400, "Voice cloning is not available. Choose one of the model's stock voices.", "voice_clone_not_supported");
@@ -294,18 +368,34 @@ async function runSpeech(ctx: Ctx, c: Context): Promise<Response> {
   if (!Number.isFinite(speed) || speed < minSpeed || speed > maxSpeed) fail(400, `speed must be ${minSpeed}–${maxSpeed}.`);
   if (hosted && c.req.header("x-anonymo-sealed")?.trim().toLowerCase() === "required")
     fail(409, "An attested speech route is unavailable.", "sealed_unavailable");
-  const upstream = hosted ? s.nanogptSpeech : s.speech;
+  const upstream = live?.upstream ?? (hosted ? s.nanogptSpeech : s.speech);
   if (!upstream) fail(503, "The speech provider is unavailable.", "upstream_unavailable");
   await floorCheck(ctx, { text: input, modality: "audio", hasUpload: false });
   regionPolicy(ctx, c, s);
   const id = requestId();
-  const price = speechPrice(model, input.length);
-  await reserve(ctx.db, { id, accountId: key.accountId, keyHash: key.keyHash, amount: price, kind: "media_speech", ttlMs: 5 * 60_000 });
+  const price = live ? SPEECH_PICO_PER_SECOND * BigInt(MAX_LIVE_SPEECH_SECONDS) : speechPrice(model, input.length);
+  const rights = await keyEntitlements(ctx, key.keyHash);
+  await reserve(ctx.db, { id, accountId: key.accountId, keyHash: key.keyHash, amount: price, kind: "media_speech", ttlMs: 5 * 60_000,
+    cover: everydayCoverage(key.keyHash, rights, "voice", price, 1) });
   try {
     const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(120_000)]);
     const raw = await upstream.speak({ model: model.upstreamModel, input, voice, speed }, signal);
+    let actual = price;
+    if (live) {
+      const { samples, rate } = wavDuration(raw.bytes);
+      if (samples > rate * MAX_LIVE_SPEECH_SECONDS) throw new UpstreamError("Speech clip exceeds the call limit", 502);
+      actual = (SPEECH_PICO_PER_SECOND * BigInt(samples) + BigInt(rate - 1)) / BigInt(rate);
+      signal.throwIfAborted();
+    }
     const out = await finishOutput(s, raw, { requestId: id, model: model.id, prompt: input, visual: false });
-    const charged = await charge(ctx, id, price, "media_speech", `Speech: ${model.name}`);
+    if (live) signal.throwIfAborted();
+    const includedTime = rights && (rights.active.length > 0 || rights.limits.dailyVoiceSeconds > 0);
+    let seconds: number | undefined;
+    if (includedTime) {
+      try { seconds = wavSeconds(out.bytes); }
+      catch { fail(502, "The speech duration could not be verified.", "speech_duration_unavailable"); }
+    }
+    const charged = await charge(ctx, id, actual, "media_speech", `Speech: ${model.name}`, seconds);
     const r = receipt(ctx, { requestId: id, model, units: input.length, unit: "character", charged, outputs: [out] });
     return new Response(out.bytes as unknown as ConstructorParameters<typeof Response>[0], {
       status: 200,
@@ -317,28 +407,35 @@ async function runSpeech(ctx: Ctx, c: Context): Promise<Response> {
   }
 }
 
-async function runTranscription(ctx: Ctx, c: Context): Promise<Response> {
+export async function runTranscription(ctx: Ctx, c: Context, live?: { file: File; samples: number; rate: number }): Promise<Response> {
   const key = await caller(ctx, c);
   const s = mediaServices(ctx);
   if (c.req.header("x-anonymo-sealed")?.trim().toLowerCase() === "required")
     fail(409, "An attested transcription route is unavailable.", "sealed_unavailable");
-  const input = await readTranscription(c);
+  const input = live
+    ? { model: WHISPER_ID, file: live.file, language: undefined, format: "wav" as const }
+    : await readTranscription(c);
   const model = modelOr404(s.catalog.get("transcription", input.model), "transcription");
   if (!s.transcription) fail(503, "The transcription provider is unavailable.", "upstream_unavailable");
   regionPolicy(ctx, c, s);
   const validationSignal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(15_000)]);
-  const minutes = await transcriptionMinutes(input.file, input.format, validationSignal).catch((e: unknown) => {
+  const minutes = live ? 0 : await transcriptionMinutes(input.file, input.format, validationSignal).catch((e: unknown) => {
     if (e instanceof ApiError) throw e;
     if (c.req.raw.signal.aborted) fail(499, "Client closed the request.", "cancelled");
     fail(503, "Audio validation is unavailable.", "audio_validation_unavailable");
   });
   const id = requestId();
-  const price = priceOf(model.usdPerMinute, minutes);
+  const perMinute = usdToPico(model.usdPerMinute);
+  const samplesPerMinute = BigInt(live ? live.rate * 60 : 1);
+  const price = live ? (perMinute * BigInt(live.samples) + samplesPerMinute - 1n) / samplesPerMinute : priceOf(model.usdPerMinute, minutes);
   const kind = "media_transcription";
-  await reserve(ctx.db, { id, accountId: key.accountId, keyHash: key.keyHash, amount: price, kind, ttlMs: 5 * 60_000 });
+  const rights = await keyEntitlements(ctx, key.keyHash);
+  await reserve(ctx.db, { id, accountId: key.accountId, keyHash: key.keyHash, amount: price, kind, ttlMs: 5 * 60_000,
+    cover: everydayCoverage(key.keyHash, rights, "credits", price) });
   try {
     const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(120_000)]);
     const text = await s.transcription.transcribe({ model: model.upstreamModel, file: input.file, language: input.language }, signal);
+    if (live) signal.throwIfAborted();
     const charged = await charge(ctx, id, price, kind, `Transcription: ${model.name}`);
     return c.json({ text }, 200, { "cache-control": "no-store", "x-anonymo-request-id": id, "x-anonymo-cost-usd": String(usd(charged)) });
   } catch (e) {
@@ -365,10 +462,9 @@ async function submitVideo(ctx: Ctx, c: Context): Promise<Response> {
   if (model.allowedSeconds && !model.allowedSeconds.includes(secs)) fail(400, `Choose a length this model offers: ${model.allowedSeconds.join(", ")} seconds.`, "invalid_duration");
   const { width, height, size } = parseSize(model, body.size);
   const seed = parseSeed(body.seed);
-  await floorCheck(ctx, { text: prompt, modality: "video", hasUpload: false });
-  await nudityCheck(s, prompt, c.req.raw.signal);
-  regionPolicy(ctx, c, s);
   const id = requestId().replace("med_", "vid_");
+  await checkVisualPrompt(ctx, s, c, { text: prompt, modality: "video", hasUpload: false }, { requestId: id, model, units: secs, unit: "second" });
+  regionPolicy(ctx, c, s);
   const price = priceOf(model.usdPerSecond, secs);
   await reserve(ctx.db, { id, accountId: key.accountId, keyHash: key.keyHash, amount: price, kind: "media_video", ttlMs: VIDEO_HOLD_MS });
   await ctx.db.insert(mediaJobs).values({ id, accountId: key.accountId, keyHash: key.keyHash, holdId: id, model: model.id, upstream: model.upstream, status: "queued", seconds: secs, width, height, explicitAllowed: false, pricePico: price });
@@ -414,9 +510,10 @@ async function advance(ctx: Ctx, s: MediaServices, job: JobRow): Promise<void> {
   const finishing = await ctx.db.update(mediaJobs).set({ status: "finishing", updatedAt: new Date() }).where(and(eq(mediaJobs.id, job.id), eq(mediaJobs.status, "running"))).returning({ id: mediaJobs.id });
   if (!finishing.length) return;
   let mediaId: string | null = null;
+  const safety: StudioSafety | undefined = s.studio ? { prompt: "safe", outputs: [] } : undefined;
   try {
-    const out = await finishOutput(s, polled.media, { requestId: job.id, model: model.id, visual: true });
-    const put = s.store.put({ bytes: out.bytes, mime: out.mime, accountId: job.accountId }, s.ttlMs);
+    const out = await finishOutput(s, polled.media, { requestId: job.id, model: model.id, visual: true, safety });
+    const put = s.store.put({ bytes: out.bytes, mime: out.mime, accountId: job.accountId, ...(safety ? { safety } : {}) }, s.ttlMs);
     mediaId = put.id;
     const charged = await charge(ctx, job.holdId, job.pricePico, "media_video", `Video: ${model.name}`);
     await ctx.db.update(mediaJobs).set({ status: "completed", mediaId: put.id, mediaExpiresAt: new Date(put.expiresAt), chargedPico: charged, updatedAt: new Date() }).where(eq(mediaJobs.id, job.id));
@@ -424,7 +521,12 @@ async function advance(ctx: Ctx, s: MediaServices, job: JobRow): Promise<void> {
     if (mediaId) s.store.delete(mediaId);
     if (e instanceof MediaBlocked) {
       log.warn("media output blocked", { kind: "video", reason: e.reason, model: model.id });
-      return end(e.reason === "unscored" ? "failed" : "blocked", e.reason === "unscored" ? "media_gate_unavailable" : e.reason === "explicit" ? "explicit_media_unavailable" : `media_blocked:${e.reason}`);
+      const type = e.reason === "unscored" ? "media_gate_unavailable" : e.reason === "explicit" ? "explicit_media_unavailable" : "media_blocked";
+      const verdicts = safety?.outputs[0];
+      const code = verdicts
+        ? [type, e.reason, verdicts.shieldgemma2, verdicts.llavaguard].join(":")
+        : type === "media_blocked" ? `${type}:${e.reason}` : type;
+      return end(e.reason === "unscored" ? "failed" : "blocked", code);
     }
     return end("failed", e instanceof ProvenanceError ? "provenance_failed" : e instanceof StoreFullError ? "media_store_full" : "internal");
   }
@@ -446,13 +548,18 @@ function videoJson(ctx: Ctx, s: MediaServices, job: JobRow) {
   const status = job.status === "completed" ? "completed" : job.status === "failed" || job.status === "blocked" ? "failed" : job.status === "queued" ? "queued" : "in_progress";
   const expires = job.mediaExpiresAt?.getTime() ?? 0;
   const live = job.status === "completed" && job.mediaId && expires > Date.now();
-  const [type, reason] = (job.errorType ?? "").split(":");
+  const [type, reason, shieldgemma2, llavaguard] = (job.errorType ?? "").split(":");
   const output = live ? s.store.get(job.mediaId!) : null;
-  const model = output ? s.catalog.get("video", job.model) : null;
-  const signed = output && model && job.chargedPico != null
-    ? receipt(ctx, { requestId: job.id, model, units: job.seconds, unit: "second", charged: job.chargedPico, outputs: [output], at: job.updatedAt })
+  const declined = isStudioVerdict(shieldgemma2) && isStudioVerdict(llavaguard);
+  const model = output || declined ? s.catalog.get("video", job.model) : null;
+  const signed = model && (declined || (output && job.chargedPico != null))
+    ? receipt(ctx, {
+      requestId: job.id, model, units: job.seconds, unit: "second", charged: job.chargedPico ?? 0n,
+      outputs: output ? [output] : [], at: job.updatedAt,
+      safety: declined ? { prompt: "safe", outputs: [{ shieldgemma2, llavaguard }] } : output?.safety,
+    })
     : null;
-  return {
+  const body = {
     id: job.id,
     object: "video.generation",
     model: job.model,
@@ -463,10 +570,11 @@ function videoJson(ctx: Ctx, s: MediaServices, job: JobRow) {
     ...(live ? { url: absolute(ctx, signedMediaPath(ctx.cfg.appSecret, job.mediaId!, expires)), expires_at: Math.floor(expires / 1000) } : {}),
     ...(job.status === "completed" && !live ? { expired: true } : {}),
     ...(job.errorType
-      ? { error: { type, message: type === "media_blocked" ? "The video crossed a line Anonymo blocks for everyone. Nothing was returned, stored or charged." : (ERROR_MESSAGES[type] ?? ERROR_MESSAGES.internal), ...(reason ? { reason } : {}) } }
+      ? { error: { type, message: reason === "studio_unsafe" ? "The video did not pass the safe-for-work check. Nothing was charged." : type === "media_blocked" ? "The video crossed a line Anonymo blocks for everyone. Nothing was returned, stored or charged." : (ERROR_MESSAGES[type] ?? ERROR_MESSAGES.internal), ...(reason ? { reason } : {}) } }
       : {}),
     anonymo: { request_id: job.id, cost_usd: job.chargedPico != null ? usd(job.chargedPico) : 0, quoted_usd: usd(job.pricePico), ...(job.status === "completed" ? { provenance: { c2pa: true, watermark: true } } : {}), ...(signed ? { receipt: signed } : {}) },
   };
+  return { body, studioBlocked: declined && job.status === "blocked" };
 }
 
 async function getVideo(ctx: Ctx, c: Context): Promise<Response> {
@@ -477,7 +585,13 @@ async function getVideo(ctx: Ctx, c: Context): Promise<Response> {
   const job = await load();
   if (!job) fail(404, "Unknown video job.", "not_found");
   if (job.status === "running") await advance(ctx, s, job);
-  return c.json(videoJson(ctx, s, (await load())!));
+  const current = (await load())!;
+  const { body, studioBlocked } = videoJson(ctx, s, current);
+  if (studioBlocked) {
+    const signed = body.anonymo.receipt;
+    return c.json(body, 451, signed ? { "x-anonymo-receipt": receiptHeader(signed), "x-anonymo-request-id": current.id } : undefined);
+  }
+  return c.json(body);
 }
 
 // ---- Shared endpoints ----------------------------------------------------------------------------------------------
@@ -517,7 +631,7 @@ function listModels(ctx: Ctx, c: Context) {
   const s = mediaServices(ctx);
   return c.json({
     object: "list",
-    data: s.catalog.models.filter((m) => !s.offered || s.offered.has(m.upstream)).map((m) => ({
+    data: s.catalog.models.filter((m) => (ctx.cfg.features.media || m.kind === "image" || m.kind === "video") && (!s.offered || s.offered.has(m.upstream))).map((m) => ({
       id: m.id,
       object: "model",
       kind: m.kind,
@@ -568,8 +682,10 @@ export function mediaRoutes(app: Hono, ctx: Ctx) {
     const s = mediaServices(ctx);
     return runImages(ctx, c, key, s, await readEditRequest(s, c));
   });
-  both("post", "/audio/speech", (c) => runSpeech(ctx, c));
-  both("post", "/audio/transcriptions", (c) => runTranscription(ctx, c));
+  if (ctx.cfg.features.media) {
+    both("post", "/audio/speech", (c) => runSpeech(ctx, c));
+    both("post", "/audio/transcriptions", (c) => runTranscription(ctx, c));
+  }
   both("post", "/video/generations", (c) => submitVideo(ctx, c));
   both("get", "/video/generations/:id", (c) => getVideo(ctx, c));
   both("get", "/media/models", (c) => listModels(ctx, c));

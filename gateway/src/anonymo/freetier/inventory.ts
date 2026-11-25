@@ -4,15 +4,15 @@ export const freeTables: Record<string, TableDoc> = {
   free_tokens: {
     category: "request",
     request: "aggregate",
-    purpose: "Daily free chat allowance and proof-of-work difficulty for each device token.",
-    retention: "One row per device token. The next admitted message after a UTC day change replaces the previous day's counters.",
+    purpose: "Daily free chat allowance and proof-of-work difficulty for each device token or Telegram trial user.",
+    retention: "One row per device token or Telegram trial user. The next admitted message after a UTC day change replaces the previous day's counters.",
     columns: {
       device_token: {
-        purpose: "SHA-256 digest of the random device token.",
+        purpose: "SHA-256 digest of the random web device token or server-salted HMAC digest of the Telegram user ID.",
         review: {
           covers: ["name:network", "type:binary"],
           verdict: "digest-only",
-          why: "The server hashes a randomly generated token. The original token, network address and chat text are never written to the table.",
+          why: "The server hashes a randomly generated web token or uses a separate keyed Telegram digest. The original token, Telegram ID, network address and chat text are never written to the table.",
         },
       },
       day: "UTC day the counters belong to.",

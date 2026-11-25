@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import type { Ctx } from "../context.ts";
 import { accounts, generations, keys } from "../db/schema.ts";
+import { SESSION_KEY } from "../anonymo/telegram/identity.ts";
 import { bearer, requireKey } from "../api/auth.ts";
 import { readJson } from "../api/common.ts";
 import { sha256 } from "../lib/util.ts";
@@ -23,6 +24,14 @@ export function inferenceScopeMiddleware(ctx: Ctx): MiddlewareHandler {
     // up only existing hashes preserves deposit-first registration in auth.ts.
     const secrets = new Set([bearer(c.req.header("authorization")), c.req.header("x-api-key")?.trim()].filter((s): s is string => !!s));
     for (const secret of secrets) {
+      if (ctx.cfg.features.telegram && SESSION_KEY.test(secret)) {
+        const chat = c.req.method === "POST" && /^\/(api\/)?v1\/chat\/completions$/.test(c.req.path);
+        const balance = c.req.method === "GET" && c.req.path === "/balance";
+        const region = c.req.method === "GET" && c.req.path === "/v1/compliance/region";
+        if (!(chat || balance || region)) fail(403, "Telegram sessions support workspace chat. Use your original key for account actions.", "telegram_chat_only");
+        await requireKey(ctx, `Bearer ${secret}`);
+        continue;
+      }
       const [key] = await ctx.db.select({ keyHash: keys.keyHash, scope: keys.scope }).from(keys).where(eq(keys.keyHash, sha256(secret)));
       if (key?.scope !== "inference") continue;
       const compliance = ctx.cfg.features.compliance && isComplianceRoute(c.req.method, c.req.path);

@@ -10,10 +10,15 @@ import {
   BookOpen,
   ChevronRight,
   Columns3,
+  Coins,
   Drama,
+  Compass,
+  HeartHandshake,
+  Vote,
   Ellipsis,
   Headphones,
   IdCard,
+  Dices,
   ImageIcon,
   Images,
   KeyRound,
@@ -23,6 +28,7 @@ import {
   MessageCircleQuestion,
   PackageOpen,
   Link2,
+  Phone,
   Plug,
   ShieldCheck,
   ReceiptText,
@@ -73,7 +79,14 @@ const groups: { title: string; fold?: Fold; links: Destination[] }[] = [
     title: 'More',
     fold: 'more',
     links: [
+      { href: '/dashboard/party', label: 'Party', icon: Dices, feature: 'party' },
+      { href: '/dashboard/discover', label: 'Discover', icon: Compass, feature: 'creators' },
+      { href: '/dashboard/creators', label: 'Creator Cut', icon: HeartHandshake, feature: 'creators' },
+      { href: '/dashboard/nymo', label: '$NYMO', icon: Coins, feature: 'stake' },
+      { href: '/dashboard/votes', label: 'Votes', icon: Vote, feature: 'creators' },
       { href: '/dashboard/story', label: 'Story Studio', icon: BookOpen, feature: 'story' },
+      { href: '/dashboard/mo-voice', label: 'Mo Voice', icon: Phone, feature: 'movoice' },
+      { href: '/dashboard/voices', label: 'Voices', icon: AudioLines, feature: 'movoice' },
       { href: '/dashboard/call', label: 'Night Call', icon: Headphones, feature: 'voice' },
       { href: '/dashboard/side-by-side', label: 'Side by side', icon: Columns3, feature: 'sidebyside' },
       {
@@ -172,7 +185,8 @@ function WorkspaceNav({
       {groups.map(({ title, fold, links }) => {
         const visible = links
           .filter((item) => !close || !shortcuts.some((shortcut) => shortcut.href === item.href))
-          .filter((item) => !item.feature || updateOn(item.feature, demo))
+          .filter((item) => !item.feature || updateOn(item.feature, demo)
+            || ((item.feature === 'images' || item.feature === 'video') && updateOn('studio', demo)))
           .map((item) => item.feature === 'movein' && updateOn('lifeboat', demo)
             ? { ...item, href: '/dashboard/lifeboat', label: 'Lifeboat' }
             : item);

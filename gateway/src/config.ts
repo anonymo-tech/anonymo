@@ -222,6 +222,13 @@ const schema = z.object({
   // Images, voice and video (WS06). Off by default: the routes do not exist until an operator turns them on, and a
   // production router refuses to start with them on unless the media classifier is configured.
   ANONYMO_FEATURE_MEDIA: bool.default(false),
+  ANONYMO_FEATURE_STUDIO: bool.default(false),
+  ANONYMO_SFW_SHIELDGEMMA_URL: opt,
+  ANONYMO_SFW_SHIELDGEMMA_TOKEN: opt,
+  ANONYMO_SFW_LLAVAGUARD_URL: opt,
+  ANONYMO_SFW_LLAVAGUARD_TOKEN: opt,
+  ANONYMO_SFW_PERSON_URL: opt,
+  ANONYMO_SFW_PERSON_TOKEN: opt,
   // Anonymo Ventures (WS11): the crew of Mos, model "anonymo-swarm" and /v1/ventures. Off by default: the routes and the
   // anonymo-swarm hook do not exist until an operator turns this on.
   ANONYMO_FEATURE_VENTURES: bool.default(false),
@@ -232,13 +239,48 @@ const schema = z.object({
   ANONYMO_FEATURE_EVERYDAY_CONTRACTS: bool.default(false),
   ANONYMO_FEATURE_LIFEBOAT: bool.default(false),
   ANONYMO_FEATURE_FREE_TIER: bool.default(false),
+  ANONYMO_FEATURE_TELEGRAM: bool.default(false),
+  ANONYMO_TELEGRAM_BOT_TOKEN: opt,
+  ANONYMO_TELEGRAM_WEBHOOK_SECRET: opt,
+  ANONYMO_TELEGRAM_ID_SALT: opt,
+  ANONYMO_TELEGRAM_TOPUP_STARS: opt,
+  ANONYMO_TELEGRAM_TOPUP_USD: opt,
   ANONYMO_FREE_DAILY: z.coerce.number().int().min(1).max(1000).default(10),
   ANONYMO_FREE_ROUTES: opt, // comma-separated moderated self-hosted route IDs; defaults to moderated anonymo-rp offers
   ANONYMO_FREE_POW_DIFFICULTY: z.coerce.number().int().min(12).max(22).default(16),
   ANONYMO_FEATURE_ASK_MO: bool.default(false),
   ANONYMO_ASK_MO_SEARCH_FALLBACK: opt, // same JSON as ANONYMO_WEB_SEARCH
   ANONYMO_FEATURE_COMPLIANCE: bool.default(false),
+  ANONYMO_FEATURE_PASSES: bool.default(false),
+  ANONYMO_FEATURE_STAKE: bool.default(false),
+  ANONYMO_EVERYDAY_RPC_URL: z.string().url().optional(),
+  ANONYMO_CHECKOUT_ADDRESS: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
+  ANONYMO_CHECKOUT_START_BLOCK: z.coerce.bigint().nonnegative().optional(),
+  ANONYMO_STAKE_CREDITS_ADDRESS: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
+  ANONYMO_STAKE_CREDITS_START_BLOCK: z.coerce.bigint().nonnegative().optional(),
+  ANONYMO_EVERYDAY_CONFIRMATIONS: z.coerce.number().int().min(1).max(1000).default(12),
   ANONYMO_FEATURE_MEMORY_SYNC: bool.default(false),
+  ANONYMO_FEATURE_MO_VOICE: bool.default(false),
+  ANONYMO_LIVEKIT_URL: z.string().optional(),
+  ANONYMO_LIVEKIT_KEY: z.string().optional(),
+  ANONYMO_LIVEKIT_SECRET: z.string().optional(),
+  ANONYMO_VOICE_DESIGN_URL: z.string().optional(),
+  ANONYMO_VOICE_DESIGN_TOKEN: z.string().optional(),
+  ANONYMO_FEATURE_CREATORS: bool.default(false),
+  ANONYMO_CREATORS_REDIS_URL: opt,
+  ANONYMO_CREATOR_PAYOUTS: addr,
+  ANONYMO_CREATOR_PAYOUTS_SIGNER: pk,
+  ANONYMO_CREATOR_REFERRALS: addr,
+  ANONYMO_CREATOR_BOOSTS: addr,
+  ANONYMO_CREATOR_VOTES: addr,
+  ANONYMO_CREATOR_CONTRACT_START_BLOCK: z.string().regex(/^\d+$/).optional(),
+  ANONYMO_CREATOR_REFERRAL_BONUS_PICO: z.string().regex(/^\d{1,15}$/).default("0"),
+  ANONYMO_CREATOR_REFERRAL_SHARE_BPS: z.coerce.number().int().min(0).max(1000).default(0),
+  ANONYMO_FEATURE_PARTY: bool.default(false),
+  ANONYMO_PARTY_REDIS_URL: z.string().optional(),
+  ANONYMO_DISCORD_APPLICATION_ID: z.string().optional(),
+  ANONYMO_DISCORD_PUBLIC_KEY: z.string().optional(),
+  ANONYMO_DISCORD_BOT_TOKEN: z.string().optional(),
   ANONYMO_MEMORY_SYNC_ISSUER: opt, // dedicated RSA PEM, shared by the API replicas
   ANONYMO_COUNCIL_MODELS: opt, // comma list of 2-5 model ids used when a council request names none
   ANONYMO_COUNCIL_JUDGE: opt, // model id of the judge used when a council request names none
@@ -297,8 +339,16 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
   const contractsMode = Object.values(contractAddresses).some((v) => v && !/^0x0{40}$/.test(v));
   const anonymoRoots = !!e.ANONYMO_RECEIPT_ROOTS_ADDRESS && !/^0x0{40}$/.test(e.ANONYMO_RECEIPT_ROOTS_ADDRESS);
   if (production) {
+    if (e.ANONYMO_FEATURE_PARTY && e.RUNTIME_ROLE !== "worker" && (!e.ANONYMO_FEATURE_COMPLIANCE || !e.ANONYMO_PARTY_REDIS_URL || e.ANONYMO_PARTY_REDIS_URL === e.REDIS_URL))
+      throw new Error("Party requires region compliance and a dedicated non-persistent Redis instance in production.");
     if (e.ANONYMO_FEATURE_COMPLIANCE && e.RUNTIME_ROLE !== "worker" && !hardening.originLockEnabled)
       throw new Error("ANONYMO_FEATURE_COMPLIANCE needs ORIGIN_LOCK_ENABLED in production to authenticate the region signal.");
+    if (e.ANONYMO_FEATURE_CREATORS && e.RUNTIME_ROLE !== "worker" && (!e.ANONYMO_CREATORS_REDIS_URL || e.ANONYMO_CREATORS_REDIS_URL === e.REDIS_URL || !/^rediss?:/.test(e.ANONYMO_CREATORS_REDIS_URL) || !new URL(e.ANONYMO_CREATORS_REDIS_URL).password))
+      throw new Error("Creator Cut needs a dedicated authenticated Redis connection.");
+    if (e.ANONYMO_FEATURE_CREATORS && (e.ANONYMO_CREATOR_PAYOUTS || e.ANONYMO_CREATOR_VOTES || e.ANONYMO_CREATOR_REFERRALS) && e.ANONYMO_CREATOR_CONTRACT_START_BLOCK === undefined)
+      throw new Error("Creator contracts need their deployment start block.");
+    if (e.ANONYMO_FEATURE_CREATORS && e.RUNTIME_ROLE === "api" && e.ANONYMO_CREATOR_PAYOUTS_SIGNER)
+      throw new Error("Keep the Creator Cut signer on the payout worker.");
     if (e.ANONYMO_FEATURE_MEMORY_SYNC && !e.ANONYMO_MEMORY_SYNC_ISSUER) throw new Error("ANONYMO_MEMORY_SYNC_ISSUER is required when memory sync is enabled in production.");
     if (!e.APP_SECRET || e.APP_SECRET.length < 32) throw new Error("APP_SECRET (>= 32 chars) is required in production.");
     if (!e.ADMIN_TOKEN || e.ADMIN_TOKEN.length < 24) throw new Error("ADMIN_TOKEN (>= 24 chars) is required in production.");
@@ -306,8 +356,10 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     // Media is generated by models that can draw anything, so it is never served without the classifier that checks
     // every image and video frame (nudity x apparent age, real-person likeness; media/gate.ts).
     const set = (k: string) => typeof raw[k] === "string" && !!(raw[k] as string).trim();
-    if (e.ANONYMO_FEATURE_MEDIA && !set("ANONYMO_MEDIA_CLASSIFIER_URL") && !(set("ANONYMO_NANOGPT_API_KEY") && set("ANONYMO_MEDIA_GUARD_KEY")))
+    if ((e.ANONYMO_FEATURE_MEDIA || e.ANONYMO_FEATURE_STUDIO) && !set("ANONYMO_MEDIA_CLASSIFIER_URL") && !(set("ANONYMO_NANOGPT_API_KEY") && set("ANONYMO_MEDIA_GUARD_KEY")))
       throw new Error("ANONYMO_FEATURE_MEDIA needs ANONYMO_MEDIA_CLASSIFIER_URL, or ANONYMO_NANOGPT_API_KEY and ANONYMO_MEDIA_GUARD_KEY, in production: images and video are never served unchecked.");
+    if (e.ANONYMO_FEATURE_STUDIO && !(e.ANONYMO_SFW_SHIELDGEMMA_URL?.trim() && e.ANONYMO_SFW_LLAVAGUARD_URL?.trim() && e.ANONYMO_SFW_PERSON_URL?.trim()))
+      throw new Error("ANONYMO_FEATURE_STUDIO requires ANONYMO_SFW_SHIELDGEMMA_URL, ANONYMO_SFW_LLAVAGUARD_URL and ANONYMO_SFW_PERSON_URL in production.");
     if (!e.PUBLIC_BASE_URL.startsWith("https://")) throw new Error("PUBLIC_BASE_URL must be https in production.");
     if (!/^postgres(?:ql)?:/.test(e.DATABASE_URL)) throw new Error("PostgreSQL is required in production.");
     const database = new URL(e.DATABASE_URL);
@@ -335,7 +387,13 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
       allowed.push("upstream-monitor"); // ON3
       allowed.push("x402-recovery-expire"); // x402 payment recovery retention
       allowed.push("anonymo-canaries", "anonymo-balances", "anonymo-deposits", "anonymo-sanctions"); // Anonymo WS04 and WS05 jobs
+      if (e.ANONYMO_FEATURE_CREATORS) allowed.push("creator-payouts", "creator-referrals");
+      if (e.ANONYMO_FEATURE_CREATORS && e.ANONYMO_CREATOR_PAYOUTS_SIGNER &&
+          !names.some((name) => name === "creator-payouts" || name === "creator-referrals"))
+        throw new Error("The Creator Cut signer requires a creator job on this worker.");
       allowed.push("anonymo-coin-price"); // NYMO price samples on their own clock
+      if (e.ANONYMO_FEATURE_TELEGRAM) allowed.push("telegram-token-expiry");
+      allowed.push("everyday-checkout", "everyday-stake", "everyday-daily");
       if (!names.length || names.some((n) => !allowed.includes(n))) throw new Error("Worker requires an explicit valid WORKER_JOBS list.");
       const keyJobs = { settlement: "settlement", anchoring: "receipts-anchor", slashing: "slasher" };
       if (Object.values(roleKeys).filter(Boolean).length > 1) throw new Error("Privileged worker signing roles must be isolated.");
@@ -509,21 +567,72 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     features: {
       council: e.ANONYMO_FEATURE_COUNCIL,
       media: e.ANONYMO_FEATURE_MEDIA,
+      studio: e.ANONYMO_FEATURE_STUDIO,
       ventures: e.ANONYMO_FEATURE_VENTURES,
       keySafe: e.ANONYMO_FEATURE_KEY_SAFE,
       codes: e.ANONYMO_FEATURE_CODES,
       everydayContracts: e.ANONYMO_FEATURE_EVERYDAY_CONTRACTS,
       lifeboat: e.ANONYMO_FEATURE_LIFEBOAT,
       freeTier: e.ANONYMO_FEATURE_FREE_TIER,
+      telegram: e.ANONYMO_FEATURE_TELEGRAM,
       askMo: e.ANONYMO_FEATURE_ASK_MO,
       compliance: e.ANONYMO_FEATURE_COMPLIANCE,
       memorySync: e.ANONYMO_FEATURE_MEMORY_SYNC,
+      moVoice: e.ANONYMO_FEATURE_MO_VOICE,
+      passes: e.ANONYMO_FEATURE_PASSES,
+      stake: e.ANONYMO_FEATURE_STAKE,
+      creators: e.ANONYMO_FEATURE_CREATORS,
+      party: e.ANONYMO_FEATURE_PARTY,
     },
+    creators: {
+      redisUrl: e.ANONYMO_CREATORS_REDIS_URL,
+      payouts: e.ANONYMO_CREATOR_PAYOUTS?.toLowerCase() as `0x${string}` | undefined,
+      payoutSigner: (e.ANONYMO_FEATURE_CREATORS ? e.ANONYMO_CREATOR_PAYOUTS_SIGNER : undefined) as `0x${string}` | undefined,
+      referrals: e.ANONYMO_CREATOR_REFERRALS?.toLowerCase() as `0x${string}` | undefined,
+      boosts: e.ANONYMO_CREATOR_BOOSTS?.toLowerCase() as `0x${string}` | undefined,
+      votes: e.ANONYMO_CREATOR_VOTES?.toLowerCase() as `0x${string}` | undefined,
+      startBlock: e.ANONYMO_CREATOR_CONTRACT_START_BLOCK === undefined ? undefined : BigInt(e.ANONYMO_CREATOR_CONTRACT_START_BLOCK),
+      referralBonus: BigInt(e.ANONYMO_CREATOR_REFERRAL_BONUS_PICO),
+      referralShareBps: e.ANONYMO_CREATOR_REFERRAL_SHARE_BPS,
+    },
+    everyday: {
+      rpc: e.ANONYMO_EVERYDAY_RPC_URL,
+      checkout: e.ANONYMO_FEATURE_PASSES ? e.ANONYMO_CHECKOUT_ADDRESS?.toLowerCase() as `0x${string}` | undefined : undefined,
+      checkoutStart: e.ANONYMO_CHECKOUT_START_BLOCK,
+      stake: e.ANONYMO_FEATURE_STAKE ? e.ANONYMO_STAKE_CREDITS_ADDRESS?.toLowerCase() as `0x${string}` | undefined : undefined,
+      stakeStart: e.ANONYMO_STAKE_CREDITS_START_BLOCK,
+      confirmations: e.ANONYMO_EVERYDAY_CONFIRMATIONS,
+    },
+    moVoice: {
+      livekit: { url: e.ANONYMO_LIVEKIT_URL, key: e.ANONYMO_LIVEKIT_KEY, secret: e.ANONYMO_LIVEKIT_SECRET },
+      design: { url: e.ANONYMO_VOICE_DESIGN_URL, token: e.ANONYMO_VOICE_DESIGN_TOKEN },
+    },
+    studioClassifiers: e.ANONYMO_FEATURE_STUDIO ? {
+      shieldGemma: { url: e.ANONYMO_SFW_SHIELDGEMMA_URL?.trim(), token: e.ANONYMO_SFW_SHIELDGEMMA_TOKEN },
+      llavaGuard: { url: e.ANONYMO_SFW_LLAVAGUARD_URL?.trim(), token: e.ANONYMO_SFW_LLAVAGUARD_TOKEN },
+      person: { url: e.ANONYMO_SFW_PERSON_URL?.trim(), token: e.ANONYMO_SFW_PERSON_TOKEN },
+    } : undefined,
+    party: e.ANONYMO_FEATURE_PARTY ? {
+      redisUrl: e.ANONYMO_PARTY_REDIS_URL,
+      discord: e.ANONYMO_DISCORD_APPLICATION_ID && e.ANONYMO_DISCORD_PUBLIC_KEY && e.ANONYMO_DISCORD_BOT_TOKEN ? {
+        applicationId: e.ANONYMO_DISCORD_APPLICATION_ID,
+        publicKey: e.ANONYMO_DISCORD_PUBLIC_KEY,
+        botToken: e.ANONYMO_DISCORD_BOT_TOKEN,
+      } : null,
+    } : null,
     codeResellers: resellerCredentials(e.ANONYMO_FEATURE_CODES ? e.ANONYMO_CODES_RESELLER_HASHES : undefined),
     freeTier: {
       daily: e.ANONYMO_FREE_DAILY,
       routes: new Set((e.ANONYMO_FREE_ROUTES ?? "").split(",").map((id) => id.trim()).filter(Boolean)),
       difficulty: e.ANONYMO_FREE_POW_DIFFICULTY,
+    },
+    telegram: {
+      botToken: e.ANONYMO_TELEGRAM_BOT_TOKEN,
+      webhookSecret: e.ANONYMO_TELEGRAM_WEBHOOK_SECRET,
+      idSalt: e.ANONYMO_TELEGRAM_ID_SALT,
+      topupStars: e.ANONYMO_TELEGRAM_TOPUP_STARS,
+      topupUsd: e.ANONYMO_TELEGRAM_TOPUP_USD,
+      salesPaused: ["1", "true", "yes", "on"].includes(String(raw.ANONYMO_DEPOSITS_PAUSED ?? "").toLowerCase()),
     },
     askMoSearchFallback: e.ANONYMO_FEATURE_ASK_MO ? createWebSearch(e, undefined, "ANONYMO_ASK_MO_SEARCH_FALLBACK") : null,
     council: { models: councilModels, judge: e.ANONYMO_COUNCIL_JUDGE ?? null, mode: e.ANONYMO_COUNCIL_MODE },

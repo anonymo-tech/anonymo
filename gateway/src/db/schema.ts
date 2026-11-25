@@ -954,3 +954,8 @@ export { keySafes } from "../anonymo/keysafe/schema.ts";
 export { codes } from "../anonymo/codes/schema.ts";
 export { freeTokens } from "../anonymo/freetier/schema.ts";
 export { memoryBlobs } from "../anonymo/memory-sync/schema.ts";
+export { designedVoices } from "../anonymo/voice/schema.ts";
+export { starsOrders, telegramLinks, telegramTokens } from "../anonymo/telegram/schema.ts";
+export * from "../anonymo/everyday/schema.ts";
+export * from "../anonymo/creators/schema.ts";
+export * from "../anonymo/party/schema.ts";

@@ -11,7 +11,9 @@ import { batchLineOf } from "../../router/batch-line.ts";
 import { regionCodeOf } from "./middleware.ts";
 import { createRegionPolicy } from "./policy.ts";
 import { parseRegion } from "./rules.ts";
+import { DISCORD_PATH } from "../party/wire.ts";
 import { ageProofs } from "./schema.ts";
+import { isTelegramWebhook } from "../telegram/identity.ts";
 
 const REGION = "/v1/compliance/region";
 const PROOF = "/v1/compliance/age-proof";
@@ -26,9 +28,9 @@ const proofSetup = new Set(["/keys", "/api/v1/keys", "/v1/models", "/api/v1/mode
 export const isComplianceRoute = (method: string, path: string) =>
   (method === "GET" && path === REGION) || (method === "POST" && path === PROOF);
 
-function ungated(c: Context) {
+function ungated(c: Context, creators: boolean) {
   const path = c.req.path;
-  return EXIT.has(path) || /^\/api\/v1\/creators\/claims(?:\/[^/]+(?:\/verify)?)?$/.test(path) ||
+  return (creators && path === "/api/v1/creators/contracts") || EXIT.has(path) || /^\/api\/v1\/creators\/claims(?:\/[^/]+(?:\/verify)?)?$/.test(path) ||
     (["GET", "DELETE"].includes(c.req.method) && /^\/api\/v1\/memory(?:\/[^/]+)?$/.test(path));
 }
 
@@ -77,7 +79,9 @@ export function mountRegionGate(app: Hono, ctx: Ctx, env: Record<string, unknown
   };
 
   app.use("*", async (c, next) => {
-    if (ungated(c) || c.req.path === REGION || c.req.path === PROOF) return next();
+    if (ctx.cfg.party?.discord && c.req.method === "POST" && c.req.path === DISCORD_PATH) return next();
+    if (ungated(c, ctx.cfg.features.creators) || isTelegramWebhook(ctx, c) || c.req.path === REGION || c.req.path === PROOF ||
+      (ctx.cfg.features.stake && c.req.path === "/v1/everyday/stake/contract")) return next();
     const policy = await access(c);
     if (!policy.access && !(policy.mode === "proof_required" && proofSetup.has(c.req.path))) {
       return regionPage(c, policy.mode === "proof_required");

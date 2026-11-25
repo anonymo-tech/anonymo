@@ -1,3 +1,5 @@
+import { isVoiceDispatch } from "./anonymo/voice/dispatch.ts";
+import { RedisCreatorCounters } from "./anonymo/creators/counters.ts";
 import { accountRunwayRoutes } from "./api/account-runway.ts"; // B119
 import { hardeningMiddleware, originLockMiddleware } from "./hardening/middleware.ts"; // HD1
 import { internalEnv } from "./hardening/client.ts"; // HD1
@@ -40,6 +42,7 @@ import { keyPolicyMiddleware } from "./anonymo/deposits/index.ts";
 import { regionMiddleware } from "./anonymo/region/middleware.ts";
 import { regionRulesFromEnv } from "./anonymo/region/rules.ts";
 import { anonymoRegionGate, anonymoRoutes } from "./anonymo/routes.ts";
+import { isTelegramWebhook } from "./anonymo/telegram/identity.ts";
 import { swarmMiddleware } from "./anonymo/ventures/routes.ts";
 import { createAnonymoServices, type AnonymoServices } from "./anonymo/services.ts";
 import { modelsRoutes } from "./api/models.ts";
@@ -89,6 +92,10 @@ export async function createApp(opts: AppOptions = {}) {
   const ownedDatabase = opts.database ? undefined : await openDatabase(cfg.databaseUrl, { migrate: cfg.autoMigrate });
   const handle = opts.database ?? ownedDatabase!;
   const redis = cfg.redisUrl ? new (await import("ioredis")).Redis(cfg.redisUrl, { maxRetriesPerRequest: 2, lazyConnect: false }) : undefined;
+  const creatorRedis = cfg.features.creators && cfg.creators.redisUrl
+    ? new (await import("ioredis")).Redis(cfg.creators.redisUrl, { maxRetriesPerRequest: 1, enableOfflineQueue: false, commandTimeout: 1_000 })
+    : undefined;
+  creatorRedis?.on("error", () => undefined);
   const limiter: RateLimiter = redis ? new RedisRateLimiter(redis) : new MemoryRateLimiter();
   const signer = new ReceiptSigner(handle.db, cfg.appSecret, cfg.receipts.rotationDays, cfg.receipts.signingKey);
   await signer.init();
@@ -99,6 +106,7 @@ export async function createApp(opts: AppOptions = {}) {
 
   const ctx: Ctx = {
     cfg,
+    creatorCounters: creatorRedis ? new RedisCreatorCounters(creatorRedis) : undefined,
     db: handle.db,
     dbKind: handle.kind,
     catalog,
@@ -145,11 +153,15 @@ export async function createApp(opts: AppOptions = {}) {
   paymentRecovery(app, ctx);
   structuredOutputMiddleware(app, ctx); // V83: ordinary chat routes bill each call.
   firstCallRoutes(app, cfg.developerFirstCallEnabled, cfg.siteUrl); // ON2: the public site address, not the router host
-  if (!regionAccess) app.use("*", regionMiddleware(regionRulesFromEnv(env)));
+  if (!regionAccess) {
+    const legacyRegion = regionMiddleware(regionRulesFromEnv(env));
+    app.use("*", (c, next) => isTelegramWebhook(ctx, c) ||
+      (cfg.features.creators && ["/api/v1/creators/claims", "/api/v1/creators/contracts"].includes(c.req.path)) ? next() : legacyRegion(c, next));
+  }
   app.use("*", keyPolicyMiddleware(ctx)); // WS05: ip_allow, sealed_only and spend windows on inference calls.
   if (cfg.features.ventures) for (const p of ["/v1/chat/completions", "/api/v1/chat/completions"]) app.use(p, swarmMiddleware(ctx, app)); // WS11: model anonymo-swarm starts a Ventures run
   chatRoutes(app, ctx);
-  anonymoRoutes(app, ctx, regionAccess);
+  const closeParty = anonymoRoutes(app, ctx, regionAccess, env);
   batchesRoutes(app, ctx);
   modelsRoutes(app, ctx);
   generationRoutes(app, ctx);
@@ -203,8 +215,8 @@ export async function createApp(opts: AppOptions = {}) {
     }
     if ((err as Error)?.name === "AbortError") return c.json(new ApiError(499, "Client closed the request.", "cancelled").toJSON(), 499 as never);
     const free = cfg.features.freeTier && (c.req.header(FREE_TOKEN_HEADER) != null || c.req.header(FREE_PROOF_HEADER) != null);
-    if (cfg.features.compliance) log.error("unhandled gateway error");
-    else log.error("unhandled error", { path: new URL(c.req.url).pathname, ...(free ? {} : { error: (err as Error)?.message, stack: (err as Error)?.stack?.split("\n").slice(0, 5).join(" | ") }) });
+    if (cfg.features.compliance || (cfg.features.telegram && c.req.path.startsWith("/v1/telegram/"))) log.error("unhandled gateway error");
+    else log.error("unhandled error", { path: new URL(c.req.url).pathname, ...(free || isVoiceDispatch(c) ? {} : { error: (err as Error)?.message, stack: (err as Error)?.stack?.split("\n").slice(0, 5).join(" | ") }) });
     return c.json(new ApiError(500, "Internal router error.", "internal").toJSON(), 500);
   });
 
@@ -220,6 +232,7 @@ export async function createApp(opts: AppOptions = {}) {
   const close = async () => {
     if (closed) return;
     closed = true;
+    closeParty?.();
     if (healthTimer) clearInterval(healthTimer);
     await stopStatus();
     await ctx.jobs.stop();
@@ -227,6 +240,7 @@ export async function createApp(opts: AppOptions = {}) {
     await ctx.telemetry.close();
     await ctx.tracing.close();
     await limiter.close();
+    creatorRedis?.disconnect();
     redis?.disconnect();
     await ownedDatabase?.close();
   };

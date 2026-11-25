@@ -596,7 +596,8 @@ describe("media store, provenance endpoints and privacy", () => {
     expect((await h.request(u.pathname + u.search)).status).toBe(200);
     expect((await h.request(u.pathname + u.search.replace(/sig=(.)/, (_m, c: string) => `sig=${c === "0" ? "1" : "0"}`))).status).toBe(404);
     expect((await h.request(u.pathname)).status).toBe(404);
-    expect((await h.request(u.pathname.replace(/.$/, "x") + u.search)).status).toBe(404);
+    // A different last character: an id that already ends in "x" would otherwise be unchanged.
+    expect((await h.request(u.pathname.replace(/.$/, (c) => (c === "x" ? "y" : "x")) + u.search)).status).toBe(404);
     const expires = Number(u.searchParams.get("expires"));
     u.searchParams.set("expires", String(expires - 7200));
     expect((await h.request(u.pathname + u.search)).status).toBe(404);

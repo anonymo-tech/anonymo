@@ -1147,3 +1147,27 @@ html[data-anonymo-panic] body { display: none !important; }
 .photo-thumb button { position: absolute; top: 2px; right: 2px; display: grid; place-items: center; width: 20px; height: 20px; border: 0; border-radius: 999px; background: #000a; color: #fff; cursor: pointer; }
 .photo-missing { padding: 6px; font-size: 11px; line-height: 1.3; color: var(--muted); text-align: center; }
 .photo-note { color: var(--amber); }
+
+/* Discover and Creator Cut */
+.creator-filters { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; gap: 12px; align-items: end; }
+.creator-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 16px; }
+.creator-listing { overflow: hidden; padding: 0; gap: 0; }
+.creator-listing-copy { display: grid; gap: 12px; padding: 18px; }
+.creator-listing-copy h2 { overflow-wrap: anywhere; }
+.creator-thumb {
+  display: grid;
+  min-height: 126px;
+  place-items: center;
+  color: var(--text);
+  background:
+    radial-gradient(circle at var(--creator-x) 50%, hsl(var(--creator-hue) 55% 47% / .6), transparent 43%),
+    repeating-linear-gradient(var(--creator-angle), transparent 0 17px, var(--line) 18px 19px),
+    var(--surface);
+}
+.creator-support, .creator-stat-card { display: grid; gap: 10px; width: 100%; border-top: 1px solid var(--line); padding-top: 12px; }
+.creator-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(126px, 1fr)); gap: 10px; }
+.creator-stats dt { color: var(--muted); font-size: 13px; }
+.creator-stats dd { margin: 0; font-size: 22px; font-variant-numeric: tabular-nums; }
+.creator-thread { display: grid; gap: 9px; max-height: 380px; overflow: auto; }
+.creator-thread p { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 650px) { .creator-filters { grid-template-columns: 1fr; align-items: stretch; } }

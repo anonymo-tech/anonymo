@@ -56,10 +56,167 @@ export const freeRateLimit = limit({
   evidence: [ev("src/anonymo/freetier/routes.ts", "ctx.limiter.take(`free:${bucket}`, amount, max, WINDOW)")],
 });
 
+export const telegramRateLimit = limit({
+  prefix: "telegram:",
+  shape: "telegram:<operation>[:<key hash or server-salted Telegram user digest>]",
+  purpose: "Limits Telegram chat challenges, proofs, bot commands and handoff or link actions.",
+  holds: "digest",
+  seconds: 60,
+  evidence: [ev("src/anonymo/telegram/trial.ts", "ctx.limiter.take(`telegram:${bucket}`, amount, max, WINDOW)")],
+});
+
+export const telegramBodyReader: ExternalDoc["bodyReaders"][number] = {
+  file: "src/anonymo/telegram/routes.ts",
+  carries: "prompt-or-answer",
+  reads: "Authenticated webhook messages and Stars payment events, or Mini App authorization, free-tier proof and optional chat message. The handoff exchange reads a one-time token.",
+  then: "Verifies the webhook secret or signed Mini App data, uses only the Telegram user ID, and sends trial text through moderated gateway chat. Telegram keeps messages in its bot chat.",
+  kept: "Salted Telegram user digests, key and token hashes, short-lived free-tier proofs, and Stars payment and refund metadata. No chat text, account names or signed Mini App data.",
+  evidence: [
+    ev("src/anonymo/telegram/routes.ts", "miniRequest.safeParse(await readJson(c))"),
+    ev("src/anonymo/telegram/routes.ts", "validWebhookSecret(settings.webhookSecret"),
+    ev("src/anonymo/telegram/routes.ts", "return c.json(await trialReply(ctx, verified, data.text, c.req.raw.signal));"),
+  ],
+};
+
+export const creatorRedisFamilies: RedisFamily[] = [
+  {
+    key: "creators:salt:<UTC day or cohort>", purpose: "Rotating random HMAC salts for spend caps and audience estimates.",
+    holds: "nothing-personal", ttl: "24 hours for a day salt and 15 days for a cohort salt.",
+    evidence: [ev("src/anonymo/creators/counters.ts", 'set(name, value, "EX", seconds, "NX")')],
+  },
+  {
+    key: "creators:cap:<daily HMAC>", purpose: "Maximum eligible spend per key per creator wallet in one UTC day.",
+    holds: "digest", ttl: "24 hours from the first counted charge.",
+    evidence: [ev("src/anonymo/creators/counters.ts", "const digest = hash(salt, keyHash + creatorId)"),
+      ev("src/anonymo/creators/counters.ts", "redis.call('EXPIRE', KEYS[1], 86400)")],
+  },
+  {
+    key: "creators:audience:<character>:<day or cohort>", purpose: "Approximate distinct daily visitors, recently funded visitors and cohort overlap using HyperLogLog registers.",
+    holds: "nothing-personal", ttl: "24 hours for daily estimates and at most 22 days for cohort estimates.",
+    evidence: [ev("src/anonymo/creators/counters.ts", "redis.call('PFADD', KEYS[i], ARGV[i])"),
+      ev("src/anonymo/creators/counters.ts", "22 * 86_400")],
+  },
+];
+export const creatorBodyReader: ExternalDoc["bodyReaders"][number] = {
+  file: "src/anonymo/creators/routes.ts",
+  reads: "An intentionally published profile, creator wallet signature, stats nonce, review decision or referral code.",
+  then: "Runs the floor against publication fields, authorizes wallet actions and accepts referral codes before funding.",
+  kept: "Public listing metadata, aggregate review decisions and opaque referral records. No chat text or raw signature.",
+  carries: "public-data",
+  evidence: [ev("src/anonymo/creators/routes.ts", "publication.parse(await readJson(c))"),
+    ev("src/anonymo/creators/routes.ts", "sha256(await c.req.text())")],
+};
+
+export const partyRateLimit = limit({
+  prefix: "party:",
+  shape: "party:<host key hash or random room ID>",
+  purpose: "Limits room creation by the host and activity within each Party room.",
+  holds: "digest",
+  seconds: 60,
+  evidence: [ev("src/anonymo/party/engine.ts", 'ctx.limiter.take(`party:${id}`, 1, max, 60_000)')],
+});
+
+export const partyRedis: RedisFamily[] = [
+  {
+    key: "party:room:<room ID>", purpose: "Shares encrypted live Party state across gateway replicas.",
+    holds: "nothing-personal", requestText: "request-and-answer-text",
+    ttl: "Two hours from the last successful state change, or immediate deletion on close.",
+    evidence: [
+      ev("src/anonymo/party/store.ts", 'encrypt(`${this.secret}:party:${id}`, JSON.stringify(room))'),
+      ev("src/anonymo/party/store.ts", 'append !== "no"'),
+      ev("src/anonymo/party/rules.ts", "ROOM_TTL_MS = 2 * 60 * 60 * 1000"),
+    ],
+  },
+  {
+    key: "party:lock:<room ID>", purpose: "Serializes changes and paid turns within a room.", holds: "nothing-personal",
+    ttl: "Until the action completes, or three minutes if the replica exits.",
+    evidence: [ev("src/anonymo/party/store.ts", 'redis.set(lock, lease, "PX", LEASE_MS, "NX")')],
+  },
+  {
+    key: "party:discord:<interaction digest>", purpose: "Prevents a repeated delivery of a Discord command from running twice.",
+    holds: "digest", ttl: "Six minutes, covering the Discord signature acceptance window.",
+    evidence: [ev("src/anonymo/party/store.ts", 'redis.set(`party:discord:${digest}`, "1", "EX", REPLAY_SECONDS, "NX")')],
+  },
+];
+
+export const partyBodyReaders: ExternalDoc["bodyReaders"] = [
+  {
+    file: "src/anonymo/party/routes.ts", carries: "prompt-or-answer",
+    reads: "Party room settings, a host checkpoint when resuming, invite or seat credentials, actions and dice inputs.",
+    then: "Authenticates the seat and forwards game turns through normal gateway chat. WebSocket frames carry only the seat token in and change notifications out.",
+    kept: "Live state is erased on close or expiry. Only room metadata and dice proofs are durable.",
+    evidence: [ev("src/anonymo/party/routes.ts", "parse(actionInput, await readJson(c))"), ev("src/anonymo/party/routes.ts", 'ws.send("changed")')],
+  },
+  {
+    file: "src/anonymo/party/discord.ts", carries: "prompt-or-answer",
+    reads: "Signed Discord interactions, including Discord identifiers, a participant region declaration and slash command arguments.",
+    then: "Verifies the signature before processing commands. Discord receives the reply and keeps its own messages.",
+    kept: "Keyed digests of Discord members and the bound channel live with the room. A replay digest expires after six minutes.",
+    evidence: [ev("src/anonymo/party/discord.ts", "new Uint8Array(await c.req.arrayBuffer())"), ev("src/anonymo/party/discord.ts", "claimInteraction(sha256(input.id))")],
+  },
+];
+
+export const partyMemory: ExternalDoc["otherStores"][number] = {
+  id: "party-memory", name: "Live Party rooms",
+  purpose: "Gateway memory hosts Party rooms when no Redis instance is configured. A dedicated Redis instance shares state and publishes room-ID change notifications across replicas.",
+  holds: "Scene, recent turns, campaign summary, seat digests, dice and current turn art. Host campaign saves live on the device and may sync through encrypted Vault Memory.",
+  ttl: "Until the host closes the room or two hours pass without changes. A restart clears the gateway memory store.",
+  requestText: "request-and-answer-text",
+  evidence: [ev("src/anonymo/party/store.ts", "this.rooms.set(id, { value: structuredClone(room), timer })")],
+};
+
 const ADDRESS_NOTE = "The caller's network address is part of the key.";
 
+const everydayRoutesFile = "src/anonymo/everyday/routes.ts";
+export const passOrderReader: ExternalDoc["bodyReaders"][number] = {
+  file: everydayRoutesFile, carries: "payment-or-signature",
+  reads: "Pass product code and the intended wallet address.",
+  then: "Creates a random Checkout order reference bound to the authenticated key, product and wallet.",
+  kept: "Only the derived order digest, SHA-256 key hash and product.",
+  evidence: [ev(everydayRoutesFile, "orderBody.parse(await readJson(c))")],
+};
+export const stakeLinkReader: ExternalDoc["bodyReaders"][number] = {
+  file: everydayRoutesFile, carries: "payment-or-signature",
+  reads: "Wallet address and, on confirmation, a signature and expiry.",
+  then: "Verifies the wallet signature over a time-limited challenge bound to the authenticated key.",
+  kept: "Only the wallet address and SHA-256 key hash. No signature or message is stored.",
+  evidence: [ev(everydayRoutesFile, "linkBody.parse(await readJson(c))")],
+};
+export const memoryCapacityReader: ExternalDoc["bodyReaders"][number] = {
+  file: "src/anonymo/memory-sync/routes.ts", carries: "settings",
+  reads: "Blinded daily capacity requests, anonymous capacity proofs on sync writes and item UUID pagination cursors.",
+  then: "Issues a day-scoped blind signature based on key eligibility. Verifies the unblinded proof against an anonymous vault credential.",
+  kept: "No signatures, blinded requests, pagination state or link between a key and a vault. Daily issuer keys are stored encrypted and replaced in place.",
+  evidence: [ev("src/anonymo/memory-sync/routes.ts", "const { after } = z.object({ after: cursor.optional() }).strict().parse(await readJson(c));"),
+    ev("src/anonymo/memory-sync/routes.ts", "const token = proof as z.infer<typeof capacity> | undefined;")],
+};
+
 const redisFamilies: RedisFamily[] = [
+  ...creatorRedisFamilies,
+  limit({
+    prefix: "creators:write:",
+    shape: "creators:write:<operation>:<keyed digest>",
+    purpose: "Limits publication, wallet stats and referral writes per workspace key.",
+    holds: "digest",
+    seconds: 60,
+    evidence: [ev("src/anonymo/creators/routes.ts", 'ctx.limiter.take(`creators:write:${operation}:${digest}`, 1, max, 60_000)')],
+  }),
   anonymousRateFamily, // HD1
+  limit({
+    prefix: "pass-order:", shape: "pass-order:<key hash>", holds: "key-hash", seconds: 60,
+    purpose: "Limits new pass order references per key.",
+    evidence: [ev(everydayRoutesFile, 'ctx.limiter.take(`pass-order:${key.keyHash}`, 1, 12, 60_000)')],
+  }),
+  limit({
+    prefix: "stake-link:", shape: "stake-link:<key hash>", holds: "key-hash", seconds: 60,
+    purpose: "Limits wallet linking attempts per key.",
+    evidence: [ev(everydayRoutesFile, 'ctx.limiter.take(`stake-link:${key.keyHash}`, 1, 12, 60_000)')],
+  }),
+  limit({
+    prefix: "memory-sync:capacity:", shape: "memory-sync:capacity:<account ID>", holds: "account", seconds: 86_400,
+    purpose: "Limits blind Vault Memory capacity grant requests per account.",
+    evidence: [ev("src/anonymo/memory-sync/routes.ts", 'ctx.limiter.take(`memory-sync:capacity:${key.accountId}`, 1, 30, 86_400_000)')],
+  }),
   limit({
     prefix: "key-safe:",
     shape: "key-safe:<operation>:<minute-scoped address HMAC>",
@@ -85,6 +242,9 @@ const redisFamilies: RedisFamily[] = [
     evidence: [ev("src/anonymo/lifeboat/routes.ts", "await ctx.limiter.take(`lifeboat:check:${bucket}`")],
   }),
   freeRateLimit,
+  telegramRateLimit,
+  partyRateLimit,
+  ...partyRedis,
   limit({
     prefix: "age-proof:",
     shape: "age-proof:<key hash>",
@@ -237,7 +397,7 @@ const redisFamilies: RedisFamily[] = [
       ev("src/gateway/cache.ts", "const payload = this.seal(scope, response);"),
       ev("src/api/chat.ts", "validateCacheTtl(body, ctx.cfg.gateway.cacheTtlS);"),
       ev("src/api/chat.ts", "!moderatedOnly && !strict && !resolved", "Never used for a call with a disclosure ceiling, a restricted model variant or a stream."),
-      ev("src/api/chat.ts", "const cacheMode: CacheMode | null = !ctx.cfg.features.compliance && !moderatedOnly", "Disabled with region compliance, a disclosure ceiling, a restricted model variant or a stream."),
+      ev("src/api/chat.ts", "const cacheMode: CacheMode | null = !publication && !ctx.cfg.features.compliance && !ctx.cfg.features.passes && !ctx.cfg.features.stake && !telegramSession && !moderatedOnly", "Disabled for published-character chats, with region compliance, passes or staking on, in Telegram chat sessions, and with a disclosure ceiling, a restricted model variant or a stream."),
     ],
   },
   {
@@ -279,7 +439,50 @@ export const lifeboatAddressReader: Touchpoint = {
   evidence: [{ file: "src/anonymo/lifeboat/routes.ts", contains: "const bucket = createHmac" }],
 };
 
+export const voiceAddressReaders: ExternalDoc["addressReaders"] = [
+  {
+    file: "src/anonymo/voice/routes.ts",
+    reads: "The caller's address when the key has a network allowlist.",
+    then: "Checked before inference and passed in process to the ordinary chat and media policy checks.",
+    kept: "Only in transient request and call state for that allowlist check.",
+    evidence: [ev("src/anonymo/voice/routes.ts", "row?.ipAllow?.length ? clientIp(c, ctx.cfg.trustProxy)"), ev("src/anonymo/voice/routes.ts", "requestIP: () => address ? { address } : null")],
+  },
+  {
+    file: "src/anonymo/voice/socket.ts",
+    reads: "The Bun socket address as needed by the existing ingress and network policy checks during upgrade.",
+    then: "Supplied to middleware through the original upgrade request.",
+    kept: "Subject to the same ingress and anonymous read limits as the other gateway routes.",
+    evidence: [ev("src/anonymo/voice/socket.ts", "requestIP: () => server.requestIP(request)")],
+  },
+];
+
+export const voiceBodyReader: ExternalDoc["bodyReaders"][number] = {
+  file: "src/anonymo/voice/routes.ts",
+  carries: "prompt-or-answer",
+  reads: "Text voice traits and a save label, or a live WebSocket control and 20 ms PCM microphone frames.",
+  then: "Text traits go to the design worker for an embedding. The voice reference check compares that vector with stock embeddings. During calls, speech segments go only to transcription. Transcripts and eligible replies go through the regular chat floor and refusal pipeline. Only checked text is sent for synthesis.",
+  kept: "Only live call state, settlement metadata and hashes, and the name and embedding of a voice the caller elects to save. The gateway skips customer trace export for Mo Voice turns.",
+  evidence: [
+    ev("src/anonymo/voice/routes.ts", "schema.safeParse(await readJson(c))"),
+    ev("src/anonymo/voice/routes.ts", "session.mic(data);"),
+    ev("src/anonymo/voice/session.ts", "this.upstreams.transcribe(micWav(frames), samples, signal)"),
+    ev("src/api/chat.ts", "privateRoute }) && !isVoiceDispatch(p.c)"),
+    ev("src/anonymo/voice/routes.ts", "values({ id, keyHash, name, embedding: preview.embedding })"),
+  ],
+};
+
+export const voiceStore: ExternalDoc["otherStores"][number] = {
+  id: "mo-voice-live",
+  name: "Mo Voice call state",
+  purpose: "Short-lived connection tickets, live audio and conversation context, and the candidate embedding until the caller saves or replaces it.",
+  holds: "Process memory only. Audio and conversation text are discarded when the call ends. Hangup sends signed counts and route metadata to the caller.",
+  ttl: "Unused tickets expire after 30 seconds. A call lasts up to 15 minutes. An unsaved candidate embedding expires after 5 minutes.",
+  requestText: "request-and-answer-text",
+  evidence: [ev("src/anonymo/voice/socket.ts", "const TTL_MS = 30_000;"), ev("src/anonymo/voice/routes.ts", "const PREVIEW_TTL = 5 * 60_000;"), ev("src/anonymo/voice/routes.ts", "const CALL_TTL = 15 * 60_000;")],
+};
+
 const addressReaders: Touchpoint[] = [
+  ...voiceAddressReaders,
   keySafeAddressReader,
   codesAddressReader,
   lifeboatAddressReader, // Everyday 23
@@ -371,9 +574,29 @@ export const lifeboatBodyReader: ExternalDoc["bodyReaders"][number] = {
 };
 
 
+export const studioBodyReader: ExternalDoc["bodyReaders"][number] = {
+  file: "src/anonymo/media/routes.ts",
+  carries: "prompt-or-answer",
+  reads: "Studio uses the existing visual media requests, including the prompt and the image supplied for an edit.",
+  then: "After the text floor passes, the Studio person classifier sees edit uploads. ShieldGemma 2 and LlavaGuard see visual outputs before they can be delivered or billed. Classifier requests carry media bytes only.",
+  kept: "Classifier verdicts are returned in signed receipts. A blocked or unscored video job keeps fixed verdict codes in its existing error field. Successful video verdicts expire with the video in memory.",
+  evidence: [
+    ev("src/anonymo/media/routes.ts", "s.studio.upload(input.upload, c.req.raw.signal)"),
+    ev("src/anonymo/media/routes.ts", "s.studio.output({ bytes: stripped(out), mime: out.mime }, o.signal)"),
+    ev("src/anonymo/media/studio.ts", "body: media.bytes,"),
+    ev("src/anonymo/media/routes.ts", "[type, e.reason, verdicts.shieldgemma2, verdicts.llavaguard]"),
+  ],
+};
+
 const bodyReaders: ExternalDoc["bodyReaders"] = [
+  voiceBodyReader,
+  ...partyBodyReaders,
   keySafeBodyReader,
   codesBodyReader,
+  telegramBodyReader,
+  passOrderReader,
+  stakeLinkReader,
+  memoryCapacityReader,
   {
     file: "src/anonymo/askmo/routes.ts",
     carries: "prompt-or-answer",
@@ -383,7 +606,8 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
     evidence: [
       ev("src/anonymo/askmo/routes.ts", "const { question, topic = null } = await readJson(c);"),
       ev("src/api/chat.ts", "webSearch.query = askMoQuery(askMoAnswer.question);"),
-      ev("src/api/chat.ts", "if (!p.meta.askMo && billing.key?.tracing"),
+      ev("src/api/chat.ts", "if (!p.meta.askMo && !publication && !p.meta.party && billing.key?.tracing"),
+      ev("src/api/chat.ts", "if (!p.meta.askMo && !publication && !p.meta.party && billing.key?.tracing"),
       ev("src/api/council.ts", "comparison = choice?.comparison;"),
     ],
   },
@@ -397,9 +621,11 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
   },
   ...anonymoMoneyBodyReaders, // WS05
   mediaBodyReader, // WS06 media
+  studioBodyReader,
   transcriptionBodyReader,
   ventureBodyReader, // WS11 Ventures
   lifeboatBodyReader,
+  creatorBodyReader,
   {
     file: "src/anonymo/memory-sync/routes.ts",
     carries: "settings",
@@ -632,6 +858,8 @@ export const EXTERNAL: ExternalDoc = {
     evidence: [ev("src/lib/util.ts", "(level === \"error\" || level === \"warn\" ? console.error : console.log)(line);"), ev("src/lib/util.ts", "const line = JSON.stringify(redactRpcFields({ t: new Date().toISOString(), level, msg, ...fields })")],
   },
   otherStores: [
+    voiceStore,
+    partyMemory,
     ...rushStores, // ON3
     ...webhookStores, // V86.
     ...activityStores,
@@ -697,7 +925,8 @@ export const EXTERNAL: ExternalDoc = {
       ttl: "In memory for seconds, or until retries end; kept by the destination the key's owner chose.",
       requestText: "answer-text",
       evidence: [
-        ev("src/api/chat.ts", "if (!p.meta.askMo && billing.key?.tracing && shouldExportTrace({ lane: p.disc.lane, privateLaneRequest: privateLane, privateRoute }))"),
+        ev("src/api/chat.ts", "if (!p.meta.askMo && !publication && !p.meta.party && billing.key?.tracing"),
+        ev("src/api/chat.ts", "if (!p.meta.askMo && !publication && !p.meta.party && billing.key?.tracing"),
         ev("src/services/tracing.ts", "export function shouldExportTrace(o: { lane: string; privateLaneRequest: boolean; privateRoute: boolean }) {"),
         ev("src/services/tracing.ts", "if (!stored.include_content) {"),
       ],

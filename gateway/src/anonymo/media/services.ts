@@ -37,6 +37,7 @@ import { placeholderRegionRules } from "./region.ts";
 import { MemoryMediaStore, type MediaStore } from "./store.ts";
 import { comfyAdapter, nanogptAdapter, ttsAdapter, unconfigured, veniceAdapter, type ImageUpstream, type SpeechUpstream, type VideoUpstream } from "./upstreams.ts";
 import { chainWatermarkers, httpWatermarker, lsbWatermarker } from "./watermark.ts";
+import { createStudioGate, llavaGuardClassifier, shieldGemmaClassifier, studioPersonClassifier } from "./studio.ts";
 import { workflowSet } from "./workflows.ts";
 
 export type MediaServices = {
@@ -44,6 +45,7 @@ export type MediaServices = {
   /** Upstreams this gateway has configured: GET /v1/media/models lists only their models. Unset lists everything. */
   offered?: ReadonlySet<Upstream>;
   gate: MediaOutputGate;
+  studio?: ReturnType<typeof createStudioGate>;
   /** Refuses image and video prompts that ask for nudity or sex, before anything is generated. */
   promptCheck: MediaPromptCheck;
   provenance: MediaProvenance;
@@ -97,6 +99,8 @@ export function buildMediaServices(ctx: Pick<Ctx, "cfg">, env: Env = process.env
     : [];
   const watermarker = chainWatermarkers([...sidecar, lsbWatermarker(hex32(env.ANONYMO_WATERMARK_KEY, "ANONYMO_WATERMARK_KEY") ?? derive(secret, "watermark-v1"))]);
   const classifier = classifierFromEnv(env);
+  const studio = ctx.cfg.studioClassifiers;
+  const videoFrames = Math.max(1, Math.floor(num(env.ANONYMO_MEDIA_VIDEO_FRAMES, 8)));
   const nanogptKey = env.ANONYMO_NANOGPT_API_KEY?.trim();
   const nanogpt = nanogptKey
     ? nanogptAdapter({ base: nanogptBase(env), apiKey: nanogptKey })
@@ -115,8 +119,14 @@ export function buildMediaServices(ctx: Pick<Ctx, "cfg">, env: Env = process.env
     gate: createMediaGate(classifier, {
       nsfw: num(env.ANONYMO_MEDIA_NSFW_THRESHOLD, 0.5),
       minAdultAge: Math.max(18, num(env.ANONYMO_MEDIA_MIN_ADULT_AGE, 25)),
-      videoFrames: Math.max(1, Math.floor(num(env.ANONYMO_MEDIA_VIDEO_FRAMES, 8))),
+      videoFrames,
     }),
+    ...(studio ? { studio: createStudioGate(
+      shieldGemmaClassifier(studio.shieldGemma),
+      llavaGuardClassifier(studio.llavaGuard),
+      studioPersonClassifier(studio.person),
+      videoFrames,
+    ) } : {}),
     promptCheck: promptCheckFromEnv(env),
     provenance: createProvenance({ key, watermarker, previousKeys }),
     region: placeholderRegionRules(env),

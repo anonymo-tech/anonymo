@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useAnonymo } from '../anonymo-provider';
+import { updateOn } from '@/lib/anonymo/updates';
 import { API_BASE } from '@/lib/anonymo/config';
 import { startVault, vault } from '@/lib/anonymo/vault-browser';
 import { loadVaultMemory, syncVaultMemory, currentVaultMemory } from '@/lib/anonymo/vault-memory/store';
@@ -29,7 +31,13 @@ export function useVaultMemory(demo: boolean, enabled = true) {
   };
 }
 
+export function useMemoryCapacity(demo: boolean) {
+  const { key } = useAnonymo();
+  return updateOn('passes', demo) || updateOn('stake', demo) ? key : undefined;
+}
+
 export function VaultMemorySync({ demo }: { demo: boolean }) {
+  const capacityKey = useMemoryCapacity(demo);
   const { snapshot } = useVaultMemory(demo);
   const id = snapshot?.stored.sync && !demo ? snapshot.stored.id : null;
   const pending = snapshot?.stored.pending;
@@ -38,7 +46,7 @@ export function VaultMemorySync({ demo }: { demo: boolean }) {
     const controller = new AbortController();
     const sync = () => {
       if (!document.hidden && !document.documentElement.hasAttribute('data-anonymo-panic'))
-        void syncVaultMemory(vaultMemoryTransport, controller.signal).catch(() => {});
+        void syncVaultMemory(vaultMemoryTransport, controller.signal, capacityKey === undefined ? undefined : { key: capacityKey }).catch(() => {});
     };
     sync();
     const timer = window.setInterval(sync, 30_000);
@@ -50,15 +58,15 @@ export function VaultMemorySync({ demo }: { demo: boolean }) {
       window.removeEventListener('focus', sync);
       window.removeEventListener('online', sync);
     };
-  }, [id]);
+  }, [id, capacityKey]);
   useEffect(() => {
     if (!id || !pending?.length) return;
     const timer = window.setTimeout(() => {
       if (!document.hidden && !document.documentElement.hasAttribute('data-anonymo-panic'))
-        void syncVaultMemory(vaultMemoryTransport).catch(() => {});
+        void syncVaultMemory(vaultMemoryTransport, undefined, capacityKey === undefined ? undefined : { key: capacityKey }).catch(() => {});
     }, 750);
     // Let an active upload settle when an acknowledgement changes the pending list.
     return () => window.clearTimeout(timer);
-  }, [id, pending]);
+  }, [id, pending, capacityKey]);
   return null;
 }

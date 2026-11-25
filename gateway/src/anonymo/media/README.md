@@ -167,3 +167,19 @@ image and video.
   the watermark sidecar, routes `/v1/media/*` to the replica that made the link (or runs media on one replica), and
   strips any client-sent `x-anonymo-country`. `sweepVideoJobs(ctx)` can run as a periodic job. Polling GETs already
   advance jobs.
+
+### Everyday Studio (Update 32)
+
+Set `ANONYMO_FEATURE_STUDIO=true` to enable the extra visual safety checks and serve the existing image and video routes. `ANONYMO_FEATURE_MEDIA` also enables speech and transcription. In the dashboard build, include `studio` in `NEXT_PUBLIC_ANONYMO_UPDATES`.
+
+Studio keeps the existing text floor, SFW prompt check and media gate. Configure the existing media classifier as above, then provision these additional sidecars with request and response logging disabled.
+
+| Base URL variable | Endpoint | Response |
+| --- | --- | --- |
+| `ANONYMO_SFW_SHIELDGEMMA_URL` | `POST /v1/shieldgemma2` | `{"frames":["safe", "unsafe"]}` |
+| `ANONYMO_SFW_LLAVAGUARD_URL` | `POST /v1/llavaguard` | `{"frames":["safe", "unsafe"]}` |
+| `ANONYMO_SFW_PERSON_URL` | `POST /v1/person-likeness` | `{"face_detected":true,"person_likeness":true}` |
+
+Each request body is raw media with its MIME type. Set the matching `ANONYMO_SFW_SHIELDGEMMA_TOKEN`, `ANONYMO_SFW_LLAVAGUARD_TOKEN` or `ANONYMO_SFW_PERSON_TOKEN` to send bearer auth. For each output, both model hosts must return exactly the requested `X-Sample-Frames` count. Use one verdict for an image and evenly spaced frames for a clip (`ANONYMO_MEDIA_VIDEO_FRAMES`, default 8). Each label reflects whether the frame passes the Studio SFW policy. For animated images, return an image verdict covering the whole image. For uploads, run face detection and a real-person likeness check on the whole image, including when a face is obscured. The likeness check distinguishes a photo of a real person from a cartoon or other synthetic character. It needs no identity match or biometric retention.
+
+An unsafe output verdict blocks delivery and billing, including when the other model passes or is unavailable. Unavailable checks fail closed. Real-person edit refusals return 451 with `floor_blocked` and category `real_person`. Signed Studio receipts include prompt, upload when applicable, and checked output verdicts. Synchronous safety refusals carry their zero-cost receipt in `x-anonymo-receipt`. For clips, poll the existing job URL for the receipt. A Studio output block returns a terminal failed job with HTTP 451.

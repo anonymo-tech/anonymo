@@ -13,7 +13,7 @@ function deviceToken(demo: boolean) {
   }
 }
 
-function solve(challenge: FreeChallenge & { challenge: string }, signal: AbortSignal): Promise<number> {
+export function solveFreeChallenge(challenge: FreeChallenge & { challenge: string }, signal: AbortSignal): Promise<number> {
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
     const worker = new Worker(freeWorkerUrl, { type: 'module' });
@@ -94,7 +94,7 @@ export function useFreeChat(client: AnonymoClient, on: boolean, demo: boolean) {
       if (value.remaining === 0)
         throw new AnonymoApiError(429, 'free_daily_limit', 'You’ve used your free messages today.');
       if (!value.challenge || !value.model) throw new Error('Free chat is temporarily unavailable.');
-      const nonce = await solve({ ...value, challenge: value.challenge }, signal);
+      const nonce = await solveFreeChallenge({ ...value, challenge: value.challenge }, signal);
       return { model: value.model, token, proof: `${value.challenge}:${nonce}:0` };
     } finally {
       setSolving(false);

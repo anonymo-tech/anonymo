@@ -1,5 +1,6 @@
 'use client';
 
+import { MoVoiceLink } from './mo-voice-link';
 import { characterDestination, setupHref } from '@/lib/anonymo/setup-return';
 import { chatSetupStep, clearSetupDraft, readSetupMessage, writeSetupDraft, type ChatSetupStep } from '@/lib/anonymo/chat-setup';
 
@@ -37,6 +38,7 @@ import { charactersStore } from '@/lib/anonymo/characters-store';
 import { memoryFor } from '@/lib/anonymo/movein/store';
 import { useFreeChat } from './use-free-chat';
 import { freeContext } from '@/lib/anonymo/free-chat';
+import type { EverydayAccess } from '@/lib/anonymo/everyday';
 import { AnonymoApiError, describeError, isOutOfCredit } from '@/lib/anonymo/client';
 import { useDeviceStore } from '@/lib/anonymo/device-store';
 import { chatModels, isAnonymoModel, publishedPpqChat } from '@/lib/anonymo/chat-models';
@@ -409,7 +411,26 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       : undefined;
   const charges = useMemo(() => modesOn ? turns.flatMap(modeCharges) : turns, [modesOn, turns]);
   const price = usePriceTag({ on: priceOn, demo, chatId, model, priced, messages: priceMessages, turns: charges, extraUsd, modeEstimate });
-  const setupForBalance = guestChat ? (freeExhausted ? 'key' : null) : chatSetupStep(!!key, balance?.available_usd);
+  const [everyday, setEveryday] = useState<{ client: typeof client; access: EverydayAccess | null } | null>(null);
+  const readEveryday = !!key && !demo && (updateOn('passes', false) || updateOn('stake', false));
+  useEffect(() => {
+    if (!readEveryday) return;
+    const abort = new AbortController();
+    const refresh = () => void client.everydayAccess(abort.signal).then(
+      (access) => { if (!abort.signal.aborted) setEveryday({ client, access }); },
+      () => { if (!abort.signal.aborted) setEveryday({ client, access: null }); },
+    );
+    refresh();
+    const timer = window.setInterval(refresh, 30_000);
+    window.addEventListener('focus', refresh);
+    return () => { abort.abort(); window.clearInterval(timer); window.removeEventListener('focus', refresh); };
+  }, [client, readEveryday]);
+  const rights = readEveryday && everyday?.client === client ? everyday.access : null;
+  const passChat = !!rights?.hasPass && model === 'anonymo-1' && mode !== 'picture' && mode !== 'three' &&
+    !extraUsd && !tray.photos.length && !excerpt?.image;
+  const mayUseIncluded = key && (readEveryday && everyday?.client !== client ||
+    passChat || !!rights?.hasPass && mode === 'picture' || !!rights?.availableCreditsUsd && mode !== 'three');
+  const setupForBalance = guestChat ? (freeExhausted ? 'key' : null) : mayUseIncluded ? null : chatSetupStep(!!key, balance?.available_usd);
   const hasAttachment = !!(excerpt || paper || picture || tray.photos.length);
   const standalone = mode === 'picture' || mode === 'three';
 
@@ -420,7 +441,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
 
   function openSetup(source: string, withExcerpt: Excerpt | null, capture = false) {
     let step = setupForBalance;
-    if (!step && !guestChat && balance) {
+    if (!step && !guestChat && balance && (!mayUseIncluded || capture)) {
       const draft = source.trim();
       const estimate = capture ? flatEstimate(perMinute) : mode === 'three' ?
         threeEstimate(draft, settings.three, comparisonModels, demo, aboutYouNote) : modeEstimate ??
@@ -442,6 +463,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const estimateBlocked = price.blocked || (mode === 'talk' && offer !== null && voiceOverLimit(offer));
   const shownPrice = guestChat ? '' : mode === 'talk' && voice.transcription
     ? (perMinute === null ? '' : transcriptionRate(voice.transcription))
+    : passChat ? 'Included with your Pass'
     : offer?.known
       ? mode === 'picture' ? spentLabel(offer.typical) : `${mode === 'three' ? 'up to' : 'about'} ${priceLabel(offer.typical, mode === 'three' ? 'up' : 'nearest')}`
       : '';
@@ -930,6 +952,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
           </select>
         </label>
       )}
+      {model !== 'anonymo-sealed' && <MoVoiceLink character={character?.id} className="tool" />}
       {shareOn && turns.length > 0 && <ShareChat turns={turns} disabled={streaming} />}
       {facesOn && character && <StageTools on={stage} onToggle={() => setStage((s) => !s)} character={character} faces={faces} />}
       {memoryOn && (character || vaultMemoryOn) && memory.memory?.enabled && (
@@ -1041,7 +1064,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
         <section className="notice notice-action" aria-label="Set up chat">
           <output>
             <span>{setupSheet.freeUpsell
-              ? 'You’ve used your free messages today. Create a free key and add funds with a wallet to unlock every model. Codes and Stars are coming.'
+              ? `You’ve used your free messages today. Create a free key and add funds with a wallet${updateOn('codes', demo) ? ' or a code' : ''} to unlock every model.`
               : setupSheet.step === 'key'
               ? 'Your message is ready. To send it, make a free key and add a little balance. No account, no email, about a minute.'
               : 'Add a little balance to send this.'}</span>

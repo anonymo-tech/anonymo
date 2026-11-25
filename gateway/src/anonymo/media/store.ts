@@ -7,9 +7,11 @@
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
-export type StoredMedia = { bytes: Uint8Array; mime: string; accountId: string; expiresAt: number };
+import type { StudioSafety } from "./studio.ts";
+
+export type StoredMedia = { bytes: Uint8Array; mime: string; accountId: string; expiresAt: number; safety?: StudioSafety };
 export interface MediaStore {
-  put(item: { bytes: Uint8Array; mime: string; accountId: string }, ttlMs: number): { id: string; expiresAt: number };
+  put(item: Omit<StoredMedia, "expiresAt">, ttlMs: number): { id: string; expiresAt: number };
   get(id: string): StoredMedia | null;
   delete(id: string): void;
   /** Bytes held now, for capacity checks and tests. */
@@ -33,7 +35,7 @@ export class MemoryMediaStore implements MediaStore {
     const t = this.now();
     for (const [id, it] of this.items) if (it.expiresAt <= t) this.delete(id);
   }
-  put(item: { bytes: Uint8Array; mime: string; accountId: string }, ttlMs: number) {
+  put(item: Omit<StoredMedia, "expiresAt">, ttlMs: number) {
     this.sweep();
     if (this.bytes + item.bytes.length > this.maxBytes) throw new StoreFullError("media store is full");
     const id = "m_" + randomBytes(18).toString("base64url");
