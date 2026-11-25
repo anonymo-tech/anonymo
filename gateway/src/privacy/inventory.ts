@@ -1,6 +1,10 @@
+import { freeAddressReader, freeTables } from "../anonymo/freetier/inventory.ts";
 import { describeAbuse } from "../anonymo/abuse/privacy.ts"; // Anonymo WS02
+import { complianceTables } from "../anonymo/region/inventory.ts";
 import { mediaTables } from "../anonymo/media/inventory.ts"; // WS06 media
 import { ventureBodyReader, ventureStores, ventureTables } from "../anonymo/ventures/inventory.ts"; // WS11 Ventures
+import { keySafeAddressReader, keySafeBodyReader, keySafeTables } from "../anonymo/keysafe/inventory.ts";
+import { codesAddressReader, codesBodyReader, codesTables } from "../anonymo/codes/inventory.ts";
 import { webhookTables } from "./webhooks.ts"; // V86: retained webhook configuration and attempt metadata.
 import { facilitatorTables } from "./facilitator.ts"; // v6 F: hosted x402 facilitator.
 import { x402RecoveryTables } from "./x402-recovery.ts";
@@ -8,7 +12,7 @@ import { refusalTables } from "./refusal.ts"; // Anonymo WS03
 import { canonicalJson, sha256 } from "../lib/util.ts";
 import { columnFlags, informationSchemaType } from "./rules.ts";
 import { schemaTables, type SchemaTable } from "./schema.ts";
-import { EXTERNAL } from "./outside.ts";
+import { EXTERNAL, freeRateLimit, lifeboatAddressReader, lifeboatBodyReader } from "./outside.ts";
 import { billingTables } from "./tables/billing.ts";
 import { chainTables } from "./tables/chain.ts";
 import { characterTables } from "./tables/characters.ts";
@@ -29,7 +33,7 @@ import { CATEGORIES, CATEGORY_INFO, type AboutRequest, type ColumnDoc, type Exte
 
 export const INVENTORY_FORMAT = "anonymo.data-inventory/1";
 
-export const TABLE_DOCS: Record<string, TableDoc> = { ...webhookTables, ...requestTables, ...billingTables, ...receiptTables, ...keyTables, ...providerTables, ...chainTables, ...operationTables, ...characterTables, ...x402RecoveryTables, ...facilitatorTables, ...refusalTables, ...mediaTables, ...anonymoReceiptTables, ...ventureTables };
+export const TABLE_DOCS: Record<string, TableDoc> = { ...webhookTables, ...requestTables, ...billingTables, ...receiptTables, ...keyTables, ...providerTables, ...chainTables, ...operationTables, ...characterTables, ...x402RecoveryTables, ...facilitatorTables, ...refusalTables, ...mediaTables, ...anonymoReceiptTables, ...ventureTables, ...keySafeTables, ...codesTables, ...freeTables, ...complianceTables };
 describeAnonymoMoney(TABLE_DOCS); // WS05: keys, deposits, withdrawals
 describeAbuse(TABLE_DOCS); // Anonymo WS02: abuse inbox, hash blocks, preservation vault
 export { EXTERNAL };
@@ -283,18 +287,31 @@ export function buildInventory(schema: SchemaTable[] = schemaTables(), docs: Rec
 }
 
 /** The deployed inventory describes the schema and stores used by enabled routes. The build still audits every table. */
-export function deployedInventory(venturesEnabled: boolean): InventoryDocument {
-  if (venturesEnabled) return buildInventory();
-  const active = (name: string) => !Object.hasOwn(ventureTables, name);
+// Optional features: what each one adds to the deployed inventory only while its switch is on.
+const OPTIONAL = {
+  keySafe: { tables: keySafeTables, address: [keySafeAddressReader], body: [keySafeBodyReader], limiters: ["key-safe:"] },
+  codes: { tables: codesTables, address: [codesAddressReader], body: [codesBodyReader], limiters: ["codes:"] },
+  lifeboat: { tables: {}, address: [lifeboatAddressReader], body: [lifeboatBodyReader], limiters: ["lifeboat:check:"] },
+  freeTier: { tables: freeTables, address: [freeAddressReader], body: [], limiters: [freeRateLimit.limiterPrefix ?? ""] },
+  compliance: { tables: complianceTables, address: [], body: [], bodyFiles: ["src/anonymo/region/compliance.ts"], limiters: ["age-proof:"] },
+} satisfies Record<string, { tables: Record<string, unknown>; address: unknown[]; body: unknown[]; bodyFiles?: string[]; limiters: string[] }>;
+
+export function deployedInventory(features: { ventures: boolean } & Partial<Record<keyof typeof OPTIONAL, boolean>>): InventoryDocument {
+  const venturesEnabled = features.ventures;
+  const off = (Object.keys(OPTIONAL) as (keyof typeof OPTIONAL)[]).filter((name) => !features[name]).map((name) => OPTIONAL[name]);
+  if (venturesEnabled && off.length === 0) return buildInventory();
+  const active = (name: string) => (venturesEnabled || !Object.hasOwn(ventureTables, name)) && off.every((o) => !Object.hasOwn(o.tables, name));
   return buildInventory(
     schemaTables().filter((table) => active(table.name)),
     Object.fromEntries(Object.entries(TABLE_DOCS).filter(([name]) => active(name))),
     {
       ...EXTERNAL,
-      bodyReaders: EXTERNAL.bodyReaders.filter((reader) => reader !== ventureBodyReader),
-      otherStores: EXTERNAL.otherStores.filter((store) => !ventureStores.includes(store)),
+      redis: { ...EXTERNAL.redis, families: EXTERNAL.redis.families.filter((family) => off.every((o) => !o.limiters.includes(family.limiterPrefix ?? ""))) },
+      addressReaders: EXTERNAL.addressReaders.filter((reader) => off.every((o) => !(o.address as unknown[]).includes(reader))),
+      bodyReaders: EXTERNAL.bodyReaders.filter((reader) => (venturesEnabled || reader !== ventureBodyReader) && off.every((o) => !(o.body as unknown[]).includes(reader) && !("bodyFiles" in o && o.bodyFiles.includes(reader.file)))),
+      otherStores: EXTERNAL.otherStores.filter((store) => venturesEnabled || !ventureStores.includes(store)),
     },
-    "active gateway schema",
+    venturesEnabled ? undefined : "active gateway schema",
   );
 }
 

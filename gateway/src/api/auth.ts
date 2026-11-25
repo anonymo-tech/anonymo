@@ -1,6 +1,8 @@
 import { and, eq, sql } from "drizzle-orm";
 import { recoverMessageAddress, type Hex } from "viem";
 import type { Ctx } from "../context.ts";
+import type { Config } from "../config.ts";
+import type { Tx } from "../db/client.ts";
 import { accounts, chainEvents, keys } from "../db/schema.ts";
 import { deriveKey, KEY_RE } from "../chain/keys.ts";
 import { fail } from "../lib/errors.ts";
@@ -36,29 +38,34 @@ export function bearer(header: string | undefined | null) {
   return m?.[1] ?? null;
 }
 
-/** Register a root key (its own account). Idempotent. Claims any deposits already made to it. */
-export async function registerRootKey(ctx: Ctx, secret: string, name = "") {
+/** Provision a root key in the caller's transaction. Fresh voucher keys are credited before becoming visible. */
+export async function insertRootKey(tx: Tx, cfg: Pick<Config, "limits">, secret: string, name = "") {
   const d = deriveKey(secret);
   const accountId = accountIdFor(d.chainKeyHash);
-  await ctx.db.transaction(async (tx) => {
-    await ensureAccount(tx, accountId, "key");
-    await tx
-      .insert(keys)
-      .values({
-        keyHash: d.keyHash,
-        chainKeyHash: d.chainKeyHash,
-        keyAddress: d.keyAddress,
-        accountId,
-        name,
-        label: d.label,
-        management: true,
-        rpm: ctx.cfg.limits.defaultRpm || null,
-        tpm: ctx.cfg.limits.defaultTpm || null,
-      })
-      .onConflictDoNothing();
-  });
-  await processEvents(ctx, { chainKeyHash: d.chainKeyHash });
-  const [row] = await ctx.db.select().from(keys).where(eq(keys.keyHash, d.keyHash));
+  await ensureAccount(tx, accountId, "key");
+  const inserted = await tx
+    .insert(keys)
+    .values({
+      keyHash: d.keyHash,
+      chainKeyHash: d.chainKeyHash,
+      keyAddress: d.keyAddress,
+      accountId,
+      name,
+      label: d.label,
+      management: true,
+      rpm: cfg.limits.defaultRpm || null,
+      tpm: cfg.limits.defaultTpm || null,
+    })
+    .onConflictDoNothing()
+    .returning({ keyHash: keys.keyHash });
+  return { accountId, keyHash: d.keyHash, chainKeyHash: d.chainKeyHash, inserted: inserted.length > 0 };
+}
+
+/** Register a root key (its own account). Idempotent. Claims any deposits already made to it. */
+export async function registerRootKey(ctx: Ctx, secret: string, name = "") {
+  const { chainKeyHash, keyHash } = await ctx.db.transaction((tx) => insertRootKey(tx, ctx.cfg, secret, name));
+  await processEvents(ctx, { chainKeyHash });
+  const [row] = await ctx.db.select().from(keys).where(eq(keys.keyHash, keyHash));
   return row;
 }
 

@@ -1,5 +1,8 @@
+import { freeAddressReader } from "../anonymo/freetier/inventory.ts";
 import { mediaBodyReader, transcriptionBodyReader } from "../anonymo/media/inventory.ts"; // WS06 media
 import { ventureBodyReader, ventureStores } from "../anonymo/ventures/inventory.ts"; // WS11 Ventures
+import { keySafeAddressReader, keySafeBodyReader } from "../anonymo/keysafe/inventory.ts";
+import { codesAddressReader, codesBodyReader } from "../anonymo/codes/inventory.ts";
 import { anonymoMoneyAddressReader, anonymoMoneyBodyReaders } from "./anonymo-money.ts"; // WS05
 import { modelAlternativesReader } from "./model-alternatives.ts"; // B121
 import { abuseBodyReader } from "../anonymo/abuse/privacy.ts"; // Anonymo WS02
@@ -44,13 +47,71 @@ function limit(o: { prefix: string; shape: string; purpose: string; holds: Redis
   };
 }
 
+export const freeRateLimit = limit({
+  prefix: "free:",
+  shape: "free:<counter>[:<daily address digest>]",
+  purpose: "Limits free chat challenges and proofs. Recent challenge volume and invalid proofs raise puzzle difficulty.",
+  holds: "digest",
+  seconds: 60,
+  evidence: [ev("src/anonymo/freetier/routes.ts", "ctx.limiter.take(`free:${bucket}`, amount, max, WINDOW)")],
+});
+
 const ADDRESS_NOTE = "The caller's network address is part of the key.";
 
 const redisFamilies: RedisFamily[] = [
   anonymousRateFamily, // HD1
+  limit({
+    prefix: "key-safe:",
+    shape: "key-safe:<operation>:<minute-scoped address HMAC>",
+    purpose: "Limits passkey backup saves, lookups and deletions per caller.",
+    holds: "digest",
+    seconds: 60,
+    evidence: [ev("src/anonymo/keysafe/routes.ts", "await ctx.limiter.take(`key-safe:${operation}:${bucket}`")],
+  }),
+  limit({
+    prefix: "codes:",
+    shape: "codes:<redeem or list>:<keyed digest>",
+    purpose: "Voucher redemption and reseller batch-list attempts per minute.",
+    holds: "digest",
+    seconds: 60,
+    evidence: [ev("src/anonymo/codes/routes.ts", 'ctx.limiter.take(`codes:${action}:${digest}`, 1, 15, 60_000)')],
+  }),
+  limit({
+    prefix: "lifeboat:check:",
+    shape: "lifeboat:check:<minute-scoped address HMAC>",
+    purpose: "Limits Lifeboat card checks per caller, so the floor can't be used as a free classifier.",
+    holds: "digest",
+    seconds: 60,
+    evidence: [ev("src/anonymo/lifeboat/routes.ts", "await ctx.limiter.take(`lifeboat:check:${bucket}`")],
+  }),
+  freeRateLimit,
+  limit({
+    prefix: "age-proof:",
+    shape: "age-proof:<key hash>",
+    purpose: "Age proof submissions per minute for each key.",
+    holds: "key-hash",
+    seconds: 60,
+    evidence: [ev("src/anonymo/region/compliance.ts", "ctx.limiter.take(`age-proof:${key.keyHash}`, 1, 5, 60_000)")],
+  }),
 
   laneReportLimit, // Lane report
   ...facilitatorRedisFamilies, // v6 F
+  limit({
+    prefix: "memory-sync:grant:",
+    shape: "memory-sync:grant:<account ID>",
+    purpose: "Limits blinded grant issuance to funded accounts. The counter has no vault ID or grant.",
+    holds: "account",
+    seconds: 86_400,
+    evidence: [ev("src/anonymo/memory-sync/routes.ts", "memory-sync:grant:")],
+  }),
+  limit({
+    prefix: "memory-sync:vault:",
+    shape: "memory-sync:vault:<vault ID>",
+    purpose: "Limits operations on an enabled memory vault. The counter has no funding key or account.",
+    holds: "digest",
+    seconds: 60,
+    evidence: [ev("src/anonymo/memory-sync/routes.ts", "memory-sync:vault:")],
+  }),
 
   limit({
     prefix: "ip:",
@@ -175,7 +236,8 @@ const redisFamilies: RedisFamily[] = [
       ev("src/gateway/cache.ts", "await this.redis.set(`cache:${key}`, JSON.stringify({ payload, upstream: upstream.toString() }), \"PX\", ttlS * 1000);"),
       ev("src/gateway/cache.ts", "const payload = this.seal(scope, response);"),
       ev("src/api/chat.ts", "validateCacheTtl(body, ctx.cfg.gateway.cacheTtlS);"),
-      ev("src/api/chat.ts", "const cacheMode: CacheMode | null = !strict && !resolved", "Never used for a call with a disclosure ceiling, a restricted model variant or a stream."),
+      ev("src/api/chat.ts", "!moderatedOnly && !strict && !resolved", "Never used for a call with a disclosure ceiling, a restricted model variant or a stream."),
+      ev("src/api/chat.ts", "const cacheMode: CacheMode | null = !ctx.cfg.features.compliance && !moderatedOnly", "Disabled with region compliance, a disclosure ceiling, a restricted model variant or a stream."),
     ],
   },
   {
@@ -209,7 +271,26 @@ const redisFamilies: RedisFamily[] = [
   x402RecoveryFamily,
 ];
 
+export const lifeboatAddressReader: Touchpoint = {
+  file: "src/anonymo/lifeboat/routes.ts",
+  reads: "The caller's address for the card check rate limit.",
+  then: "Counts card checks using a short-lived, keyed digest of the address.",
+  kept: "Only a minute-scoped HMAC digest in the rate limiter.",
+  evidence: [{ file: "src/anonymo/lifeboat/routes.ts", contains: "const bucket = createHmac" }],
+};
+
 const addressReaders: Touchpoint[] = [
+  keySafeAddressReader,
+  codesAddressReader,
+  lifeboatAddressReader, // Everyday 23
+  freeAddressReader,
+  {
+    file: "src/anonymo/askmo/routes.ts",
+    reads: "When Ask Mo is enabled, the caller address from the shared ingress helper for keys with an IP allowlist.",
+    then: "Compared in memory with that key's allowlist before an Ask Mo or Second Opinion call.",
+    kept: "The check retains no address and sends none to the search provider.",
+    evidence: [ev("src/anonymo/askmo/routes.ts", "policy?.ipAllow?.length ? clientIp")],
+  },
   anonymoMoneyAddressReader, // WS05: an Anonymo key's IP allowlist
   ...hardeningAddresses, // HD1
   facilitatorAddressReader, // v6 F
@@ -232,8 +313,8 @@ const addressReaders: Touchpoint[] = [
     file: "src/api/common.ts",
     reads: "The selected client address from the shared ingress helper: socket by default, the trusted hop counted from the right when TRUST_PROXY is on, or CF-Connecting-IP when the enabled origin lock secret is valid.",
     then: "Returned to a caller as the key of a per-address rate limit (addressBucket).",
-    kept: "Not written to Postgres and not logged. It exists in Redis only as part of the rate-limit keys listed above, for at most an hour.",
-    evidence: [ev("src/api/common.ts", "export function clientIp(c: Context, trustProxy = false)"), ev("src/api/common.ts", "return { id: clientIp(c, cfg.trustProxy), scale: (limit) => limit };")],
+    kept: "The rate-limit keys expire within an hour. With region compliance enabled they use a keyed digest of the address.",
+    evidence: [ev("src/api/common.ts", "export function clientIp(c: Context, trustProxy = false)"), ev("src/api/common.ts", "cfg.features.compliance ? hmac(cfg.appSecret, `address-limit:${ip}`) : ip")],
   },
   {
     file: "src/api/chat.ts",
@@ -280,11 +361,53 @@ const addressReaders: Touchpoint[] = [
   },
 ];
 
+export const lifeboatBodyReader: ExternalDoc["bodyReaders"][number] = {
+  file: "src/anonymo/lifeboat/routes.ts",
+  carries: "prompt-or-answer",
+  reads: "Card text, including greetings and lorebook entries, for a pre-import safety check.",
+  then: "Checks the text with the configured floor classifiers and returns a verdict. The check needs no key and creates no charge.",
+  kept: "No card text. A blocked card leaves the same minimal floor hit record as chat (hash, length, category, in memory unless reported). Each configured guard provider's own retention applies.",
+  evidence: [ev("src/anonymo/lifeboat/routes.ts", "await c.req.json()"), ev("src/anonymo/lifeboat/routes.ts", "ctx.anonymo.floor.check(")],
+};
+
+
 const bodyReaders: ExternalDoc["bodyReaders"] = [
+  keySafeBodyReader,
+  codesBodyReader,
+  {
+    file: "src/anonymo/askmo/routes.ts",
+    carries: "prompt-or-answer",
+    reads: "When Ask Mo is enabled, the question and optional topic in the request body.",
+    then: "The floor checks the prompt before search or model dispatch. Ask Mo supplies a bounded search query with recognizable identifiers stripped. No caller headers or key are sent to the search service. Search results go to the chat model as numbered sources. Second Opinion sends the question through the council, where the judge compares the proposals that answered.",
+    kept: "The question, results, answer and comparison stay in gateway memory for the call. The gateway records receipt metadata and exchange hashes. Ask Mo skips the response cache and customer trace export. Search services receive the query under their own data policies.",
+    evidence: [
+      ev("src/anonymo/askmo/routes.ts", "const { question, topic = null } = await readJson(c);"),
+      ev("src/api/chat.ts", "webSearch.query = askMoQuery(askMoAnswer.question);"),
+      ev("src/api/chat.ts", "if (!p.meta.askMo && billing.key?.tracing"),
+      ev("src/api/council.ts", "comparison = choice?.comparison;"),
+    ],
+  },
+  {
+    file: "src/anonymo/region/compliance.ts",
+    carries: "payment-or-signature",
+    reads: "An opaque proof of age submitted to POST /v1/compliance/age-proof.",
+    then: "Verifies the over-18 claim against the authenticated key.",
+    kept: "A 32-byte proof nullifier, the key hash and the verification time.",
+    evidence: [ev("src/anonymo/region/compliance.ts", "verifier.verify(proof, key.keyHash)")],
+  },
   ...anonymoMoneyBodyReaders, // WS05
   mediaBodyReader, // WS06 media
   transcriptionBodyReader,
   ventureBodyReader, // WS11 Ventures
+  lifeboatBodyReader,
+  {
+    file: "src/anonymo/memory-sync/routes.ts",
+    carries: "settings",
+    reads: "A blinded grant request, an unblinded grant, or bounded encrypted Vault Memory records.",
+    then: "A funded-key request signs a blinded grant. A separate request validates the grant and enables an anonymous vault credential. Sync accepts that credential.",
+    kept: "The vault's credential verifier, item UUIDs, versions, ciphertext and tombstones. Grants and funding key associations are never stored.",
+    evidence: [ev("src/anonymo/memory-sync/routes.ts", "parse(await readJson(c))")],
+  },
   modelAlternativesReader, // B121
   abuseBodyReader, // Anonymo WS02: takedown inbox
   refusalSettingReader, // Anonymo WS03
@@ -311,7 +434,7 @@ const bodyReaders: ExternalDoc["bodyReaders"] = [
     reads: "The whole JSON body of a chat or text completion: the messages, the model and the parameters (readJson).",
     then: "Read in memory to route the call on every lane: validated, checked against guardrails, priced, then sent to the provider chosen. The request is hashed (request_sha256) and the answer is hashed (response_sha256). Streaming answers are passed through chunk by chunk. Unless the refusal catch is off, the last user turn and the first ~160 tokens of the answer are read by the refusal classifier: in process on the attested and private lanes, otherwise also by the operator's classifier endpoint (ANONYMO_REFUSAL_URL) when one is configured; the classifier keeps nothing.",
     kept: "Not stored. Kept in memory for the length of the call. The opt-in response cache and batch content are kept sealed outside the database (see the Redis section), and a failed provider attempt can keep up to 200 characters of that provider's own error message.",
-    evidence: [ev("src/api/chat.ts", "const body = await readJson(c);"), ev("src/api/chat.ts", "const bodySha = requestHash(body);"), ev("src/api/chat.ts", "response_sha256: sha256(p.responseText),"), ev("src/api/chat.ts", "const local = disc.lane !== \"public\" || requiresAttestedUpstream(body, disc as DisclosureRequest);")],
+    evidence: [ev("src/api/chat.ts", "} : await readJson(c);"), ev("src/api/chat.ts", "const bodySha = requestHash(body);"), ev("src/api/chat.ts", "response_sha256: sha256(p.responseText),"), ev("src/api/chat.ts", "const local = disc.lane !== \"public\" || requiresAttestedUpstream(body, disc as DisclosureRequest);")],
   },
   {
     file: "src/api/batches.ts",
@@ -496,10 +619,10 @@ export const EXTERNAL: ExternalDoc = {
       "Error messages from libraries and upstream services, each cut to 200 characters where a call site truncates them. Configured private chain RPC URLs, including paths and queries on the same host, are redacted before log emission; chain transport failures are redacted before callers truncate them.",
     ],
     neverRecords: [
-      noLog("Client network addresses. No log call passes one; addresses are used for rate limits and direct private-network ingress checks.", "src/api/common.ts", "return { id: clientIp(c, cfg.trustProxy), scale: (limit) => limit };"),
+      noLog("Client network addresses. No log call passes one; addresses are used for rate limits and direct private-network ingress checks.", "src/api/common.ts", "const ip = clientIp(c, cfg.trustProxy);"),
       noLog("Request or response bodies and prompts. The unhandled-error line takes the path and the error, not the body.", "src/app.ts", "log.error(\"unhandled error\", { path: new URL(c.req.url).pathname"),
       noLog("Request headers, cookies and API keys. The unhandled-error line takes the path and the error only.", "src/app.ts", "log.error(\"unhandled error\", { path: new URL(c.req.url).pathname"),
-      noLog("Query strings: only the pathname of a failing request is logged.", "src/app.ts", ".pathname, error: (err as Error)?.message"),
+      noLog("Query strings: only the pathname of a failing request is logged.", "src/app.ts", "new URL(c.req.url).pathname"),
     ],
     caveats: [
       "The text of an unexpected exception is logged as the library wrote it (src/app.ts unhandled error, src/lib/process-guard.ts uncaught exception, job failures). No code path puts request text into an error message on purpose, but only configured private chain RPC URLs are filtered, and a library error could quote a fragment of what it was parsing.",
@@ -574,7 +697,7 @@ export const EXTERNAL: ExternalDoc = {
       ttl: "In memory for seconds, or until retries end; kept by the destination the key's owner chose.",
       requestText: "answer-text",
       evidence: [
-        ev("src/api/chat.ts", "if (billing.key?.tracing && shouldExportTrace({ lane: p.disc.lane, privateLaneRequest: privateLane, privateRoute }))"),
+        ev("src/api/chat.ts", "if (!p.meta.askMo && billing.key?.tracing && shouldExportTrace({ lane: p.disc.lane, privateLaneRequest: privateLane, privateRoute }))"),
         ev("src/services/tracing.ts", "export function shouldExportTrace(o: { lane: string; privateLaneRequest: boolean; privateRoute: boolean }) {"),
         ev("src/services/tracing.ts", "if (!stored.include_content) {"),
       ],

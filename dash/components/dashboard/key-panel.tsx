@@ -8,12 +8,15 @@ import { setupHref, setupReturn } from '@/lib/anonymo/setup-return';
 import { useEffect, useState } from 'react';
 import { chainName } from '@/lib/anonymo/chains';
 import { useAnonymo } from '../anonymo-provider';
+import { NewKeyReveal } from './new-key-reveal';
 import { CopyButton } from '../copy-button';
 import { describeError } from '@/lib/anonymo/client';
 import { dashboardSignup } from '@/lib/anonymo/dashboard-signup';
 import { isApiKey, maskKey } from '@/lib/anonymo/key-store';
+import { updateOn } from '@/lib/anonymo/updates';
 import { musdToUsdString, parseUsd } from '@/lib/anonymo/money';
 import type { CreateKeyResponse, DepositContracts, KeyCapsInput } from '@/lib/anonymo/types';
+import { KeySafeControls } from './key-safe-controls';
 
 /** Create a key (shown once), paste an existing one, or forget it on this device. No identity fields anywhere. */
 export function KeyPanel() {
@@ -25,13 +28,12 @@ export function KeyPanel() {
   const nextAction = !target || target.href === '/dashboard/chat' ? 'Open chat' : `Return to ${target.label}`;
   const fromChat = target?.href.split('?')[0] === '/dashboard/chat';
   const [created, setCreated] = useState<CreateKeyResponse | null>(null);
-  const [remember, setRemember] = useState(true);
-  const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [dailyCap, setDailyCap] = useState('');
   const [sealedOnly, setSealedOnly] = useState(false);
   const [pasted, setPasted] = useState('');
+  const [remember, setRemember] = useState(true);
   const [method, setMethod] = useState<'create' | 'connect'>('create');
 
   async function create() {
@@ -55,7 +57,6 @@ export function KeyPanel() {
       // device is never replaced until then: it may hold credit.
       if (!key) setKey(fresh.key, false);
       setCreated(fresh);
-      setSaved(false);
     } catch (e) {
       setError(describeError(e));
     } finally {
@@ -64,8 +65,9 @@ export function KeyPanel() {
   }
 
   if (!ready) return null;
+  const keySafe = updateOn('keysafe', demo);
 
-  function finishCreating(href: string) {
+  function finishCreating(href: string, remember: boolean) {
     if (!created) return;
     setKey(created.key, remember);
     setCreated(null);
@@ -75,49 +77,12 @@ export function KeyPanel() {
   if (created)
     return (
       <div className="panel-stack">
-        <section className="key-reveal" aria-labelledby="key-title">
-          <h2 id="key-title">Your key. This is the only time it is shown.</h2>
-          <p className="muted">
-            Anonymo keeps only a hash of it and cannot show it again or recover
-            it. Anyone holding this key can spend its credit, so store it like a
-            password.
-          </p>
-          <code>{created.key}</code>
-          <div className="row">
-            <CopyButton text={created.key} label="Copy key" />
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={remember}
-                onChange={(e) => setRemember(e.target.checked)}
-              />
-              Remember on this device
-            </label>
-          </div>
-          <label className="checkbox">
-            <input
-              type="checkbox"
-              checked={saved}
-              onChange={(e) => setSaved(e.target.checked)}
-            />
-            I have stored this key somewhere safe
-          </label>
-          <div className="row">
-            {fromChat && (
-              <button type="button" className="btn btn-primary" disabled={!saved} onClick={() => finishCreating(fundsHref)}>
-                Add funds
-              </button>
-            )}
-            <button
-              type="button"
-              className={fromChat ? 'btn' : 'btn btn-primary'}
-              disabled={!saved}
-              onClick={() => finishCreating(nextHref)}
-            >
-              {nextAction}
-            </button>
-          </div>
-        </section>
+        <NewKeyReveal secret={created.key} action={nextAction}
+          remember={remember} onRememberChange={setRemember}
+          onContinue={(remember) => finishCreating(nextHref, remember)}
+          onAddFunds={fromChat ? (remember) => finishCreating(fundsHref, remember) : undefined}
+          safe={keySafe ? (markSaved) => <KeySafeControls client={client} demo={demo} apiKey={created.key} onSaved={markSaved} /> : undefined}
+        />
       </div>
     );
 
@@ -142,6 +107,7 @@ export function KeyPanel() {
             <Link className="btn" href={fundsHref}>
               Add funds
             </Link>
+            {keySafe && <CopyButton text={key} label="Copy key" />}
             <button type="button" className="btn btn-danger" onClick={clearKey}>
               Forget key on this device
             </button>
@@ -150,6 +116,7 @@ export function KeyPanel() {
             Forgetting only removes it from this browser. The key and its credit
             keep working.
           </p>
+          {keySafe && <KeySafeControls client={client} demo={demo} apiKey={key} canRemove />}
         </section>
       ) : (
         <section className="panel">
@@ -267,6 +234,7 @@ export function KeyPanel() {
               </label>
             </>
           )}
+          {keySafe && <KeySafeControls client={client} demo={demo} apiKey={null} onUnlocked={(restored) => setKey(restored, remember)} />}
           {error && (
             <p className="error-text" role="alert">
               {error}

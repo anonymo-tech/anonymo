@@ -118,6 +118,7 @@ const routeSchema = z.strictObject({
   /** A model ID of its own (for example glm-5.3-flash-uncensored). Never for a Venice route. */
   direct_id: z.string().regex(/^[a-z0-9][a-z0-9._-]{1,80}$/).optional(),
   hf_repo: z.string().optional(),
+  is_moderated: z.boolean().optional(),
   features: z.array(z.string()).default([]),
   params: z.array(z.string()).optional(),
   enabled: z.boolean().default(true),
@@ -233,6 +234,7 @@ export function staticModelsOf(r: RouteSpec): Record<string, unknown>[] {
     pricing: { prompt: perToken(r.price.in), completion: perToken(r.price.out) },
     supported_sampling_parameters: r.params ?? ["temperature", "top_p", "stop", "seed", "max_tokens", "frequency_penalty", "presence_penalty"],
     supported_features: r.features,
+    ...(r.is_moderated ? { is_moderated: true } : {}),
   }));
 }
 

@@ -858,6 +858,75 @@ test('a SillyTavern zip: cards and chats find each other by folder, whatever ord
   assert.deepEqual([character.name, character.built, character.chats[0].title], ['Juniper of the Desk', false, 'night one']);
 });
 
+test('Lifeboat checks and deduplicates V2 and V3 PNG and JSON cards by normalized hash in a ZIP', async () => {
+  const v2 = buildCard({ source: 'sillytavern', name: 'Stone Lantern', greeting: 'Welcome to the ridge.' });
+  const v3 = {
+    spec: 'chara_card_v3', spec_version: '3.0',
+    data: {
+      ...v2.data, name: 'Sky Lantern', alternate_greetings: ['Walk with me.'], group_only_greetings: ['Hello crew.'],
+      character_book: { entries: [{ keys: ['ridge'], content: 'The observatory overlooks the ridge.', enabled: true }] },
+    },
+  };
+  const blocked = { ...v3, data: { ...v3.data, name: 'Storm Lantern', alternate_greetings: ['fixture-floor-block-marker'] } };
+  const zip = zipOf([
+    { name: 'characters/storm.json', data: JSON.stringify(blocked) },
+    { name: 'characters/stone.png', data: writeCardToPng(v2) },
+    { name: 'characters/stone-copy.json', data: JSON.stringify(v2) },
+    { name: 'characters/sky.png', data: writeCardToPng(v3) },
+    { name: 'characters/sky-copy.json', data: JSON.stringify({ data: v3.data, spec: v3.spec }) },
+  ]);
+  const disk = memoryDisk();
+  const seen = [];
+  const checkCard = async (card) => {
+    seen.push(card);
+    return card.data.alternate_greetings.includes('fixture-floor-block-marker') ? 'Card rejected. Fixture category.' : null;
+  };
+  const files = [{ name: 'cards.zip', blob: zip }];
+  const result = await importFiles(files, disk, false, { ...options(), checkCard });
+  assert.equal(result.duplicates, 2);
+  assert.equal(result.characters, 2);
+  assert.equal(seen.length, 3);
+  assert.deepEqual(result.skipped, [{ name: 'storm.json', why: 'Card rejected. Fixture category.' }]);
+  const view = await loadArchive(disk, false);
+  const stored = view.characters.find((character) => character.name === 'Sky Lantern').card;
+  assert.equal(stored.spec, 'chara_card_v3', 'ccv3 wins over the PNG’s V2 fallback');
+  assert.deepEqual(stored.data.group_only_greetings, ['Hello crew.']);
+  const built = buildCharacterMessages(stored, [{ role: 'user', content: 'Show me the ridge.' }], { greeting: 1 });
+  assert.match(built.messages[0].content, /The observatory overlooks the ridge/);
+  assert.equal(built.messages[1].content, 'Walk with me.');
+  const again = await importFiles(files, disk, false, { ...options(), checkCard });
+  assert.equal(again.characters, 0);
+  assert.equal(again.duplicates, 4);
+  assert.deepEqual(await loadArchive(disk, false), view);
+});
+
+test('Lifeboat links a chat through a duplicate card alias and never recreates a rejected card from its chats', async () => {
+  const card = buildCard({ source: 'sillytavern', name: 'Stone Lantern', greeting: 'Welcome to the ridge.' });
+  const denied = buildCard({ source: 'sillytavern', name: 'Cloud Lantern', description: 'fixture-floor-block-marker' });
+  const chat = (character, key) => stChat({ chat_metadata: {}, user_name: 'unused', character_name: character }, [
+    { name: character, is_user: false, mes: 'Welcome to the ridge.' },
+    { name: 'Visitor', is_user: true, mes: `We painted the telescope ${key}.` },
+  ]);
+  const first = { name: 'stone.json', blob: new Blob([JSON.stringify(card)]) };
+  const disk = memoryDisk();
+  const checkCard = async (candidate) => candidate.data.description === denied.data.description ? 'Card rejected. Fixture category.' : null;
+  await importFiles([first], disk, false, { ...options(), checkCard });
+  const zip = zipOf([
+    { name: 'chats/alias/night.jsonl', data: chat('Unknown', 'green') },
+    { name: 'chats/denied/night.jsonl', data: chat('Cloud Lantern', 'silver') },
+    { name: 'characters/alias.json', data: JSON.stringify(card) },
+    { name: 'characters/denied.json', data: JSON.stringify(denied) },
+  ]);
+  const result = await importFiles([{ name: 'cards.zip', blob: zip }], disk, false, { ...options(), checkCard });
+  assert.deepEqual([result.duplicates, result.chats, result.messages], [1, 1, 2]);
+  const { characters, boards } = await loadArchive(disk, false);
+  assert.deepEqual(characters.map(({ name }) => name), ['Stone Lantern']);
+  assert.equal((await disk.keys('chats', 'live:')).length, 1);
+  const prompt = buildCharacterMessages(characters[0].card, [{ role: 'user', content: 'Do you remember?' }], { memory: boardMemory(boards[characters[0].id]) });
+  assert.match(prompt.messages[0].content, /painted the telescope green/);
+  assert.doesNotMatch(JSON.stringify(boards), /silver/);
+});
+
 test('a ChatGPT export: every conversation under one character, with its settings and saved memories', async () => {
   const second = { ...gptConversation(), conversation_id: 'conv-0002', title: 'A later chat', update_time: 1_790_500_000 };
   const json = JSON.stringify([{}, gptConversation(), second, { title: 'no messages', mapping: {}, current_node: null }]);

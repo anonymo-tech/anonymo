@@ -1,3 +1,4 @@
+import { safeAskMoFinish } from "../anonymo/askmo/answer.ts";
 import { inheritRoutePlan, routeResponseHeaders } from "../router/explain.ts"; // V84
 import { randomBytes } from "node:crypto";
 import type { Context } from "hono";
@@ -21,6 +22,7 @@ import {
   attestationRefOf,
   compareOutputs,
   judgeMessages,
+  type CouncilComparison,
   labelFor,
   outputText,
   parseJudgeChoice,
@@ -86,6 +88,7 @@ type Base = {
   /** Routing preferences with the disclosure ceiling and lane already folded in. */
   prefs: ProviderPrefs;
   disc: DisclosureRequest;
+  secondOpinion?: boolean;
 };
 
 // ---- Request checks --------------------------------------------------------------------------------
@@ -490,7 +493,7 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
   let { prefs, disc } = p;
   validateMulti(ctx, kind, body);
   const spec = parseAnonymoSpec(body.council);
-  const mode: AnonymoCouncilMode = parseCouncilMode(c.req.header(COUNCIL_MODE_HEADER), spec.mode, "merge");
+  const mode: AnonymoCouncilMode = p.secondOpinion ? "select" : parseCouncilMode(c.req.header(COUNCIL_MODE_HEADER), spec.mode, "merge");
   const sealed = sealedRequired({ header: c.req.header(SEALED_HEADER), councilSealed: spec.sealed }) || disc.lane === "attested" || await keySealedOnly(ctx.db, key?.keyHash);
   // A sealed or attested council is never read by the hosted guards (GHSA-rch8-pxr3-p8gc).
   refuseConfidentialOutsideEnclave(ctx.anonymo.floor, sealed || disc.lane !== "public" || namesPrivateModel(body) || (body.provider as { private?: unknown } | undefined)?.private === true);
@@ -558,8 +561,15 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
       .slice(0, COUNCIL_PROPOSERS)
       .map((g) => ({ seat: routePool, targets: [{ model: routePool.model, ordered: g.routes }], family: g.family }));
   } else {
-    const famOf = (s: Seat) => familyOf(s.model, ctx.catalog.offers(s.model.id)[0] as unknown as Record<string, unknown> | undefined);
-    chosen = pickProposers(pool, famOf, (s) => !!planProposer(s)).map((s) => ({ seat: s, targets: planProposer(s)!.targets, family: famOf(s) }));
+    const family = (s: Seat, cand?: Candidate) => familyOf(s.model, cand as unknown as Record<string, unknown> | undefined);
+    const famOf = (s: Seat) => family(s, p.secondOpinion ? planProposer(s)?.targets[0]?.ordered[0] : ctx.catalog.offers(s.model.id)[0]);
+    chosen = pickProposers(pool, famOf, (s) => !!planProposer(s)).map((s) => {
+      const f = famOf(s);
+      const targets = planProposer(s)!.targets;
+      return { seat: s, family: f, targets: p.secondOpinion
+        ? targets.map((t) => ({ ...t, ordered: t.ordered.filter((cand) => family(s, cand) === f) })).filter((t) => t.ordered.length)
+        : targets };
+    });
   }
   if (chosen.length < COUNCIL_PROPOSERS) {
     const families = chosen.map((p) => p.family);
@@ -580,7 +590,7 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
   const aggSeat = resolveSeat(aggId, true)!;
   const conversation = transcript(shared.messages);
   const tag = randomBytes(8).toString("hex");
-  const skeleton = mode === "merge" ? mergeMessages(conversation, [], tag) : judgeMessages("judge", conversation, [], tag);
+  const skeleton = mode === "merge" ? mergeMessages(conversation, [], tag) : judgeMessages("judge", conversation, [], tag, p.secondOpinion);
   const aggBase: Record<string, unknown> = {
     model: aggId,
     ...(mode === "select" ? { max_tokens: JUDGE_MAX_TOKENS } : Object.fromEntries(["max_tokens", "max_completion_tokens"].filter((k) => body[k] != null).map((k) => [k, body[k]]))),
@@ -629,7 +639,7 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
   const open = new Set([...legs.map((l) => l.holdId), aggHoldId, premiumHoldId]);
   const abort = new AbortController();
   c.req.raw.signal?.addEventListener("abort", () => abort.abort(new DOMException("client disconnected", "AbortError")), { once: true });
-  const meta = { guard, middle: null, paywithNote, cacheMode: null, excluded: [...new Set(legs.flatMap((l) => planCache.get(l.model.id)?.excluded.slice(0, 10) ?? []))], route: null };
+  const meta = { guard, middle: null, paywithNote, cacheMode: null, askMo: p.secondOpinion, excluded: [...new Set(legs.flatMap((l) => planCache.get(l.model.id)?.excluded.slice(0, 10) ?? []))], route: null };
   const common = (leg: Leg, sha: string) => ({ ctx, c, body: leg.body, billing: bill, holdId: leg.holdId, t0, bodySha: sha, stream: false, kind, byok, meta, guardCfg, promptTokens: leg.promptTokens, disc, planned: null });
   const budget = (l: { hold: Pico }) => (budgetCap != null ? l.hold : undefined);
   const promptText = transcript(shared.messages);
@@ -657,6 +667,10 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
     const { results, late } = await awaitQuorum<ProposerRun>(runs, (r) => r.ok && !r.refused, { quorum: COUNCIL_QUORUM, graceMs: cfg.graceMs, onError: (e) => ({ ok: false, attempts: [], thrown: e }) });
     for (const i of late) legAborts[i].abort(new DOMException("council moved on", "AbortError"));
     if (abort.signal.aborted) throw abort.signal.reason;
+    if (p.secondOpinion) {
+      // A blocked proposal must never be passed to the judge or rerouted.
+      await Promise.all(results.map((r) => r?.ok && floorReplyCheck(ctx.anonymo.floor, replyTextOf(r.r.json), abort.signal)));
+    }
     const answered = legs.flatMap((leg, i) => {
       const r = results[i];
       return r && r.ok && !r.refused ? [{ leg, done: prepare(leg, r, guardCfg) }] : [];
@@ -675,11 +689,12 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
 
     // ---- Aggregator (merge) or judge (select) ---------------------------------------------------------------------
     const candidates = answered.map((a) => ({ label: a.leg.label, text: outputText(a.done.json) }));
-    const aggBody = { ...aggBase, messages: mode === "merge" ? mergeMessages(conversation, candidates, tag) : judgeMessages("judge", conversation, candidates, tag) };
+    const aggBody = { ...aggBase, messages: mode === "merge" ? mergeMessages(conversation, candidates, tag) : judgeMessages("judge", conversation, candidates, tag, p.secondOpinion) };
     const aggLeg: Leg = { label: aggRole, model: aggSeat.model, requested: aggId, body: aggBody, targets: aggPlan.targets, promptTokens: estimatePromptTokens(aggBody), holdId: aggHoldId, hold: aggHold };
     const ao = await callLeg(tk, { ctx, kind, billing: bill, byok, signal: abort.signal }, aggLeg);
     if (abort.signal.aborted) throw abort.signal.reason;
     if (!ao.ok) throw new ApiError(502, `The council ${aggRole} could not be reached. Nothing was charged.`, "council_aggregator_failed", { [aggRole]: { model: aggSeat.model.id, error: reasonOf(tk, ao) } });
+    if (p.secondOpinion) await floorReplyCheck(ctx.anonymo.floor, replyTextOf(ao.r.json), abort.signal);
     const agg = prepare(aggLeg, ao, guardCfg);
 
     // What the caller receives: the merged answer, or the reply the judge picked. A merge that comes back as a refusal,
@@ -687,15 +702,22 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
     let source: Done = agg;
     let selected: string | null = null;
     let reason: string | null = null;
+    let comparison: CouncilComparison | undefined;
     let outcome: "merged" | "selected" | "aggregator_refused" | "invalid_verdict" = mode === "merge" ? "merged" : "selected";
     let aggStatus: "ok" | "refused" = "ok";
     if (mode === "select") {
-      const choice = parseJudgeChoice(outputText(agg.json), answered.map((a) => a.leg.label));
+      const judgeText = outputText(agg.json);
+      const judgeRefused = p.secondOpinion && await refusedHead(agg.json);
+      const choice = judgeRefused ? null : parseJudgeChoice(judgeText, answered.map((a) => a.leg.label), p.secondOpinion);
+      comparison = choice?.comparison;
       const pick = choice ? answered.find((a) => a.leg.label === choice.label)! : answered[0];
       source = pick.done;
       selected = pick.leg.label;
       reason = choice?.reason ?? null;
-      if (!choice) outcome = "invalid_verdict";
+      if (judgeRefused) {
+        outcome = "aggregator_refused";
+        aggStatus = "refused";
+      } else if (!choice) outcome = "invalid_verdict";
     } else if (await refusedHead(agg.json)) {
       source = answered[0].done;
       selected = answered[0].leg.label;
@@ -705,7 +727,7 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
 
     // ---- The floor's reply check on what the caller would receive; a block or an unreachable guard throws, and the
     // finally below releases every hold, so nothing is charged (anonymo/floor/reply.ts).
-    await floorReplyCheck(ctx.anonymo.floor, replyTextOf(source.json), abort.signal);
+    if (!p.secondOpinion) await floorReplyCheck(ctx.anonymo.floor, replyTextOf(source.json), abort.signal);
 
     // ---- Settle: proposers that answered, the aggregator (unless it refused), then the premium -----------------------
     const fins: Fin[] = [];
@@ -799,7 +821,7 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
     if (dropped.length) extras.dropped_parameters = dropped;
     const usage = aggregateUsage(fins);
     const out = {
-      ...source.json,
+      ...(p.secondOpinion ? { choices: [{ index: 0, finish_reason: safeAskMoFinish(firstFinish(source.json).finish), message: { role: "assistant", content: source.text } }] } : source.json),
       id: requestId,
       model: ANONYMO_COUNCIL_MODEL,
       object: "chat.completion",
@@ -811,6 +833,7 @@ async function runAnonymoCouncil(tk: Toolkit, p: Base): Promise<Response> {
         outcome,
         selected,
         ...(reason ? { reason } : {}),
+        ...(comparison ? { comparison } : {}),
         sealed,
         proposers: routes.filter((r) => r.role === "proposer").map((r, i) => ({ label: labelFor(i), model: r.model, provider: r.provider, family: r.family, status: r.status, cost: r.cost, receipt_id: r.call_receipt_id ?? null })),
         [aggRole]: { model: agg.r.model.id, provider: agg.r.candidate.providerId, status: aggStatus, cost: picoToUsdString(aggFin?.charged ?? 0n), receipt_id: aggFin?.id ?? null },

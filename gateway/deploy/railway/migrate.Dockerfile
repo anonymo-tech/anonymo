@@ -11,7 +11,12 @@ COPY src/anonymo/refusal/schema.ts ./src/anonymo/refusal/schema.ts
 COPY src/facilitator/schema.ts ./src/facilitator/schema.ts
 COPY src/anonymo/abuse/schema.ts ./src/anonymo/abuse/schema.ts
 COPY src/anonymo/media/schema.ts ./src/anonymo/media/schema.ts
+COPY src/anonymo/codes/schema.ts ./src/anonymo/codes/schema.ts
+COPY src/anonymo/region/schema.ts ./src/anonymo/region/schema.ts
 COPY src/anonymo/ventures/store/schema.ts ./src/anonymo/ventures/store/schema.ts
+COPY src/anonymo/keysafe/schema.ts ./src/anonymo/keysafe/schema.ts
+COPY src/anonymo/freetier/schema.ts ./src/anonymo/freetier/schema.ts
+COPY src/anonymo/memory-sync/schema.ts ./src/anonymo/memory-sync/schema.ts
 COPY src/lib/util.ts ./src/lib/util.ts
 COPY src/chain/rpc-redaction.ts ./src/chain/rpc-redaction.ts
 COPY src/providers/headers.ts ./src/providers/headers.ts

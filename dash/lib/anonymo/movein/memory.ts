@@ -16,8 +16,7 @@ export type Patch = {
   kind: 'summary' | 'fact';
   text: string;
   pinned: boolean;
-  /** Who wrote it: a model during a build, the person, or the export it came with. */
-  by: 'model' | 'you' | 'export';
+  by: 'model' | 'you' | 'export' | 'import';
   at: number;
 };
 /** Where a build stopped, so it can carry on from the same place instead of paying for the start again. */
@@ -33,7 +32,7 @@ export const emptyBoard = (): Board => ({ patches: [] });
 const clean = (text: string) => text.replace(/\r\n?/g, '\n').trim().slice(0, PATCH_MAX_CHARS);
 
 /** A rebuild replaces only what a model wrote and the person has not pinned. */
-export const isProtected = (patch: Patch) => patch.pinned || patch.by !== 'model';
+export const isProtected = (patch: Patch) => patch.pinned || (patch.by !== 'model' && patch.by !== 'import');
 
 export const summaryOf = (board: Board) => board.patches.find((p) => p.kind === 'summary');
 
@@ -77,6 +76,20 @@ export function withExportMemory(board: Board, memory: { summary?: string; facts
     patches.push({ id: newId(), kind: 'fact', text: body, pinned: false, by: 'export', at: now });
   }
   return patches.length === board.patches.length ? board : { ...board, patches };
+}
+
+/** An extractive recap from the opening and latest messages, ready before the first reply. */
+export function withImportedHistory(board: Board, messages: FoundMessage[], newId: () => string, now: number): Board {
+  const prior = summaryOf(board);
+  if (prior && (prior.by !== 'import' || prior.pinned)) return board;
+  const picked = messages.length > 6 ? [...messages.slice(0, 2), ...messages.slice(-4)] : messages;
+  const lines = picked.flatMap((message) => {
+    const text = message.text.replace(/\s+/g, ' ').trim();
+    return text ? [`${message.role === 'user' ? 'User' : 'Character'}: ${text.length > 260 ? `${text.slice(0, 259)}…` : text}`] : [];
+  });
+  const text = clean(lines.join('\n'));
+  if (!text || text === prior?.text) return board;
+  return { ...board, patches: [{ id: prior?.id ?? newId(), kind: 'summary', text, pinned: false, by: 'import', at: now }, ...board.patches.filter((patch) => patch.kind !== 'summary')] };
 }
 
 /**

@@ -28,7 +28,16 @@ export interface ArchiveDisk {
   commit(ops: DiskOp[]): Promise<void>;
 }
 
-export type ChatHead = { id: string; title: string; source: SourceId; messages: number; createdAt?: number; updatedAt?: number };
+export type ChatHead = {
+  id: string;
+  /** The source identity when a re-import saved a new copy of the chat. Older heads use id. */
+  importKey?: string;
+  title: string;
+  source: SourceId;
+  messages: number;
+  createdAt?: number;
+  updatedAt?: number;
+};
 
 export type ArchiveCharacter = {
   /** The id the chat page knows the character by: the first 16 hex of its card's hash, as on the Characters page. */

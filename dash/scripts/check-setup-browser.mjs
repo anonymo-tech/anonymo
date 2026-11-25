@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { chromium } from 'playwright-core';
+import { useUpDemoFreeChat } from './free-chat-fixture.mjs';
 
 const origin = new URL(process.env.WORKSPACE_PREVIEW_URL ?? 'http://localhost:5173');
 assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname));
@@ -14,6 +15,7 @@ test('character chat survives key creation, funding, and reloading the original 
       const url = new URL(route.request().url());
       return url.origin === origin.origin || url.protocol === 'data:' ? route.continue() : route.abort();
     });
+    await useUpDemoFreeChat(page);
     await page.goto(new URL('/dashboard/characters', origin).href);
     await page.getByText('Demo mode.', { exact: true }).waitFor();
     const consent = page.getByRole('button', { name: 'I am 18 or older' });

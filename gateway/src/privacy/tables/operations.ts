@@ -156,6 +156,7 @@ export const operationTables: Record<string, TableDoc> = {
       "Per key family: a wallet sign-in challenge is deleted when used and any older than 10 minutes is deleted when the next challenge is made; first-chat signup markers, per-account eligibility records and daily aggregate counters have no automatic deletion. Other families are overwritten in place.",
     notes: [
       ...rushKvNotes, // ON3
+      "memory-sync:verifier:<vault ID> holds the SHA-256 verifier of the device-derived sync credential for an enabled Vault Memory vault. It has no funding key, memory secret or account association.",
       "first-chat:signup:<digest> marks a dashboard signup UUID as enrolled. first-chat:account:<account ID> records eligibility, the number of pre-dispatch attempts or a terminal outcome. A reserved or dispatched attempt carries a random claim ID. A reservation may be reclaimed after two minutes; a dispatched attempt stays spent if its worker stops.",
       "first-chat:daily:<UTC date> counts sponsored dispatches across all workers. These counters contain no account IDs, wallet addresses or conversation content.",
       "wallet-login:<nonce>: a sign-in challenge (wallet address, the router's own origin, chain id, expiry and the message to sign). Deleted when used; older ones are pruned.",

@@ -7,6 +7,7 @@ import { bearer, requireKey } from "../api/auth.ts";
 import { readJson } from "../api/common.ts";
 import { sha256 } from "../lib/util.ts";
 import { fail } from "../lib/errors.ts";
+import { isComplianceRoute } from "../anonymo/region/compliance.ts";
 
 // Allow-list by method and full path: every added route starts refused. A stored
 // restriction stays in force even when INFERENCE_KEYS_ENABLED is turned off.
@@ -24,7 +25,8 @@ export function inferenceScopeMiddleware(ctx: Ctx): MiddlewareHandler {
     for (const secret of secrets) {
       const [key] = await ctx.db.select({ keyHash: keys.keyHash, scope: keys.scope }).from(keys).where(eq(keys.keyHash, sha256(secret)));
       if (key?.scope !== "inference") continue;
-      if (!inferenceRouteAllowed(c.req.method, c.req.path)) fail(403, "Inference-only keys may call models and read only their own generations and receipts.", "inference_only");
+      const compliance = ctx.cfg.features.compliance && isComplianceRoute(c.req.method, c.req.path);
+      if (!compliance && !inferenceRouteAllowed(c.req.method, c.req.path)) fail(403, "Inference-only keys may call models and read only their own generations and receipts.", "inference_only");
       await requireKey(ctx, `Bearer ${secret}`);
       const receipt = c.req.path.match(/^\/api\/v1\/receipts\/([^/]+)(?:\/(proof|privacy))?$/);
       // keys and verify are public helper endpoints, not this key's receipts.

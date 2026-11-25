@@ -1,4 +1,5 @@
 import { internalEnv } from "../hardening/client.ts";
+import { forwardComplianceRegion } from "../anonymo/region/compliance.ts";
 import type { Context, Hono } from "hono";
 import type { Ctx } from "../context.ts";
 import { ApiError } from "../lib/errors.ts";
@@ -35,11 +36,12 @@ export function responsesRoutes(app: Hono, ctx: Ctx) {
   const create = async (c: Context): Promise<Response> => {
     const createdAt = Math.floor(Date.now() / 1000);
     const { chat, echo, stream } = chatRequestFrom(await readJson(c));
-    const headers: Record<string, string> = { "content-type": "application/json" };
+    const headers = new Headers({ "content-type": "application/json" });
     for (const name of FORWARD) {
       const v = c.req.header(name);
-      if (v !== undefined) headers[name] = v;
+      if (v !== undefined) headers.set(name, v);
     }
+    if (ctx.cfg.features.compliance) forwardComplianceRegion(c, headers);
     // The inner request has no socket of its own: hand it the caller's address so per-address limits count the caller.
     const from = clientIp(c, ctx.cfg.trustProxy);
     const res = await app.request(CHAT, { method: "POST", headers, body: JSON.stringify(chat), signal: c.req.raw.signal }, internalEnv({ requestIP: () => ({ address: from }) }));

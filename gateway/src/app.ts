@@ -19,6 +19,7 @@ import { Hono } from "hono";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { cors } from "hono/cors";
+import { FREE_PROOF_HEADER, FREE_REMAINING_HEADER, FREE_TOKEN_HEADER } from "./anonymo/freetier/pow.ts";
 import { ZodError } from "zod";
 import { loadConfig } from "./config.ts";
 import { openDatabase, type DbHandle } from "./db/client.ts";
@@ -38,7 +39,7 @@ import { chatRoutes } from "./api/chat.ts";
 import { keyPolicyMiddleware } from "./anonymo/deposits/index.ts";
 import { regionMiddleware } from "./anonymo/region/middleware.ts";
 import { regionRulesFromEnv } from "./anonymo/region/rules.ts";
-import { anonymoRoutes } from "./anonymo/routes.ts";
+import { anonymoRegionGate, anonymoRoutes } from "./anonymo/routes.ts";
 import { swarmMiddleware } from "./anonymo/ventures/routes.ts";
 import { createAnonymoServices, type AnonymoServices } from "./anonymo/services.ts";
 import { modelsRoutes } from "./api/models.ts";
@@ -76,7 +77,7 @@ export type AppOptions = {
   startJobs?: boolean;
   /** Already initialized, caller-owned database for embedding or sharing an in-memory test store. */
   database?: Pick<DbHandle, "db" | "kind">;
-  /** Replace Anonymo's floor gate or refusal classifier (tests, and the real implementations once built). */
+  /** Inject Anonymo services, including the deployment's age proof verifier. */
   anonymo?: Partial<AnonymoServices>;
 };
 
@@ -122,7 +123,7 @@ export async function createApp(opts: AppOptions = {}) {
   const app = new Hono();
   app.use("*", originLockMiddleware(ctx)); // HD1: authenticate ingress before CORS, including preflights.
   // The OpenAI-style /v1/* aliases get the same CORS as /api/*, so a browser can read the receipt, lane and policy headers on either.
-  const apiCors = cors({ origin: "*", allowHeaders: ["authorization", "content-type", "x-payment", "payment-signature", "payment-recovery", "x-wallet-auth", "x-anonymo-cache", "x-anonymo-disclosure-max", "x-anonymo-lane", "x-anonymo-lane-downgrade", "x-anonymo-sealed", "x-anonymo-refusal-catch", /* WS01: old names, one release */ "x-anonymo-cache", "x-anonymo-disclosure-max", "x-anonymo-lane", "x-anonymo-lane-downgrade", "http-referer", "x-title", "traceparent", "x-api-key", "anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access"], exposeHeaders: [...EXPOSED_RESPONSE_HEADERS, ...(cfg.routeExplain ? ["x-anonymo-route"] : []), /* V84 */ ...(cfg.structuredOutputCheckEnabled ? ["x-anonymo-json-check"] : []), /* V83 */] });
+  const apiCors = cors({ origin: "*", allowHeaders: ["authorization", "content-type", "x-payment", "payment-signature", "payment-recovery", "x-wallet-auth", "x-anonymo-declared-region", "x-anonymo-cache", "x-anonymo-disclosure-max", "x-anonymo-lane", "x-anonymo-lane-downgrade", "x-anonymo-sealed", "x-anonymo-refusal-catch", /* WS01: old names, one release */ "x-anonymo-cache", "x-anonymo-disclosure-max", "x-anonymo-lane", "x-anonymo-lane-downgrade", "http-referer", "x-title", "traceparent", "x-api-key", "anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access", ...(cfg.features.freeTier ? [FREE_TOKEN_HEADER, FREE_PROOF_HEADER] : [])], exposeHeaders: [...EXPOSED_RESPONSE_HEADERS, ...(cfg.features.freeTier ? [FREE_REMAINING_HEADER] : []), ...(cfg.routeExplain ? ["x-anonymo-route"] : []), /* V84 */ ...(cfg.structuredOutputCheckEnabled ? ["x-anonymo-json-check"] : []), /* V83 */] });
   app.use("/api/*", apiCors);
   app.use("/v1/*", apiCors);
   app.use("/facilitator/*", apiCors); // v6 F
@@ -137,17 +138,18 @@ export async function createApp(opts: AppOptions = {}) {
     if (cfg.production) c.header("strict-transport-security", "max-age=31536000; includeSubDomains");
   });
 
+  const regionAccess = anonymoRegionGate(app, ctx, env);
   app.use("*", hardeningMiddleware(ctx)); // HD1: after CORS/security headers, before every body reader.
   app.use("*", statusMiddleware(ctx)); // public-lane outcomes per API surface for /api/v1/status/slo; private lanes are not counted here
   app.use("*", inferenceScopeMiddleware(ctx)); // ZK6: deny by default before account middleware.
-  paymentRecovery(app, ctx); // a lost x402 answer is sent again, never paid twice; outside every other route middleware
+  paymentRecovery(app, ctx);
   structuredOutputMiddleware(app, ctx); // V83: ordinary chat routes bill each call.
   firstCallRoutes(app, cfg.developerFirstCallEnabled, cfg.siteUrl); // ON2: the public site address, not the router host
-  app.use("*", regionMiddleware(regionRulesFromEnv(env))); // WS02: 451 for blocked regions, before chat and media.
+  if (!regionAccess) app.use("*", regionMiddleware(regionRulesFromEnv(env)));
   app.use("*", keyPolicyMiddleware(ctx)); // WS05: ip_allow, sealed_only and spend windows on inference calls.
   if (cfg.features.ventures) for (const p of ["/v1/chat/completions", "/api/v1/chat/completions"]) app.use(p, swarmMiddleware(ctx, app)); // WS11: model anonymo-swarm starts a Ventures run
   chatRoutes(app, ctx);
-  anonymoRoutes(app, ctx); // Anonymo: every workstream mounts its routes in src/anonymo/routes.ts
+  anonymoRoutes(app, ctx, regionAccess);
   batchesRoutes(app, ctx);
   modelsRoutes(app, ctx);
   generationRoutes(app, ctx);
@@ -183,7 +185,7 @@ export async function createApp(opts: AppOptions = {}) {
   // Public documents that used to ship inside the website: the OpenAPI description and the data inventory ("what we keep").
   const openapi = readFileSync(resolve(import.meta.dir, "../docs/openapi.json"), "utf8");
   app.get("/openapi.json", (c) => c.body(openapi, 200, { "content-type": "application/json; charset=utf-8", "cache-control": "public, max-age=300" }));
-  const inventory = inventoryJson(deployedInventory(cfg.features.ventures));
+  const inventory = inventoryJson(deployedInventory(cfg.features));
   app.get("/keep/inventory.json", (c) => c.body(inventory, 200, { "content-type": "application/json; charset=utf-8", "cache-control": "public, max-age=300" }));
   siteRoutes(app, ctx); // a small built-in page that lists models and rankings
 
@@ -200,7 +202,9 @@ export async function createApp(opts: AppOptions = {}) {
       return c.json(new ApiError(400, "Invalid request: " + err.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; "), "invalid_request").toJSON(), 400);
     }
     if ((err as Error)?.name === "AbortError") return c.json(new ApiError(499, "Client closed the request.", "cancelled").toJSON(), 499 as never);
-    log.error("unhandled error", { path: new URL(c.req.url).pathname, error: (err as Error)?.message, stack: (err as Error)?.stack?.split("\n").slice(0, 5).join(" | ") });
+    const free = cfg.features.freeTier && (c.req.header(FREE_TOKEN_HEADER) != null || c.req.header(FREE_PROOF_HEADER) != null);
+    if (cfg.features.compliance) log.error("unhandled gateway error");
+    else log.error("unhandled error", { path: new URL(c.req.url).pathname, ...(free ? {} : { error: (err as Error)?.message, stack: (err as Error)?.stack?.split("\n").slice(0, 5).join(" | ") }) });
     return c.json(new ApiError(500, "Internal router error.", "internal").toJSON(), 500);
   });
 

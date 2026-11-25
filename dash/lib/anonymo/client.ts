@@ -6,7 +6,10 @@
 // it on the device is the caller's choice (lib/anonymo/key-store.ts).
 
 import { SPEECH_MODEL, TRANSCRIPTION_MODEL, type SpeechModel, type TranscriptionModel, type VoiceModels } from './talk.ts';
+import { FREE_PROOF_HEADER, FREE_REMAINING_HEADER, FREE_TOKEN_HEADER, type FreeChallenge } from './free-chat.ts';
+import { readAskMoReply, type AskMoRequest } from './askmo.ts';
 import { citationsOf } from './search.ts'; // update "search"
+import type { CodeRedemption } from './codes.ts';
 import type {
   DepositContracts,
   NymoQuote,
@@ -64,10 +67,14 @@ import type {
 } from './ventures.ts';
 import { usdToMusd } from './money.ts';
 import type { GenerationView } from './connect.ts';
+import type { KeySafeIds, KeySafeUpload, WrappedKeySafe } from './key-safe.ts';
 
 /** Every path the dashboard calls, in one place. */
 export const API_PATHS = {
   keys: '/keys',
+  keySafe: '/v1/key-safe',
+  keySafeLookup: '/v1/key-safe/lookup',
+  redeemCode: '/v1/codes/redeem',
   keyInfo: '/keys/me',
   balance: '/balance',
   withdraw: '/withdraw',
@@ -77,10 +84,16 @@ export const API_PATHS = {
   depositContracts: '/deposits/contracts',
   nymoQuote: '/deposits/coin/quote',
   chat: '/v1/chat/completions',
+  freeChallenge: '/v1/free/challenge',
+  askMo: '/v1/ask',
+  secondOpinion: '/v1/ask/second-opinion',
   models: '/v1/models',
+  regionCompliance: '/v1/compliance/region',
+  ageProof: '/v1/compliance/age-proof',
   receipt: (id: string) => `/v1/receipts/${encodeURIComponent(id)}`,
   receiptProof: (id: string) => `/v1/receipts/${encodeURIComponent(id)}/proof`,
   characters: '/api/v1/characters',
+  lifeboatCard: '/v1/lifeboat/check-card',
   manifest: '/manifest',
   leaderboard: '/leaderboard',
   mediaModels: '/v1/media/models',
@@ -142,6 +155,7 @@ export function isOutOfCredit(error: unknown): boolean {
 /** Plain-language text for the errors a person can act on. Never echoes the prompt. */
 export function describeError(error: unknown): string {
   if (error instanceof AnonymoApiError) {
+    if (error.metadata?.region_page) return error.message;
     if (error.status === 451 || error.code === 'floor_blocked')
       return error.metadata?.stage === 'reply'
         ? "Blocked by the floor check. The model's reply crossed one of the four lines Anonymo never serves, so it was withheld and you were not charged."
@@ -154,6 +168,7 @@ export function describeError(error: unknown): string {
     if (isOutOfCredit(error)) return 'Not enough credit for this request. Add funds and try again.';
     if (error.code === 'deposits_paused') return 'New deposits are paused right now. Withdrawals are not affected.';
     if (error.status === 401) return 'This key was not accepted. Check it, or create a new key.';
+    if (error.code === 'free_daily_limit') return error.message;
     if (error.status === 429) return 'Too many requests for this key right now. Wait a moment and try again.';
     return error.message || `The gateway answered ${error.status}.`;
   }
@@ -166,6 +181,13 @@ export type ClientOptions = {
   baseUrl: string;
   key?: string | null;
   fetch?: typeof fetch;
+  declaredRegion?: string | null;
+};
+
+export type RegionCompliance = {
+  mode: 'allowed' | 'blocked' | 'proof_required';
+  disclosure_interval_min: number | null;
+  access: boolean;
 };
 
 export type AnonymoClient = ReturnType<typeof createAnonymoClient>;
@@ -178,15 +200,17 @@ export function createAnonymoClient(options: ClientOptions) {
   const doFetch = options.fetch ?? ((input, init) => fetch(input, init));
   const key = options.key ?? null;
 
-  async function request(path: string, init: RequestInit & { auth?: boolean } = {}): Promise<Response> {
+  async function request(path: string, init: RequestInit & { auth?: boolean; onResponse?: (response: Response) => void } = {}): Promise<Response> {
     const headers = new Headers(init.headers);
+    if (options.declaredRegion && /^\/(?:api\/)?v1\//.test(path)) headers.set('x-anonymo-declared-region', options.declaredRegion);
     if (init.body && !(init.body instanceof FormData) && !headers.has('content-type')) headers.set('content-type', 'application/json');
     if (init.auth !== false) {
       if (!key) throw new AnonymoApiError(401, 'missing_key', 'Create or paste an API key first.');
       headers.set('authorization', `Bearer ${key}`);
     }
-    const { auth: _auth, ...rest } = init;
+    const { auth: _auth, onResponse, ...rest } = init;
     const response = await doFetch(`${base}${path}`, { ...rest, headers, credentials: 'omit', referrerPolicy: 'no-referrer' });
+    onResponse?.(response);
     if (!response.ok) throw await toError(response);
     return response;
   }
@@ -208,8 +232,23 @@ export function createAnonymoClient(options: ClientOptions) {
   return {
     hasKey: key !== null,
 
+    regionCompliance: (signal?: AbortSignal) =>
+      json<RegionCompliance>(API_PATHS.regionCompliance, { signal, auth: key !== null, cache: 'no-store', headers: { accept: 'application/json' } }),
+    submitAgeProof: (proof: string, signal?: AbortSignal) =>
+      json<{ verified: true }>(API_PATHS.ageProof, { method: 'POST', body: JSON.stringify({ proof }), signal }),
+
     createKey: (body: CreateKeyRequest = {}) =>
       json<CreateKeyResponse>(API_PATHS.keys, { method: 'POST', body: JSON.stringify(body), auth: false }),
+    async saveKeySafe({ safeId, credentialId, ciphertext, nonce }: KeySafeUpload, signal?: AbortSignal) {
+      await request(API_PATHS.keySafe, { method: 'POST', body: JSON.stringify({ safeId, credentialId, ciphertext, nonce }), auth: false, signal });
+    },
+    findKeySafe: (credentialId: string, signal?: AbortSignal) =>
+      json<WrappedKeySafe>(API_PATHS.keySafeLookup, { method: 'POST', body: JSON.stringify({ credentialId }), auth: false, cache: 'no-store', signal }),
+    async deleteKeySafe({ safeId, credentialId }: KeySafeIds, signal?: AbortSignal) {
+      await request(API_PATHS.keySafe, { method: 'DELETE', body: JSON.stringify({ safeId, credentialId }), auth: false, signal });
+    },
+    redeemCode: (code: string) =>
+      json<CodeRedemption>(API_PATHS.redeemCode, { method: 'POST', body: JSON.stringify({ code }), auth: key !== null, cache: 'no-store' }),
     keyInfo: () => json<KeyInfo>(API_PATHS.keyInfo),
     balance: (signal?: AbortSignal) => json<Balance>(API_PATHS.balance, { signal }),
     deposits: (signal?: AbortSignal) => json<Deposits>(API_PATHS.deposits, { signal }),
@@ -225,6 +264,8 @@ export function createAnonymoClient(options: ClientOptions) {
     withdrawals: () => data<Withdrawal[]>(API_PATHS.withdrawals),
 
     models: (signal?: AbortSignal) => json<ModelList>(API_PATHS.models, { auth: false, cache: 'no-store', signal }),
+    checkLifeboatCard: (fields: string[], signal?: AbortSignal) =>
+      json<{ allowed: boolean }>(API_PATHS.lifeboatCard, { method: 'POST', auth: false, cache: 'no-store', body: JSON.stringify({ fields }), signal }),
     receipt: (id: string) => data<ReceiptView>(API_PATHS.receipt(id), { auth: false }),
     receiptProof: (id: string) => data<ProofView>(API_PATHS.receiptProof(id), { auth: false }),
     /** One of this key's own generations, with `origin: "mcp"` when it came through the MCP chat tool (update 05). */
@@ -335,8 +376,17 @@ export function createAnonymoClient(options: ClientOptions) {
     saveRecipe: (id: string, body: RecipeBody) => data<{ id: string; recipeHash: string }>(API_PATHS.ventureRecipe(id), { method: 'POST', body: JSON.stringify(body) }),
     recipes: (signal?: AbortSignal) => data<Recipe[]>(API_PATHS.recipes, { auth: false, signal }),
 
+    askMo: (body: AskMoRequest, signal?: AbortSignal) =>
+      json<ChatCompletion>(API_PATHS.askMo, { method: 'POST', body: JSON.stringify(body), signal }).then(readAskMoReply),
+    secondOpinion: (body: AskMoRequest, signal?: AbortSignal) =>
+      json<ChatCompletion>(API_PATHS.secondOpinion, { method: 'POST', body: JSON.stringify(body), signal }).then(readAskMoReply),
+
     importCharacter: (body: CharacterImportRequest) =>
       json<CharacterImportResponse>(API_PATHS.characters, { method: 'POST', body: JSON.stringify(body) }),
+
+    freeChallenge: (token: string, signal?: AbortSignal) => json<FreeChallenge>(API_PATHS.freeChallenge, {
+      auth: false, headers: { [FREE_TOKEN_HEADER]: token }, cache: 'no-store', signal,
+    }),
 
     /**
      * `/v1/chat/completions`. Streams (SSE) for every model except anonymo-council, which answers as one JSON body.
@@ -344,11 +394,20 @@ export function createAnonymoClient(options: ClientOptions) {
      */
     async chat(
       body: ChatRequest | PhotoChatRequest,
-      opts: { headers?: ChatHeaders; signal?: AbortSignal; onDelta?: (text: string) => void } = {},
+      opts: {
+        headers?: ChatHeaders;
+        signal?: AbortSignal;
+        onDelta?: (text: string) => void;
+        free?: { token: string; proof: string; onRemaining: (left: number) => void };
+      } = {},
     ): Promise<ChatResult> {
       const headers: Record<string, string> = {};
       if (opts.headers?.refusalCatch) headers['x-anonymo-refusal-catch'] = opts.headers.refusalCatch;
       if (opts.headers?.sealed || body.model === 'anonymo-sealed') headers['x-anonymo-sealed'] = 'required';
+      if (opts.free) {
+        headers[FREE_TOKEN_HEADER] = opts.free.token;
+        headers[FREE_PROOF_HEADER] = opts.free.proof;
+      }
       const streaming = !NON_STREAMING_MODELS.includes(body.model);
       // The council mode goes in the body (`council.mode`): the gateway reads it there too, and the header form is not
       // on its CORS allow-list, so a browser could not send it.
@@ -360,6 +419,13 @@ export function createAnonymoClient(options: ClientOptions) {
       const response = await request(API_PATHS.chat, {
         method: 'POST',
         body: JSON.stringify(payload),
+        ...(opts.free ? {
+          auth: false,
+          onResponse: (response: Response) => {
+            const remaining = response.headers.get(FREE_REMAINING_HEADER);
+            if (remaining !== null && /^\d+$/.test(remaining)) opts.free?.onRemaining(Number(remaining));
+          },
+        } : {}),
         headers: { ...headers, accept: streaming ? 'text/event-stream' : 'application/json' },
         signal: opts.signal,
       });

@@ -1,9 +1,11 @@
+import { ASK_TOPICS, type AskMoRequest } from '../askmo.ts';
 // An in-browser stand-in for the Anonymo gateway, used in demo mode and by the dash checks. It answers the same paths
 // with the same shapes as the real gateway (lib/anonymo/types.ts names the gateway route behind each), keeps state per
 // key, streams chat as SSE, and signs nothing for real: receipts and proofs are structurally valid (the Merkle path
 // verifies) but the signature is a placeholder. It never sends anything over the network.
 
 import { API_PATHS } from '../client.ts';
+import { canonicalCode, DEMO_CODE } from '../codes.ts';
 import { musdToUsdString, parseUsd, usdToMusd } from '../money.ts';
 import { hashPair, keccakHex } from '../proof.ts';
 import type {
@@ -44,9 +46,11 @@ import { COUNCIL_MERGED, DEMO_NYMO, DEMO_COIN_PAY, DEMO_LEADERBOARD, DEMO_MANIFE
 import { listPricing, sideBySideReply } from './sidebyside.ts';
 import { updateOn } from '../updates.ts';
 import { createDemoVentures } from './ventures.ts';
+import { createDemoKeySafe } from './key-safe.ts';
 import { AUTO_MODEL, DEMO_AUTO_MODEL_INFO, classifyDemo, rankAuto, type AutoClass } from '../auto.ts';
 import { DEMO_SEARCH_MUSD, demoSearchAsk, demoSearchRefusal, demoSearchReply } from './search.ts'; // update "search"
 import { readPhotoParts } from '../photos.ts';
+import { FREE_PROOF_HEADER, FREE_REMAINING_HEADER, FREE_TOKEN_HEADER, hasFreeWork } from '../free-chat.ts';
 
 /** The demo's DepositRouter and stablecoins, shared by a key's instructions and the keyless /deposits/contracts. */
 const DEMO_EVM_CHAINS = [
@@ -64,6 +68,7 @@ type KeyState = {
   balance: number; // micro-USD
   held: number;
   usageOnly: number; // NYMO credit: spendable on usage, never withdrawable
+  codeCredit?: number;
   deposits: Row[];
   withdrawals: (Withdrawal & { musd: number; idem: string })[];
   /** Update 05: this key's recent generations, for the owner-only lookup. The demo has no MCP, so origin is never "mcp". */
@@ -73,7 +78,13 @@ type KeyState = {
   usage?: UsageEntry[];
 };
 type StoredReceipt = { view: Omit<ReceiptView, 'anchor'>; hourLeaves: string[] };
-type State = { v: 2; keys: Record<string, KeyState>; receipts: Record<string, StoredReceipt> };
+type State = {
+  v: 2;
+  keys: Record<string, KeyState>;
+  receipts: Record<string, StoredReceipt>;
+  redeemedCodes?: string[];
+  free?: Record<string, { resetsAt: number; used: number }>;
+};
 
 export type MockOptions = {
   /** Where state survives a page reload. `null` keeps it in memory only. */
@@ -150,6 +161,7 @@ const capsOut = (input: KeyCapsInput = {}): KeyCaps => ({
 
 export function createMockGateway(options: MockOptions = {}) {
   const storage = options.storage === undefined ? null : options.storage;
+  const keySafe = createDemoKeySafe(storage);
   const delayMs = options.delayMs ?? 18;
   const coinPrice = options.coinPriceUsd === undefined ? '0.0125' : options.coinPriceUsd;
   let state: State = { v: 2, keys: {}, receipts: {} };
@@ -209,7 +221,7 @@ export function createMockGateway(options: MockOptions = {}) {
 
   /** What each source can take back: what came from it less what went back, capped at the withdrawable balance. */
   function withdrawTo(k: KeyState): Balance['withdraw_to'] {
-    const withdrawable = Math.max(0, k.balance - k.held - k.usageOnly);
+    const withdrawable = Math.max(0, k.balance - k.held - k.usageOnly - (k.codeCredit ?? 0));
     const out = new Map<string, { chain: PayoutChain; address: string; remaining: number }>();
     for (const d of k.deposits) {
       if (d.status !== 'credited' || d.chain === 'coin') continue;
@@ -226,11 +238,13 @@ export function createMockGateway(options: MockOptions = {}) {
   }
 
   function balanceOf(k: KeyState): Balance {
+    const available = Math.max(0, k.balance - k.held);
     return {
       balance_usd: usd(k.balance),
       held_usd: usd(k.held),
-      available_usd: usd(Math.max(0, k.balance - k.held)),
-      usage_only_usd: usd(k.usageOnly),
+      available_usd: usd(available),
+      usage_only_usd: usd(k.codeCredit ? Math.min(available, k.usageOnly + k.codeCredit) : k.usageOnly),
+      ...(k.codeCredit ? { code_credit_usd: usd(Math.min(available, k.codeCredit)) } : {}),
       withdraw_to: withdrawTo(k),
     };
   }
@@ -337,8 +351,7 @@ export function createMockGateway(options: MockOptions = {}) {
     return ref;
   }
 
-  async function createKey(request: Request) {
-    const body = ((await request.json().catch(() => ({}))) ?? {}) as { caps?: KeyCapsInput; dashboard_signup?: string };
+  async function prepareKey(body: { caps?: KeyCapsInput; dashboard_signup?: string } = {}) {
     const key = `anm_live_${randomHex(32)}`;
     const keyHash = await sha256Hex(key);
     const signupHash = typeof body.dashboard_signup === 'string' ? await sha256Hex(body.dashboard_signup) : undefined;
@@ -356,10 +369,38 @@ export function createMockGateway(options: MockOptions = {}) {
       withdrawals: [],
       characters: [],
     };
-    state.keys[keyHash] = k;
+    return { key, k };
+  }
+
+  async function createKey(request: Request) {
+    const body = ((await request.json().catch(() => ({}))) ?? {}) as { caps?: KeyCapsInput; dashboard_signup?: string };
+    const { key, k } = await prepareKey(body);
+    state.keys[k.keyHash] = k;
     persist();
-    const response: CreateKeyResponse = { key, first_chat_available: firstChatAvailable, key_hash: keyHash, wallet: null, caps: k.caps, deposit: instructions(k) };
+    const response: CreateKeyResponse = { key, first_chat_available: k.firstChatAvailable ?? false, key_hash: k.keyHash, wallet: null, caps: k.caps, deposit: instructions(k) };
     return json(response, 201);
+  }
+
+  async function redeemCode(request: Request) {
+    const body = await request.json().catch(() => null) as { code?: unknown } | null;
+    const code = typeof body?.code === 'string' && canonicalCode(body.code);
+    if (!code) return fail(400, 'invalid_code', 'Check the 16 characters on your Anonymo Code.');
+    if (code !== DEMO_CODE) return fail(404, 'code_not_found', 'This Anonymo Code was not found.');
+    const hash = await sha256Hex(code);
+    const fresh = request.headers.has('authorization') ? null : await prepareKey();
+    const k = fresh?.k ?? await keyState(request);
+    if (k instanceof Response) return k;
+    const lapsed = expiredKeyRefusal(k.caps, Date.now(), fail);
+    if (lapsed) return lapsed;
+
+    if (state.redeemedCodes?.includes(hash)) return fail(409, 'code_already_redeemed', 'This Anonymo Code has already been redeemed.');
+    (state.redeemedCodes ??= []).push(hash);
+    const added = 25_000_000;
+    k.balance += added;
+    k.codeCredit = (k.codeCredit ?? 0) + added;
+    if (fresh) state.keys[k.keyHash] = k;
+    persist();
+    return json({ added_usd: 25, key_hash: k.keyHash, ...(fresh ? { key: fresh.key } : {}) }, fresh ? 201 : 200, { 'cache-control': 'no-store' });
   }
 
   async function withdraw(request: Request, k: KeyState) {
@@ -434,8 +475,13 @@ export function createMockGateway(options: MockOptions = {}) {
     };
   };
 
-  async function chat(request: Request, k: KeyState) {
-    const raw = (await request.json().catch(() => null)) as (PhotoChatRequest & { stream?: boolean; council?: { mode?: string } }) | null;
+  async function chat(request: Request, k: KeyState, ask?: AskMoRequest, opinion = false) {
+    const raw = ask ? {
+      model: opinion ? 'anonymo-council' : 'anonymo-1:online',
+      messages: [{ role: 'user' as const, content: ask.question }],
+      stream: false,
+      ...(opinion ? { council: { mode: 'select' } } : {}),
+    } : (await request.json().catch(() => null)) as (PhotoChatRequest & { stream?: boolean; council?: { mode?: string } }) | null;
     if (!raw || typeof raw.model !== 'string' || !Array.isArray(raw.messages) || raw.messages.length === 0)
       return fail(400, 'invalid_request', 'Invalid request: model and messages are required.');
     // Update "photos": image parts are checked as the gateway checks them; the rest of the demo reads the text.
@@ -516,6 +562,10 @@ export function createMockGateway(options: MockOptions = {}) {
         [mode === 'merge' ? 'aggregator' : 'judge']: seat(routes[3]),
         premium: '0',
         total_cost: musdToUsdString(cost),
+        ...(opinion ? { comparison: {
+          agree: 'All three demo families would check the underlying records before drawing a conclusion.',
+          disagree: 'A and B would start with the current guidance. C would first confirm which rules apply to your situation.',
+        } } : {}),
       };
       const signed = storeReceipt(receipt);
       persist();
@@ -563,6 +613,10 @@ export function createMockGateway(options: MockOptions = {}) {
     if (rerouted) text = `The first route refused this, so the router retried on a different model family (${other.family}) and billed the refused attempt nothing. ${text}`;
     const searched = asked.searching ? demoSearchReply(text, typeof lastUser === 'string' ? lastUser : '') : null;
     if (searched) text = searched.text;
+    if (ask && searched) {
+      text = 'The first demo source gives an overview [1]. The second adds context you can compare [2].';
+      if (ask.topic) text += '\n\n## What a professional would check\n- Confirm which details apply to your situation [1].\n\n## Region notes\n- Check what applies where you live [2].';
+    }
 
     const chunks = text.match(/\S+\s*/g) ?? [text];
     const signal = request.signal;
@@ -593,6 +647,13 @@ export function createMockGateway(options: MockOptions = {}) {
       persist();
       return signed;
     };
+    if (ask) return json({
+      id: requestId,
+      object: 'chat.completion',
+      model,
+      choices: [{ index: 0, message: { role: 'assistant', content: text, annotations: searched?.annotations }, finish_reason: 'stop' }],
+      anonymo_receipt: finish(text),
+    });
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         const send = (chunk: ChatChunk) => controller.enqueue(enc.encode(`data: ${JSON.stringify(chunk)}\n\n`));
@@ -623,6 +684,67 @@ export function createMockGateway(options: MockOptions = {}) {
       },
     });
     return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream', 'x-receipt-id': requestId, ...(autoClass ? { 'x-anonymo-auto': autoClass } : {}) } });
+  }
+
+  const freePuzzles = new Map<string, { device: string; used: number; expires: number }>();
+  const freeDaily = 10;
+  const freeDifficulty = 12;
+
+  async function freeChat(request: Request, issue: boolean) {
+    const token = request.headers.get(FREE_TOKEN_HEADER);
+    if (!token || !/^[a-f0-9]{64}$/.test(token)) return fail(400, 'invalid_free_device', 'Send a valid free device token.');
+    const device = keccakHex(enc.encode(token));
+    const now = Date.now();
+    const resets_at = Math.floor(now / 86_400_000) * 86_400_000 + 86_400_000;
+    const usedToday = () => state.free?.[device]?.resetsAt === resets_at ? state.free[device].used : 0;
+    const used = usedToday();
+    const model = 'anonymo-rp';
+    if (issue) {
+      if (used >= freeDaily) return json({ challenge: null, difficulty: 0, expires: resets_at, remaining: 0, resets_at, model: null });
+      for (const [challenge, puzzle] of freePuzzles) if (puzzle.expires <= now) freePuzzles.delete(challenge);
+      const challenge = randomHex(16);
+      const expires = Math.min(now + 180_000, resets_at);
+      freePuzzles.set(challenge, { device, used, expires });
+      return json({ challenge, expires, difficulty: freeDifficulty, remaining: freeDaily - used, resets_at, model });
+    }
+
+    if (used >= freeDaily) return fail(429, 'free_daily_limit', 'You’ve used your free messages today.');
+    const [challenge, nonce, slot] = (request.headers.get(FREE_PROOF_HEADER) ?? '').split(':');
+    const puzzle = freePuzzles.get(challenge);
+    if (!puzzle || puzzle.device !== device || puzzle.expires <= now || slot !== '0' ||
+        !/^(0|[1-9]\d{0,9})$/.test(nonce) || !(await hasFreeWork(challenge, Number(nonce), freeDifficulty)))
+      return fail(403, 'invalid_free_proof', 'Solve a current free chat challenge first.');
+    const body = await request.json().catch(() => null) as (ChatRequest & { stream?: boolean }) | null;
+    if (!body || body.model !== model || !Array.isArray(body.messages) ||
+        body.messages.some((message) => typeof message?.content !== 'string') ||
+        !body.messages.some((message) => message.role === 'user' && message.content.trim()))
+      return fail(400, 'free_text_only', 'Free chat requires a text message.');
+    if (puzzle.used !== usedToday() || !freePuzzles.delete(challenge))
+      return fail(409, 'free_proof_stale', 'Get a fresh free chat challenge and try again.');
+
+    (state.free ??= {})[device] = { resetsAt: resets_at, used: used + 1 };
+    const id = `gen-${randomHex(12)}`;
+    const text = 'Let’s start with one small detail and see where the conversation takes us. What would you like to explore?';
+    const tokens = { in: tokensOf(body.messages.map((message) => message.content).join(' ')), out: tokensOf(text) };
+    const receipt = storeReceipt({
+      v: 'anonymo-receipt/1', request_id: id, model_id: model, tokens, cost: '0', refused: false, sealed: false,
+      ts: new Date().toISOString(), weights_hash: [null],
+      routes: [{
+        route: 'selfhost:moderated-chat', role: 'single', provider: 'selfhost', model: 'moderated-chat',
+        family: 'qwen', quant: 'fp8', attested: false, weights_hash: null, tokens, cost: '0', refused: false, status: 'ok',
+      }],
+    });
+    persist();
+    const headers = { [FREE_REMAINING_HEADER]: String(freeDaily - used - 1), 'x-receipt-id': id };
+    if (!body.stream) return json({
+      id, model, choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }], anonymo_receipt: receipt,
+    }, 200, headers);
+    const chunks = [
+      { id, model, choices: [{ index: 0, delta: { content: text }, finish_reason: 'stop' }] },
+      { id, model, choices: [], anonymo_receipt: receipt },
+    ];
+    return new Response(chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n',
+      { headers: { ...headers, 'content-type': 'text/event-stream' } });
   }
 
   function proofOf(id: string): Extract<ProofView, { rooted: true }> | null {
@@ -712,6 +834,8 @@ export function createMockGateway(options: MockOptions = {}) {
     if (method === 'GET' && path === API_PATHS.leaderboard) return json(DEMO_LEADERBOARD);
     if (method === 'GET' && path === API_PATHS.statusSlo) return json({ data: demoStatus(Date.now()) });
     if (method === 'GET' && path === API_PATHS.health) return json({ ok: true });
+    if (method === 'GET' && path === API_PATHS.regionCompliance)
+      return json({ mode: 'allowed', disclosure_interval_min: 1, access: true });
     if (method === 'GET' && path === API_PATHS.mediaModels) return json({ object: 'list', data: [...DEMO_IMAGE_MODELS, ...DEMO_VIDEO_MODELS, ...DEMO_SPEECH_MODELS, ...DEMO_VOICE_MODELS.filter((m) => m.kind === 'transcription')] });
     const receiptMatch = /^\/v1\/receipts\/([^/]+)(\/proof)?$/.exec(path);
     if (method === 'GET' && receiptMatch) {
@@ -736,7 +860,14 @@ export function createMockGateway(options: MockOptions = {}) {
     }
     if (method === 'GET' && path === API_PATHS.depositContracts) return json({ paused: false, chains: DEMO_EVM_CHAINS, coin: publicCoin() });
     if (method === 'POST' && path === API_PATHS.keys) return createKey(request);
+    if ((method === 'POST' || method === 'DELETE') && path === API_PATHS.keySafe) return keySafe(request, false);
+    if (method === 'POST' && path === API_PATHS.keySafeLookup) return keySafe(request, true);
+    if (method === 'POST' && path === API_PATHS.redeemCode && updateOn('codes', true)) return redeemCode(request);
     if (ventures && method === 'GET' && path === API_PATHS.recipes) return (await ventures.handle(request, path, null))!;
+
+    if (method === 'GET' && path === API_PATHS.freeChallenge) return freeChat(request, true);
+    if (method === 'POST' && path === API_PATHS.chat && request.headers.has(FREE_TOKEN_HEADER) && !request.headers.has('authorization'))
+      return freeChat(request, false);
 
     const k = await keyState(request);
     if (k instanceof Response) return k;
@@ -768,6 +899,13 @@ export function createMockGateway(options: MockOptions = {}) {
     }
     if (method === 'POST' && path === API_PATHS.withdraw) return withdraw(request, k);
     if (method === 'POST' && path === API_PATHS.chat) return chat(request, k);
+    if (method === 'POST' && (path === API_PATHS.askMo || path === API_PATHS.secondOpinion)) {
+      const body = (await request.json().catch(() => null)) as Partial<AskMoRequest> | null;
+      const question = typeof body?.question === 'string' ? body.question.trim() : '';
+      const topic = body?.topic ?? null;
+      if (!question || question.length > 4000 || (topic !== null && !Object.hasOwn(ASK_TOPICS, topic))) return fail(400, 'invalid_request', 'Send an Ask Mo question and an optional topic.');
+      return chat(request, k, { question, topic }, path === API_PATHS.secondOpinion);
+    }
     if (method === 'POST' && path === API_PATHS.images) return images(request, k);
     // One stock speech model in the demo, as in production: Night Call's mock serves it for both voice updates.
     if (method === 'POST' && path === API_PATHS.speech) return speech.speak(request, k);

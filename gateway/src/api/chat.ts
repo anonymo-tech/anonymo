@@ -52,12 +52,20 @@ import { requestLane } from "../router/request-lane.ts";
 import { blockReasonForStatus, isPrivateLaneRequest, noteLane, recordPrivateLane } from "../services/private-stats.ts";
 import { parseTraceparent, shouldExportTrace } from "../services/tracing.ts";
 import { autoDecisionOf, planAuto, withAutoHeader } from "../auto/plan.ts"; // Auto Model
+import { boundFreeChat, fundedKeyRequired, hasFundedKey, moderatedRoute } from "../anonymo/freetier/policy.ts";
+import { FREE_PROOF_HEADER, FREE_REMAINING_HEADER, FREE_TOKEN_HEADER } from "../anonymo/freetier/pow.ts";
+import { consumeFreeChat, verifyFreeChat } from "../anonymo/freetier/routes.ts";
+import { askMoQuery, askMoServices, checkedAnswer, runAskMoSearch, safeAskMoFinish } from "../anonymo/askmo/answer.ts";
+import { ANONYMO_1 } from "../anonymo/models.ts";
+import { answerInstructions, TOPIC_PACKS } from "../anonymo/askmo/packs.ts";
+import type { AskMoRequest } from "../anonymo/askmo/routes.ts";
 import * as webSearchPath from "../anonymo/search/chat.ts"; // Private Web Search
 
 export type Kind = "chat" | "completion";
 export type Billing =
   | { mode: "prepaid"; accountId: string; key: KeyRow; firstChat?: string }
   | { mode: "per_call"; accountId: string; payer: string; paymentTx?: string; paymentResponse?: string; key?: undefined };
+type ChatBilling = Billing | { mode: "free"; accountId: null; key?: undefined };
 
 const ROLES = new Set(["system", "developer", "user", "assistant", "tool", "function"]);
 // Parameters that change what a provider must be able to do; never silently dropped.
@@ -150,16 +158,17 @@ export function reasoningLast<T extends Pick<Candidate, "tier" | "supportedParam
 
 function selectTargets(
   ctx: Ctx,
-  o: { resolved: { model: ModelRow; modifiers: Set<Modifier> }[]; prefs: ProviderPrefs; params: string[]; promptTokens: number; byok: Map<string, string>; disc: DisclosureRequest; maxOut?: number | null; regularTextChat?: boolean },
+  o: { resolved: { model: ModelRow; modifiers: Set<Modifier> }[]; prefs: ProviderPrefs; params: string[]; promptTokens: number; byok: Map<string, string>; disc: DisclosureRequest; maxOut?: number | null; regularTextChat?: boolean; moderatedOnly?: boolean },
 ) {
   const { resolved, prefs, params, promptTokens, byok, disc } = o;
   const strict = disc.max !== "any";
   const targets: RouteTarget[] = [];
   const excluded: { model: string; provider: string; reason: string }[] = [];
   const plan = (r: (typeof resolved)[number], p: ProviderPrefs) => {
+    const offers = ctx.catalog.offers(r.model.id);
     const sel = selectProviders({
       modelId: r.model.id,
-      offers: ctx.catalog.offers(r.model.id),
+      offers: o.moderatedOnly ? offers.filter((offer) => moderatedRoute(ctx, r.model, offer)) : offers,
       prefs: p,
       modifiers: r.modifiers,
       requestParams: params,
@@ -234,19 +243,20 @@ export function firstChatInputBound(body: Record<string, unknown>): number | nul
   return userMessages === 1 ? bytes + (16 * messages.length) + 32 : null;
 }
 
-async function endFirstChat(ctx: Ctx, billing: Billing, outcome: "completed" | "failed") {
+async function endFirstChat(ctx: Ctx, billing: ChatBilling, outcome: "completed" | "failed") {
   if (billing.mode === "prepaid" && billing.firstChat)
     await finishFirstChat(ctx.db, billing.accountId, billing.firstChat, outcome);
 }
 
 /** Undo a hold whose request was not served. */
-async function giveBack(ctx: Ctx, billing: Billing, holdId: string) {
+async function giveBack(ctx: Ctx, billing: ChatBilling, holdId: string) {
+  if (billing.mode === "free") return;
   try { await release(ctx.db, holdId); }
   finally { await endFirstChat(ctx, billing, "failed"); }
 }
 
 /** x402: the settlement receipt rides on the served response. */
-const paymentHeaders = (b: Billing): Record<string, string> => (b.mode === "per_call" && b.paymentResponse ? x402ResponseHeaders(b.paymentResponse) : {});
+const paymentHeaders = (b: ChatBilling): Record<string, string> => (b.mode === "per_call" && b.paymentResponse ? x402ResponseHeaders(b.paymentResponse) : {});
 
 function chunkBase(id: string, created: number, model: ModelRow, provider: string, kind: Kind) {
   return { id, object: kind === "chat" ? "chat.completion.chunk" : "text_completion", created, model: model.id, provider };
@@ -256,10 +266,10 @@ function chunkBase(id: string, created: number, model: ModelRow, provider: strin
  * One chat or completion call. A refused private-lane request is counted (noisily, see services/private-stats.ts) under the
  * reason it was refused. `characterId` forces a character (POST /api/v1/characters/:id/chat, src/api/characters.ts).
  */
-export async function runChat(ctx: Ctx, c: Context, kind: Kind, characterId?: string): Promise<Response> {
+export async function runChat(ctx: Ctx, c: Context, kind: Kind, characterId?: string, askMo?: AskMoRequest): Promise<Response> {
   const t0 = Date.now();
   try {
-    return withAutoHeader(c.req.raw, await handle(ctx, c, kind, characterId)); // Auto Model: x-anonymo-auto
+    return withAutoHeader(c.req.raw, await handle(ctx, c, kind, characterId, askMo)); // Auto Model: x-anonymo-auto
   } catch (e) {
     if (isPrivateLaneRequest(c.req.raw)) recordPrivateLane(ctx, c.req.raw, { blocked: isApiError(e) ? blockReasonForStatus(e.status, e.type) : "upstream_error", latencyMs: Date.now() - t0 });
     throw e;
@@ -275,9 +285,20 @@ export function chatRoutes(app: Hono, ctx: Ctx) {
   app.post("/v1/completions", (c) => run(c, "completion"));
 }
 
-async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): Promise<Response> {
+async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string, askMo?: AskMoRequest): Promise<Response> {
   const t0 = Date.now();
-  const body = await readJson(c);
+  const pack = askMo?.topic ? TOPIC_PACKS[askMo.topic] : null;
+  const body: Record<string, unknown> = askMo ? {
+    model: askMo.opinion ? COUNCIL_MODEL : ANONYMO_1,
+    max_tokens: 900,
+    messages: [
+      { role: "system", content: askMo.opinion
+        ? ["Answer the question independently. State what depends on missing facts or location.", pack?.checks, pack?.region].filter(Boolean).join(" ")
+        : answerInstructions(askMo.topic) },
+      { role: "user", content: askMo.question },
+    ],
+    ...(askMo.opinion ? { council: { mode: "select" } } : {}),
+  } : await readJson(c);
   const dashboardChat = body.dashboard_chat === true;
   delete body.dashboard_chat; // control plane only; not part of the provider payload or request fingerprint
   validate(kind, body);
@@ -287,12 +308,16 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   const bodySha = requestHash(body);
   const firstChatRequested = dashboardChat && kind === "chat" && !characterId && firstChatInputBound(body) !== null;
   // Private Web Search: `:online`, plugins web, web_search_options, stripped here (after firstChatRequested, so a search is never a sponsored first chat).
-  const searchAsk = webSearchPath.takeWebSearch(body);
+  const askMoAnswer = askMo && !askMo.opinion ? askMo : null;
+  const searchAsk = askMoAnswer ? { via: "web_search_options" as const } : webSearchPath.takeWebSearch(body);
 
   // ---- 1. Who is calling -------------------------------------------------------------------
   const secret = bearer(c.req.header("authorization"));
   // A line of a batch (POST /api/v1/batches), dispatched in process by the batch runner as the key that submitted it.
   const batchLine = batchLineOf(c);
+  const wantsFree = ctx.cfg.features.freeTier && !secret && !batchLine &&
+    (c.req.header(FREE_TOKEN_HEADER) != null || c.req.header(FREE_PROOF_HEADER) != null);
+  let freeProof: Awaited<ReturnType<typeof verifyFreeChat>> | null = null;
   let key: KeyRow | null = null;
   let wallet: { accountId: string; wallet: string; exists: boolean } | null = null;
   if (batchLine || secret) {
@@ -300,6 +325,12 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
     if (!key) fail(401, "Unknown API key. Create one (POST /api/v1/keys) or deposit USDG to its key hash first.", "invalid_key");
     await requireRole(ctx, key, ["owner", "admin", "member"]);
     await limitOrThrow(ctx, `k:${key.keyHash}`, 1, key.rpm ?? ctx.cfg.limits.defaultRpm, "requests");
+  } else if (wantsFree) {
+    if (kind !== "chat" || characterId || c.req.header("authorization") || c.req.header("x-wallet-auth") ||
+        paymentHeaderOf(c) || searchAsk || typeof body.model !== "string" || !/^[a-z0-9][a-z0-9._/-]{0,150}$/.test(body.model))
+      fail(400, "Free chat requires a text chat completion with a model from the free lane.", "free_text_only");
+    boundFreeChat(body);
+    freeProof = await verifyFreeChat(ctx, c);
   } else {
     const from = addressBucket(c, ctx.cfg);
     await limitOrThrow(ctx, `ip:${from.id}`, 1, from.scale(ctx.cfg.limits.unauthRpm), "requests");
@@ -309,7 +340,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
 
   // ---- 2. Key presets, model resolution, guardrails, transforms --------------------------------
   const routing = (key?.routing ?? null) as { aliases?: Record<string, { model: string; provider?: ProviderPrefs; models?: string[] }>; provider?: ProviderPrefs } | null;
-  const alias = typeof body.model === "string" ? routing?.aliases?.[body.model] : undefined;
+  const alias = !askMo && typeof body.model === "string" ? routing?.aliases?.[body.model] : undefined;
   if (alias) {
     body.model = alias.model;
     if (alias.models && !body.models) body.models = alias.models;
@@ -349,15 +380,23 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   // Photos in chat: every image part passes the upload rule before the floor reads the text (floor/chat-photos.ts).
   await checkChatPhotos(ctx, body, disc.lane !== "public" || requiresAttestedUpstream(body, disc), c.req.raw.signal);
   await floorCheck(ctx, body);
+  const moderatedOnly = ctx.cfg.features.freeTier && !(await hasFundedKey(ctx, key));
+  if (moderatedOnly && (body.model === COUNCIL_MODEL || body.verify != null)) fundedKeyRequired();
   // Auto Model: only after the floor passed. Rewrites `model`/`models` to the ranked candidates (auto/plan.ts).
   const auto = await planAuto(ctx, c.req.raw, { body, kind, key, prefs, disc, sealed, character: !!character });
   // Private Web Search: only after the floor passed; refused for sealed/private/attested, 501 when not set up. Nothing searched yet.
-  const webSearch = searchAsk ? webSearchPath.admitWebSearch(ctx.anonymo.search, searchAsk, body, { kind, sealed: !!sealed, confidential: disc.lane !== "public" || requiresAttestedUpstream(body, disc), council: ctx.cfg.features.council && body.model === COUNCIL_MODEL, verify: body.verify != null }) : null;
+  const engines = askMoAnswer ? askMoServices(ctx.anonymo.search, ctx.cfg.askMoSearchFallback) : [];
+  const webSearch = searchAsk ? webSearchPath.admitWebSearch(askMoAnswer ? engines[0] : ctx.anonymo.search, searchAsk, body, { kind, sealed: !!sealed, confidential: disc.lane !== "public" || requiresAttestedUpstream(body, disc), council: ctx.cfg.features.council && body.model === COUNCIL_MODEL, verify: body.verify != null }) : null;
+
+  if (webSearch && askMoAnswer) {
+    webSearch.query = askMoQuery(askMoAnswer.question);
+    if (!webSearch.query) fail(400, "Ask Mo needs a question with searchable text.", "invalid_request");
+  }
 
   if (batchLine && (stream || body.verify != null || (ctx.cfg.features.council && body.model === COUNCIL_MODEL)))
     fail(400, "Batch lines cannot stream, use council mode or use dual verification.", "invalid_request");
   // Council mode (`model: "anonymo/council"`): several member calls plus a judge call, each billed and receipted.
-  if (ctx.cfg.features.council && body.model === COUNCIL_MODEL) return runCouncil(toolkit, { ctx, c, kind, body, bodySha, t0, key, wallet, prefs, disc });
+  if (ctx.cfg.features.council && body.model === COUNCIL_MODEL) return runCouncil(toolkit, { ctx, c, kind, body, bodySha, t0, key, wallet, prefs, disc, secondOpinion: askMo?.opinion });
 
   const modelIds = [...new Set([...(typeof body.model === "string" ? [body.model] : []), ...((body.models as string[] | undefined) ?? [])])];
   if (!modelIds.length) fail(400, "`model` is required (e.g. \"meta-llama/llama-3.3-70b-instruct\").", "invalid_request");
@@ -393,7 +432,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
     );
 
   // Anonymo refusal catch (WS03): set up only once the floor gate passed, so a blocked prompt never reaches it.
-  const refusal = await refusalCatchFor(ctx, c, key, body, kind, disc);
+  const refusal = await refusalCatchFor(ctx, c, key, body, kind, disc, !!freeProof);
 
   // Request-level guardrails only for authenticated keys; a key's own guardrails always apply.
   const guardCfg = mergeGuardrails(key?.guardrails as GuardrailConfig | null, key ? body.guardrails as GuardrailConfig | undefined : undefined);
@@ -412,46 +451,55 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
 
   // ---- 3. Accounts: key, wallet change, per-call payment -------------------------------------------
   const { billing: resolvedBilling, paywithNote } = await resolveBilling(ctx, c, key, wallet);
-  let billing: Billing | null = resolvedBilling;
+  let billing: ChatBilling | null = freeProof ? { mode: "free", accountId: null } : resolvedBilling;
 
   // ---- 4. Cache (opt-in, never across accounts, keys, policies or end users) ----------------------
   const cacheSpec = (body.cache as { mode?: CacheMode; ttl?: number } | undefined) ?? (c.req.header("x-anonymo-cache") ? { mode: c.req.header("x-anonymo-cache") as CacheMode } : undefined);
   // The response cache keeps prompts and answers in the router, and a hit is served without any provider, so a
   // request with a disclosure ceiling never reads or writes it. Nor does a restricted variant (abliterated,
   // native_low_refusal): those are served only under attested retention, and the router must not keep their prompts.
-  const cacheMode: CacheMode | null = !strict && !resolved.some((r) => {
+  const cacheMode: CacheMode | null = !ctx.cfg.features.compliance && !moderatedOnly && !strict && !resolved.some((r) => {
     const lane = ctx.catalog.laneOf(r.model);
     return isRestricted(lane.variant) || ctx.catalog.offers(r.model.id).some((offer) => isRestricted(offerLane(lane, offer.weightLane).variant));
   }) && !webSearch && (cacheSpec?.mode === "exact" || cacheSpec?.mode === "semantic") ? cacheSpec.mode : null; // a web search answer is never cached
   // `user` is forwarded to the provider as the end-user identity; a response made for one end user
   // must never be replayed to another behind the same key (exact or semantic).
   const cacheScope = billing ? `${billing.accountId}:policy-v3:${sha256(canonicalJson({ key: key?.keyHash ?? null, user: body.user ?? null, guardrails: guardCfg, provider: prefs, kind, models: resolved.map((r) => ({ id: r.model.id, modifiers: [...r.modifiers].sort() })), ...(savedRoute ? { route: savedRoute } : {}), ...(presetMeta ? { preset: presetMeta } : {}) }))}` : "";
-  if (cacheMode && billing && !stream && body.verify == null) {
+  if (cacheMode && billing && billing.mode !== "free" && !stream && body.verify == null) {
     const hit = await ctx.cache.get(cacheMode, cacheScope, body, ctx.cfg.gateway.semanticThreshold);
     if (hit) return cachedResponse(ctx, c, { body, hit, billing, model: primary, t0, bodySha, disc });
   }
 
   // ---- 5. Provider selection ------------------------------------------------------------------
-  const byok = await byokFor(ctx, billing?.accountId);
+  const byok = await byokFor(ctx, billing?.accountId ?? undefined);
   if (body.verify != null) applyDualDecoding(body); // temperature 0 and a fixed seed, before parameter support is checked
   const params = requestParams(body);
   const alternatives = { resolved, prefs, params, promptTokens, byok, body, allowed }; // B121
   // Sealed: only attested, fresh routes; otherwise 409 sealed_unavailable before any hold or provider call (WS09).
+  const select = () => selectTargets(ctx, { resolved, prefs, params, promptTokens, byok, disc,
+    maxOut: outputBudgetOf(body), regularTextChat: kind === "chat", moderatedOnly });
   let { targets, excluded } = sealed
-    ? sealedSelection(ctx, true, () => selectTargets(ctx, { resolved, prefs, params, promptTokens, byok, disc, maxOut: outputBudgetOf(body), regularTextChat: kind === "chat" }))
-    : selectWithSuggestions(() => selectTargets(ctx, { resolved, prefs, params, promptTokens, byok, disc, maxOut: outputBudgetOf(body), regularTextChat: kind === "chat" }), ctx, alternatives); // B121
+    ? sealedSelection(ctx, true, select)
+    : moderatedOnly ? select() : selectWithSuggestions(select, ctx, alternatives); // B121
+  if (moderatedOnly && !targets.length) {
+    const hasModeratedRoute = resolved.some(({ model }) =>
+      ctx.catalog.offers(model.id).some((offer) => moderatedRoute(ctx, model, offer)));
+    if (!hasModeratedRoute) fundedKeyRequired();
+    fail(503, "The moderated route is temporarily unavailable.", "free_unavailable");
+  }
   if (!targets.length)
     throw addSuggestions(new ApiError(404, "No providers match this request's model and routing preferences.", "no_providers", { excluded: excluded.slice(0, 50) }), ctx, alternatives); // B121
 
   // Dual verification (`verify: "dual"`): the same request to two providers, outputs compared.
-  if (body.verify != null) return runDual(toolkit, { ctx, c, kind, body, bodySha, t0, key, wallet, billing, paywithNote, prefs, disc, resolved, targets, excluded, promptTokens, byok, guard, guardCfg, middle, savedRoute, preset: presetMeta });
+  if (body.verify != null) return runDual(toolkit, { ctx, c, kind, body, bodySha, t0, key, wallet, billing: resolvedBilling, paywithNote, prefs, disc, resolved, targets, excluded, promptTokens, byok, guard, guardCfg, middle, savedRoute, preset: presetMeta });
 
   // ---- 6. Hold the worst case --------------------------------------------------------------------
   const fees = { royaltyBps: 0, perCallMarginBps: ctx.cfg.fees.perCallMarginBps, byokFeeBps: ctx.cfg.fees.byokFeeBps };
-  const modeForPrice: Mode = billing?.mode ?? "per_call";
+  const modeForPrice: Mode = billing?.mode === "free" ? "prepaid" : billing?.mode ?? "per_call";
   let attemptable = targets.flatMap((t) => t.ordered.map((cand) => ({ cand, model: t.model }))).slice(0, ctx.cfg.routing.maxAttempts);
   const worst = maxPico(...attemptable.map(({ cand, model }) => worstCase(cand, model, body, promptTokens, modeForPrice, fees, byok.has(cand.providerId))));
-  const hold = (batchLine ? batchHold(worst, batchLine.discountBps) : worst) + webSearchPath.webSearchHold(webSearch); // a batch line is held at its discounted worst case
+  const searchHold = engines.reduce((max, service) => service.price > max ? service.price : max, webSearchPath.webSearchHold(webSearch));
+  const hold = (batchLine ? batchHold(worst, batchLine.discountBps) : worst) + searchHold; // a batch line is held at its discounted worst case
 
   if (!billing) {
     const r = await payPerCall(ctx, c, { pricePico: hold, bodySha, modelId: primary.id });
@@ -461,12 +509,15 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
 
   const holdId = batchLine?.generationId ?? genId(); // a batch line's id is chosen by the runner, so an interrupted line can be traced to its charge
   const reservation = {
-    id: holdId, accountId: billing.accountId, keyHash: billing.key?.keyHash ?? null,
+    id: holdId, keyHash: billing.key?.keyHash ?? null,
     amount: hold, kind: "usage" as const, ttlMs: ctx.cfg.routing.providerTimeoutMs * (ctx.cfg.routing.maxAttempts + 1),
   };
   let maxAttempts = ctx.cfg.routing.maxAttempts;
-  try {
-    await reserve(ctx.db, reservation);
+  if (billing.mode === "free") {
+    c.req.raw.signal.throwIfAborted();
+    c.header(FREE_REMAINING_HEADER, String(await consumeFreeChat(ctx, freeProof!)));
+  } else try {
+    await reserve(ctx.db, { ...reservation, accountId: billing.accountId });
   } catch (e) {
     if (!isApiError(e) || e.type !== "insufficient_credits") throw e;
     if (paywithNote) e.metadata = { ...e.metadata, pay_with: paywithNote };
@@ -495,7 +546,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
     if (!claim) throw e;
     billing = { ...billing, firstChat: claim };
     try {
-      await reserve(ctx.db, { ...reservation, amount: 0n });
+      await reserve(ctx.db, { ...reservation, accountId: billing.accountId, amount: 0n });
       if (c.req.raw.signal.aborted || !(await startFirstChat(ctx.db, billing.accountId, claim))) throw e;
     } catch (setupError) {
       await giveBack(ctx, billing, holdId);
@@ -510,7 +561,20 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   }
 
   // Private Web Search: the one query leaves now, after the floor and the hold. A failure releases the hold (502, nothing charged).
-  if (webSearch) await webSearchPath.runWebSearch(webSearch, c.req.raw.signal).catch(async (e) => { await giveBack(ctx, billing!, holdId); throw e; });
+  if (webSearch) {
+    try {
+      if (askMoAnswer) {
+        await runAskMoSearch(webSearch, engines, c.req.raw.signal);
+        // The search results are part of the prompt going to the model.
+        await floorCheck(ctx, body);
+      } else {
+        await webSearchPath.runWebSearch(webSearch, c.req.raw.signal);
+      }
+    } catch (e) {
+      await giveBack(ctx, billing, holdId);
+      throw e;
+    }
+  }
 
   // ---- 7. Route ---------------------------------------------------------------------------------
   const abort = new AbortController();
@@ -519,7 +583,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   if (stream || !(billing.mode === "per_call" && billing.paymentResponse)) c.req.raw.signal?.addEventListener("abort", () => abort.abort(new DOMException("client disconnected", "AbortError")), { once: true });
   const keyFor = (cand: Candidate) => providerKey(cand, ctx.cfg.appSecret, byok.get(cand.providerId));
   const path = kind === "chat" ? ("/chat/completions" as const) : ("/completions" as const);
-  const meta = { guard, middle, paywithNote, cacheMode, excluded, route: savedRoute, preset: presetMeta, character, webSearch };
+  const meta = { guard, middle, paywithNote, cacheMode, excluded, route: savedRoute, preset: presetMeta, character, webSearch, askMo: !!askMoAnswer };
   // Streams send their headers before a provider is chosen, so the header is only set up front when every
   // provider this request can reach is served under the same class; the signed receipt always carries the truth.
   const classes = new Set(attemptable.map(({ cand }) => servedDisclosure(ctx, cand).class));
@@ -528,17 +592,20 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   const plannedPolicy = sharedPolicyHash(attemptable.map(({ cand }) => servedPolicyHash(ctx, cand)));
   const common = { ctx, c, body, billing, holdId, t0, bodySha, stream, kind, byok, meta, guardCfg, promptTokens, disc, planned, plannedPolicy, sealed, unavailable: (attempts: Attempt[], last?: Parameters<typeof allFailed>[1]) => availabilityFailure(() => allFailed(attempts, last), ctx, alternatives, attempts) }; // B121
 
-  if (stream) return explainedStream(ctx.cfg.routeExplain, () => route({ appSecret: ctx.cfg.appSecret, targets, path, body, stream: true, keyFor, signal: abort.signal, health: ctx.health, maxAttempts, timeoutMs: ctx.cfg.routing.providerTimeoutMs, firstTokenTimeoutMs: ctx.cfg.routing.firstTokenTimeoutMs, production: ctx.cfg.production, caller: sha256(billing.accountId).slice(0, 16), refusal }), (run, routeHeaders) => streamResponse({ ...common, run, routeHeaders, abort })); // V84
+  const caller = billing.accountId === null ? undefined : sha256(billing.accountId).slice(0, 16);
+  if (stream) return explainedStream(ctx.cfg.routeExplain, () => route({ appSecret: ctx.cfg.appSecret, targets, path, body, stream: true, keyFor, signal: abort.signal, health: ctx.health, maxAttempts, timeoutMs: ctx.cfg.routing.providerTimeoutMs, firstTokenTimeoutMs: ctx.cfg.routing.firstTokenTimeoutMs, production: ctx.cfg.production, caller, refusal }), (run, routeHeaders) => streamResponse({ ...common, run, routeHeaders, abort })); // V84
 
   let result: Awaited<ReturnType<typeof route>>;
   try {
-    result = await route({ appSecret: ctx.cfg.appSecret, targets, path, body, stream: false, keyFor, signal: abort.signal, health: ctx.health, maxAttempts, timeoutMs: ctx.cfg.routing.providerTimeoutMs, firstTokenTimeoutMs: ctx.cfg.routing.firstTokenTimeoutMs, production: ctx.cfg.production, caller: sha256(billing.accountId).slice(0, 16), refusal });
+    result = await route({ appSecret: ctx.cfg.appSecret, targets, path, body, stream: false, keyFor, signal: abort.signal, health: ctx.health, maxAttempts, timeoutMs: ctx.cfg.routing.providerTimeoutMs, firstTokenTimeoutMs: ctx.cfg.routing.firstTokenTimeoutMs, production: ctx.cfg.production, caller, refusal });
   } catch (e) {
     await giveBack(ctx, billing, holdId);
     throw e;
   }
   if (!result.ok) {
     await giveBack(ctx, billing, holdId);
+    if (askMoAnswer) throw common.unavailable(result.attempts.map(({ message: _, ...attempt }) => attempt),
+      result.last && { ...result.last, message: "invalid request" });
     throw common.unavailable(result.attempts, result.last); // B121
   }
   const r = result as Extract<RouteSuccess, { kind: "json" }>;
@@ -553,6 +620,16 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   const json = r.json;
   const usage = readUsage(json.usage, { prompt: promptTokens, completion: Math.ceil(JSON.stringify(json.choices ?? []).length / 4) });
   const redactions = guardCfg?.redact_output ? redactOutput(json) : 0;
+  if (askMoAnswer) {
+    const refused = r.refusal?.served === "refused";
+    const choices = Array.isArray(json.choices) ? json.choices : [];
+    json.choices = choices.slice(0, 1).map((ch: any) => {
+      const text = typeof ch.message?.content === "string" ? ch.message.content : "";
+      return { index: 0, finish_reason: safeAskMoFinish(ch.finish_reason), message: {
+        role: "assistant", content: refused ? text : checkedAnswer(text, askMoAnswer.question, webSearch?.results?.length ?? 0, askMoAnswer.topic),
+      } };
+    });
+  }
   const responseText = (json.choices ?? []).map((ch: any) => (typeof ch?.message?.content === "string" ? ch.message.content : ch?.text ?? "")).join("");
   // An attested gateway's receipt for this exchange: checked before anything is returned.
   const upstreamAttestation = await upstreamAttestationOf(ctx, r, byok);
@@ -564,7 +641,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string): P
   const anon = await receiptForCall(ctx, { r, fin, modelId: autoDecisionOf(c.req.raw) ? r.model.id : String(body.model ?? r.model.id), sealed }); // WS09
   if (r.refusal?.served !== "refused") webSearchPath.attachWebCitations(json, webSearch); // url_citation annotations
   const out = {
-    ...json,
+    ...(askMoAnswer ? { choices: json.choices } : json),
     id: fin.id,
     model: r.model.id,
     provider: r.candidate.provider.name,
@@ -642,14 +719,14 @@ export type Common = {
   sealed?: boolean;
   c: Context;
   body: Record<string, unknown>;
-  billing: Billing;
+  billing: ChatBilling;
   holdId: string;
   t0: number;
   bodySha: string;
   stream: boolean;
   kind: Kind;
   byok: Map<string, string>;
-  meta: { guard: ReturnType<typeof applyGuardrails>; middle: { removed: number; truncated: number } | null; paywithNote?: string; cacheMode: CacheMode | null; excluded: unknown[]; route: string | null; preset?: { name: string; version: number; hash: string } | null; character?: CharacterMeta | null; webSearch?: webSearchPath.WebSearchUse | null };
+  meta: { guard: ReturnType<typeof applyGuardrails>; middle: { removed: number; truncated: number } | null; paywithNote?: string; cacheMode: CacheMode | null; excluded: unknown[]; route: string | null; preset?: { name: string; version: number; hash: string } | null; character?: CharacterMeta | null; webSearch?: webSearchPath.WebSearchUse | null; askMo?: boolean };
   guardCfg: GuardrailConfig | null;
   promptTokens: number;
   disc: DisclosureRequest;
@@ -695,12 +772,16 @@ export type FinalizeInput = Common & {
   delivered?: { completion: number; reasoning: number } | null;
 };
 
+const FREE_FINISH = new Set(["stop", "length", "content_filter", "cancelled", "error"]);
+
 async function finalize(p: FinalizeInput) {
   const { ctx, billing, r } = p;
   const isByok = p.byok.has(r.candidate.providerId);
-  const mode: Mode = isByok ? "byok" : billing.mode;
+  const free = billing.mode === "free";
+  const mode = isByok ? "byok" : billing.mode;
+  const finish = free && !FREE_FINISH.has(p.finishReason ?? "") ? null : p.finishReason;
   const fees = { royaltyBps: r.model.royaltyBps, perCallMarginBps: ctx.cfg.fees.perCallMarginBps, byokFeeBps: ctx.cfg.fees.byokFeeBps };
-  const listCost = priceUsage(r.candidate, r.model, p.usage, billing.mode === "per_call" ? "per_call" : mode, fees, isByok);
+  const listCost = priceUsage(r.candidate, r.model, p.usage, billing.mode === "per_call" ? "per_call" : mode === "free" ? "prepaid" : mode, fees, isByok);
   // A batch line is charged the discounted price (BATCH_DISCOUNT_BPS); everything else the list price.
   const batchLine = batchLineOf(p.c);
   const cost = batchLine ? batchPrice(listCost, batchLine.discountBps) : { ...listCost, batchDiscount: 0n };
@@ -712,9 +793,10 @@ async function finalize(p: FinalizeInput) {
   // refusal_refund, below), and so is every refused attempt before it.
   const servedRefused = r.refusal?.served === "refused";
   const firstChat = billing.mode === "prepaid" && !!billing.firstChat;
+  const sponsorship = free ? { sponsorship: "free_daily" } : firstChat ? { sponsorship: "first_dashboard_chat" } : {};
   const searchFee = servedRefused || firstChat ? 0n : webSearchPath.webSearchFee(p.meta.webSearch); // once per served request
   const settleAmount = servedRefused || firstChat ? 0n : payable + searchFee;
-  const settled = await settle(ctx.db, p.holdId, settleAmount, {
+  const settled = free ? { charged: 0n } : await settle(ctx.db, p.holdId, settleAmount, {
     description: `${r.model.id} via ${r.candidate.providerId}`,
     generationId: id,
   });
@@ -740,7 +822,7 @@ async function finalize(p: FinalizeInput) {
     provider: r.candidate.providerId,
     tokens: { prompt: p.usage.prompt, completion: p.usage.completion, reasoning: p.usage.reasoning, cached: p.usage.cachedRead, estimated: p.usage.estimated },
     cost: picoToUsdString(charged),
-    ...(firstChat ? { sponsorship: "first_dashboard_chat" } : {}),
+    ...sponsorship,
     cost_details: { upstream: picoToUsdString(cost.upstream), royalty: picoToUsdString(cost.royalty), margin: picoToUsdString(cost.margin), ...(overBudget ? { over_budget: picoToUsdString(cost.total) } : {}), ...(batchLine ? { batch_discount: picoToUsdString(cost.batchDiscount) } : {}) },
     paid_with: paidWith,
     latency_ms: Math.round(r.latencyMs),
@@ -781,7 +863,7 @@ async function finalize(p: FinalizeInput) {
     chainHead: p.stream ? (p.chainHead ?? null) : null,
     tokensIn: p.usage.prompt,
     tokensOut: p.usage.completion,
-    finish: p.finishReason,
+    finish: p.meta.askMo ? safeAskMoFinish(finish) : finish,
     stream: p.stream,
     complete: !p.cancelled && p.finishReason !== "error",
     lane: p.disc.lane,
@@ -796,7 +878,7 @@ async function finalize(p: FinalizeInput) {
   const title = p.c.req.header("x-title");
   let appId: string | null = null;
   // App attribution: where a call came from, cut to a bounded length.
-  if (referer || title) {
+  if (!free && !p.meta.askMo && (referer || title)) {
     appId = sha256((referer ?? "") + "|" + (title ?? "")).slice(0, 24);
     await ctx.db.insert(apps).values({ id: appId, url: referer?.slice(0, 500) ?? null, title: title?.slice(0, 200) ?? null }).onConflictDoNothing();
   }
@@ -823,8 +905,8 @@ async function finalize(p: FinalizeInput) {
     mode,
     latencyMs: Math.round(r.latencyMs),
     generationTimeMs: p.generationMs,
-    finishReason: p.finishReason,
-    nativeFinishReason: p.nativeFinish,
+    finishReason: p.meta.askMo ? safeAskMoFinish(finish) : finish,
+    nativeFinishReason: free ? null : p.meta.askMo ? safeAskMoFinish(p.nativeFinish) : p.nativeFinish,
     streamed: p.stream,
     cancelled: p.cancelled,
     quant: r.candidate.quant,
@@ -843,7 +925,7 @@ async function finalize(p: FinalizeInput) {
     paidWith,
     paymentTx: billing.mode === "per_call" ? (billing.paymentTx ?? null) : null,
     appId,
-    attempts: r.attempts,
+    attempts: free || p.meta.askMo ? r.attempts.map(({ message: _message, ...attempt }) => attempt) : r.attempts,
     requestSha256: p.bodySha,
     responseSha256: payload.response_sha256,
   });
@@ -869,7 +951,7 @@ async function finalize(p: FinalizeInput) {
   }, undefined, p.c.req.header("traceparent")?.split("-")[1]);
   // The key owner's own trace export (services/tracing.ts): public-lane calls only. An attested call
   // never reaches the queue, whatever the key is configured to do. Queued without waiting; it cannot fail the call.
-  if (billing.key?.tracing && shouldExportTrace({ lane: p.disc.lane, privateLaneRequest: privateLane, privateRoute })) {
+  if (!p.meta.askMo && billing.key?.tracing && shouldExportTrace({ lane: p.disc.lane, privateLaneRequest: privateLane, privateRoute })) {
     const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
     ctx.tracing.enqueue(billing.key.keyHash, billing.key.tracing, {
       generationId: id,
@@ -902,7 +984,7 @@ async function finalize(p: FinalizeInput) {
     total_tokens: p.usage.prompt + p.usage.completion,
     cost: picoToUsd(charged),
     is_byok: isByok,
-    ...(firstChat ? { sponsorship: "first_dashboard_chat" } : {}),
+    ...sponsorship,
     cost_details: { upstream_inference_cost: picoToUsd(cost.upstream), royalty: picoToUsd(cost.royalty), margin: picoToUsd(cost.margin), ...(batchLine ? { batch_discount: picoToUsd(cost.batchDiscount) } : {}), ...(searchFee ? { web_search: picoToUsd(searchFee) } : {}) },
     prompt_tokens_details: { cached_tokens: p.usage.cachedRead, cache_write_tokens: p.usage.cacheWrite },
     completion_tokens_details: { reasoning_tokens: p.usage.reasoning },
@@ -1105,7 +1187,7 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
         event({ ...base, choices: [], usage: fin.usageJson, receipt: fin.receiptJson, anonymo_receipt: { ...anon.body, header: anon.header_value }, ...(fin.extras(0) ?? {}) });
       } catch (e) {
         clearInterval(holdKeepalive);
-        log.error("stream finalize failed", { error: (e as Error).message, hold: p.holdId });
+        log.error("stream finalize failed", { ...(p.billing.mode === "free" ? {} : { error: (e as Error).message }), hold: p.holdId });
         await giveBack(ctx, p.billing, p.holdId).catch(() => undefined);
       }
       send("data: [DONE]\n\n");
@@ -1213,8 +1295,8 @@ async function floorCheck(ctx: Ctx, body: Record<string, unknown>) {
 export const REFUSED_MAX_CHARS = 2400;
 
 /** The refusal catch for this request, or undefined when it is off (header, then the key's setting; on by default). */
-async function refusalCatchFor(ctx: Ctx, c: Context, key: KeyRow | null, body: Record<string, unknown>, kind: Kind, disc: DisclosureRequest): Promise<RefusalCatch | undefined> {
-  if (!(await refusalCatchEnabled(ctx.db, c.req.header(REFUSAL_CATCH_HEADER), key?.keyHash ?? null))) return undefined;
+async function refusalCatchFor(ctx: Ctx, c: Context, key: KeyRow | null, body: Record<string, unknown>, kind: Kind, disc: DisclosureRequest, free: boolean): Promise<RefusalCatch | undefined> {
+  if (!free && !(await refusalCatchEnabled(ctx.db, c.req.header(REFUSAL_CATCH_HEADER), key?.keyHash ?? null))) return undefined;
   return { classifier: refusalClassifierFor(ctx, body, disc), prompt: refusalPromptOf(body, kind), familyOf: (m, cand) => familyOf(m, cand, ctx.catalog.lane.get(m.id)?.baseModel) };
 }
 
@@ -1394,23 +1476,23 @@ async function recordRefusal(p: FinalizeInput, o: { fees: Parameters<typeof pric
   const { ctx, billing, r } = p;
   const out = r.refusal!;
   const servedRefused = out.served === "refused";
-  const priceMode = (byok: boolean): Mode => (billing.mode === "per_call" ? "per_call" : byok ? "byok" : billing.mode);
+  const priceMode = (byok: boolean): Mode => billing.mode === "free" ? "prepaid" : byok && billing.mode !== "per_call" ? "byok" : billing.mode;
   const charges = out.refused.map((a, i) => {
     if (servedRefused && i === out.refused.length - 1) return { modelId: a.model.id, providerId: a.candidate.providerId, cost: o.served };
     const byok = p.byok.has(a.candidate.providerId);
     const usage = readUsage(a.usage, { prompt: p.promptTokens, completion: Math.max(1, Math.ceil(a.outChars / 4)) });
     return { modelId: a.model.id, providerId: a.candidate.providerId, cost: priceUsage(a.candidate, a.model, usage, priceMode(byok), o.fees, byok).total };
   });
-  await recordRefusedAttempts(ctx.db, { accountId: billing.accountId, keyHash: billing.key?.keyHash ?? null, holdId: p.holdId, charges });
+  if (billing.mode !== "free") await recordRefusedAttempts(ctx.db, { accountId: billing.accountId, keyHash: billing.key?.keyHash ?? null, holdId: p.holdId, charges });
   await bumpRefusalStats(ctx.db, out.checked.map((x) => ({ routeId: routeIdOf(x.model.id, x.candidate.providerId), refused: x.refused })));
-  const refunded = charges.reduce((sum, ch) => sum + ch.cost, 0n);
+  const refunded = billing.mode === "free" ? 0n : charges.reduce((sum, ch) => sum + ch.cost, 0n);
   let n = 0;
   const routes = out.checked.map((x) => ({
     model: x.model.id,
     provider: x.candidate.providerId,
     family: familyOf(x.model, x.candidate, ctx.catalog.lane.get(x.model.id)?.baseModel),
     refused: x.refused,
-    ...(x.refused ? { refund: picoToUsdString(charges[n++]?.cost ?? 0n) } : {}),
+    ...(x.refused ? { refund: picoToUsdString(billing.mode === "free" ? 0n : charges[n++]?.cost ?? 0n) } : {}),
   }));
   return {
     refused: servedRefused,

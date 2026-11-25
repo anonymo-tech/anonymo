@@ -1,5 +1,5 @@
 import type { MemoryFact } from '../memory.ts';
-import { MEMORY_INSTRUCTION } from '../memory-request.ts';
+import { MEMORY_INSTRUCTION, VAULT_MEMORY_INSTRUCTION } from '../memory-request.ts';
 import type { ChatMessage } from '../types.ts';
 
 export const DEMO_MEMORY_FACTS: MemoryFact[] = [
@@ -9,6 +9,11 @@ export const DEMO_MEMORY_FACTS: MemoryFact[] = [
 ];
 
 export function demoMemoryReply(messages: ChatMessage[]): string | null {
+  if (messages[0]?.content === VAULT_MEMORY_INSTRUCTION) {
+    const user = (JSON.parse(messages[1]?.content ?? '{}') as { user?: string }).user ?? '';
+    if (/\bvegetarian\b/i.test(user)) return JSON.stringify([{ kind: 'pref', text: 'You’re vegetarian.', replace: null }]);
+    return '[]';
+  }
   if (messages[0]?.role !== 'system' || messages[0].content !== MEMORY_INSTRUCTION) return null;
   return JSON.stringify([{ text: 'Keeps a compass from their first voyage.', replace: null }]);
 }

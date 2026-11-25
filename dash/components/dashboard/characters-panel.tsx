@@ -51,7 +51,7 @@ export function CharactersPanel() {
   // Update "faces": the art inside a PNG card is kept as the character's face, and any character can be given painted
   // ones. `?face=<id>` (the chat's "Give them a face" link) opens that character's Face panel.
   const facesOn = ready && updateOn('faces', demo);
-  const memoryOn = ready && updateOn('memory', demo);
+  const memoryOn = ready && (updateOn('memory', demo) || updateOn('vaultsync', demo));
   const [memoryFor, setMemoryFor] = useState<string | null>(null);
   const [art, setArt] = useState<Blob | null>(null);
   const params = useSearchParams();

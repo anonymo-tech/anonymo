@@ -11,6 +11,19 @@ export function readCardBytes(bytes: Uint8Array): CharacterCard {
   return normalizeCard(new TextDecoder().decode(bytes));
 }
 
+/** Card text the floor can judge. Asset references and application-specific extension data stay on the device. */
+export function cardTextFields({ data }: CharacterCard): string[] {
+  const book = data.character_book;
+  return [
+    data.name, data.nickname, data.description, data.personality, data.scenario, data.first_mes,
+    data.mes_example, data.system_prompt, data.post_history_instructions, data.creator_notes, data.creator,
+    ...data.tags, ...data.alternate_greetings, ...(data.group_only_greetings ?? []),
+    ...Object.values(data.creator_notes_multilingual ?? {}),
+    book?.name, book?.description,
+    ...(book?.entries.flatMap((entry) => [entry.name, entry.comment, entry.content, ...entry.keys, ...(entry.secondary_keys ?? [])]) ?? []),
+  ].filter((value): value is string => !!value?.trim());
+}
+
 /**
  * True for parsed JSON that is a Tavern card: a spec'd V2/V3 card, or V1's flat fields. A name and a description alone
  * are not enough (plenty of other JSON has those): a V1 card also has its greeting or two more of its own fields.

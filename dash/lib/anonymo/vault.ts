@@ -16,6 +16,8 @@ export const aboutYouSlot = (demo: boolean) => demo ? 'anonymo.demo.aboutyou.v1'
 // Chats and stories can live in legacy localStorage. Memory and About you always use the vault's IndexedDB store.
 const legacySlots = [...historySlots, storySlot(false), storySlot(true)];
 const recordSlots = [...legacySlots, memorySlot(false), memorySlot(true), aboutYouSlot(false), aboutYouSlot(true)];
+const memorySecretSlot = (demo: boolean) => demo ? 'anonymo.demo.memory-secret.v1' : 'anonymo.memory-secret.v1';
+recordSlots.push(memorySecretSlot(false), memorySecretSlot(true));
 const configSlot = 'config';
 const imagePrefix = 'image:';
 const utf8 = new TextEncoder();
@@ -168,22 +170,34 @@ export function createVault({ disk, legacy, exclusive, announce }: Options) {
     emit(nextConfig ? (key ? 'unlocked' : 'locked') : 'off');
   }
 
-  function updateList(slot: string, update: (previous: unknown[]) => unknown[]) {
+  function updateList(
+    slot: string,
+    update: (previous: unknown[], related?: unknown) => unknown[] | Promise<unknown[]>,
+    extra?: { slot: string; replacement?: unknown },
+  ) {
     return run(async (current) => {
       current = await syncConfig(current);
       if (config && !key) throw new VaultLocked();
       const previous = await readChats(slot, key, current);
       assertCurrent(current);
-      const list = update(previous);
+      const related = extra ? (await readChats(extra.slot, key, current))[0] : undefined;
+      assertCurrent(current);
+      const changed = update(previous, related);
+      const list = changed instanceof Promise ? await changed : changed;
+      assertCurrent(current);
       if (list === previous && !legacySlots.includes(slot)) return;
       if (config === undefined && legacySlots.includes(slot)) legacy().setItem(slot, JSON.stringify(list));
       else {
         const data = await packChats(slot, list, key);
         assertCurrent(current);
-        await disk.commit([[slot, data]]);
+        const puts: [string, unknown][] = [[slot, data]];
+        if (extra?.replacement !== undefined) puts.push([extra.slot, await packChats(extra.slot, [extra.replacement], key)]);
+        assertCurrent(current);
+        await disk.commit(puts);
       }
       assertCurrent(current);
       histories.set(slot, list);
+      if (extra?.replacement !== undefined) histories.set(extra.slot, [extra.replacement]);
       emit(config ? 'unlocked' : 'off');
       announce?.('data');
     });
@@ -275,6 +289,27 @@ export function createVault({ disk, legacy, exclusive, announce }: Options) {
     },
     updateMemory(demo: boolean, update: (records: unknown[]) => unknown[]) {
       return updateList(memorySlot(demo), update);
+    },
+    updateVaultMemory(demo: boolean, update: (records: unknown[], secret?: unknown) => Promise<unknown[]>, replacement?: unknown) {
+      return updateList(memorySlot(demo), update, { slot: memorySecretSlot(demo), replacement });
+    },
+    snapshotMemorySecret(demo: boolean) {
+      return histories.get(memorySecretSlot(demo))?.[0];
+    },
+    updateMemorySecret(demo: boolean, update: (previous: unknown) => unknown) {
+      return updateList(memorySecretSlot(demo), (records) => {
+        const next = update(records[0]);
+        return next === records[0] ? records : next === undefined ? [] : [next];
+      });
+    },
+    clearMemorySecret(demo: boolean) {
+      return run(async () => {
+        const slot = memorySecretSlot(demo);
+        await disk.commit([], [slot]);
+        histories.delete(slot);
+        emit();
+        announce?.('data');
+      });
     },
     snapshotAboutYou(demo: boolean) {
       return histories.get(aboutYouSlot(demo))?.[0];

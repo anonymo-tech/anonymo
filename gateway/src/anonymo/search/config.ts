@@ -29,25 +29,25 @@ const schema = z.object({
 export type WebSearchConfig = z.infer<typeof schema>;
 
 /** Parse the env value. Never echoes the input (it holds the API key). */
-export function parseWebSearchConfig(raw: unknown): WebSearchConfig | null {
+export function parseWebSearchConfig(raw: unknown, envKey = WEB_SEARCH_ENV): WebSearchConfig | null {
   if (raw == null || (typeof raw === "string" && !raw.trim())) return null;
   let json: unknown;
   try {
     json = typeof raw === "string" ? JSON.parse(raw) : raw;
   } catch {
-    throw new Error(`${WEB_SEARCH_ENV} must be JSON like {"provider":"tavily","apiKey":"…","maxResults":5}.`);
+    throw new Error(`${envKey} must be JSON like {"provider":"tavily","apiKey":"…","maxResults":5}.`);
   }
   const parsed = schema.safeParse(json);
   if (!parsed.success) {
     const fields = [...new Set(parsed.error.issues.map((i) => i.path.join(".") || "(root)"))].join(", ");
-    throw new Error(`${WEB_SEARCH_ENV} is invalid at: ${fields}.`);
+    throw new Error(`${envKey} is invalid at: ${fields}.`);
   }
   return parsed.data;
 }
 
 /** The deployment's web search, or null when ANONYMO_WEB_SEARCH is unset. `fetchImpl` is for tests. */
-export function createWebSearch(env: Record<string, unknown>, fetchImpl?: typeof fetch): WebSearchService | null {
-  const cfg = parseWebSearchConfig(env[WEB_SEARCH_ENV]);
+export function createWebSearch(env: Record<string, unknown>, fetchImpl?: typeof fetch, envKey = WEB_SEARCH_ENV): WebSearchService | null {
+  const cfg = parseWebSearchConfig(env[envKey], envKey);
   if (!cfg) return null;
   return {
     provider: cfg.provider,

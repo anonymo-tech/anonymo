@@ -18,16 +18,20 @@
 //   talk      in chat: hold to talk (transcribed by Anonymo) and read replies aloud with a stock voice
 //   story     long-form writing with chapters and a story bible
 //   memory    device-only character facts and suggestions after replies
+//   vaultsync encrypted Vault Memory and optional cross-device sync
 //   aboutyou  a device-only profile carried into chats, with a ChatGPT import
 //   faces     Character Studio: customizable plush characters and expressive portraits
 //   voice     Night Call: a voice call page with a sleep timer (speech in stays on the device)
 //   movein    bring characters and chats from other apps, read in the browser
+//   lifeboat  bring cards and chats with floor-checked card imports (needs ANONYMO_FEATURE_LIFEBOAT)
 //   sidebyside one question answered by three models at once, then merged
 //   tickets   hand someone a funded key as a link, a QR code or a printed ticket
+//   codes     redeem a voucher for chat credit (needs ANONYMO_FEATURE_CODES on the gateway)
 //   share     Sealed Share: a chat shared as a link that Anonymo can't read (sealed in the browser)
 //   pricetag  in chat: the estimated price of a message before sending, this chat's charges so far, and a per-chat limit
 //   auto      in chat: the Auto model (anonymo-auto) picks a model for each message and shows which one answered
 //   search    in chat: "Search the web" sends the model as :online and shows the sources under the answer
+//   askmo     Ask Mo with web sources, topic checklists and a council Second Opinion
 //   photos    in chat: attach up to 4 photos for models that take images (shrunk in the browser, never saved)
 //   mask      01 Mask my details: personal details in a draft are masked on the device before sending
 //   circle    02 Circle anything: point at part of a picture or PDF page and ask about it
@@ -37,11 +41,13 @@
 //   connect   05 Pair my coding tool: MCP setup for Cursor and Claude Code, verified by a receipt from the tool
 //   walletreview 08 What am I signing?: a read-only review of a pasted token approval
 //   solpay    pay with a Solana wallet from Add funds
+//   free      daily moderated chat messages without a key (needs ANONYMO_FEATURE_FREE_TIER)
 //   app       install the workspace on a phone, with a static offline screen
+//   keysafe   back up and restore your API key and memory secret with a passkey (needs ANONYMO_FEATURE_KEY_SAFE)
 //
 // Ventures and the phone app require a build opt-in. Demo mode shows the other updates.
 
-export const UPDATE_IDS = ['history', 'images', 'usage', 'catchup', 'status', 'compare', 'vanish', 'vault', 'video', 'faces', 'talk', 'story', 'memory', 'voice', 'movein', 'sidebyside', 'tickets', 'share', 'pricetag', 'auto', 'search', 'photos', 'ventures', 'mask', 'circle', 'excerpt', 'safepost', 'proof', 'connect', 'walletreview', 'solpay', 'app', 'aboutyou', 'modes'] as const;
+export const UPDATE_IDS = ['history', 'images', 'usage', 'catchup', 'status', 'compare', 'vanish', 'vault', 'video', 'faces', 'talk', 'story', 'memory', 'voice', 'movein', 'sidebyside', 'tickets', 'share', 'pricetag', 'auto', 'search', 'photos', 'ventures', 'mask', 'circle', 'excerpt', 'safepost', 'proof', 'connect', 'walletreview', 'solpay', 'app', 'aboutyou', 'modes', 'keysafe', 'codes', 'creators', 'passes', 'stake', 'lifeboat', 'free', 'askmo', 'compliance', 'vaultsync'] as const;
 export type UpdateId = (typeof UPDATE_IDS)[number];
 
 export function parseUpdates(raw: string | undefined): ReadonlySet<UpdateId> {

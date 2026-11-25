@@ -1,3 +1,4 @@
+import { createWebSearch } from "./anonymo/search/config.ts";
 import { hardeningEnv, hardeningSettings } from "./hardening/config.ts"; // HD1
 import { rpcEnv, rpcSettings } from "./chain/rpc-config.ts"; // RPC1: private transport settings.
 import { rushEnv, rushSettings } from "./rush/config.ts"; // ON3
@@ -11,6 +12,7 @@ import { resolve } from "node:path";
 import { z } from "zod";
 import { usdToPico } from "./lib/money.ts";
 import { parseModelMap } from "./anthropic/models.ts";
+import { resellerCredentials } from "./anonymo/codes/resellers.ts";
 
 // Every setting comes from the environment. Missing optional services produce
 // an explicit "unavailable" state at runtime; they never fake success.
@@ -223,6 +225,21 @@ const schema = z.object({
   // Anonymo Ventures (WS11): the crew of Mos, model "anonymo-swarm" and /v1/ventures. Off by default: the routes and the
   // anonymo-swarm hook do not exist until an operator turns this on.
   ANONYMO_FEATURE_VENTURES: bool.default(false),
+  ANONYMO_FEATURE_KEY_SAFE: bool.default(false),
+  ANONYMO_FEATURE_CODES: bool.default(false),
+  ANONYMO_CODES_RESELLER_HASHES: opt,
+  // Public Everyday contract metadata for wallet clients.
+  ANONYMO_FEATURE_EVERYDAY_CONTRACTS: bool.default(false),
+  ANONYMO_FEATURE_LIFEBOAT: bool.default(false),
+  ANONYMO_FEATURE_FREE_TIER: bool.default(false),
+  ANONYMO_FREE_DAILY: z.coerce.number().int().min(1).max(1000).default(10),
+  ANONYMO_FREE_ROUTES: opt, // comma-separated moderated self-hosted route IDs; defaults to moderated anonymo-rp offers
+  ANONYMO_FREE_POW_DIFFICULTY: z.coerce.number().int().min(12).max(22).default(16),
+  ANONYMO_FEATURE_ASK_MO: bool.default(false),
+  ANONYMO_ASK_MO_SEARCH_FALLBACK: opt, // same JSON as ANONYMO_WEB_SEARCH
+  ANONYMO_FEATURE_COMPLIANCE: bool.default(false),
+  ANONYMO_FEATURE_MEMORY_SYNC: bool.default(false),
+  ANONYMO_MEMORY_SYNC_ISSUER: opt, // dedicated RSA PEM, shared by the API replicas
   ANONYMO_COUNCIL_MODELS: opt, // comma list of 2-5 model ids used when a council request names none
   ANONYMO_COUNCIL_JUDGE: opt, // model id of the judge used when a council request names none
   ANONYMO_COUNCIL_MODE: z.enum(["judge", "fuse"]).default("judge"),
@@ -271,6 +288,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
   }
   const e = parsed.data;
   const production = e.ANONYMO_ENV === "production";
+  const hardening = hardeningSettings(e);
   const rpc = rpcSettings(e, production || process.env.NODE_ENV === "production"); // RPC1
   // Contract mode: the Anonymo Credits / CallPay / ReceiptAnchor / ProviderBond contracts are configured. Anonymo runs
   // without them by default (deposits are WS05's, hourly roots WS09's), so a router with none of them is contract-free:
@@ -279,6 +297,9 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
   const contractsMode = Object.values(contractAddresses).some((v) => v && !/^0x0{40}$/.test(v));
   const anonymoRoots = !!e.ANONYMO_RECEIPT_ROOTS_ADDRESS && !/^0x0{40}$/.test(e.ANONYMO_RECEIPT_ROOTS_ADDRESS);
   if (production) {
+    if (e.ANONYMO_FEATURE_COMPLIANCE && e.RUNTIME_ROLE !== "worker" && !hardening.originLockEnabled)
+      throw new Error("ANONYMO_FEATURE_COMPLIANCE needs ORIGIN_LOCK_ENABLED in production to authenticate the region signal.");
+    if (e.ANONYMO_FEATURE_MEMORY_SYNC && !e.ANONYMO_MEMORY_SYNC_ISSUER) throw new Error("ANONYMO_MEMORY_SYNC_ISSUER is required when memory sync is enabled in production.");
     if (!e.APP_SECRET || e.APP_SECRET.length < 32) throw new Error("APP_SECRET (>= 32 chars) is required in production.");
     if (!e.ADMIN_TOKEN || e.ADMIN_TOKEN.length < 24) throw new Error("ADMIN_TOKEN (>= 24 chars) is required in production.");
     if (e.ALLOW_DEV_ATTESTATION) throw new Error("ALLOW_DEV_ATTESTATION must be false in production.");
@@ -389,7 +410,7 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     adminToken: e.ADMIN_TOKEN,
     logLevel: e.LOG_LEVEL,
     trustProxy: e.TRUST_PROXY,
-    hardening: hardeningSettings(e), // HD1
+    hardening, // HD1
     release: { commit: contractPath.releaseCommit, deployment: contractPath.deployment },
     receipts: {
       signingKey: e.RECEIPT_SIGNING_KEY,
@@ -484,7 +505,27 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
     anthropic: { modelMap: parseModelMap(e.ANTHROPIC_MODEL_MAP) },
     // Off unless enabled. Council members and the judge are billed and receipted like any other call.
     structuredOutputCheckEnabled: e.STRUCTURED_OUTPUT_CHECK_ENABLED, // V83
-    features: { council: e.ANONYMO_FEATURE_COUNCIL, media: e.ANONYMO_FEATURE_MEDIA, ventures: e.ANONYMO_FEATURE_VENTURES },
+    memorySyncIssuer: e.ANONYMO_MEMORY_SYNC_ISSUER,
+    features: {
+      council: e.ANONYMO_FEATURE_COUNCIL,
+      media: e.ANONYMO_FEATURE_MEDIA,
+      ventures: e.ANONYMO_FEATURE_VENTURES,
+      keySafe: e.ANONYMO_FEATURE_KEY_SAFE,
+      codes: e.ANONYMO_FEATURE_CODES,
+      everydayContracts: e.ANONYMO_FEATURE_EVERYDAY_CONTRACTS,
+      lifeboat: e.ANONYMO_FEATURE_LIFEBOAT,
+      freeTier: e.ANONYMO_FEATURE_FREE_TIER,
+      askMo: e.ANONYMO_FEATURE_ASK_MO,
+      compliance: e.ANONYMO_FEATURE_COMPLIANCE,
+      memorySync: e.ANONYMO_FEATURE_MEMORY_SYNC,
+    },
+    codeResellers: resellerCredentials(e.ANONYMO_FEATURE_CODES ? e.ANONYMO_CODES_RESELLER_HASHES : undefined),
+    freeTier: {
+      daily: e.ANONYMO_FREE_DAILY,
+      routes: new Set((e.ANONYMO_FREE_ROUTES ?? "").split(",").map((id) => id.trim()).filter(Boolean)),
+      difficulty: e.ANONYMO_FREE_POW_DIFFICULTY,
+    },
+    askMoSearchFallback: e.ANONYMO_FEATURE_ASK_MO ? createWebSearch(e, undefined, "ANONYMO_ASK_MO_SEARCH_FALLBACK") : null,
     council: { models: councilModels, judge: e.ANONYMO_COUNCIL_JUDGE ?? null, mode: e.ANONYMO_COUNCIL_MODE },
     batch: {
       discountBps: e.BATCH_DISCOUNT_BPS,

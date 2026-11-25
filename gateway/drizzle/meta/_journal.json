@@ -435,6 +435,41 @@
       "when": 1791400063000,
       "tag": "0063_ventures",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1791400064000,
+      "tag": "0064_free_tokens",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1791400065000,
+      "tag": "0065_codes",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1791400066000,
+      "tag": "0066_key_safes",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1791400067000,
+      "tag": "0067_memory_blobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1791400068000,
+      "tag": "0068_region_compliance",
+      "breakpoints": true
     }
   ]
 }

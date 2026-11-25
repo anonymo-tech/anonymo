@@ -1,6 +1,6 @@
 // Only known workspace tools and their opaque local IDs can be carried through setup.
 const tools = new Map([
-  ['/dashboard/chat', 'chat'], ['/dashboard/call', 'Night Call'],
+  ['/dashboard/chat', 'chat'], ['/dashboard/ask', 'Ask Mo'], ['/dashboard/call', 'Night Call'],
   ['/dashboard/images', 'Image studio'], ['/dashboard/video', 'Video studio'],
   ['/dashboard/side-by-side', 'Side by side'], ['/dashboard/story', 'Story Studio'],
   ['/dashboard/characters', 'Character studio'], ['/dashboard/move-in', 'Move in'],
@@ -46,7 +46,8 @@ export function setupReturn(value: string | null | undefined): { href: string; l
   return { href: value, label: path === '/dashboard/chat' && query ? 'character chat' : label, needsCredit: path !== '/dashboard/presets' && path !== '/dashboard/usage' };
 }
 
-export function setupHref(step: 'key' | 'funds', destination?: string | null) {
+export function setupHref(step: 'key' | 'funds' | 'redeem', destination?: string | null) {
   const target = setupReturn(destination);
-  return `/dashboard/${step}${target ? `?returnTo=${encodeURIComponent(target.href)}` : ''}`;
+  const path = step === 'redeem' ? '/redeem' : `/dashboard/${step}`;
+  return `${path}${target ? `?returnTo=${encodeURIComponent(target.href)}` : ''}`;
 }

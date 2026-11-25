@@ -2,6 +2,7 @@ import { derivedClientIp } from "../hardening/client.ts";
 import type { Context } from "hono";
 import type { Config } from "../config.ts";
 import { fail } from "../lib/errors.ts";
+import { hmac } from "../lib/util.ts";
 
 export const MAX_BODY_BYTES = 16 * 1024 * 1024;
 
@@ -29,15 +30,16 @@ export function clientIp(c: Context, trustProxy = false) {
 
 /** Who a per-address rate limit counts a request against. */
 export type AddressBucket = {
-  /** The client address. */
+  /** The client address or its keyed digest. */
   id: string;
   /** The limit this bucket gets where one address would get `limit`. */
   scale: (limit: number) => number;
 };
 
 /** The bucket for per-address rate limits (unauthenticated calls, new keys and the like). Keyed calls are limited per key. */
-export function addressBucket(c: Context, cfg: Pick<Config, "trustProxy">): AddressBucket {
-  return { id: clientIp(c, cfg.trustProxy), scale: (limit) => limit };
+export function addressBucket(c: Context, cfg: Pick<Config, "trustProxy" | "appSecret" | "features">): AddressBucket {
+  const ip = clientIp(c, cfg.trustProxy);
+  return { id: cfg.features.compliance ? hmac(cfg.appSecret, `address-limit:${ip}`) : ip, scale: (limit) => limit };
 }
 
 export const isoOrNull = (d: Date | null | undefined) => (d ? d.toISOString() : null);

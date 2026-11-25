@@ -31,7 +31,8 @@ import { useDeviceStore } from '@/lib/anonymo/device-store';
 import { keepStore, saveChat } from '@/lib/anonymo/history';
 import { usdToMusd } from '@/lib/anonymo/money';
 import { modelStore } from '@/lib/anonymo/prefs';
-import { AI_NOTICE, AI_REMINDER, mentionsSelfHarm, reminderDue } from '@/lib/anonymo/safety';
+import { AI_NOTICE, AI_REMINDER } from '@/lib/anonymo/safety';
+import { CompanionDisclosure, RegionPage, useCompanionCompliance } from './companion-compliance';
 import type { AnonymoModelId, ChatMessage, MediaSpeechModel } from '@/lib/anonymo/types';
 import { updateOn } from '@/lib/anonymo/updates';
 import {
@@ -213,8 +214,7 @@ function Call() {
   const lastReply = useRef({ ok: false, chars: 0 });
   const quietSince = useRef(0);
   const press = useRef({ at: 0, ends: false });
-  // The AI notice is always on the call screen; this marks when the thread last repeated it (as chat does).
-  const noticedAt = useRef(Date.now());
+  const compliance = useCompanionCompliance(client, updateOn('compliance', demo), phase === 'live', chatId);
   // This call's own turns, patched the moment they change, so the next message never reads a stale thread.
   const mine = useRef(new Map<string, Turn>());
   const turnsRef = useLatest(turns);
@@ -255,7 +255,7 @@ function Call() {
       controller.current?.abort();
       await running.current.catch(() => undefined);
     }
-    if (!prompt || !key || phaseRef.current !== 'live' || !sleepAllowsSpeech(sleepRef.current)) return;
+    if (!prompt || !key || compliance.restricted || phaseRef.current !== 'live' || !sleepAllowsSpeech(sleepRef.current)) return;
     const thread = freshTurns();
     if (thread.some((t) => t.status === 'streaming')) {
       setNote({ text: 'Another reply is still being written. Give it a moment, then try again.' });
@@ -269,8 +269,7 @@ function Call() {
       messages = built.messages.map((m) => ({ role: m.role as ChatMessage['role'], content: typeof m.content === 'string' ? m.content : '' }));
     }
     const id = crypto.randomUUID();
-    const aiReminder = reminderDue(noticedAt.current);
-    if (aiReminder) noticedAt.current = Date.now();
+    const signals = compliance.takeSignals(prompt);
     const turn: Turn = {
       id,
       model,
@@ -284,12 +283,11 @@ function Call() {
       receipt: null,
       council: null,
       councilMode: null,
-      aiReminder,
-      crisis: mentionsSelfHarm(prompt),
+      ...signals,
     };
     mine.current.set(id, turn);
     setTurns((list) => [...list, turn]);
-    setFlags((f) => ({ reminder: f.reminder || aiReminder, crisis: f.crisis || turn.crisis === true }));
+    setFlags((f) => ({ reminder: f.reminder || signals.aiReminder, crisis: f.crisis || signals.crisis }));
     setMode('thinking');
     setCaption({ who: 'you', text: prompt });
     const job = run(turn, messages);
@@ -581,7 +579,7 @@ function Call() {
 
   // ---- starting and ending -------------------------------------------------------------------------------------------
   function start(story: boolean) {
-    if (!key || phaseRef.current !== 'lobby' || streaming) return;
+    if (!key || compliance.restricted || phaseRef.current !== 'lobby' || streaming) return;
     unlockAudio();
     primeDeviceVoice(deviceVoice);
     sampler.stop();
@@ -798,6 +796,7 @@ function Call() {
         </section>
       )}
       {flags.crisis && phase === 'lobby' && <CrisisLines />}
+      {compliance.restricted && phase === 'lobby' && <RegionPage mode={compliance.restricted} client={client} onVerified={compliance.refresh} />}
 
       <section className="nc-hero">
         <Photo src="/mascot/headphones.jpg" alt="" width={640} height={640} />
@@ -809,14 +808,14 @@ function Call() {
             reply.
           </p>
           <div className="nc-start">
-            <button type="button" className="btn btn-primary btn-lg" onClick={() => start(false)} disabled={streaming}>
+            <button type="button" className="btn btn-primary btn-lg" onClick={() => start(false)} disabled={streaming || !!compliance.restricted}>
               <span className="nc-start-label">
                 <Phone size={18} aria-hidden="true" />
                 Start the call
               </span>
               <span className="studio-cost">{voicePrice}</span>
             </button>
-            <button type="button" className="btn btn-lg" onClick={() => start(true)} disabled={streaming} title={storyNote}>
+            <button type="button" className="btn btn-lg" onClick={() => start(true)} disabled={streaming || !!compliance.restricted} title={storyNote}>
               <span className="nc-start-label">
                 <BedDouble size={18} aria-hidden="true" />
                 Read me to sleep
@@ -989,7 +988,9 @@ function Call() {
                 {caption.text || ' '}
               </p>
               <div className="nc-notes">
-                {flags.reminder && (
+                {compliance.disclosure && <CompanionDisclosure />}
+                {compliance.restricted && <RegionPage mode={compliance.restricted} client={client} onVerified={compliance.refresh} />}
+                {flags.reminder && !compliance.disclosure && (
                   <p className="ai-reminder" role="note">
                     {AI_REMINDER}
                   </p>

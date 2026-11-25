@@ -6,7 +6,7 @@ import { chromium } from 'playwright-core';
 const origin = new URL(process.env.WORKSPACE_PREVIEW_URL ?? 'http://localhost:5173');
 assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname));
 
-test('a new phone user writes first, funds at Send, and returns to send their draft', async () => {
+test('a guest chats for free, uses the allowance, then funds a key and sends the saved draft', async () => {
   const browser = await chromium.launch({
     executablePath: process.env.CHROMIUM_PATH || undefined,
     channel: process.env.BROWSER_CHANNEL || undefined,
@@ -25,12 +25,22 @@ test('a new phone user writes first, funds at Send, and returns to send their dr
     const sheet = page.getByRole('region', { name: 'Set up chat' });
     const next = 'Say hello in one sentence.';
     const slot = 'anonymo.chat-setup-draft';
+    await page.getByText(/^Free today: 10 left/).waitFor();
+    for (let left = 9; left >= 0; left--) {
+      await message.fill('Tell me about a quiet morning.');
+      await send.tap();
+      await page.getByText(new RegExp(`^Free today: ${left} left`)).waitFor();
+      await main.locator('.thread[aria-busy="false"] article.turn').nth(9 - left).getByRole('link', { name: /receipt/i }).waitFor();
+    }
+    await sheet.getByText(/You’ve used your free messages today/).waitFor();
+    await page.reload();
+    await page.getByText('Free today: 0 left', { exact: true }).waitFor();
     await main.getByRole('button', { name: 'Give me three ideas for a short mystery story.' }).tap();
     assert.match(await message.inputValue(), /mystery story/);
     await message.fill(next);
     assert.equal(await page.evaluate((slot) => sessionStorage.getItem(slot), slot), null);
     await send.tap();
-    await sheet.getByText('Your message is ready.', { exact: false }).waitFor();
+    await sheet.getByText(/You’ve used your free messages today/).waitFor();
     assert.equal(await main.locator('.turn').count(), 0);
     assert.equal(await page.evaluate((slot) => JSON.parse(sessionStorage.getItem(slot)).text, slot), next);
     assert.equal(await page.evaluate((text) => Object.values(localStorage).some(value => value.includes(text)), next), false);
@@ -70,7 +80,7 @@ test('a new phone user writes first, funds at Send, and returns to send their dr
     const answer = main.locator('.thread[aria-busy="false"] article.turn').filter({ has: page.getByText(next, { exact: true }) });
     await answer.locator('.answer-body').waitFor();
     assert.ok((await answer.locator('.answer-body').innerText()).trim());
-    await answer.getByRole('link', { name: /receipt/i }).waitFor();
+    await answer.getByRole('link', { name: /receipt/i }).first().waitFor();
   } finally {
     await browser.close();
   }

@@ -12,7 +12,7 @@
 
 import { and, eq, gt, inArray, ne, sql } from "drizzle-orm";
 import type { Db, Tx } from "../../db/client.ts";
-import { accounts, keys } from "../../db/schema.ts";
+import { accounts, keys, ledger } from "../../db/schema.ts";
 import { post } from "../../ledger/ledger.ts";
 import { ApiError, fail } from "../../lib/errors.ts";
 import { type Pico, picoToUsd, usdToPico } from "../../lib/money.ts";
@@ -64,6 +64,13 @@ export async function coinCreditPico(db: Db | Tx, accountId: string): Promise<Pi
     .select({ total: sql<string | null>`sum(${anonymoDeposits.amountPico})` })
     .from(anonymoDeposits)
     .where(and(inArray(anonymoDeposits.keyHash, accountKeys(db, accountId)), eq(anonymoDeposits.chain, "coin"), eq(anonymoDeposits.status, "credited")));
+  return BigInt(row?.total ?? 0);
+}
+
+/** Voucher credit has no source wallet, even on an account with a SIWE refund destination. */
+export async function codeCreditPico(db: Db | Tx, accountId: string): Promise<Pico> {
+  const [row] = await db.select({ total: sql<string | null>`sum(${ledger.amount})` }).from(ledger)
+    .where(and(eq(ledger.accountId, accountId), eq(ledger.kind, "code")));
   return BigInt(row?.total ?? 0);
 }
 
@@ -156,7 +163,8 @@ export async function requestWithdrawal(db: Db, o: { minPico: Pico }, w: Withdra
     }
     const [acct] = await tx.select().from(accounts).where(eq(accounts.id, w.accountId)).for("update");
     const settling = await recentBitcoinCreditPico(tx, w.accountId);
-    const available = (acct ? acct.balance - acct.held : 0n) - (await coinCreditPico(tx, w.accountId)) - settling;
+    const available = (acct ? acct.balance - acct.held : 0n) - (await coinCreditPico(tx, w.accountId)) -
+      (await codeCreditPico(tx, w.accountId)) - settling;
     const dests = await withdrawDestinations(tx, w.keyHash);
     const d = dests.get(dest(chain, to));
     if (!d) fail(403, "Withdrawals go only to an address this key's deposits came from, on the same chain.", "not_source_address", { allowed: [...dests.values()].map((x) => ({ chain: x.chain, address: x.address })) });

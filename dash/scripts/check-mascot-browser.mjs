@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { chromium } from 'playwright-core';
+import { useUpDemoFreeChat } from './free-chat-fixture.mjs';
 
 const base = process.env.MASCOT_TEST_URL ?? 'http://127.0.0.1:3000';
 assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(new URL(base).hostname));
@@ -22,6 +23,7 @@ for (const width of [1250, 390]) {
       const btn = (name) => page.getByRole('button', { name, exact: true });
       const pop = page.getByRole('dialog', { name: 'Anonymo chat' });
       const launcher = btn('Open Anonymo chat');
+      await useUpDemoFreeChat(page);
       await page.goto(base + '/docs');
       await page.waitForFunction(
         () =>

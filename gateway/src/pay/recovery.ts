@@ -176,6 +176,10 @@ export function paymentRecovery(app: Hono, ctx: Ctx) {
   const middleware: MiddlewareHandler = async (c, next) => {
     if (c.req.method !== "POST") return next();
     const signature = c.req.header("payment-recovery");
+    if (ctx.cfg.features.compliance) {
+      if (signature !== undefined) fail(403, "Answer recovery is unavailable with region compliance enabled.", "payment_recovery_unavailable");
+      return next();
+    }
     if (signature !== undefined) return recover(ctx, c, signature);
     await next();
     const settlement = c.res.headers.get("x-payment-response");

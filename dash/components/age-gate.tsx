@@ -1,9 +1,11 @@
 'use client';
 
 import { Photo } from '@/components/photo';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useDeviceStore } from '@/lib/anonymo/device-store';
 import { adultStore, confirmAdult } from '@/lib/anonymo/prefs';
+import { declareRegion, parseRegionDeclaration } from '@/lib/anonymo/region-declaration';
+import { BUILT_WITH } from '@/lib/anonymo/updates';
 
 /**
  * 18+ notice on entry (Overview §10). It asks once per browser and stores only "confirmed" on this device: no date
@@ -12,6 +14,9 @@ import { adultStore, confirmAdult } from '@/lib/anonymo/prefs';
 export function AgeGate() {
   const confirmed = useDeviceStore(adultStore);
   const button = useRef<HTMLButtonElement>(null);
+  const [region, setRegion] = useState('');
+  const [invalid, setInvalid] = useState(false);
+  const compliance = BUILT_WITH.has('compliance');
   useEffect(() => {
     document.documentElement.toggleAttribute('data-gated', !confirmed);
     const app = document.querySelector<HTMLElement>('.app-root');
@@ -29,8 +34,23 @@ export function AgeGate() {
           Anonymo serves uncensored models for adults: no refusals for legal adult use, with a floor that stays on. You
           must be 18 or older, and of legal age where you live, to continue.
         </p>
+        {compliance && (
+          <label className="field">
+            Country or subdivision code (optional)
+            <input className="input" value={region} maxLength={6} placeholder="CA or US-NY" aria-invalid={invalid}
+              onChange={(e) => { setRegion(e.target.value); setInvalid(false); }} />
+            {invalid && <span role="alert">Enter a country or subdivision code, such as CA or US-NY.</span>}
+          </label>
+        )}
         <div className="age-gate-actions">
-          <button ref={button} type="button" className="btn btn-primary" onClick={confirmAdult}>
+          <button ref={button} type="button" className="btn btn-primary" onClick={() => {
+            if (compliance && region.trim()) {
+              const code = parseRegionDeclaration(region);
+              if (!code) { setInvalid(true); return; }
+              declareRegion(code);
+            }
+            confirmAdult();
+          }}>
             I am 18 or older
           </button>
           <a className="btn btn-ghost" href="about:blank" rel="noreferrer">

@@ -1121,6 +1121,15 @@ html[data-anonymo-panic] body { display: none !important; }
 .memory-suggestions li { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 7px; min-width: 0; max-width: 100%; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--raised); padding: 3px 5px 3px 10px; font-size: 13px; }
 .memory-suggestions li > span { overflow-wrap: anywhere; }
 .memory-suggestions li > div { display: flex; flex-wrap: wrap; gap: 4px; }
+.vault-memory-layout { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 18px; }
+.vault-memory-layout .panel { align-content: start; }
+.vault-memory-layout .row { flex-wrap: wrap; }
+.memory-pair-code { display: grid; gap: 8px; justify-items: start; min-width: 0; }
+.memory-pair-code .field { width: 100%; min-width: 0; }
+.memory-pair-code input { max-width: 100%; }
+@media (min-width: 1080px) {
+  .vault-memory-layout { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+}
 .memory-charge { overflow-wrap: anywhere; }
 
 /* Update "search": sources under a searched answer. */

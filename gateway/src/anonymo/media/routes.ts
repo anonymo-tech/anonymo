@@ -105,9 +105,9 @@ async function nudityCheck(s: MediaServices, prompt: string, signal: AbortSignal
 }
 
 function regionPolicy(ctx: Ctx, c: Context, s: MediaServices) {
+  if (ctx.cfg.features.compliance) return; // The shared region gate already checked access.
   const policy = regionRulesOf(ctx, s).forCountry(countryOf(c));
   if (policy.blocked) fail(451, "Anonymo is not available in this region. Nothing was sent or charged.", "region_blocked");
-  return policy;
 }
 
 /** A backstop for upstream metadata the format strippers do not know about: an output that carries the caller's

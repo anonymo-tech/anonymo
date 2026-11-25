@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { chromium } from 'playwright-core';
+import { useUpDemoFreeChat } from './free-chat-fixture.mjs';
 
 const origin = new URL(process.env.WORKSPACE_PREVIEW_URL ?? 'http://localhost:5173');
 assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname));
@@ -12,6 +13,7 @@ test('chat modes stay opt-in per message, survive setup, and put results in the 
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   await page.route('**/*', (route) => new URL(route.request().url()).origin === origin.origin ? route.continue() : route.abort());
   await page.addInitScript(() => localStorage.setItem('anonymo.adult.v1', 'true'));
+  await useUpDemoFreeChat(page);
   await page.goto(new URL('/dashboard/chat?demo=1', origin).href);
 
   const message = page.getByRole('textbox', { name: 'Message', exact: true });

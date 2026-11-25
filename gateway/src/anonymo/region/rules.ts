@@ -56,7 +56,7 @@ export function parseRegion(code: string | null | undefined): { country: string;
   return { country: m[1], subdivision: m[2] ?? null };
 }
 
-const parseList = (v: unknown, name: string): string[] | undefined => {
+export const parseRegionList = (v: unknown, name: string): string[] | undefined => {
   if (typeof v !== "string" || !v.trim()) return undefined;
   if (v.trim().toLowerCase() === "none") return [];
   const items = v.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
@@ -70,10 +70,10 @@ export function regionConfigFromEnv(env: Record<string, unknown>): RegionConfig 
   const unknownText = typeof env.ANONYMO_REGION_UNKNOWN_TEXT === "string" ? env.ANONYMO_REGION_UNKNOWN_TEXT.trim().toLowerCase() : "";
   if (unknownText && unknownText !== "block" && unknownText !== "allow") throw new Error("ANONYMO_REGION_UNKNOWN_TEXT must be block or allow");
   return {
-    ofac: parseList(env.ANONYMO_OFAC_REGIONS, "ANONYMO_OFAC_REGIONS") ?? [...DEFAULT_OFAC_REGIONS],
-    blocked: parseList(env.ANONYMO_REGION_BLOCKED, "ANONYMO_REGION_BLOCKED") ?? [...DEFAULT_BLOCKED_REGIONS],
+    ofac: parseRegionList(env.ANONYMO_OFAC_REGIONS, "ANONYMO_OFAC_REGIONS") ?? [...DEFAULT_OFAC_REGIONS],
+    blocked: parseRegionList(env.ANONYMO_REGION_BLOCKED, "ANONYMO_REGION_BLOCKED") ?? [...DEFAULT_BLOCKED_REGIONS],
     unknownText: (unknownText || (env.ANONYMO_ENV === "production" ? "block" : "allow")) as "block" | "allow",
-    ageVerification: parseList(env.ANONYMO_AGE_VERIFICATION_REGIONS, "ANONYMO_AGE_VERIFICATION_REGIONS") ?? [...DEFAULT_AGE_VERIFICATION_REGIONS],
+    ageVerification: parseRegionList(env.ANONYMO_AGE_VERIFICATION_REGIONS, "ANONYMO_AGE_VERIFICATION_REGIONS") ?? [...DEFAULT_AGE_VERIFICATION_REGIONS],
     unknownExplicitMedia: (unknown || "restrict") as RegionConfig["unknownExplicitMedia"],
   };
 }

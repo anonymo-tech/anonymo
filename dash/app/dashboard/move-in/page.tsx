@@ -1,15 +1,9 @@
-import { MoveIn } from '@/components/dashboard/move-in';
-import { UpdateGate } from '@/components/dashboard/update-gate';
-import { WorkspaceShell } from '@/components/dashboard/workspace-shell';
+import { MoveInWorkspace } from '@/components/dashboard/move-in';
+import { DEMO_BY_DEFAULT } from '@/lib/anonymo/config';
+import { updateOn } from '@/lib/anonymo/updates';
 
-export const metadata = { title: 'Move in — Anonymo' };
+export const metadata = { title: updateOn('lifeboat', DEMO_BY_DEFAULT) ? 'Lifeboat — Anonymo' : 'Move in — Anonymo' };
 
 export default function MoveInPage() {
-  return (
-    <WorkspaceShell section="Move in" title="Move in" lede="Bring your characters and chats from other apps. Your export is read in this browser, and nothing is uploaded.">
-      <UpdateGate id="movein">
-        <MoveIn />
-      </UpdateGate>
-    </WorkspaceShell>
-  );
+  return <MoveInWorkspace />;
 }

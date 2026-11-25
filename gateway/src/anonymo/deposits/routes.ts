@@ -26,7 +26,7 @@ import { coinTargetRoute } from "./coin-target.ts";
 import { depositInstructions, evmContracts, publicCoinContract } from "./instructions.ts";
 import { anonymoBtcpayInvoices, anonymoDeposits, anonymoWithdrawals } from "./schema.ts";
 import { registerMoneyJobs, type MoneyDeps } from "./services.ts";
-import { attemptPayout, coinCreditPico, recentBitcoinCreditPico, requestWithdrawal, withdrawalJson, withdrawDestinations } from "./withdraw.ts";
+import { attemptPayout, codeCreditPico, coinCreditPico, recentBitcoinCreditPico, requestWithdrawal, withdrawalJson, withdrawDestinations } from "./withdraw.ts";
 
 const withdrawBody = z
   .object({
@@ -52,14 +52,16 @@ export function moneyRoutes(app: Hono, ctx: Ctx, deps: MoneyDeps, o: { jobs?: bo
     const dests = await withdrawDestinations(ctx.db, key.keyHash);
     const available = b.available > 0n ? b.available : 0n;
     const coin = await coinCreditPico(ctx.db, key.accountId);
+    const code = await codeCreditPico(ctx.db, key.accountId);
+    const usageOnly = coin + code;
     const settling = await recentBitcoinCreditPico(ctx.db, key.accountId);
-    const cashable = available > coin + settling ? available - coin - settling : 0n;
+    const cashable = available > usageOnly + settling ? available - usageOnly - settling : 0n;
     return c.json({
       balance_usd: picoToUsd(b.balance),
       held_usd: picoToUsd(b.held),
       available_usd: picoToUsd(available),
-      // Paid in the coin: spendable on usage, never withdrawn.
-      usage_only_usd: picoToUsd(available < coin ? available : coin),
+      usage_only_usd: picoToUsd(available < usageOnly ? available : usageOnly),
+      ...(code > 0n ? { code_credit_usd: picoToUsd(available < code ? available : code) } : {}),
       // Credit from BTC or Lightning in the last 24 hours: spendable now, withdrawable a day after it arrived.
       ...(settling > 0n ? { bitcoin_hold_usd: picoToUsd(settling) } : {}),
       withdraw_to: [...dests.values()].map((d) => ({ chain: d.chain, address: d.address, max_usd: picoToUsd(d.remaining === null || d.remaining > cashable ? cashable : d.remaining) })),

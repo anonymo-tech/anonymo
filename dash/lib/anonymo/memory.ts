@@ -1,7 +1,8 @@
-import type { ChatMessage } from './types.ts';
+import type { ChatPhotoMessage } from './types.ts';
+import type { MemoryKind } from './vault-memory/crypto.ts';
 
-export type MemoryFact = { id: string; text: string; chatId: string | null; at: string };
-export type MemoryProposal = { text: string; replace: string | null };
+export type MemoryFact = { id: string; text: string; chatId: string | null; at: string; kind?: MemoryKind };
+export type MemoryProposal = { text: string; replace: string | null; kind?: MemoryKind };
 export type MemorySuggestion = MemoryProposal & { fingerprint: string; previous: string | null };
 export type CharacterMemory = {
   characterId: string;
@@ -86,13 +87,13 @@ export function selectMemories(
   return selected;
 }
 
-export function withCharacterMemory(messages: ChatMessage[], facts: readonly MemoryFact[]): ChatMessage[] {
-  if (!facts.length || messages[0]?.role !== 'system') return messages;
+export function withCharacterMemory<T extends ChatPhotoMessage>(messages: T[], facts: readonly MemoryFact[]): T[] {
+  if (!facts.length || messages[0]?.role !== 'system' || typeof messages[0].content !== 'string') return messages;
   const [persona, ...conversation] = messages;
   return [{ ...persona, content: persona.content + '\n\n' + memoryBlock(facts) }, ...conversation];
 }
 
-export function parseMemoryProposals(raw: string): MemoryProposal[] {
+export function parseMemoryProposals(raw: string, vaultMemory = false): MemoryProposal[] {
   if (raw.length > 8192) return [];
   const text = raw.trim();
   const body = /^\x60{3}(?:json)?\s*([\s\S]*?)\s*\x60{3}$/i.exec(text)?.[1] ?? text;
@@ -107,14 +108,18 @@ export function parseMemoryProposals(raw: string): MemoryProposal[] {
   const proposals: MemoryProposal[] = [];
   for (const item of value) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
-    const fact = cleanFact(item.text);
+    const kind: MemoryKind | undefined = vaultMemory ? (item.kind === 'pref' || item.kind === 'event' || item.kind === 'summary' ? item.kind : 'fact') : undefined;
+    const fact = kind === 'summary' && typeof item.text === 'string'
+      ? item.text.replace(/[\s\p{Cc}]+/gu, ' ').trim().slice(0, 720)
+      : cleanFact(item.text);
     const replace = item.replace ?? null;
     if (!fact || (replace !== null && (typeof replace !== 'string' || replace.length > 80))) continue;
     const key = factKey(fact);
     if (seen.has(key)) continue;
     seen.add(key);
-    proposals.push({ text: fact, replace });
-    if (proposals.length === MAX_PROPOSALS) break;
+    if (kind === 'summary' ? proposals.some((entry) => entry.kind === 'summary') : proposals.filter((entry) => entry.kind !== 'summary').length >= MAX_PROPOSALS) continue;
+    proposals.push({ text: fact, replace, ...(kind ? { kind } : {}) });
+    if (!vaultMemory && proposals.length === MAX_PROPOSALS) break;
   }
   return proposals;
 }
@@ -140,7 +145,7 @@ export function saveSuggestions(memory: CharacterMemory, suggestions: readonly M
   let next = memory;
   for (const suggestion of suggestions) {
     if (!suggestionsFor(next, [suggestion]).length) continue;
-    const fact: MemoryFact = { id: suggestion.replace ?? crypto.randomUUID(), text: suggestion.text, chatId, at };
+    const fact: MemoryFact = { id: suggestion.replace ?? crypto.randomUUID(), text: suggestion.text, chatId, at, ...(suggestion.kind ? { kind: suggestion.kind } : {}) };
     next = { ...next, facts: [fact, ...next.facts.filter(({ id }) => id !== fact.id)] };
   }
   return next;

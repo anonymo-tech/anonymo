@@ -7,9 +7,14 @@
 export const AI_NOTICE = 'AI conversation';
 export const AI_REMINDER = 'Reminder: you’re talking to an AI, not a person.';
 export const AI_NOTICE_INTERVAL_MS = 3 * 60 * 60 * 1000;
+export const AI_DISCLOSURE = 'I’m an AI.';
+
+export function disclosureDelay(lastAt: number, now: number, intervalMin: number | null) {
+  return Math.max(0, lastAt + (intervalMin === null ? AI_NOTICE_INTERVAL_MS : intervalMin * 60_000) - now);
+}
 
 /** True when a reminder is due: at least AI_NOTICE_INTERVAL_MS since the last one. */
-export const reminderDue = (lastAt: number, now = Date.now()) => now - lastAt >= AI_NOTICE_INTERVAL_MS;
+export const reminderDue = (lastAt: number, now = Date.now()) => disclosureDelay(lastAt, now, null) === 0;
 
 const SELF_HARM = [
   /\bsuicid(?:e|es|al|ality)\b/i,
@@ -28,6 +33,13 @@ const SELF_HARM = [
 
 /** Whether a message talks about suicide or self-harm, in the first person or not. Deliberately broad. */
 export const mentionsSelfHarm = (text: string) => SELF_HARM.some((r) => r.test(text));
+
+/** Companion surfaces can use these signals locally without sending text to a separate detector. */
+export function companionSignals(text: string) {
+  const asksAboutAI = /\b(?:are you|aren[’']t you|r u) (?:an? )?(?:(?:a )?real person|(?:actual(?:ly)? )?(?:ai|bot|chatbot|human|artificial intelligence)|real)\b/i.test(text)
+    || /\b(?:are you (?:a )?(?:person|robot)|am i talking to (?:an? )?(?:ai|human|bot|real person))\b/i.test(text);
+  return { crisis: mentionsSelfHarm(text), asksAboutAI };
+}
 
 export type CrisisLine = { where: string; what: string; href: string; action: string };
 

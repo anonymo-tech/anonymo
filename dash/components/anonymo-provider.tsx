@@ -15,6 +15,7 @@ import { forgetReceipts, receiptsStore, rememberReceipt, type SeenReceipt } from
 import { keepStore } from '@/lib/anonymo/history';
 import { freshTabChats, switchTabChat, type TabChat } from '@/lib/anonymo/tab-chats';
 import { updateOn } from '@/lib/anonymo/updates';
+import { declaredRegionStore } from '@/lib/anonymo/region-declaration';
 import type { Balance, ModelInfo } from '@/lib/anonymo/types';
 import type { Turn } from './dashboard/chat-types';
 
@@ -108,9 +109,11 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
   }, [ready, demo, loadedMock]);
   const mock = ready && demo ? loadedMock : null;
   const demoFetch = mock?.fetch ?? (demo ? lazyDemoFetch : undefined);
+  const region = useDeviceStore(declaredRegionStore);
+  const declaredRegion = updateOn('compliance', demo) ? region : null;
   const client = useMemo(
-    () => createAnonymoClient({ baseUrl: demo ? DEMO_BASE : API_BASE, key, fetch: demoFetch }),
-    [demo, key, demoFetch],
+    () => createAnonymoClient({ baseUrl: demo ? DEMO_BASE : API_BASE, key, fetch: demoFetch, declaredRegion }),
+    [demo, key, demoFetch, declaredRegion],
   );
 
   // Funds reads its own balance alongside deposits and withdrawals.
@@ -141,7 +144,7 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!ready) return;
     const controller = new AbortController();
-    const publicClient = createAnonymoClient({ baseUrl: demo ? DEMO_BASE : API_BASE, fetch: demoFetch });
+    const publicClient = createAnonymoClient({ baseUrl: demo ? DEMO_BASE : API_BASE, fetch: demoFetch, declaredRegion });
     let fetching = false;
     let checked = 0;
     async function load() {
@@ -170,7 +173,7 @@ export function AnonymoProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('focus', load);
       document.removeEventListener('visibilitychange', load);
     };
-  }, [ready, demo, demoFetch, catalogVersion]);
+  }, [ready, demo, demoFetch, declaredRegion, catalogVersion]);
 
   const setKey = useCallback(
     (value: string, remember: boolean) => {

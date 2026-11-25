@@ -1,5 +1,4 @@
-// Update "movein": people bring their characters and chats from other apps. An export file is read in this browser
-// and nothing is uploaded: every module in this folder runs on the device, and only ordinary chat calls ever leave it.
+// Move In and Lifeboat read export files on this device. Lifeboat sends card text for a pre-import floor check.
 //
 // A parser turns one file into the shapes below. It is a pure function behind its own detector, so each source can be
 // checked against a small fixture (scripts/check-movein.mjs).

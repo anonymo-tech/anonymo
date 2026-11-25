@@ -166,6 +166,7 @@ export type Balance = {
   available_usd: Usd;
   /** Credit paid in ANMO: spendable on usage, never withdrawable. Absent on gateways without the coin rail. */
   usage_only_usd?: Usd;
+  code_credit_usd?: Usd;
   withdraw_to: { chain: PayoutChain; address: string; max_usd: Usd }[];
 };
 
@@ -244,6 +245,7 @@ export type CouncilResult = {
   outcome: 'merged' | 'selected' | 'aggregator_refused' | 'invalid_verdict';
   selected: string | null;
   reason?: string;
+  comparison?: { agree: string; disagree: string };
   sealed: boolean;
   proposers: (CouncilSeat & { label: string; family: string })[];
   aggregator?: CouncilSeat;

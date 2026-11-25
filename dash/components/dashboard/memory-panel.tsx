@@ -11,6 +11,7 @@ import { editMemory, memorySession } from '@/lib/anonymo/memory-store';
 import { useCharacterMemory } from './memory-state';
 import { useDeviceStore } from '@/lib/anonymo/device-store';
 import { chatsStore } from '@/lib/anonymo/history';
+import { updateOn } from '@/lib/anonymo/updates';
 
 export function MemoryPanel({ demo, characters, initialId }: {
   demo: boolean;
@@ -45,6 +46,7 @@ export function MemoryPanel({ demo, characters, initialId }: {
 function MemoryEditor({ demo, memory }: { demo: boolean; memory: CharacterMemory }) {
   // A fact's source chat by its title when the chat is saved on this device; unsaved chats leave no trace to name.
   const savedChats = useDeviceStore(chatsStore(demo));
+  const vaultMemory = updateOn('vaultsync', demo);
   const chatTitle = (id: string) => savedChats.find((chat) => chat.id === id)?.title ?? null;
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -101,10 +103,12 @@ function MemoryEditor({ demo, memory }: { demo: boolean; memory: CharacterMemory
       <header>
         <h2>Memory</h2>
         <p className="memory-stats" title="Facts available for a reply. The chat can choose a different mix based on the conversation.">
-          {active.length} in use · {size} in prompt · {memory.facts.length} saved
+          {!vaultMemory && `${active.length} in use · ${size} in prompt · `}{memory.facts.length} saved
         </p>
       </header>
-      <p className="muted">Facts are saved on this device. Memory adds relevant facts to this character’s chat requests.</p>
+      {vaultMemory
+        ? <p className="muted">Chat recalls relevant memories. Manage sync, pins and exports in <Link href="/dashboard/memory">Memory</Link>.</p>
+        : <p className="muted">Facts are saved on this device. Memory adds relevant facts to this character’s chat requests.</p>}
       <fieldset className="memory-settings" disabled={busy}>
         <legend className="sr-only">Memory settings</legend>
         <label>
@@ -129,7 +133,7 @@ function MemoryEditor({ demo, memory }: { demo: boolean; memory: CharacterMemory
           Save automatically
         </label>
       </fieldset>
-      <p className="faint">Suggestions use a separate paid chat request on the same model.</p>
+      <p className="faint">Suggestions use a separate paid chat request{vaultMemory ? "." : " on the same model."}</p>
       {error && <p className="error-text" role="alert">{error}</p>}
       {memory.facts.length ? (
         <ul className="memory-facts">

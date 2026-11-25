@@ -69,4 +69,25 @@ export const characterTables: Record<string, TableDoc> = {
       updated_at: UPDATED,
     },
   },
+
+  memory_blobs: {
+    category: "operations",
+    purpose: "Vault Memory sync keeps individually encrypted items under a device-derived vault ID. Character scope, labels and memory text are inside the ciphertext.",
+    request: "no",
+    retention: "Ciphertext is replaced by an empty tombstone when an item is deleted. Tombstones prevent offline copies from reappearing.",
+    columns: {
+      vault_id: {
+        purpose: "Pseudorandom ID derived from the device memory secret.",
+        review: rv(["type:binary"], "config", "HKDF yields a 32-byte vault ID. The funded check issues a blind signature and never handles this ID."),
+      },
+      item_id: "UUID assigned to an individual item by the device.",
+      version: "Logical revision of the item used to merge updates.",
+      ciphertext: {
+        purpose: "Random AES-GCM nonce and ciphertext from the device, or empty for a tombstone.",
+        review: rv(["type:binary"], "no-request-content", "The device encrypts memory under a separate key derived from its memory secret. The gateway cannot derive that key."),
+      },
+      deleted: "Whether the item was deleted and its ciphertext removed.",
+      updated_at: UPDATED,
+    },
+  },
 };

@@ -25,7 +25,7 @@ type Loaded = { balance: Balance | null; deposits: DepositData | null; withdrawa
 type Target = ReturnType<typeof setupReturn>;
 
 export function FundsPanel() {
-  const { ready, key } = useAnonymo();
+  const { ready, key, demo } = useAnonymo();
   const target = setupReturn(useSearchParams().get('returnTo'));
   if (!ready) return <p className="muted" role="status">Opening Balance…</p>;
   if (key) return <KeyFunds key={key} keySuffix={key.slice(-4)} target={target} />;
@@ -36,6 +36,7 @@ export function FundsPanel() {
       <h1>Add funds</h1>
       <p>Create a key or connect one you already have. Your key holds the credit you spend across Anonymo.</p>
       <Link className="btn btn-primary" href={setupHref('key', target?.href)}>Set up your key <ArrowRight size={17} aria-hidden="true" /></Link>
+      {updateOn('codes', demo) && <Link className="funds-back" href={setupHref('redeem', target?.href)}>Have a code?</Link>}
     </section>
   );
 }
@@ -133,7 +134,9 @@ function KeyFunds({ keySuffix, target }: { keySuffix: string; target: Target }) 
         <button className="funds-refresh" type="button" onClick={refreshBalance} aria-label="Refresh balance" title="Refresh balance"><RefreshCw size={16} aria-hidden="true" /></button>
       </div>
       {balance && usdToMusd(balance.held_usd) > 0 && <p className="funds-credit-detail">{formatUsdAmount(balance.held_usd)} held for active requests.</p>}
-      {balance && usdToMusd(balance.usage_only_usd ?? 0) > 0 && <p className="funds-credit-detail">{formatUsdAmount(balance.usage_only_usd)} in usage-only credit from {coinOf(instructions)?.token.symbol ?? 'coin payments'}.</p>}
+      {balance && usdToMusd(balance.usage_only_usd ?? 0) > 0 && <p className="funds-credit-detail">
+        {formatUsdAmount(balance.usage_only_usd)} in usage-only credit{balance.code_credit_usd ? '.' : ` from ${coinOf(instructions)?.token.symbol ?? 'coin payments'}.`}
+      </p>}
       {data?.errors.map(message => <p className="notice notice-rose" role="alert" key={message}>{message}</p>)}
       {resume && !fromChat && !tracking && <Link className="funds-continue" href={target?.href ?? '/dashboard/chat'}>{target ? `Return to ${target.label}` : 'Continue to chat'} <ArrowRight size={15} aria-hidden="true" /></Link>}
       <div className="funds-body">
@@ -150,6 +153,7 @@ function KeyFunds({ keySuffix, target }: { keySuffix: string; target: Target }) 
         </div>}
       </div>
       <nav className="funds-secondary" aria-label="Fund actions">
+        {updateOn('codes', demo) && <Link className="funds-back" href={setupHref('redeem', target?.href)}>Have a code?</Link>}
         {task !== 'Deposit' && <button onClick={() => switchTask('Deposit')} type="button"><ArrowDownLeft size={15} aria-hidden="true" /> Add funds</button>}
         {task !== 'Activity' && <button onClick={() => switchTask('Activity')} type="button"><Clock3 size={15} aria-hidden="true" /> Account activity</button>}
         {task !== 'Withdraw' && <button onClick={() => switchTask('Withdraw')} type="button"><ArrowUpRight size={15} aria-hidden="true" /> Withdraw</button>}
@@ -500,7 +504,9 @@ function Withdrawals({ balance, onDone }: { balance: Balance; onDone: () => void
         </ul>
       )}
       {usageOnly > 0 && (
-        <p className="faint">{formatUsdAmount(usageOnly)} was paid in the coin. It is usage only and can&apos;t be withdrawn, so it is not counted above.</p>
+        <p className="faint">{formatUsdAmount(usageOnly)} {balance.code_credit_usd
+          ? 'is reserved for usage.'
+          : 'was paid in the coin. It is usage only and can’t be withdrawn, so it is not counted above.'}</p>
       )}
       {result && (
         <output className="notice notice-signal">

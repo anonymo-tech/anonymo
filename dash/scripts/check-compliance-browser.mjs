@@ -1,0 +1,43 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { chromium } from 'playwright-core';
+
+const origin = new URL(process.env.WORKSPACE_PREVIEW_URL ?? 'http://localhost:5173');
+assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname));
+
+test('chat shows crisis resources and discloses AI identity on schedule and when asked', async (t) => {
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH, channel: process.env.BROWSER_CHANNEL });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  await page.route('**/*', (route) => new URL(route.request().url()).origin === origin.origin ? route.continue() : route.abort());
+  await page.addInitScript(() => localStorage.setItem('anonymo.adult.v1', 'true'));
+  await page.clock.install();
+  await page.goto(new URL('/dashboard/chat?demo=1', origin).href);
+  const message = page.getByRole('textbox', { name: 'Message', exact: true });
+  const send = page.getByRole('button', { name: 'Send', exact: true });
+  const setup = page.getByRole('region', { name: 'Set up chat' });
+  const prompt = 'I have been thinking about suicide.';
+  await message.fill(prompt);
+  await send.tap();
+  await setup.getByRole('link', { name: 'Create a free key' }).tap();
+  await page.getByRole('button', { name: 'Create key', exact: true }).tap();
+  await page.getByLabel('I have stored this key somewhere safe').check();
+  await page.getByRole('button', { name: 'Open chat', exact: true }).tap();
+  await send.tap();
+  await setup.getByRole('link', { name: 'Add funds', exact: true }).tap();
+  await page.getByRole('button', { name: 'Send test USDG' }).tap();
+  await page.getByRole('region', { name: 'Available credit' }).getByText('$10.00', { exact: true }).waitFor();
+  await page.getByRole('link', { name: /back to chat|return to chat|continue to chat/i }).tap();
+  await send.tap();
+  const thread = page.locator('.thread[aria-busy="false"]');
+  const support = thread.getByRole('complementary', { name: 'Crisis support' });
+  await support.getByRole('link', { name: 'Call or text 988' }).waitFor();
+  await thread.locator('.answer-body').waitFor();
+  const disclosure = page.getByText('I’m an AI.', { exact: true });
+  assert.equal(await disclosure.count(), 0);
+  await page.clock.fastForward(60_000);
+  await disclosure.waitFor();
+  await message.fill('Are you an AI?');
+  await send.tap();
+  await page.locator('article.turn').last().getByText('Reminder: you’re talking to an AI, not a person.', { exact: true }).waitFor();
+});

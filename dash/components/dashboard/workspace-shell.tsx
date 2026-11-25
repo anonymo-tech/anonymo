@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   AudioLines,
+  Archive,
   BarChart3,
   BookOpen,
   ChevronRight,
@@ -19,6 +20,7 @@ import {
   LayoutGrid,
   ListTree,
   MessageSquare,
+  MessageCircleQuestion,
   PackageOpen,
   Link2,
   Plug,
@@ -35,6 +37,7 @@ import { useAnonymo } from '../anonymo-provider';
 import { AdultsOnly, VeniceBadge, Wordmark } from '../brand';
 import { DemoNotice } from '../demo-notice';
 import { ContractAddressChip } from '../contract-address';
+import { VaultMemorySync } from './vault-memory-state';
 import { WipeDevice } from './chat-history';
 import { useVanishWorkspace } from './panic-key';
 import { VaultTopBar } from './vault-controls';
@@ -59,6 +62,7 @@ const groups: { title: string; fold?: Fold; links: Destination[] }[] = [
     links: [
       overview,
       chat,
+      { href: '/dashboard/ask', label: 'Ask Mo', icon: MessageCircleQuestion, feature: 'askmo' },
       { href: '/dashboard/characters', label: 'Characters', icon: Drama },
       { href: '/dashboard/key', label: 'API key', icon: KeyRound },
       funds,
@@ -81,6 +85,7 @@ const groups: { title: string; fold?: Fold; links: Destination[] }[] = [
       { href: '/dashboard/video', label: 'Video studio', icon: Video, feature: 'video' },
       { href: '/dashboard/library', label: 'Library', icon: Images, feature: 'vault' },
       { href: '/dashboard/move-in', label: 'Move in', icon: PackageOpen, feature: 'movein' },
+      { href: '/dashboard/memory', label: 'Memory', icon: Archive, feature: 'vaultsync' },
       { href: '/dashboard/about-you', label: 'About you', icon: IdCard, feature: 'aboutyou' },
       { href: '/dashboard/ventures', label: 'Ventures', icon: Rocket, feature: 'ventures' },
       { href: '/dashboard/tickets', label: 'Tickets', icon: Ticket, feature: 'tickets' },
@@ -114,7 +119,7 @@ const groups: { title: string; fold?: Fold; links: Destination[] }[] = [
 
 function matches(path: string, href: string) {
   return (
-    path === href || (href !== overview.href && path.startsWith(href + '/'))
+    path === href || (path === '/dashboard/move-in' && href === '/dashboard/lifeboat') || (href !== overview.href && path.startsWith(href + '/'))
   );
 }
 
@@ -167,7 +172,10 @@ function WorkspaceNav({
       {groups.map(({ title, fold, links }) => {
         const visible = links
           .filter((item) => !close || !shortcuts.some((shortcut) => shortcut.href === item.href))
-          .filter((item) => !item.feature || updateOn(item.feature, demo));
+          .filter((item) => !item.feature || updateOn(item.feature, demo))
+          .map((item) => item.feature === 'movein' && updateOn('lifeboat', demo)
+            ? { ...item, href: '/dashboard/lifeboat', label: 'Lifeboat' }
+            : item);
         if (!visible.length) return null;
         const items = visible.map(({ href, label, icon: Icon }) => (
           <Link
@@ -338,6 +346,7 @@ export function WorkspaceShell({
   if (useVanishWorkspace()) return null;
   return (
     <div className="ws">
+      {ready && updateOn('vaultsync', demo) && <VaultMemorySync demo={demo} />}
       <a className="skip-link" href="#main">
         Skip to content
       </a>

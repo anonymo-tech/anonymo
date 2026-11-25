@@ -1,0 +1,4 @@
+.redeem-code { max-width: 540px; margin-inline: auto; }
+.redeem-code > header { display: grid; gap: 6px; }
+.redeem-code .redeem-input { font-size: 18px; letter-spacing: 0.06em; }
+.redeem-code .redeem-amount { color: var(--ok); font: 500 clamp(32px, 7vw, 52px)/1.1 var(--sans); }

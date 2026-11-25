@@ -46,7 +46,7 @@ import type { ChatResult } from '@/lib/anonymo/types';
 /** The models a build can run on: one model, not the council, and only where the gateway lists a price. */
 const BUILD_MODELS = ['anonymo-1', 'anonymo-rp', 'anonymo-sealed'];
 const SCOPES = [300, 1000];
-const WRITERS: Record<Patch['by'], string> = { model: 'Written by AI', you: 'Yours', export: 'From your export' };
+const WRITERS: Record<Patch['by'], string> = { model: 'Written by AI', you: 'Yours', export: 'From your export', import: 'From imported chats' };
 const FELT = ['#f6d9a8', '#f7c4d4', '#c9e6cf', '#c7dcf4', '#ddd0f4', '#f8cdb4'];
 const EMPTY = emptyBoard();
 /** The time, for stamping patches. Only ever called from a click, never while rendering. */

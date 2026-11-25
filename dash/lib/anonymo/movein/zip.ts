@@ -58,6 +58,15 @@ function entryName(bytes: Uint8Array): string {
 /** True when the bytes start like a zip (a local header, or the end record of an empty archive). */
 export const looksLikeZip = (head: Uint8Array) => head.length >= 4 && head[0] === 0x50 && head[1] === 0x4b && ((head[2] === 3 && head[3] === 4) || (head[2] === 5 && head[3] === 6));
 
+/** Export zips often include hidden files written by the operating system. */
+export function importableZipEntries(entries: ZipEntry[], transcripts: boolean): ZipEntry[] {
+  const extensions = transcripts ? /\.(jsonl?|png|txt)$/i : /\.(jsonl?|png)$/i;
+  return entries.filter((entry) => {
+    const path = transcripts ? entry.name.replace(/\\/g, '/') : entry.name;
+    return !entry.directory && !/(^|\/)(__MACOSX\/|\.)/.test(path) && extensions.test(path);
+  });
+}
+
 /** Every entry of the archive, from its central directory. Throws ZipError when the file is not a readable zip. */
 export async function readZipDirectory(blob: Blob): Promise<ZipEntry[]> {
   if (blob.size < 22) throw new ZipError('This is not a zip file.');

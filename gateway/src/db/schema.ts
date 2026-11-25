@@ -1,4 +1,5 @@
 export * from "../anonymo/abuse/schema.ts"; // Anonymo WS02: abuse inbox, hash blocks, preservation vault
+export * from "../anonymo/region/schema.ts";
 export * from "../anonymo/media/schema.ts"; // WS06 media_jobs
 export * from "../anonymo/refusal/schema.ts"; // Anonymo WS03: refusal_stats, refusal_key_settings
 export * from "./anonymo-receipts.ts"; // WS09: Anonymo receipts and hourly roots
@@ -949,3 +950,7 @@ export const characterMemory = pgTable(
 
 export { webhookDestinations, webhookDeliveries } from "../webhooks/schema.ts"; // V86: signed destinations.
 export { facilitatorSellers, facilitatorSettlements, sellerGasFloats } from "../facilitator/schema.ts"; // v6 F: hosted x402 facilitator
+export { keySafes } from "../anonymo/keysafe/schema.ts";
+export { codes } from "../anonymo/codes/schema.ts";
+export { freeTokens } from "../anonymo/freetier/schema.ts";
+export { memoryBlobs } from "../anonymo/memory-sync/schema.ts";

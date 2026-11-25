@@ -2,22 +2,23 @@
 // opened entry by entry, each file goes to the parser whose detector accepts it, conversations are written to the
 // archive as they are read so a huge export never sits in memory whole, and at the end chats are tied to characters.
 //
-// Nothing in this file sends anything anywhere.
+// Lifeboat can check card text before saving it. Chats are parsed and saved on the device.
 
 import { mapChatGptSetup, type AboutYouImport } from '../about-you.ts';
-import { cardHash, type CharacterCard } from '../card.ts';
-import { byNewest, loadArchive, sweepOrphans, writeCharacters, writeChats, type ArchiveCharacter, type ArchiveChat, type ArchiveDisk, type ChatHead } from './archive.ts';
+import { cardHash, greetingsOf, type CharacterCard } from '../card.ts';
+import { byNewest, loadArchive, readChat, scopeOf, sweepOrphans, writeCharacters, writeChats, type ArchiveCharacter, type ArchiveChat, type ArchiveDisk, type ChatHead } from './archive.ts';
 import { buildCard, CardError, detectCard, normalizeCard, readCardBytes } from './cards.ts';
 import { chatGptCharacter, CHATGPT_NAME, detectChatGptConversation, emptyChatGptSetup, latestChatGptSetup, parseChatGptConversation } from './chatgpt.ts';
 import { caiRow, chatsFromRows, detectCaiRow, detectCharacterAi, isGreeting, parseCharacterAi, UNNAMED, type CaiRow } from './characterai.ts';
 import { claudeCharacter, CLAUDE_NAME, detectClaudeConversation, detectClaudeMemories, parseClaudeConversation, parseClaudeMemories } from './claude.ts';
-import { detectGeneric, parseGeneric, parseGenericLines } from './generic.ts';
+import { detectGeneric, parseGeneric, parseGenericLines, parseTranscript } from './generic.ts';
+import { CARD_CHECK_UNAVAILABLE, type CardCheck } from './floor.ts';
 import { arrayItems, firstJsonByte, JsonStreamError } from './json-stream.ts';
-import { emptyBoard, withExportMemory, type Board } from './memory.ts';
+import { emptyBoard, withExportMemory, withImportedHistory, type Board } from './memory.ts';
 import { chatFolderOf, detectSillyTavernChat, parseSillyTavernChat } from './sillytavern.ts';
 import { openingLine } from './turns.ts';
 import { isObj, nameKey, shortId, type Found, type FoundCharacter, type FoundChat, type SourceId } from './types.ts';
-import { looksLikeZip, openZipEntry, readZipDirectory, readZipEntry, ZipError, type ZipEntry } from './zip.ts';
+import { importableZipEntries, looksLikeZip, openZipEntry, readZipDirectory, readZipEntry, ZipError, type ZipEntry } from './zip.ts';
 
 export type DropFile = { name: string; blob: Blob };
 export type ImportProgress = { file: string; chats: number; messages: number };
@@ -33,6 +34,7 @@ export type ImportSummary = {
   replaced: { from: string; to: string }[];
   skipped: Skipped[];
   notes: string[];
+  duplicates?: number;
   aboutYou?: AboutYouImport[];
 };
 
@@ -67,6 +69,7 @@ const baseOf = (path: string) => path.replace(/\\/g, '/').split('/').pop() ?? pa
 const stemOf = (path: string) => baseOf(path).replace(/\.[^.]+$/, '');
 const extOf = (path: string) => /\.([a-z0-9]+)$/i.exec(baseOf(path))?.[1]?.toLowerCase() ?? '';
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+const importKeyOf = (head: ChatHead) => head.importKey ?? head.id;
 
 async function firstBytes(item: Item, count = 64): Promise<Uint8Array> {
   const reader = (await item.stream()).getReader();
@@ -79,14 +82,15 @@ async function firstBytes(item: Item, count = 64): Promise<Uint8Array> {
 }
 
 type Group = { source: SourceId; name: string; folder: string; heads: ChatHead[]; opening: { at: number; text: string } | null };
-type FoundCard = { card: CharacterCard; fileBase: string };
+type FoundCard = { card: CharacterCard; fileBase: string; label: string };
 
 export async function importFiles(
   files: DropFile[],
   disk: ArchiveDisk,
   demo: boolean,
-  opts: { onProgress?: (progress: ImportProgress) => void; signal?: AbortSignal; now?: () => number; newId?: () => string; aboutYou?: boolean } = {},
+  opts: { onProgress?: (progress: ImportProgress) => void; signal?: AbortSignal; now?: () => number; newId?: () => string; aboutYou?: boolean; checkCard?: CardCheck } = {},
 ): Promise<ImportSummary> {
+  const lifeboat = !!opts.checkCard;
   const now = opts.now ?? Date.now;
   const newId = opts.newId ?? (() => crypto.randomUUID());
   const skipped: Skipped[] = [];
@@ -96,6 +100,9 @@ export async function importFiles(
   const parts = new Map<string, FoundCharacter>(); // characters a source described without a card
   const groups = new Map<string, Group>();
   const seenChats = new Set<string>();
+  const archivedChatKeys = new Set<string>();
+  const verdicts = new Map<string, string | null>();
+  let duplicates = 0;
   let batch: ArchiveChat[] = [];
   let batchChars = 0;
   let chats = 0;
@@ -109,6 +116,15 @@ export async function importFiles(
     if (opts.signal?.aborted) throw new ImportStopped();
   };
   const progress = () => opts.onProgress?.({ file: current, chats, messages });
+  async function cardRejection(card: CharacterCard, hash: string): Promise<string | null> {
+    check();
+    if (!opts.checkCard) return null;
+    if (verdicts.has(hash)) return verdicts.get(hash) ?? null;
+    const reason = await opts.checkCard(card, opts.signal).catch(() => CARD_CHECK_UNAVAILABLE);
+    check();
+    verdicts.set(hash, reason);
+    return reason;
+  }
   const flush = async () => {
     if (!batch.length) return;
     const writing = batch;
@@ -120,15 +136,18 @@ export async function importFiles(
   async function addChat(found: FoundChat, folder = '') {
     check();
     if (!found.messages.length) return;
-    const id = shortId(`${found.source}|${found.key}`);
-    if (seenChats.has(id)) return; // the same conversation twice in one drop
-    seenChats.add(id);
+    const importKey = shortId(`${found.source}|${found.key}`);
+    if (seenChats.has(importKey)) return; // the same conversation twice in one drop
+    seenChats.add(importKey);
+    // Stage a revision separately so a rejected card or failed import cannot overwrite the saved log.
+    const id = archivedChatKeys.has(importKey) ? `${importKey}-${newId()}` : importKey;
     sources.add(found.source);
     const groupKey = `${found.source}|${nameKey(folder) || nameKey(found.character)}`;
     let group = groups.get(groupKey);
     if (!group) groups.set(groupKey, (group = { source: found.source, name: found.character, folder, heads: [], opening: null }));
     group.heads.push({
       id,
+      ...(id !== importKey ? { importKey } : {}),
       title: found.title.replace(/\s+/g, ' ').trim().slice(0, 160) || 'Untitled chat',
       source: found.source,
       messages: found.messages.length,
@@ -148,7 +167,7 @@ export async function importFiles(
 
   const addCharacter = (found: FoundCharacter) => {
     sources.add(found.source);
-    if (found.card) cards.push({ card: found.card, fileBase: found.fileBase ?? '' });
+    if (found.card) cards.push({ card: found.card, fileBase: found.fileBase ?? '', label: current || found.name });
     else parts.set(`${found.source}|${nameKey(found.name)}`, { ...parts.get(`${found.source}|${nameKey(found.name)}`), ...found });
   };
 
@@ -161,7 +180,7 @@ export async function importFiles(
   /** A parsed JSON value that is not a list of conversations: a card, one conversation, or a small export file. */
   async function readValue(value: unknown, item: Item): Promise<boolean> {
     if (detectCard(value)) {
-      cards.push({ card: normalizeCard(value), fileBase: stemOf(item.path) });
+      cards.push({ card: normalizeCard(value), fileBase: stemOf(item.path), label: baseOf(item.path) });
       sources.add('sillytavern');
       return true;
     }
@@ -249,11 +268,18 @@ export async function importFiles(
         if (item.size > MAX_CARD_BYTES) return skip('Larger than 8 MB, so it was not read as a character card.');
         const bytes = await item.bytes();
         try {
-          cards.push({ card: readCardBytes(bytes), fileBase: stemOf(item.path) });
+          cards.push({ card: readCardBytes(bytes), fileBase: stemOf(item.path), label: baseOf(item.path) });
           sources.add('sillytavern');
         } catch {
           skip('This picture holds no character card that can be read.');
         }
+        return;
+      }
+      if (lifeboat && ext === 'txt') {
+        if (item.size > MAX_WHOLE_BYTES) return skip('This transcript is too large to read here.');
+        const chat = parseTranscript(decode(await item.bytes()), stemOf(item.path));
+        if (chat) await addChat(chat);
+        else skip('No speaker turns found. Use the transcript paste guide.');
         return;
       }
       if (ext === 'jsonl') {
@@ -289,7 +315,7 @@ export async function importFiles(
         if (!(await readValue(value, item))) skip('No chats or characters were found in this file.');
         return;
       }
-      skip('Move In reads .zip, .json, .jsonl and .png files.');
+      skip(lifeboat ? 'Lifeboat reads .zip, .json, .jsonl, .txt and .png files.' : 'Move In reads .zip, .json, .jsonl and .png files.');
     } catch (error) {
       if (error instanceof ImportStopped) throw error;
       if (error instanceof CardError || error instanceof ZipError || error instanceof JsonStreamError) skipped.push({ name: baseOf(item.path), why: error.message });
@@ -305,7 +331,7 @@ export async function importFiles(
       skipped.push({ name: file.name, why: error instanceof ZipError ? error.message : 'This zip could not be opened.' });
       return;
     }
-    const wanted = entries.filter((e) => !e.directory && !/(^|\/)(__MACOSX\/|\.)/.test(e.name) && ['json', 'jsonl', 'png'].includes(extOf(e.name)));
+    const wanted = importableZipEntries(entries, lifeboat);
     if (wanted.length && wanted.every((e) => e.encrypted)) {
       // Character.AI locks its export with the account's email address. Nothing here asks for an address, so the
       // person unlocks it with their own computer and drops what is inside.
@@ -318,14 +344,14 @@ export async function importFiles(
       });
       return;
     }
-    // A ChatGPT or Claude export is full of pictures that are not character cards; they are not unpacked.
-    const isAssistantExport = wanted.some((e) => /^conversations(-\d+)?\.json$/i.test(baseOf(e.name)));
+    // Move In skips pictures in known assistant exports. Lifeboat also accepts mixed bundles.
+    const isAssistantExport = !lifeboat && wanted.some((e) => /^conversations(-\d+)?\.json$/i.test(baseOf(e.name)));
     const images = wanted.filter((e) => extOf(e.name) === 'png');
     if (entries.some((e) => extOf(e.name) === 'zip')) notes.add('A zip inside the zip was not opened. Unzip it and drop it on its own.');
     if (!isAssistantExport && images.length > MAX_ZIP_IMAGES) notes.add(`Only the first ${MAX_ZIP_IMAGES.toLocaleString('en-US')} pictures in the zip were checked for character cards.`);
     // Cards first, so a chat finds its character whatever order the zip lists them in.
     const ordered = [...(isAssistantExport ? [] : images.slice(0, MAX_ZIP_IMAGES)), ...wanted.filter((e) => extOf(e.name) !== 'png')];
-    if (!ordered.length) skipped.push({ name: file.name, why: 'This zip holds no .json, .jsonl or .png files.' });
+    if (!ordered.length) skipped.push({ name: file.name, why: lifeboat ? 'This zip holds no supported cards or chat files.' : 'This zip holds no .json, .jsonl or .png files.' });
     for (const entry of ordered) {
       await readItem({
         path: entry.name,
@@ -340,6 +366,8 @@ export async function importFiles(
   let finished = false;
   try {
     await sweepOrphans(disk, demo);
+    const priorArchive = lifeboat ? await loadArchive(disk, demo) : null;
+    for (const character of priorArchive?.characters ?? []) for (const head of character.chats) archivedChatKeys.add(importKeyOf(head));
     for (const file of files) {
       check();
       const head = new Uint8Array(await file.blob.slice(0, 4).arrayBuffer());
@@ -353,7 +381,7 @@ export async function importFiles(
           stream: async () => file.blob.stream() as ReadableStream<Uint8Array>,
         });
     }
-    const existing = await loadArchive(disk, demo);
+    const existing = priorArchive ?? await loadArchive(disk, demo);
 
     // Character.AI: a chat is known only by its opening line, so each one goes to the character whose greeting that
     // is (from character.json, a card, or an earlier import), and the rest share an unnamed character per greeting.
@@ -361,8 +389,8 @@ export async function importFiles(
       current = 'Character.AI chats';
       const known: { name: string; greeting: string }[] = [
         ...[...parts.values()].map((c) => ({ name: c.name, greeting: c.greeting ?? '' })),
-        ...cards.map((c) => ({ name: c.card.data.name, greeting: c.card.data.first_mes })),
-        ...existing.characters.map((c) => ({ name: c.name, greeting: c.card.data.first_mes })),
+        ...cards.flatMap((c) => (lifeboat ? greetingsOf(c.card) : [c.card.data.first_mes]).map((greeting) => ({ name: c.card.data.name, greeting }))),
+        ...existing.characters.flatMap((c) => (lifeboat ? greetingsOf(c.card) : [c.card.data.first_mes]).map((greeting) => ({ name: c.name, greeting }))),
       ].filter((k) => k.greeting.trim());
       let unnamed = Math.max(0, ...known.map((k) => Number(new RegExp(`^${UNNAMED} (\\d+)$`).exec(k.name)?.[1] ?? 0)));
       for (const chat of chatsFromRows(caiRows)) {
@@ -372,7 +400,7 @@ export async function importFiles(
         await addChat({ ...chat, character: who.name });
       }
       caiRows.length = 0;
-      notes.add('Character.AI’s export does not say who wrote each message. Move In took the character to speak first and the two of you to take turns, so read a chat through before you rely on it.');
+      notes.add(`Character.AI’s export does not say who wrote each message. ${lifeboat ? 'Lifeboat' : 'Move In'} took the character to speak first and the two of you to take turns, so read a chat through before you rely on it.`);
     }
     await flush();
     check();
@@ -388,18 +416,24 @@ export async function importFiles(
     const touched = new Set<string>();
     const dropped = new Set<string>();
     const replaced: ImportSummary['replaced'] = [];
+    const retired = new Set<string>();
     const stamp = new Date(now()).toISOString();
     const total = (heads: ChatHead[]) => heads.reduce((sum, head) => sum + head.messages, 0);
     const mergeChats = (record: ArchiveCharacter, heads: ChatHead[]) => {
-      const merged = new Map(record.chats.map((head) => [head.id, head]));
-      for (const head of heads) merged.set(head.id, head);
+      const merged = new Map(record.chats.map((head) => [importKeyOf(head), head]));
+      for (const head of heads) {
+        const key = importKeyOf(head);
+        const prior = merged.get(key);
+        if (prior && prior.id !== head.id) retired.add(prior.id);
+        merged.set(key, head);
+      }
       record.chats = [...merged.values()].sort(byNewest);
       record.messages = total(record.chats);
     };
 
     /** The record a card is kept under: the one already in the archive, or a new one. */
-    const recordFor = async (card: CharacterCard, source: SourceId, built: boolean, reuse?: ArchiveCharacter): Promise<ArchiveCharacter> => {
-      const hash = await cardHash(card);
+    const recordFor = async (card: CharacterCard, source: SourceId, built: boolean, reuse?: ArchiveCharacter, knownHash?: string): Promise<ArchiveCharacter> => {
+      const hash = knownHash ?? await cardHash(card);
       const id = reuse?.id ?? hash.slice(0, 16);
       const prior = out.get(id) ?? byId.get(id);
       const record: ArchiveCharacter = { id, hash, name: card.data.name, source: prior?.source ?? source, card, built, importedAt: stamp, chats: prior?.chats ?? [], messages: prior?.messages ?? 0 };
@@ -411,8 +445,31 @@ export async function importFiles(
     // Cards that came in this drop, by the file they were in and by name.
     const byFile = new Map<string, ArchiveCharacter>();
     const byName = new Map<string, ArchiveCharacter>();
+    const byHash = new Map(lifeboat ? existing.characters.map((c) => [c.hash, c] as const) : []);
+    const rejectedFiles = new Set<string>();
+    const rejectedNames = new Set<string>();
     for (const found of cards) {
-      const record = await recordFor(found.card, 'sillytavern', false);
+      const hash = lifeboat ? await cardHash(found.card) : undefined;
+      if (hash) {
+        current = found.label;
+        progress();
+        const reason = await cardRejection(found.card, hash);
+        if (reason) {
+          skipped.push({ name: found.label, why: reason });
+          if (found.fileBase) rejectedFiles.add(nameKey(found.fileBase));
+          rejectedNames.add(nameKey(found.card.data.name));
+          continue;
+        }
+        const duplicate = byHash.get(hash);
+        if (duplicate) {
+          duplicates++;
+          if (found.fileBase) byFile.set(nameKey(found.fileBase), duplicate);
+          byName.set(nameKey(duplicate.name), duplicate);
+          continue;
+        }
+      }
+      const record = await recordFor(found.card, 'sillytavern', false, undefined, hash);
+      if (hash) byHash.set(hash, record);
       // A card for a character that so far only had a built one takes over that one's chats and memory.
       for (const old of existing.characters) {
         if (!old.built || old.id === record.id || dropped.has(old.id) || nameKey(old.name) !== nameKey(record.name)) continue;
@@ -427,46 +484,82 @@ export async function importFiles(
     }
 
     // Characters with no card of their own get one built, once per source and name, here or in an earlier import.
-    const builtNow = new Map<string, ArchiveCharacter>();
-    const builtFor = async (found: FoundCharacter): Promise<ArchiveCharacter> => {
+    const builtNow = new Map<string, ArchiveCharacter | null>();
+    const builtFor = async (found: FoundCharacter): Promise<ArchiveCharacter | null> => {
       const key = `${found.source}|${nameKey(found.name)}`;
-      const done = builtNow.get(key);
-      if (done) return done;
+      if (builtNow.has(key)) return builtNow.get(key) ?? null;
       const prior = existing.characters.find((c) => c.built && !dropped.has(c.id) && c.source === found.source && nameKey(c.name) === nameKey(found.name));
       // A later import with less to go on (a chat log without the description) keeps the card built the first time.
       const card = prior && !found.description?.trim() ? prior.card : buildCard(found);
-      const record = await recordFor(card, found.source, true, prior);
+      const hash = lifeboat ? await cardHash(card) : undefined;
+      if (hash && card !== prior?.card) {
+        const reason = await cardRejection(card, hash);
+        if (reason) {
+          skipped.push({ name: found.name, why: reason });
+          builtNow.set(key, null);
+          return null;
+        }
+      }
+      const record = await recordFor(card, found.source, true, prior, hash);
       if (found.memory) boards[record.id] = withExportMemory(boards[record.id] ?? existing.boards[record.id] ?? emptyBoard(), found.memory, newId, now());
       builtNow.set(key, record);
       return record;
     };
 
+    const withNewChats = new Set<ArchiveCharacter>();
+    const omittedChats: ChatHead[] = [];
     for (const group of groups.values()) {
       const key = `${group.source}|${nameKey(group.name)}`;
       const described = parts.get(key);
       parts.delete(key);
-      let record = (group.folder ? byFile.get(nameKey(group.folder)) : undefined) ?? byName.get(nameKey(group.name));
-      if (!record) {
+      const byFolder = group.folder ? byFile.get(nameKey(group.folder)) : undefined;
+      let record: ArchiveCharacter | null | undefined = byFolder ?? byName.get(nameKey(group.name));
+      if (lifeboat && ((!byFolder && rejectedFiles.has(nameKey(group.folder))) || (!record && rejectedNames.has(nameKey(group.name))))) record = null;
+      if (record) record = out.get(record.id) ?? await recordFor(record.card, record.source, record.built, record, record.hash);
+      if (record === undefined) {
         // A card with this name that moved in earlier takes the new chats too.
         const carded = existing.characters.find((c) => !c.built && nameKey(c.name) === nameKey(group.name));
         if (carded) record = out.get(carded.id) ?? (await recordFor(carded.card, carded.source, false, carded));
         else {
-          // Where a character speaks first, that line is its greeting. An assistant's export has no such thing.
-          const opening = group.source === 'chatgpt' || group.source === 'claude' ? '' : (group.opening?.text ?? '');
+          // Lifeboat leaves log-derived greetings in local memory, outside the card check.
+          const opening = lifeboat || group.source === 'chatgpt' || group.source === 'claude' ? '' : (group.opening?.text ?? '');
           const greeting = described?.greeting?.trim() || opening;
           record = await builtFor({ source: group.source, name: group.name, ...described, ...(greeting ? { greeting } : {}) });
         }
       }
+      if (!record) {
+        for (const head of group.heads) omittedChats.push(head);
+        chats -= group.heads.length;
+        messages -= total(group.heads);
+        continue;
+      }
       mergeChats(record, group.heads);
+      if (lifeboat) withNewChats.add(record);
     }
     // Characters a source described but that have no chats in this drop still move in.
     for (const found of parts.values()) await builtFor(found);
 
+    for (const record of withNewChats) {
+      const head = record.chats[0];
+      const chat = head && await readChat(disk, demo, head.id);
+      if (!chat) continue;
+      const board = boards[record.id] ?? existing.boards[record.id] ?? emptyBoard();
+      const next = withImportedHistory(board, chat.messages, newId, now());
+      if (next !== board) boards[record.id] = next;
+    }
+    check();
+    if (omittedChats.length) await disk.commit(omittedChats.map(({ id }) => ({ store: 'chats', key: scopeOf(demo) + id })));
+    check();
     const records = [...out.values()];
     if (records.length || dropped.size) await writeCharacters(disk, demo, records, boards, [...dropped]);
     finished = true;
+    if (retired.size) {
+      const unchanged = existing.characters.filter((character) => !out.has(character.id) && !dropped.has(character.id));
+      for (const character of [...unchanged, ...records]) for (const head of character.chats) retired.delete(head.id);
+      if (retired.size) await disk.commit([...retired].map((id) => ({ store: 'chats', key: scopeOf(demo) + id }))).catch(() => undefined);
+    }
     const aboutYou = opts.aboutYou ? mapChatGptSetup(chatGptSetup) : [];
-    return { ids: [...touched], characters: touched.size, chats, messages, sources: [...sources], replaced, skipped, notes: [...notes], ...(aboutYou.length ? { aboutYou } : {}) };
+    return { ids: [...touched], characters: touched.size, chats, messages, sources: [...sources], replaced, skipped, notes: [...notes], ...(duplicates ? { duplicates } : {}), ...(aboutYou.length ? { aboutYou } : {}) };
   } finally {
     // A stopped or failed import leaves no chat text behind that no character lists.
     if (!finished) await sweepOrphans(disk, demo).catch(() => undefined);

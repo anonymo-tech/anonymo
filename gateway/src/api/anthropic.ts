@@ -1,4 +1,6 @@
 import type { Context, Hono } from "hono";
+import { forwardComplianceRegion } from "../anonymo/region/compliance.ts";
+import { internalEnv } from "../hardening/client.ts";
 import { randomBytes } from "node:crypto";
 import { ZodError } from "zod";
 import type { Ctx } from "../context.ts";
@@ -104,12 +106,13 @@ export function anthropicRoutes(app: Hono, ctx: Ctx) {
       // Anthropic clients ask for large max_tokens; a provider rejects more than the model can produce or the context can hold.
       if (row) conv.body.max_tokens = clampMaxTokens(conv.body.max_tokens as number, row, promptTokens);
 
-      const headers: Record<string, string> = { authorization: `Bearer ${key}`, "content-type": "application/json" };
+      const headers = new Headers({ authorization: `Bearer ${key}`, "content-type": "application/json" });
       for (const h of PASSED) {
         const v = c.req.header(h);
-        if (v) headers[h] = v;
+        if (v) headers.set(h, v);
       }
-      const res = await app.request("/api/v1/chat/completions", { method: "POST", headers, body: JSON.stringify(conv.body), signal: c.req.raw.signal });
+      if (ctx.cfg.features.compliance) forwardComplianceRegion(c, headers);
+      const res = await app.request("/api/v1/chat/completions", { method: "POST", headers, body: JSON.stringify(conv.body), signal: c.req.raw.signal }, ctx.cfg.features.compliance ? internalEnv() : undefined);
       const extra: Record<string, string> = { "request-id": requestId, ...(conv.ignored.length ? { "x-anonymo-ignored": conv.ignored.join(", ") } : {}) };
 
       const fromRouter = async () => {

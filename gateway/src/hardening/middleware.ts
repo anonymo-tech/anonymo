@@ -20,13 +20,16 @@ export const hardeningMiddleware = (ctx: Ctx): MiddlewareHandler => async (c, ne
   const internal = c.get("internalCaller") === true;
   const rejected = await capBody(c, requestCap(c.req.path, ctx.cfg));
   if (rejected) return rejected;
-  const publicRead = ["GET", "HEAD"].includes(c.req.method) && /^\/(api\/|v1\/|facilitator\/|\.well-known\/|keep\/inventory\.json$)/.test(c.req.path);
+  // The reseller list applies its own address-derived limiter without retaining the address.
+  const codesList = ctx.cfg.features.codes && c.req.path === "/v1/codes/batches";
+  const publicRead = !codesList && ["GET", "HEAD"].includes(c.req.method) && /^\/(api\/|v1\/|facilitator\/|\.well-known\/|keep\/inventory\.json$)/.test(c.req.path);
   const mcp = c.req.method === "POST" && c.req.path === "/mcp";
   let amount = 1;
   if (mcp) {
     try { const msg = await c.req.json(); if (Array.isArray(msg)) { if (msg.length > MCP_BATCH_MAX) return batchTooLarge(c); amount = Math.max(1, msg.length); } } catch { /* route returns the JSON-RPC parse error */ }
   }
-  if (!exempt && !internal && (publicRead || mcp)) {
+  const freeChallenge = ctx.cfg.features.freeTier && c.req.method === "GET" && c.req.path === "/v1/free/challenge";
+  if (!exempt && !internal && !freeChallenge && (publicRead || mcp)) {
     const secret = bearer(c.req.header("authorization")) ?? c.req.header("x-api-key");
     let keyed = false;
     if (secret) { try { keyed = !!await resolveKey(ctx, secret); } catch { /* invalid keys do not evade the anonymous limit */ } }

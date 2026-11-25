@@ -1,9 +1,12 @@
 import type { Context } from "hono";
 import type { Config } from "../config.ts";
 import { TRANSCRIPTION_MAX_BYTES } from "../anonymo/media/voice-models.ts";
+import { KEY_SAFE_BODY_MAX, KEY_SAFE_PATH } from "../anonymo/keysafe/wire.ts";
 const LARGE = 16 * 1024 * 1024;
 /** Preserve existing image/file wire limits; their route-specific semantic caps still apply. */
 export function requestCap(path: string, cfg: Config): number {
+  if (cfg.features.keySafe && (path === KEY_SAFE_PATH || path === `${KEY_SAFE_PATH}/lookup`))
+    return Math.min(KEY_SAFE_BODY_MAX, cfg.hardening.requestMaxBytes);
   if (/^\/(api\/v1|v1)\/audio\/transcriptions$/.test(path)) return TRANSCRIPTION_MAX_BYTES;
   if (path === "/mcp") return cfg.hardening.mcpMaxBytes;
   if (/^\/(api\/v1|v1)\/(chat\/completions|responses|messages|batches)$/.test(path)) return LARGE;

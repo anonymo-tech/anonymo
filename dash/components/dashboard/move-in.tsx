@@ -1,8 +1,7 @@
 'use client';
 
 // Update "movein": people bring their characters and chats from other apps. The export is read in this browser
-// (lib/anonymo/movein), kept in an on-device archive, and nothing is uploaded: the only requests this page ever makes
-// are the ordinary chat calls of "Build memory", each behind a button that shows its price.
+// (lib/anonymo/movein) and kept in an on-device archive. Lifeboat checks card text before saving and derives a local recap.
 
 import './movein.css';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -27,6 +26,8 @@ import { lastTurns, pairTurns, toChatTurns } from '@/lib/anonymo/movein/turns';
 import { nameKey, SOURCES } from '@/lib/anonymo/movein/types';
 import { AI_NOTICE } from '@/lib/anonymo/safety';
 import { updateOn } from '@/lib/anonymo/updates';
+import { UpdateGate } from './update-gate';
+import { WorkspaceShell } from './workspace-shell';
 
 const ACCEPT = '.zip,.json,.jsonl,.png,application/zip,application/json,image/png';
 const SHOWN_CHATS = 3;
@@ -48,6 +49,22 @@ const BROUGHT: { name: string; what: string; early?: boolean }[] = [
   { name: 'Anything else', what: 'a .json or .jsonl file with a list of messages' },
 ];
 
+export function MoveInWorkspace() {
+  const { demo } = useAnonymo();
+  const lifeboat = updateOn('lifeboat', demo);
+  const title = lifeboat ? 'Lifeboat' : 'Move in';
+  const lede = lifeboat
+    ? 'If you’re moving from another app, bring your characters and chats. Your imported history stays on this device.'
+    : 'Bring your characters and chats from other apps. Your export is read in this browser, and nothing is uploaded.';
+  return (
+    <WorkspaceShell section={title} title={title} lede={lede}>
+      <UpdateGate id="movein">
+        <MoveIn />
+      </UpdateGate>
+    </WorkspaceShell>
+  );
+}
+
 export function MoveIn() {
   const { demo, turns, openChat } = useAnonymo();
   const router = useRouter();
@@ -61,12 +78,15 @@ export function MoveIn() {
   const [aboutYou, setAboutYou] = useState<{ items: AboutYouImport[]; reviewing: boolean } | null>(null);
   const [profileSaved, setProfileSaved] = useState(false);
   const [problem, setProblem] = useState('');
+  const [paste, setPaste] = useState('');
+  const [speaker, setSpeaker] = useState('');
   const requestedCharacter = useSearchParams().get('character');
   const [boardFor, setBoardFor] = useState<string | null>(requestedCharacter);
   const [confirmAll, setConfirmAll] = useState(false);
   const reading = progress !== null;
   const streaming = turns.some((turn) => turn.status === 'streaming');
   const aboutYouOn = updateOn('aboutyou', demo);
+  const lifeboat = updateOn('lifeboat', demo);
   useEffect(() => {
     if (aboutYouOn) return deviceVault.onLock(() => { setAboutYou(null); setProfileSaved(false); });
   }, [aboutYouOn]);
@@ -146,14 +166,14 @@ export function MoveIn() {
       <section className="panel">
         <header>
           <h2>Bring them with you</h2>
-          <span className="faint">.zip · .json · .jsonl · .png</span>
+          <span className="faint">.zip · .json · .jsonl · .png{lifeboat ? ' · .txt' : ''}</span>
         </header>
         <input
           ref={picker}
           type="file"
           hidden
           multiple
-          accept={ACCEPT}
+          accept={lifeboat ? `${ACCEPT},.txt,text/plain` : ACCEPT}
           onChange={(event) => {
             drop(event.target.files);
             event.target.value = '';
@@ -178,8 +198,33 @@ export function MoveIn() {
         >
           <PackageOpen size={26} aria-hidden="true" />
           <span>Drop your export here, or choose files</span>
-          <span className="faint">It is read in this browser. Nothing is uploaded.</span>
+          <span className="faint">{lifeboat
+            ? demo ? 'Files in this demo stay on this device.' : 'Card text is sent for a safety check. Chat files stay on this device.'
+            : 'It is read in this browser. Nothing is uploaded.'}</span>
         </button>
+        {lifeboat && (
+          <details>
+            <summary>Paste a transcript</summary>
+            <form className="panel-stack" onSubmit={(event) => {
+              event.preventDefault();
+              const name = speaker.replace(/[/\\]/g, ' ').trim();
+              if (!name || !paste.trim()) return;
+              void read([{ name: `${name}.txt`, blob: new Blob([paste], { type: 'text/plain' }) }]);
+            }}>
+              <label className="panel-stack">
+                Character name
+                <input className="input" value={speaker} onChange={(event) => setSpeaker(event.target.value)} maxLength={60} required />
+              </label>
+              <label className="panel-stack">
+                Start each turn with “You:” or “Character:”.
+                <textarea className="input" value={paste} onChange={(event) => setPaste(event.target.value)} rows={5} required />
+              </label>
+              <div className="row">
+                <button className="btn" type="submit" disabled={reading}>Import transcript</button>
+              </div>
+            </form>
+          </details>
+        )}
 
         {reading && (
           <output className="mi-reading" aria-live="polite">
@@ -192,7 +237,7 @@ export function MoveIn() {
             </button>
           </output>
         )}
-        {result && <Outcome result={result} />}
+        {result && <Outcome result={result} lifeboat={lifeboat} />}
         {aboutYouOn && aboutYou && (aboutYou.reviewing
           ? <AboutYouImportPreview items={aboutYou.items} demo={demo} onClose={(saved) => {
             if (saved) {
@@ -220,7 +265,7 @@ export function MoveIn() {
                   early
                 </span>
               )}
-              <span className="muted">{source.what}</span>
+              <span className="muted">{lifeboat && source.name === 'SillyTavern' ? 'Tavern V2 and V3 cards (.png or .json), including lorebooks and alternate greetings, .jsonl chats, or a ZIP of cards and chats' : source.what}</span>
             </li>
           ))}
         </ul>
@@ -230,16 +275,16 @@ export function MoveIn() {
               Try a sample export
             </button>
           )}
-          <span className="faint">Anonymo is for adults only. What you bring is checked like any other message when you send it, never before.</span>
+          <span className="faint">{lifeboat ? 'Anonymo is for adults only. Cards that fail the floor check show the reason here.' : 'Anonymo is for adults only. What you bring is checked like any other message when you send it, never before.'}</span>
         </div>
         {archive.loaded && !moveInPersists() && <p className="notice notice-amber">This browser is blocking its storage, so what you bring over lasts only until this tab is closed.</p>}
-        {vaultOn && <p className="notice">The vault passphrase does not cover Move In yet. What moves in is stored in this browser without it, and Wipe removes it with everything else.</p>}
+        {vaultOn && <p className="notice">The vault passphrase does not cover {lifeboat ? 'Lifeboat' : 'Move In'} yet. What moves in is stored in this browser without it, and Wipe removes it with everything else.</p>}
       </section>
 
       {archive.loaded && archive.characters.length > 0 && (
         <section className="mi-moved" aria-label="Who moved in">
           <p className="mono mi-count">
-            {count(archive.characters.length, 'character')} · {count(total, 'message')} · 0 uploaded
+            {count(archive.characters.length, 'character')} · {count(total, 'message')} · {lifeboat ? 'stored on this device' : '0 uploaded'}
           </p>
           <ul className="mi-wall">
             {archive.characters.map((character, i) => (
@@ -295,20 +340,22 @@ export function MoveIn() {
 }
 
 /** What one drop brought, and what was left out of it. */
-function Outcome({ result }: { result: ImportSummary }) {
+function Outcome({ result, lifeboat }: { result: ImportSummary; lifeboat: boolean }) {
   const nothing = result.characters === 0 && result.chats === 0;
+  const alreadyHere = nothing && !!result.duplicates && result.skipped.length === 0;
   return (
-    <div className={nothing ? 'notice notice-amber mi-outcome' : 'notice notice-signal mi-outcome'}>
+    <div className={nothing && !alreadyHere ? 'notice notice-amber mi-outcome' : 'notice notice-signal mi-outcome'}>
       <output>
-        {nothing
+        {alreadyHere ? 'These cards are already on this device.' : nothing
           ? 'Nothing in that drop could be moved in.'
           : `Moved in: ${count(result.characters, 'character')}, ${count(result.chats, 'chat')}, ${count(result.messages, 'message')}. They are below.`}
       </output>
       {result.notes.map((note) => (
         <p key={note}>{note}</p>
       ))}
+      {!!result.duplicates && <p>{count(result.duplicates, 'duplicate card')} skipped.</p>}
       {result.skipped.length > 0 && (
-        <details>
+        <details open={lifeboat || undefined}>
           <summary>{count(result.skipped.length, 'file')} left out</summary>
           <ul>
             {result.skipped.slice(0, 40).map((file, i) => (

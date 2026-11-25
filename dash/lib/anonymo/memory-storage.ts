@@ -4,7 +4,7 @@ import type { createVault } from './vault.ts';
 type MemoryVault = Pick<ReturnType<typeof createVault>, 'snapshotMemory' | 'updateMemory'>;
 
 export function readCharacterMemory(vault: MemoryVault, demo: boolean, id: string) {
-  return records(vault.snapshotMemory(demo)).find(({ characterId }) => characterId === id) ?? emptyMemory(id);
+  return characterMemoryRecords(vault.snapshotMemory(demo)).find(({ characterId }) => characterId === id) ?? emptyMemory(id);
 }
 
 export async function changeCharacterMemory(
@@ -15,7 +15,7 @@ export async function changeCharacterMemory(
 ) {
   let result = emptyMemory(id);
   await vault.updateMemory(demo, (previous) => {
-    const all = records(previous);
+    const all = characterMemoryRecords(previous);
     const current = all.find(({ characterId }) => characterId === id) ?? emptyMemory(id);
     const next = change(current);
     result = next === current ? current : { ...next, generation: next.generation || crypto.randomUUID() };
@@ -24,7 +24,7 @@ export async function changeCharacterMemory(
   return result;
 }
 
-function records(list: unknown[]): CharacterMemory[] {
+export function characterMemoryRecords(list: unknown[]): CharacterMemory[] {
   return list.filter((item): item is CharacterMemory => {
     const value = item as Partial<CharacterMemory> | null;
     return !!value && typeof value.characterId === 'string' && typeof value.generation === 'string' &&

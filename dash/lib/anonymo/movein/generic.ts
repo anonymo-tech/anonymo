@@ -128,3 +128,21 @@ export function parseGenericLines(source: string, label = 'Imported chat'): Foun
   const list: unknown = rows;
   return isMessageList(list) ? parseGeneric(list, label) : rows.flatMap((row) => parseGeneric(row, label));
 }
+
+/** A plain transcript with speaker labels on their own turns. Lines without a label continue the preceding turn. */
+export function parseTranscript(source: string, character: string): FoundChat | null {
+  const rows: { role: 'user' | 'assistant'; content: string }[] = [];
+  let current: { role: 'user' | 'assistant'; content: string } | undefined;
+  for (const line of source.split(/\r?\n/)) {
+    const match = /^\s*([^:\r\n]{1,60}):\s*(.*)$/.exec(line);
+    const speaker = match?.[1]?.trim().toLowerCase();
+    if (match && speaker && (USER.has(speaker) || ASSISTANT.has(speaker) || speaker === character.trim().toLowerCase())) {
+      current = { role: USER.has(speaker) ? 'user' : 'assistant', content: match[2] ?? '' };
+      rows.push(current);
+    } else if (current) {
+      current.content += `\n${line}`;
+    }
+  }
+  if (!rows.some((row) => row.role === 'user' && row.content.trim()) || !rows.some((row) => row.role === 'assistant' && row.content.trim())) return null;
+  return chatFrom(rows, { id: shortId(source) }, character, 0);
+}

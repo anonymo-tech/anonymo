@@ -5,6 +5,7 @@
 
 import { loadArchive, sweepOrphans } from '@/lib/anonymo/movein/archive';
 import { idbDisk } from '@/lib/anonymo/movein/archive-idb';
+import { lifeboatCardCheck } from '@/lib/anonymo/movein/floor';
 import { importFiles, ImportStopped, type DropFile, type ImportProgress, type ImportSummary } from '@/lib/anonymo/movein/importer';
 import { dropReady, makeReadyWhereFree } from '@/lib/anonymo/movein/ready';
 import { archiveChanged, archiveDisk, beginWrite, importRunning, moveInPersists } from '@/lib/anonymo/movein/store';
@@ -20,7 +21,13 @@ export type RunningImport = { done: Promise<ImportSummary>; stop: () => void };
 
 function onPage(files: DropFile[], demo: boolean, onProgress: (p: ImportProgress) => void): RunningImport {
   const abort = new AbortController();
-  return { done: importFiles(files, archiveDisk(), demo, { onProgress, signal: abort.signal, aboutYou: updateOn('aboutyou', demo) }), stop: () => abort.abort() };
+  return {
+    done: importFiles(files, archiveDisk(), demo, {
+      onProgress, signal: abort.signal, aboutYou: updateOn('aboutyou', demo),
+      checkCard: updateOn('lifeboat', demo) ? lifeboatCardCheck(demo) : undefined,
+    }),
+    stop: () => abort.abort(),
+  };
 }
 
 function inWorker(files: DropFile[], demo: boolean, onProgress: (p: ImportProgress) => void): RunningImport {
@@ -60,7 +67,7 @@ function inWorker(files: DropFile[], demo: boolean, onProgress: (p: ImportProgre
       if (!heard && !fallback) viaPage();
       else reject(new Error('The import stopped unexpectedly. Try again.'));
     };
-    const request: ImportRequest = { files, demo, aboutYou: updateOn('aboutyou', demo) };
+    const request: ImportRequest = { files, demo, aboutYou: updateOn('aboutyou', demo), lifeboat: updateOn('lifeboat', demo) };
     started.postMessage(request);
   });
   return { done, stop: () => stop() };

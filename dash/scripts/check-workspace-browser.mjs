@@ -25,7 +25,7 @@ test('sidebar folds remember manual choices and open for the current page', asyn
     const presets = nav.getByRole('link', { name: 'Frontend presets' });
     const history = nav.getByRole('link', { name: 'History' });
     const savedMore = (value) => page.waitForFunction((value) => localStorage.getItem('anonymo:workspace-nav:more') === value, value);
-    assert.deepEqual(await nav.getByRole('link').allTextContents(), ['Overview', 'Chat', 'Characters', 'API key', 'Balance', 'History']);
+    assert.deepEqual(await nav.getByRole('link').allTextContents(), ['Overview', 'Chat', 'Ask Mo', 'Characters', 'API key', 'Balance', 'History']);
     await more.press('Enter');
     await story.waitFor();
     await savedMore('open');

@@ -78,7 +78,7 @@ export const requestTables: Record<string, TableDoc> = {
       royalty: "The share of the cost owed to the model's creator, in pico-USD.",
       margin: "The router's fee on the call, in pico-USD.",
       cache_discount: "The discount given for cached prompt tokens, in pico-USD.",
-      mode: "How the call was paid: prepaid, per_call, byok or cache (paywith and blind appear only on calls made before WS01 removed them).",
+      mode: "How the call was paid: prepaid, per_call, byok, cache or free. Free daily messages carry no payer or charge.",
       latency_ms: "Milliseconds until the provider's first response.",
       generation_time_ms: "Milliseconds for the whole call.",
       finish_reason: "Why the model stopped, such as stop or length.",

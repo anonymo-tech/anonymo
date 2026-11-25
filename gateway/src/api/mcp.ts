@@ -1,5 +1,6 @@
 import { dispatchMcp } from "../hardening/mcp-batch.ts";
 import { internalEnv } from "../hardening/client.ts";
+import { forwardComplianceRegion } from "../anonymo/region/compliance.ts";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
 import type { Ctx } from "../context.ts";
@@ -173,6 +174,11 @@ const NEEDS_KEY = new Set(["chat"]);
 export function mcpRoutes(app: Hono, ctx: Ctx) {
   /** Call one of the router's own REST routes in-process, turning its error body back into an ApiError. */
   const internal = async (path: string, init?: RequestInit, c?: Context) => {
+    if (ctx.cfg.features.compliance && c) {
+      const headers = new Headers(init?.headers);
+      forwardComplianceRegion(c, headers);
+      init = { ...init, headers };
+    }
     const res = await app.request(path, init, internalEnv());
     for (const name of ["X-Receipt-Id", "X-Anonymo-Lane", "X-Anonymo-Policy-Hash"]) { const value = res.headers.get(name); if (c && value !== null) c.header(name, value); }
     const body = (await res.json().catch(() => null)) as { id?: unknown; error?: { message?: string; type?: string; metadata?: Record<string, unknown> } } | null;

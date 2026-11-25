@@ -116,3 +116,12 @@ test('Talk prices recordings by the started minute and reads the actual charge f
   assert.deepEqual(await client.transcribeWithCost(clip), { text: 'A sample transcript.', costUsd: '0.003' });
   assert.deepEqual(await client.transcribe(clip), { text: 'A sample transcript.' });
 });
+
+test('Everyday contracts updates are optional and available in demo mode', () => {
+  for (const id of ['creators', 'passes', 'stake']) {
+    assert.equal(parseUpdates('').has(id), false);
+    assert.equal(RELEASED.has(id), false);
+    assert.deepEqual([...parseUpdates(id)], [id]);
+    assert.equal(updateOn(id, true), true);
+  }
+});
