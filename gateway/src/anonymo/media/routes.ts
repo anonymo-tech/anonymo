@@ -44,7 +44,7 @@ import { checkMediaSignature, signedMediaPath, StoreFullError } from "./store.ts
 import { isStudioVerdict, stricterVerdict, type StudioSafety } from "./studio.ts";
 import { readTranscription, transcriptionMinutes } from "./transcription.ts";
 import { TRANSCRIPTION_FORMATS, TRANSCRIPTION_MAX_BYTES, TRANSCRIPTION_MAX_SECONDS, WHISPER_ID } from "./voice-models.ts";
-import { UpstreamError, type Media, type SpeechUpstream } from "./upstreams.ts";
+import { VideoSubmissionDeclined, UpstreamError, type Media, type SpeechUpstream } from "./upstreams.ts";
 
 const MAX_PROMPT = 4000;
 const MAX_VIDEO_PROMPT = 2000;
@@ -569,7 +569,11 @@ async function submitVideo(ctx: Ctx, c: Context, welcome = false): Promise<Respo
     if (!accepted.length) throw new UpstreamError("job expired", 503);
   } catch (e) {
     await release(ctx.db, id).catch(() => undefined);
-    await ctx.db.update(mediaJobs).set({ status: "failed", errorType: e instanceof UpstreamError && e.status === 503 ? "upstream_unavailable" : "upstream_failed", updatedAt: new Date() })
+    const blocked = e instanceof UpstreamError && e.status === 451;
+    const errorType = blocked ? "upstream_blocked" : e instanceof VideoSubmissionDeclined ? "upstream_submission_declined"
+      : e instanceof UpstreamError && e.status === 503 ? "upstream_unavailable"
+      : e instanceof UpstreamError && e.rejected ? "upstream_rejected" : "upstream_failed";
+    await ctx.db.update(mediaJobs).set({ status: blocked ? "blocked" : "failed", errorType, updatedAt: new Date() })
       .where(and(eq(mediaJobs.id, id), eq(mediaJobs.status, "queued")));
     throw mediaError(e, "video");
   }
@@ -604,7 +608,7 @@ async function advance(ctx: Ctx, s: MediaServices, job: JobRow): Promise<void> {
     return; // transient: try again on the next poll; the hold's own expiry bounds how long
   }
   if (polled.state === "running") return;
-  if (polled.state === "failed") return polled.blocked ? end("blocked", "upstream_blocked") : end("failed", "upstream_failed");
+  if (polled.state === "failed") return polled.blocked ? end("blocked", "upstream_blocked") : end("failed", polled.reason ?? "upstream_failed");
   const [finishing] = await ctx.db.update(mediaJobs).set({ status: "finishing", updatedAt: new Date() }).where(owner)
     .returning({ lease: mediaJobs.updatedAt });
   if (!finishing) return;
@@ -637,6 +641,13 @@ async function advance(ctx: Ctx, s: MediaServices, job: JobRow): Promise<void> {
 const ERROR_MESSAGES: Record<string, string> = {
   upstream_unavailable: "The video provider was unavailable. Nothing was charged.",
   upstream_failed: "The video provider failed. Nothing was charged.",
+  upstream_rejected: "The video provider rejected the request. Nothing was charged.",
+  upstream_submission_declined: "The video provider could not accept this request. Nothing was charged.",
+  upstream_render_failed: "The video provider could not finish this render. Nothing was charged.",
+  upstream_cancelled: "The video provider cancelled the render. Nothing was charged.",
+  upstream_job_missing: "The video provider could not find this render. Nothing was charged.",
+  upstream_output_unavailable: "The rendered video could not be downloaded. Nothing was charged.",
+  upstream_output_invalid: "The provider returned an unreadable video. Nothing was charged.",
   upstream_blocked: "The video provider blocked this request. Nothing was charged.",
   job_expired: "The free clip timed out. You can try again.",
   model_unavailable: "This video model is no longer available. Nothing was charged.",

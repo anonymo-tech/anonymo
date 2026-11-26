@@ -12,7 +12,7 @@ import type { FloorGate, FloorInput } from "../../src/anonymo/seams.ts";
 import { provenanceKeyFromSeed } from "../../src/anonymo/media/c2pa.ts";
 import { evmKeyCommit } from "../../src/anonymo/deposits/addresses.ts";
 import { anonymoKeys } from "../../src/anonymo/deposits/schema.ts";
-import { compVideoConfig, FIRST_VIDEO_DAILY_BUDGET, firstVideoOffer } from "../../src/anonymo/media/first-video.ts";
+import { compVideoConfig, firstVideoOffer } from "../../src/anonymo/media/first-video.ts";
 import { FIRST_IMAGE_DAILY_BUDGET, firstImageOffer, finishFirstImage, startFirstImage } from "../../src/anonymo/media/first-image.ts";
 import { MediaCatalog } from "../../src/anonymo/media/catalog.ts";
 import { createMediaGate, type FrameScore, type MediaClassifier } from "../../src/anonymo/media/gate.ts";
@@ -588,7 +588,7 @@ describe("/v1/video/generations", () => {
     expect(await balance()).toBe(before);
     expect(await openHolds()).toBe(held);
     const [row] = await h.ctx.db.select().from(mediaJobs).where(eq(mediaJobs.status, "failed")).orderBy(sql`${mediaJobs.createdAt} desc`).limit(1);
-    expect(row.errorType).toBe("upstream_failed");
+    expect(row.errorType).toBe("upstream_rejected");
   });
 });
 
@@ -864,11 +864,14 @@ describe("studio's independent first video", () => {
     const k = await h.newKey();
     const headers = {...origin, ...k.auth};
     const before = calls.videoSubmit;
+    const budgetBefore = (await firstVideoOffer(h.ctx.db)).remaining;
     const first = await (await post(path,params,headers)).json();
     videoFrames = [{nsfw:0.9,apparentAge:15}];
     videoPolls = [{state:"done",media:{bytes:tinyMp4(9),mime:"video/mp4"}}];
     expect((await poll(first.id,headers)).status).toBe("failed");
     expect((await lookup(headers)).available).toBe(true);
+    // The provider delivered its clip. Our safety rejection releases the claim, but that render cost is real.
+    expect((await firstVideoOffer(h.ctx.db)).remaining).toBe(budgetBefore - usdToPico("0.1"));
     videoFrames = [{nsfw:0.1,apparentAge:30}];
     const second = await (await post(path,params,headers)).json();
     await h.ctx.db.update(mediaJobs).set({status:"finishing",updatedAt:sql`now() - interval '11 minutes'`}).where(eq(mediaJobs.id,second.id));
@@ -878,27 +881,37 @@ describe("studio's independent first video", () => {
     expect((await lookup(headers)).available).toBe(false);
   });
 
-  test("an abandoned submit or a timed-out job releases eligibility without refunding its dispatch", async () => {
+  test("abandoned and timed-out jobs release claims and conservatively retain uncertain charges on the dispatch day", async () => {
     const k = await h.newKey();
     const headers = {...origin, ...k.auth};
     const [key] = await h.ctx.db.select().from(keys).where(eq(keys.keyHash,k.hash));
     const remaining = (await firstVideoOffer(h.ctx.db)).remaining;
+    let expectedRemaining = remaining;
     for (const state of ["queued","running"]) {
       const job = await (await post(path,params,headers)).json();
-      await h.ctx.db.update(mediaJobs).set({status:state,createdAt:sql`now() - interval '2 hours'`,updatedAt:sql`now() - interval '3 minutes'`})
+      // Moving an existing fixture across midnight must also move its reservation out of today's total.
+      if (state === "running") await h.ctx.db.update(kv)
+        .set({ value: sql`to_jsonb((${kv.value} #>> '{}')::bigint - ${String(usdToPico("0.1"))}::bigint)` })
+        .where(sql`${kv.key} = 'first-video:v1:daily:' || to_char(now() at time zone 'UTC', 'YYYY-MM-DD')
+          and (now() at time zone 'UTC')::date <> ((now() - interval '2 hours') at time zone 'UTC')::date`);
+      await h.ctx.db.update(mediaJobs).set({status:state,createdAt:state === "running" ? sql`now() - interval '2 hours'` : undefined,updatedAt:sql`now() - interval '3 minutes'`})
         .where(eq(mediaJobs.id,job.id));
+      const [timing] = await h.ctx.db.select({
+        today: sql<boolean>`(${mediaJobs.createdAt} at time zone 'UTC')::date = (now() at time zone 'UTC')::date`,
+      }).from(mediaJobs).where(eq(mediaJobs.id, job.id));
+      if (timing.today) expectedRemaining -= usdToPico("0.1");
       expect((await poll(job.id,headers)).error.type).toBe("job_expired");
       expect((await lookup(headers)).available).toBe(true);
       const [hold] = await h.ctx.db.select().from(holds).where(eq(holds.id,job.id));
       expect(hold.status).toBe("released");
     }
-    expect((await firstVideoOffer(h.ctx.db,key.accountId)).remaining).toBe(remaining - 2n * usdToPico("0.1"));
+    expect((await firstVideoOffer(h.ctx.db,key.accountId)).remaining).toBe(expectedRemaining);
   });
 
-  test("different accounts cannot overrun the UTC pool and failed jobs still count against its limit", async () => {
+  test("different accounts race for one remaining clip and a blocked render restores it exactly once", async () => {
     const daily = sql<string>`'first-video:v1:daily:' || to_char(timezone('UTC', now()), 'YYYY-MM-DD')`;
     const [prior] = await h.ctx.db.select().from(kv).where(eq(kv.key,daily));
-    const spent = Number(FIRST_VIDEO_DAILY_BUDGET-usdToPico("0.1"));
+    const spent = Number(BigInt(Number(prior?.value ?? 0)) + (await firstVideoOffer(h.ctx.db)).remaining - usdToPico("0.1"));
     await h.ctx.db.insert(kv).values({key:daily,value:spent}).onConflictDoUpdate({target:kv.key,set:{value:spent}});
     try {
       const keys = await Promise.all([h.newKey(),h.newKey()]);
@@ -911,7 +924,15 @@ describe("studio's independent first video", () => {
       const job = await results[i].json();
       videoPolls = [{state:"failed",blocked:true}];
       expect((await poll(job.id,headers[i])).status).toBe("failed");
-      expect((await lookup(headers[i])).available).toBe(false);
+      expect((await lookup(headers[i])).available).toBe(true);
+      await poll(job.id, headers[i]);
+      expect((await firstVideoOffer(h.ctx.db)).remaining).toBe(usdToPico("0.1"));
+      const retries = await Promise.all(headers.map(auth => post(path, params, auth)));
+      expect(retries.map(r => r.status).sort()).toEqual([202, 409]);
+      const winner = retries.findIndex(r => r.ok);
+      const retry = await retries[winner].json();
+      videoPolls = [{ state: "done", media: { bytes: tinyMp4(6), mime: "video/mp4" } }];
+      expect((await poll(retry.id, headers[winner])).status).toBe("completed");
       expect((await firstVideoOffer(h.ctx.db)).remaining).toBe(0n);
     } finally {
       await h.ctx.db.delete(kv).where(eq(kv.key,daily));
@@ -935,6 +956,65 @@ describe("operator-funded Video Studio allowance", () => {
     expect(() => compVideoConfig({ ANONYMO_VIDEO_COMP_KEY_COMMIT: commit.slice(0, -1) })).toThrow();
     expect(() => compVideoConfig({ ANONYMO_VIDEO_COMP_KEY_COMMIT: commit, ANONYMO_VIDEO_COMP_DAILY_USD:"-1" })).toThrow();
     expect(() => compVideoConfig({ ANONYMO_VIDEO_COMP_KEY_COMMIT: commit, ANONYMO_VIDEO_COMP_DAILY_USD:"NaN" })).toThrow();
+  });
+
+  test("failed legacy jobs restore the existing daily aggregate without guessing mixed historical prices", async () => {
+    const amount = usdToPico("0.24");
+    const allowance = { keyCommit: "", dailyBudget: amount };
+    const daily = sql<string>`'complimentary-video:v1:daily:' || to_char(timezone('UTC', now()), 'YYYY-MM-DD')`;
+    const oldJob = (id: string, status: string) => ({
+      id, accountId, status, holdId: id, pricePico: 0n, model: "lightricks/ltx-2.3-fast", upstream: "nanogpt",
+      seconds: 6, width: 1280, height: 720, explicitAllowed: false,
+    });
+    const failed = "vid_c_" + crypto.randomUUID();
+    const completed = "vid_c_" + crypto.randomUUID();
+    try {
+      await h.ctx.db.insert(kv).values({ key: daily, value: Number(amount) });
+      await h.ctx.db.insert(mediaJobs).values({ ...oldJob(failed, "failed"), errorType: "upstream_failed", upstreamRef: null });
+      expect((await firstVideoOffer(h.ctx.db, accountId, allowance)).remaining).toBe(amount);
+      await h.ctx.db.update(kv).set({ value: Number(usdToPico("0.99")) }).where(eq(kv.key, daily));
+      await h.ctx.db.insert(mediaJobs).values(oldJob(completed, "completed"));
+      expect((await firstVideoOffer(h.ctx.db, accountId, { ...allowance, dailyBudget: usdToPico("1") })).remaining).toBe(usdToPico("0.25"));
+      // Prior-day failures cannot create a rebate against successful clips today.
+      await h.ctx.db.update(mediaJobs).set({ createdAt: sql`now() - interval '1 day'` }).where(eq(mediaJobs.id, failed));
+      await h.ctx.db.update(kv).set({ value: Number(amount) }).where(eq(kv.key, daily));
+      expect((await firstVideoOffer(h.ctx.db, accountId, allowance)).remaining).toBe(0n);
+    } finally {
+      await h.ctx.db.delete(mediaJobs).where(eq(mediaJobs.id, failed));
+      await h.ctx.db.delete(mediaJobs).where(eq(mediaJobs.id, completed));
+      await h.ctx.db.delete(kv).where(eq(kv.key, daily));
+    }
+  });
+
+  test("failed complimentary submissions and renders restore the quoted cost for a zero-balance retry", async () => {
+    const key = await h.newKey();
+    const allowance = { keyCommit: evmKeyCommit(key.hash), dailyBudget: usdToPico("0.24") };
+    const headers = { ...origin, ...key.auth };
+    const options = { prompt: "A green hillside", model: "lightricks/ltx-2.3-fast", seconds: 6 };
+    const active = () => firstVideoOffer(h.ctx.db, undefined, allowance);
+    const submit = video.submit;
+    setMediaServices(h.ctx, { compVideo: allowance });
+    try {
+      video.submit = async () => { throw new UpstreamError("private provider text", 502, true); };
+      expect((await post(path, options, headers)).status).toBe(502);
+      expect((await active()).remaining).toBe(usdToPico("0.24"));
+      video.submit = submit;
+      const result = await post(path + "/sponsored", options, headers);
+      expect(result.status).toBe(202);
+      const job = await result.json();
+      const [quote] = await h.ctx.db.select().from(kv).where(eq(kv.key, "video-sponsor:v1:quote:" + job.id));
+      expect(quote.value).toBe(Number(usdToPico("0.24")));
+      expect((await active()).remaining).toBe(0n);
+      videoPolls = [{ state: "failed", reason: "upstream_cancelled", message: "private provider text" }];
+      const failed = await (await h.request(path + "/" + job.id, { headers })).json();
+      expect(failed).toMatchObject({ status: "failed", error: { type: "upstream_cancelled" }, anonymo: { cost_usd: 0 } });
+      expect(JSON.stringify(failed)).not.toContain("private provider text");
+      expect((await active()).remaining).toBe(usdToPico("0.24"));
+      expect((await lookup(headers)).available).toBe(true);
+    } finally {
+      video.submit = submit;
+      setMediaServices(h.ctx, { compVideo: undefined });
+    }
   });
 
   test("only the matched root gets repeated independent zero-cost clips; neither endpoint can spend its own balance", async () => {

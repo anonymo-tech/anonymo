@@ -26,10 +26,14 @@ export class UpstreamError extends Error {
   }
 }
 
+/** A provider expressly declined a video request before it entered a render queue. */
+export class VideoSubmissionDeclined extends UpstreamError {}
+
 export type ImageRequest = { model: string; prompt: string; n: number; width: number; height: number; seed: number; safe: boolean; image?: Media };
 export type SpeechRequest = { model: string; input: string; voice: string; speed: number };
 export type VideoRequest = { model: string; prompt: string; seconds: number; width: number; height: number; seed: number; safe: boolean };
-export type VideoPoll = { state: "running" } | { state: "failed"; message: string; blocked?: true } | { state: "done"; media: Media };
+export type VideoFailure = "upstream_render_failed" | "upstream_cancelled" | "upstream_job_missing" | "upstream_output_unavailable" | "upstream_output_invalid";
+export type VideoPoll = { state: "running" } | { state: "failed"; message: string; blocked?: true; reason?: VideoFailure } | { state: "done"; media: Media };
 
 export interface ImageUpstream {
   generate(r: ImageRequest, signal: AbortSignal): Promise<Media[]>;
@@ -104,7 +108,7 @@ export function veniceAdapter(o: { base: string; apiKey: string; fetch?: typeof 
       const type = res.headers.get("content-type") ?? "";
       if (type.startsWith("video/")) return { state: "done", media: media(await readCapped(res), type) };
       const j = (await res.json().catch(() => ({}))) as { status?: string };
-      return /fail|error/i.test(j.status ?? "") ? { state: "failed", message: "Venice video job failed" } : { state: "running" };
+      return /fail|error/i.test(j.status ?? "") ? { state: "failed", reason: "upstream_render_failed", message: "Venice video job failed" } : { state: "running" };
     },
   };
 }
@@ -249,13 +253,13 @@ export function comfyAdapter(o: { base: string; token?: string; workflows: Workf
       if (!h) return { state: "running" };
       if (h.status?.status_str === "error") {
         void forget(ref);
-        return { state: "failed", message: "Video job failed on the worker" };
+        return { state: "failed", reason: "upstream_render_failed", message: "Video job failed on the worker" };
       }
       if (!h.status?.completed && !(h.outputs && Object.keys(h.outputs).length)) return { state: "running" };
       try {
         const list = await files(h, signal);
         const video = list.find((m) => m.mime.startsWith("video/"));
-        return video ? { state: "done", media: video } : { state: "failed", message: "Worker produced no video" };
+        return video ? { state: "done", media: video } : { state: "failed", reason: "upstream_output_unavailable", message: "Worker produced no video" };
       } finally {
         void forget(ref);
       }

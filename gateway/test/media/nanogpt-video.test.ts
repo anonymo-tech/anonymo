@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import { log } from "../../src/lib/util.ts";
 import { readFileSync } from "node:fs";
 import { concatBytes, te, u32be } from "../../src/anonymo/media/bytes.ts";
 import { MediaCatalog } from "../../src/anonymo/media/catalog.ts";
@@ -81,7 +82,7 @@ test("NanoGPT polling maps queue, completion, cancellation and content blocks an
   expect(await poll()).toEqual({ state: "running" });
   expect(await poll()).toEqual({ state: "running" });
   expect(await poll()).toMatchObject({ state: "done", media: { mime: "video/mp4" } });
-  expect(await poll()).toMatchObject({ state: "failed" });
+  expect(await poll()).toMatchObject({ state: "failed", reason: "upstream_cancelled" });
   expect(await poll()).toMatchObject({ state: "failed", blocked: true });
 });
 
@@ -103,4 +104,27 @@ test("NanoGPT rejects insecure download URLs and non-MP4 bytes, and drops an aud
   expect(isSilentMp4(done.media.bytes)).toBe(true);
   expect(Buffer.from(done.media.bytes).includes(Buffer.from("soun"))).toBe(false);
   expect(responses).toHaveLength(0);
+});
+
+test("submission diagnostics expose only a catalog model, fixed reason and HTTP status", async () => {
+  const providerText = "private fixture output";
+  const result = [
+    Response.json({ error: { message: providerText } }, { status: 422 }),
+    Response.json({ error: providerText }, { status: 200 }),
+    Response.json({ runId: providerText }, { status: 202 }),
+    Response.json({ error: { type: "CONTENT_POLICY_VIOLATION" } }, { status: 400 }),
+  ];
+  const fetch = (async () => result.shift()!) as typeof globalThis.fetch;
+  const adapter = nanogptVideoAdapter({ base, apiKey: key, fetch });
+  const warn = spyOn(log, "warn").mockImplementation(() => {});
+  try {
+    for (const [reason, provider_status] of [["http_error", 422], ["missing_job_id", 200], ["invalid_job_id", 202], ["policy_block", 400]]) {
+      await expect(adapter.submit({ ...req, model: "lightricks/ltx-2.3/fast", seconds: 6 }, signal)).rejects.toThrow();
+      expect(warn).toHaveBeenLastCalledWith("video provider submission failed", {
+        provider: "nanogpt", model: "lightricks/ltx-2.3-fast", reason, provider_status,
+      });
+    }
+  } finally {
+    warn.mockRestore();
+  }
 });

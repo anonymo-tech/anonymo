@@ -9,7 +9,7 @@
 //   Without it, the hosted pair (hosted-classifier.ts) when both keys are set: ANONYMO_NANOGPT_API_KEY (NanoGPT's NSFW
 //   check) and ANONYMO_MEDIA_GUARD_KEY with ANONYMO_MEDIA_GUARD_URL (default https://api.ppq.ai/v1) and
 //   ANONYMO_MEDIA_GUARD_MODEL (default meta-llama/llama-guard-4-12b). Images only.
-//   ANONYMO_NANOGPT_API_KEY / ANONYMO_NANOGPT_BASE (default https://nano-gpt.com/api/v1): hosted image and video models (catalog.ts)
+//   ANONYMO_NANOGPT_API_KEY / ANONYMO_NANOGPT_BASE: hosted image and video models (catalog.ts)
 //   ANONYMO_MEDIA_NSFW_THRESHOLD, ANONYMO_MEDIA_MIN_ADULT_AGE, ANONYMO_MEDIA_VIDEO_FRAMES
 //   ANONYMO_WATERMARK_URL / _TOKEN / _MIMES   watermark sidecar (watermark.ts httpWatermarker); MIMES defaults to video/mp4
 //   ANONYMO_WATERMARK_KEY                     64 hex chars; default derived from APP_SECRET
@@ -135,7 +135,7 @@ export function buildMediaServices(ctx: Pick<Ctx, "cfg">, env: Env = process.env
     region: placeholderRegionRules(env),
     store: new MemoryMediaStore(Math.max(16, num(env.ANONYMO_MEDIA_STORE_MB, 512)) * 1024 * 1024),
     images: { venice, comfyui: comfy, nanogpt },
-    video: { venice, comfyui: comfy, ...(nanogptKey ? { nanogpt: nanogptVideoAdapter({ base: nanogptBase(env), apiKey: nanogptKey }) } : {}) },
+    video: { venice, comfyui: comfy, ...(nanogptKey ? { nanogpt: nanogptVideoAdapter({ base: env.ANONYMO_NANOGPT_BASE?.trim() || "https://api.nano-gpt.com/api", apiKey: nanogptKey }) } : {}) },
     speech: env.ANONYMO_TTS_URL ? ttsAdapter({ base: env.ANONYMO_TTS_URL, token: env.ANONYMO_TTS_TOKEN }) : unconfigured("The TTS worker pool"),
     nanogptSpeech: voice,
     transcription: voice,

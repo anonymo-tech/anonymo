@@ -5,10 +5,21 @@ import test from 'node:test';
 import { API_PATHS, createAnonymoClient } from '../lib/anonymo/client.ts';
 import { createMockGateway } from '../lib/anonymo/mock/gateway.ts';
 import { parseUpdates, updateOn } from '../lib/anonymo/updates.ts';
-import { formatVideoUsd, pollWhileVisible, studioVideoModels, videoBlocked, videoCost, videoDurations } from '../lib/anonymo/video.ts';
+import { canRetryVideoFree, formatVideoUsd, pollWhileVisible, studioVideoModels, videoBlocked, videoCost, videoDurations } from '../lib/anonymo/video.ts';
 
 const base = 'https://demo.anonymo.invalid';
 const prompt = 'A ribbon of pale light across a violet sky';
+
+test('a failed clip shows free retry eligibility only after its exact offer is available again', () => {
+  const clip = { model: 'lightricks/ltx-2.3-fast', seconds: 6 };
+  const offer = { available: true, eligible_clips: [clip] };
+  assert.ok(canRetryVideoFree(offer, clip));
+  for (const changed of [null, { ...offer, available: false }, { ...offer, eligible_clips: [] }])
+    assert.equal(canRetryVideoFree(changed, clip), false);
+  assert.equal(canRetryVideoFree(offer, { ...clip, seconds: 8 }), false);
+  assert.equal(canRetryVideoFree(offer, { ...clip, model: 'another-model' }), false);
+  assert.equal(canRetryVideoFree(offer, undefined), false);
+});
 
 async function demo(credit = 2_000_000) {
   let now = 1_700_000_000_000;

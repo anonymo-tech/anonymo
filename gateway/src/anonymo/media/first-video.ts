@@ -1,7 +1,7 @@
 // The existing job row is also the per-account claim. Only completed jobs permanently consume
-// it. A failed or blocked dispatch keeps its quote in the shared budget but allows a new attempt.
+// it. Daily pools also cover renders the provider may have charged for, including locally blocked output.
 import { and, eq, inArray, or, sql } from "drizzle-orm";
-import type { Db } from "../../db/client.ts";
+import type { Db, Tx } from "../../db/client.ts";
 import { accounts, kv } from "../../db/schema.ts";
 import { release } from "../../ledger/ledger.ts";
 import { fail } from "../../lib/errors.ts";
@@ -52,11 +52,46 @@ export async function recoverFirstVideoJobs(db: Db, accountId?: string) {
     .where(and(scope, eq(mediaJobs.status, "finishing"), sql`${mediaJobs.updatedAt} <= now() - interval '10 minutes'`));
 }
 
+const quotePrefix = "video-sponsor:v1:quote:";
+
+/** Gross dispatch totals remain compatible with workers predating the per-job quote snapshot.
+ * Compute spend in one database snapshot; counted jobs and quotes belong to the dispatch's UTC day.
+ * Old jobs had no per-job provider quote. Bound any surviving legacy spend by its grant ceiling,
+ * retaining at most the actual legacy aggregate. An entirely rejected legacy day is fully restored. */
+async function reservedSpend(db: Db | Tx, comp: boolean): Promise<Pico> {
+  // Local post-processing failures, acknowledged timeouts and missing provider results can cost
+  // real money. Only confirmed provider failures and pre-upgrade unaccepted submissions are freed.
+  const refundable = sql`(${mediaJobs.status} in ('blocked', 'failed') and (
+    coalesce(${mediaJobs.errorType}, '') in ('upstream_rejected', 'upstream_blocked', 'upstream_render_failed',
+      'upstream_cancelled', 'upstream_submission_declined')
+    or (${kv.key} is null and ${mediaJobs.upstreamRef} is null and
+      coalesce(${mediaJobs.errorType}, '') in ('upstream_failed', 'upstream_unavailable'))
+  ))`;
+  const amount = sql`(${kv.value} #>> '{}')::numeric`;
+  const dayStart = sql`(date_trunc('day', now() at time zone 'UTC') at time zone 'UTC')`;
+  const [totals] = await db.select({
+    gross: sql<string>`(select value #>> '{}' from kv where key = ${dailySlot(comp)})`,
+    exact: sql<string>`coalesce(sum(${amount}), 0)::text`,
+    retainedExact: sql<string>`coalesce(sum(${amount}) filter (where not (${refundable})), 0)::text`,
+    refundedLegacy: sql<string>`count(*) filter (where ${kv.key} is null and ${refundable})::text`,
+    keptLegacy: sql<string>`count(*) filter (where ${kv.key} is null and not (${refundable}))::text`,
+  }).from(mediaJobs).leftJoin(kv, eq(kv.key, sql`${quotePrefix}::text || ${mediaJobs.id}`))
+    .where(and(comp ? complimentary : sponsored,
+      sql`${mediaJobs.createdAt} >= ${dayStart} and ${mediaJobs.createdAt} < ${dayStart} + interval '24 hours'`));
+
+  let legacy = BigInt(totals.gross ?? 0) - BigInt(totals.exact);
+  if (legacy < 0n) legacy = 0n;
+  if (BigInt(totals.refundedLegacy) > 0n) {
+    const survivorCeiling = BigInt(totals.keptLegacy) * MAX_FIRST_VIDEO_PRICE;
+    if (legacy > survivorCeiling) legacy = survivorCeiling;
+  }
+  return legacy + BigInt(totals.retainedExact);
+}
+
 export async function firstVideoOffer(db: Db, accountId?: string, comp?: CompVideoAllowance) {
-  const [counter] = await db.select({ spent: sql<string>`(${kv.value} #>> '{}')` }).from(kv).where(eq(kv.key, dailySlot(!!comp)));
-  const remaining = (comp?.dailyBudget ?? FIRST_VIDEO_DAILY_BUDGET) - BigInt(counter?.spent ?? 0);
+  if (accountId) await recoverFirstVideoJobs(db, accountId);
+  const remaining = (comp?.dailyBudget ?? FIRST_VIDEO_DAILY_BUDGET) - await reservedSpend(db, !!comp);
   if (!accountId) return { available: true, remaining };
-  await recoverFirstVideoJobs(db, accountId);
   const [claim] = await db.select({ id: mediaJobs.id }).from(mediaJobs).where(blockingClaim(accountId, !!comp)).limit(1);
   return { available: !claim, remaining };
 }
@@ -70,11 +105,16 @@ export async function startFirstVideo(db: Db, job: typeof mediaJobs.$inferInsert
     if (!account) videoUnavailable(!!comp);
     const [prior] = await tx.select({ id: mediaJobs.id }).from(mediaJobs).where(blockingClaim(job.accountId, !!comp)).limit(1);
     if (prior) videoUnavailable(!!comp);
-    const total = sql`(${kv.value} #>> '{}')::bigint + ${quote.toString()}::bigint`;
-    const spent = await tx.insert(kv).values({ key: dailySlot(!!comp), value: Number(quote) })
-      .onConflictDoUpdate({ target: kv.key, set: { value: sql`to_jsonb(${total})`, updatedAt: sql`now()` },
-        setWhere: sql`${total} <= ${budget.toString()}::bigint` }).returning({ key: kv.key });
-    if (!spent.length) videoUnavailable(!!comp);
+    // The pool lock serializes reservations across accounts. A terminal job can only decrease spend.
+    const slot = dailySlot(!!comp);
+    await tx.insert(kv).values({ key: slot, value: 0 }).onConflictDoNothing();
+    await tx.select({ key: kv.key }).from(kv).where(eq(kv.key, slot)).for("update");
+    if (await reservedSpend(tx, !!comp) + quote > budget) videoUnavailable(!!comp);
+    await tx.update(kv).set({
+      value: sql`to_jsonb((${kv.value} #>> '{}')::numeric + ${quote.toString()}::numeric)`,
+      updatedAt: sql`now()`,
+    }).where(eq(kv.key, slot));
+    await tx.insert(kv).values({ key: quotePrefix + job.id, value: Number(quote) });
     await tx.insert(mediaJobs).values(job);
   });
 }

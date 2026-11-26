@@ -43,6 +43,10 @@ export type VideoJob = Omit<VideoRequest, 'prompt'> & {
   anonymo?: { request_id: string; cost_usd: number; quoted_usd: number; receipt?: VideoReceipt };
 };
 
+export function canRetryVideoFree(offer: VideoWelcome | null, clip: Pick<VideoRequest, 'model' | 'seconds'> | undefined) {
+  return !!clip && !!offer?.available && offer.eligible_clips.some(item => item.model === clip.model && item.seconds === clip.seconds);
+}
+
 export function studioVideoModels(models: VideoModel[], offer: VideoWelcome | null) {
   if (offer?.mode !== 'complimentary') return models;
   if (!offer.available) return [];

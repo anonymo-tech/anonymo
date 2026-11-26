@@ -853,6 +853,7 @@ export const EXTERNAL: ExternalDoc = {
     records: [
       "The time, the level and a message written in the code.",
       "Anonymous limiter failure: fixed warning that a request was allowed; no exception, address, header, key or body.",
+      "Video submission failures can record the provider ID, catalog model ID, a fixed reason code and the provider’s HTTP status. These events contain no prompt, provider response body or job reference.",
       "Host slash dry-run intent: provider id, evidence commitment root, proposeSlash function name, whole-bond USDG amount, numeric contract reason, contract and chain id, bytes32 host id and delist flag. Logged once per evidence root; no signed bytes, key, raw quote or receipt envelope.",
       "Sanctions refresh counts (distinct EVM entries, ignored formats and digital currency entries), publication date and source hash; screening skip/refusal reasons and provider ids. Freshness exceptions for previously paid addresses and refresh failures use fixed reason codes. No payout wallet or identity fields are added to these logs.",
       "Identifiers and counts: provider ids, model ids, job names, hold and generation ids, epochs, block numbers, transaction hashes, hashed key ids and, on rare settlement and escrow events, an account id.",

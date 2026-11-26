@@ -13,7 +13,7 @@ import Link from 'next/link';
 import { ChevronDown, Clock3, Download, Film, Proportions, Video } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
 import { AnonymoApiError, describeError, isOutOfCredit, type AnonymoClient } from '@/lib/anonymo/client';
-import { formatVideoUsd, pollWhileVisible, videoBlocked, videoCost, videoDurations, videoJobSlot, videoPending, studioVideoModels, type VideoJob, type VideoModel, type VideoWelcome } from '@/lib/anonymo/video';
+import { canRetryVideoFree, formatVideoUsd, pollWhileVisible, videoBlocked, videoCost, videoDurations, videoJobSlot, videoPending, studioVideoModels, type VideoJob, type VideoModel, type VideoWelcome } from '@/lib/anonymo/video';
 import { charactersStore } from '@/lib/anonymo/characters-store';
 import { useDeviceStore } from '@/lib/anonymo/device-store';
 import { studioPrompt } from '@/lib/anonymo/studio-presets';
@@ -109,7 +109,7 @@ function VideoWorkspace({ client, session, created, installKey }: {
   const [length, setLength] = useState<number>();
   const [shapeSize, setShapeSize] = useState('');
   const [sending, setSending] = useState(false);
-  const [error, setError] = useState<{ text: string; funds: boolean } | null>(null);
+  const [error, setError] = useState<{ text: string; funds: boolean; clip?: { model: string; seconds: number } } | null>(null);
   const jobs = useSyncExternalStore(session.subscribe, session.snapshot, () => EMPTY_JOBS);
 
   useEffect(() => {
@@ -205,7 +205,7 @@ function VideoWorkspace({ client, session, created, installKey }: {
       const text = cause instanceof AnonymoApiError && cause.status === 451
         ? 'Video request blocked. Nothing was charged.'
         : describeError(cause);
-      setError({ text, funds: !complimentary && isOutOfCredit(cause) });
+      setError({ text, funds: !complimentary && isOutOfCredit(cause), clip: sponsored ? { model: model.id, seconds } : undefined });
     } finally {
       submitting.current = false;
       setSending(false);
@@ -258,7 +258,7 @@ function VideoWorkspace({ client, session, created, installKey }: {
         </button>
         {error && (
           <div className="notice" role="alert">
-            {error.text} {error.funds && <Link href={setupHref('funds', '/dashboard/video')}>Add funds</Link>}
+            {error.text} {canRetryVideoFree(currentOffer, error.clip) && 'Your free clip is still available.'} {error.funds && <Link href={setupHref('funds', '/dashboard/video')}>Add funds</Link>}
           </div>
         )}
       </form>
@@ -267,7 +267,8 @@ function VideoWorkspace({ client, session, created, installKey }: {
           <h2 className="image-results-title">Your clips</h2>
           {jobs.map(job => <VideoJobCard key={job.id} job={job} client={client}
             modelName={models?.find(m => m.id === job.model)?.name ?? job.model} save={session.save}
-            refreshBalance={refreshBalance} refreshOffer={refreshOffer} demo={demo} />)}
+            refreshBalance={refreshBalance} refreshOffer={refreshOffer} demo={demo}
+            freeRetry={job.status === 'failed' && job.anonymo?.quoted_usd === 0 && canRetryVideoFree(currentOffer, job)} />)}
           {created && key && <CopyButton text={key} label="Copy your key" className="btn btn-small video-copy-key" />}
         </>}
       </section>
@@ -277,7 +278,7 @@ function VideoWorkspace({ client, session, created, installKey }: {
   );
 }
 
-function VideoJobCard({ job, client, modelName, save, refreshBalance, refreshOffer, demo }: {
+function VideoJobCard({ job, client, modelName, save, refreshBalance, refreshOffer, demo, freeRetry }: {
   job: VideoJob;
   client: AnonymoClient;
   modelName: string;
@@ -285,6 +286,7 @@ function VideoJobCard({ job, client, modelName, save, refreshBalance, refreshOff
   refreshBalance: () => void;
   refreshOffer: () => void;
   demo: boolean;
+  freeRetry: boolean;
 }) {
   const [connection, setConnection] = useState('');
   const [playbackError, setPlaybackError] = useState(false);
@@ -333,7 +335,7 @@ function VideoJobCard({ job, client, modelName, save, refreshBalance, refreshOff
       {pending && <div className="video-wait" aria-hidden="true"><Film size={30} /></div>}
       {connection && <p className="video-job-note" role="status">{connection}</p>}
       {job.status === 'failed' && (
-        <p className="video-job-note" role="status">{blocked ? 'Video request blocked.' : 'Video generation failed.'} Nothing was charged.</p>
+        <p className="video-job-note" role="status">{blocked ? 'Video request blocked.' : 'Video generation failed.'} {freeRetry ? 'Your free clip is still available.' : 'Nothing was charged.'}</p>
       )}
       {job.status === 'completed' && (
         <>
