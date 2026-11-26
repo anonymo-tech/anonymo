@@ -12,6 +12,7 @@ export type Turn = {
   content: string;
   status: 'streaming' | 'done' | 'stopped' | 'error';
   error: string | null;
+  welcomeReply?: boolean; // The introductory text reply after choosing a model.
   needsFunds?: boolean; // the error was a balance too low for the request: offer the Funds page
   receiptId: string | null;
   receipt: Receipt | null;

@@ -9,14 +9,15 @@ import { characterDestination, setupHref } from '@/lib/anonymo/setup-return';
 // judge) side by side with its route, status and cost. The gateway returns only the final reply's text.
 
 import Link from 'next/link';
-import { BookOpen, Columns3, FileText, ReceiptText } from 'lucide-react';
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { BookOpen, ChevronDown, Columns3, FileText, ReceiptText } from 'lucide-react';
+import { Fragment, useId, useMemo, useState, type ReactNode } from 'react';
 import { claimGaps, context, locate, parseCitations, statusLabel, type ProofSource, type ProofStatus } from '@/lib/anonymo/citations';
 import { CopyButton } from '../copy-button';
 import { formatUsdAmount } from '@/lib/anonymo/money';
 import { VoiceReply } from './chat-voice';
 import type { Turn } from './chat-types';
 import { MemoryCost } from './memory-cost';
+import { ModelLogo } from './model-picker';
 import { WebSources } from './web-sources';
 
 /** Paragraphs and fenced code only; everything renders as text, never as HTML. */
@@ -210,7 +211,11 @@ function ProofPanel({ checked, source, onHide, onForget }: { checked: Checked; s
   );
 }
 
-export function AnswerCard({ turn, characterId, proof }: { turn: Turn; characterId?: string; proof?: TurnProof | null }) {
+export function AnswerCard({ turn, characterId, proof, identity, keyAction }: {
+  turn: Turn; characterId?: string; proof?: TurnProof | null; identity?: { name: string; logo: string | null } | null; keyAction?: ReactNode;
+}) {
+  const detailsId = useId();
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const council = turn.council;
   const [comparing, setComparing] = useState(false);
   const streaming = turn.status === 'streaming';
@@ -281,7 +286,9 @@ export function AnswerCard({ turn, characterId, proof }: { turn: Turn; character
 
   return (
     <div className="answer">
-      <div className="response-bar" role="tablist" aria-label="Answers">
+      {identity ? <p className="reply-byline" title={turn.model}>
+        <ModelLogo src={identity.logo} /><span>{identity.name}</span>
+      </p> : <div className="response-bar" role="tablist" aria-label="Answers">
         <button type="button" role="tab" className="tab" aria-selected={!comparing} onClick={() => setComparing(false)}>
           {council ? (council.mode === 'select' ? `Selected${council.selected ? ` · ${council.selected}` : ''}` : 'Merged') : isAutoModel(turn.model) ? autoTabLabel(answeredBy(turn)) : turn.model}
         </button>
@@ -292,13 +299,23 @@ export function AnswerCard({ turn, characterId, proof }: { turn: Turn; character
             {comparing ? 'Answer' : 'Council'}
           </button>
         )}
-      </div>
+      </div>}
       {body}
       {selectedCheck && proof && !comparing && (
         <ProofPanel checked={selectedCheck} source={proof.source} onHide={() => setSelected(null)} onForget={() => { proof.onForget(); }} />
       )}
       {turn.status === 'stopped' && <p className="faint">Stopped. You are charged only for the text that arrived.</p>}
-      {turn.status !== 'streaming' && turn.status !== 'error' && <Footer turn={turn} />}
+      {turn.status !== 'streaming' && turn.status !== 'error' && (turn.welcomeReply ? (
+        <>
+          <div className="intro-reply-actions">
+            <button type="button" className="reply-details-toggle" aria-expanded={detailsOpen} aria-controls={detailsId} onClick={() => setDetailsOpen(open => !open)}>
+              Reply details <ChevronDown size={14} aria-hidden="true" />
+            </button>
+            {keyAction}
+          </div>
+          <div id={detailsId} className="intro-reply-details" hidden={!detailsOpen}><Footer turn={turn} /></div>
+        </>
+      ) : <><Footer turn={turn} />{keyAction}</>)}
     </div>
   );
 }

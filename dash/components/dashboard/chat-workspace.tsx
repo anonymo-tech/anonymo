@@ -8,7 +8,7 @@ import { MascotSprite } from '../mascot-sprite';
 import { Photo } from '@/components/photo';
 import { InstallAppCard } from '@/components/phone-app';
 import Link from 'next/link';
-import { ArrowUp, Crop, Drama, ImageIcon, ShieldCheck, SlidersHorizontal, Square, X } from 'lucide-react';
+import { ArrowUp, Crop, Drama, ImageIcon, ShieldCheck, Square, X } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { mightBeWalletRequest, parseWalletRequest, WALLET_REVIEW_DRAFT } from '@/lib/anonymo/wallet-request';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -24,7 +24,7 @@ import { dashboardSignup } from '@/lib/anonymo/dashboard-signup';
 import { loadKey } from '@/lib/anonymo/key-store';
 import { CopyButton } from '../copy-button';
 import { ModelWelcome } from './model-welcome';
-import { ModelPicker } from './model-picker';
+import { modelIdentity, ModelPicker } from './model-picker';
 import { MemorySuggestions, useChatMemory } from './memory-chat';
 import { PaperTrail } from './paper-trail';
 import { ShareChat } from './share-chat';
@@ -630,6 +630,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       receipt: null,
       council: null,
       councilMode: model === 'anonymo-council' ? councilMode : null,
+      ...(sponsoredChat ? { welcomeReply: true } : {}),
       ...compliance.takeSignals(prompt),
       ...(mode === 'talk' && voice.speech ? { modeResult: { mode, settings: settings.talk, speechModel: voice.speech.id, audioCosts } } : {}),
       ...(searchOn && webSearch && onlineModel(model, true) !== model ? { search: true } : {}),
@@ -692,7 +693,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       const lastMessage = messages.at(-1);
       const memoryPrompt = vaultMemoryOn && lastMessage?.role === 'user' && typeof lastMessage.content === 'string'
         ? lastMessage.content : turn.prompt;
-      if (!guest && !turn.recap && !turn.attachment && !abort.signal.aborted && (!vaultMemoryOn || !turn.photoCount))
+      if (!guest && !sponsoredChat && !turn.recap && !turn.attachment && !abort.signal.aborted && (!vaultMemoryOn || !turn.photoCount))
         void memory.afterReply(id, model, memoryPrompt, result);
     } catch (error) {
       const stopped = abort.signal.aborted;
@@ -1022,14 +1023,11 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   if (picture) activeTools.push({ label: picture.name, remove: () => { setPicture(null); setExcerpt(null); setReview(null); } });
   if (photosOn && tray.photos.length) activeTools.push({ label: 'Photos', remove: tray.clear });
   if (searchOn && webSearch && onlineModel(model, true) !== model) activeTools.push({ label: standalone ? 'Chat web search' : 'Search the web', remove: () => setWebSearch(false) });
-  // The chat model only applies to chat: a mode shows its own model in its settings row.
-  if (!freeMode && !mode && model !== 'anonymo-1') activeTools.push({ label: `Model: ${model}`, remove: () => chooseModel('anonymo-1') });
   if (refusalTool && !refusalCatch) activeTools.push({ label: 'Refusal catch off', remove: () => setRefusalCatch(true) });
   if (!freeMode && !mode && model === 'anonymo-council' && councilMode === 'select') activeTools.push({ label: 'Council: select', remove: () => setCouncilMode('merge') });
   if (character) activeTools.push({ label: character.card.data.name, remove: () => { setCharacterId(null); setSetupSheet(null); } });
   if (voiceOn && voice.autoRead) activeTools.push({ label: 'Auto-read replies', remove: () => voice.toggleAutoRead(false) });
   if (stage && character) activeTools.push({ label: 'Stage', remove: () => setStage(false) });
-  if (memoryOn && (character || vaultMemoryOn) && memory.extractionOn) activeTools.push({ label: 'Memory suggestions', remove: memory.toggleExtraction });
   if (price.limit !== null) activeTools.push({ label: `Limit ${usdText(price.limit)}`, remove: () => setChatLimit(demo, chatId, null) });
 
   const composerPrice = { ...price, estimate: null };
@@ -1091,8 +1089,6 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const composer = (
     <div className={modesOn ? 'dock-composer dock-composer-modes' : 'dock-composer'}>
       {sponsoredChat && !streaming && <output className="ai-notice">Your first message is on us.</output>}
-      {newChatKey && key === newChatKey && turns.some(turn => turn.status === 'done') &&
-        <div className="row"><span className="faint">Your key is in this tab.</span><CopyButton text={key} label="Copy your key" /></div>}
       {freeMode && free.remaining !== null && (
         <output className="ai-notice">
           Free today: {free.remaining} left{free.solving ? ' · Checking this device…' : turns.length === 0 && !freeExhausted ? ' · Try it free. No account.' : ''}
@@ -1180,7 +1176,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       )}
       {modesOn ? (
         <ChatModeComposer text={text} textarea={textarea} mode={mode} hint={hint} available={availableModes}
-          menu={menu} setMenu={setMenu} price={shownPrice} onMode={pickMode} action={modeAction} active={activeTools}
+          modelPicker={!mode && modelPicker} menu={menu} setMenu={setMenu} price={shownPrice} onMode={pickMode} action={modeAction} active={activeTools}
           options={mode && <ChatModeSettings mode={mode} settings={settings} images={images} models={comparisonModels}
             voices={voice.speech?.voices ?? []} canMerge={mergeReady} onChange={changeSettings}
             studio={() => {
@@ -1188,7 +1184,6 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
               router.push('/dashboard/images');
             }} />}
           tools={<>
-            {modelPicker && <div className="mode-model-tool"><SlidersHorizontal size={15} aria-hidden="true" /> <span>Chat model</span>{modelPicker}</div>}
             {composerTools}
             {voiceOn && <VoiceSettings sealed={model === 'anonymo-sealed'} />}
             {priceOn && <details className="mode-price-tools"><summary>Chat spending</summary><PriceTag {...composerPrice} /></details>}
@@ -1231,7 +1226,6 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
         <output className="mode-detail">Read replies · {speechRate(voice.speech)}</output>
       )}
       {key && !modelReady && !standalone && <output className="notice">{!catalog && !catalogError ? 'Checking your selected model…' : 'Your selected model is unavailable. Choose another model to send.'}</output>}
-      {memoryOn && (character || vaultMemoryOn) && <MemorySuggestions {...memory} />}
       {excerpt && (
         <fieldset className="excerpt-chip" aria-label="Approved excerpt" style={{ minInlineSize: 0, margin: 0 }}>
           <span className="chip"><Crop size={13} aria-hidden="true" /> {excerpt.image ? 'Cropped image only' : 'Excerpt only'}{excerpt.page ? ` · p. ${excerpt.page}` : ''}</span>
@@ -1284,11 +1278,15 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     </>
   );
 
+  const saveKeyAfter = newChatKey && key === newChatKey ? turns.find(turn => turn.status === 'done' && turn.content.trim())?.id : null;
+  const saveKeyNote = saveKeyAfter && key && (
+    <CopyButton text={key} label="Copy your key" className="reply-key-action" />
+  );
   const installAfter = BUILT_WITH.has('app') && !compact
-    ? turns.find((turn) => turn.status === 'done' && turn.content.trim())?.id
+    ? turns.find((turn) => !turn.welcomeReply && turn.status === 'done' && turn.content.trim())?.id
     : undefined;
 
-  function turnAnswer(turn: Turn) {
+  function turnAnswer(turn: Turn, inThread = false) {
     const proof = proofOn ? {
       source: sources.get(turn.id) ?? null,
       onForget: () => setSources((map) => {
@@ -1298,9 +1296,18 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       }),
     } : null;
     const result = turn.modeResult;
-    if (result) return <ChatModeTurn turn={{ ...turn, modeResult: result }} characterId={character?.id} proof={proof}
-      redo={!streaming && availableModes.includes(result.mode) ? () => redo(turn, result) : undefined} />;
-    return <AnswerCard turn={turn} characterId={character?.id} proof={proof} />;
+    const plainModel = !result && !turn.character && !turn.council && turn.model !== 'anonymo-council' && !isAutoModel(turn.model);
+    const identity = plainModel ? modelIdentity(turn.model, directModels) : null;
+    const answer = result
+      ? <ChatModeTurn turn={{ ...turn, modeResult: result }} characterId={character?.id} proof={proof}
+          redo={!streaming && availableModes.includes(result.mode) ? () => redo(turn, result) : undefined} />
+      : <AnswerCard turn={turn} characterId={character?.id} proof={proof} identity={identity}
+          keyAction={turn.id === saveKeyAfter ? saveKeyNote : null} />;
+    if (!inThread) return answer;
+    return <div className={identity ? 'ai-row model-reply' : 'ai-row'}>
+      {!identity && <TurnFace faces={character && turn.character === character.card.data.name ? faces : null} turn={turn} />}
+      {answer}
+    </div>;
   }
 
   const thread = compliance.restricted ? (
@@ -1327,7 +1334,10 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
         </>
       )}
       {facesOn && stage && character ? (
-        <Stage character={character} faces={faces} turns={turns} streaming={streaming} notices={notices} renderAnswer={modesOn ? turnAnswer : undefined} onLog={() => setStage(false)} />
+        <>
+          <Stage character={character} faces={faces} turns={turns} streaming={streaming} notices={notices} renderAnswer={modesOn ? turnAnswer : undefined} onLog={() => setStage(false)} />
+          {!modesOn && saveKeyNote}
+        </>
       ) : compact && !turns.length ? (
         <div className="mascot-welcome">
           {hasFace(faces) ? <FaceAvatar faces={faces} /> : <MascotSprite mood="greet" />}
@@ -1405,16 +1415,15 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
                 </div>
               )}
               {turn.crisis && <CrisisNotice />}
-              <div className="ai-row">
-                <TurnFace faces={character && turn.character === character.card.data.name ? faces : null} turn={turn} />
-                {turnAnswer(turn)}
-              </div>
+              {turnAnswer(turn, true)}
+              {turn.modeResult && turn.id === saveKeyAfter && saveKeyNote}
               {turn.id === installAfter && <InstallAppCard />}
             </article>
           ))}
           <div ref={end} />
         </div>
       )}
+      {memoryOn && (character || vaultMemoryOn) && <MemorySuggestions {...memory} />}
     </>
   );
   return <ChatVoiceContext.Provider value={voiceOn ? voice : null}>{threadHost && createPortal(thread, threadHost)}{composerHost && !compliance.restricted && createPortal(composer, composerHost)}</ChatVoiceContext.Provider>;

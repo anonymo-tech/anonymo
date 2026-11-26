@@ -66,7 +66,9 @@ test('a guest chats for free, uses the allowance, then funds a key and sends the
     await page.getByRole('link', { name: 'Balance $0.00' }).waitFor();
     await send.tap();
     await main.getByText(next, { exact: true }).waitFor();
-    await main.locator('.thread[aria-busy="false"] article.turn').getByRole('link', { name: /receipt/i }).waitFor();
+    const welcomeReply = main.locator('.thread[aria-busy="false"] article.turn');
+    await welcomeReply.getByRole('button', { name: 'Reply details' }).tap();
+    await welcomeReply.getByRole('link', { name: /receipt/i }).waitFor();
     await message.fill(next);
     await send.tap();
     await sheet.getByText('Add a little balance to send this.').waitFor();
@@ -109,8 +111,23 @@ test('Open app creates a tab-only key on model selection and sponsors one direct
   const message = page.getByRole('textbox', { name: 'Message', exact: true });
   await message.fill('Explain a rainbow.');
   await message.press('Enter');
-  await page.getByRole('button', { name: 'Copy your key', exact: true }).waitFor();
   const reply = page.locator('.thread[aria-busy="false"] article.turn').first();
+  await reply.getByRole('button', { name: 'Copy your key', exact: true }).waitFor();
+  assert.equal(await page.locator('.dock-composer').getByRole('button', { name: 'Copy your key' }).count(), 0);
+  const byline = reply.locator('.reply-byline');
+  const modelName = (await byline.innerText()).trim();
+  assert.ok(modelName);
+  await page.locator('.mode-bar').getByRole('button', { name: `Choose model: ${modelName}`, exact: true }).waitFor();
+  assert.equal(await byline.locator('.model-logo').count(), 1);
+  assert.equal(await page.getByText('Memory suggestions are unavailable for this reply.').count(), 0);
+  const toggle = reply.getByRole('button', { name: 'Reply details' });
+  const receipt = reply.getByRole('link', { name: 'Signed receipt', includeHidden: true });
+  assert.equal(await receipt.isVisible(), false);
+  await toggle.focus();
+  await page.keyboard.press('Enter');
+  await receipt.waitFor();
+  await toggle.click();
+  assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
   assert.ok((await reply.locator('.answer-body').innerText()).trim());
   assert.equal(await page.evaluate(() => {
     const state = JSON.parse(localStorage.getItem('anonymo.demo.state.v2') ?? 'null');

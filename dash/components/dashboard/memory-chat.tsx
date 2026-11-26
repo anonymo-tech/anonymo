@@ -216,7 +216,7 @@ export function MemorySuggestions({ pending, busy, error, review, remembered }: 
   if (!pending.length && !error && !remembered) return null;
   return (
     <section className="memory-suggestions" aria-label="Memory suggestions" aria-live="polite">
-      {error && <p className="error-text" role="status">{error}</p>}
+      {error && <p className="muted" role="status">{error}</p>}
       {(!!pending.length || remembered) && (
         <ul>
           {remembered && <li><Link href="/dashboard/memory">Remembered: {remembered}</Link></li>}

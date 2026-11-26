@@ -28,6 +28,13 @@ export function directLogo(model: ModelInfo) {
   return family ? `/model-logos/${family[1]}` : null;
 }
 
+export function modelIdentity(id: string, models: readonly ModelInfo[]) {
+  const direct = models.find(model => model.id === id);
+  if (direct) return { name: chatModelName(direct), logo: directLogo(direct) };
+  const preset = MODEL_CHOICES.find(model => model.id === id) ?? (isAutoModel(id) ? AUTO_CHOICE : undefined);
+  return { name: preset?.name ?? id, logo: preset ? '/favicon.svg' : null };
+}
+
 export function ModelLogo({ src }: { src: string | null }) {
   return <span className="model-logo" aria-hidden="true">{src ? <img src={src} width="24" height="24" alt="" /> : <Box size={20} />}</span>;
 }
@@ -57,10 +64,7 @@ export function ModelPicker({ value, onChange, live, models, catalogError, onRef
     return () => { panel?.close(); trigger.current?.focus(); };
   }, [open]);
 
-  const direct = models.find(m => m.id === value);
-  const preset = MODEL_CHOICES.find(m => m.id === value) ?? (isAutoModel(value) ? AUTO_CHOICE : undefined);
-  const selectedName = direct ? chatModelName(direct) : preset?.name ?? value;
-  const selectedLogo = direct ? directLogo(direct) : preset ? '/favicon.svg' : null;
+  const { name: selectedName, logo: selectedLogo } = modelIdentity(value, models);
   const featured = models.filter(m => uncensoredChatModel(m) && m.availability !== 'temporarily_unavailable');
   const visible = searchChatModels(uncensoredOnly ? featured : models, search);
   const aliases = uncensoredOnly ? [] : MODEL_CHOICES.filter(m => `${m.id} ${m.name} ${m.summary}`.toLowerCase().includes(search.trim().toLowerCase()));
