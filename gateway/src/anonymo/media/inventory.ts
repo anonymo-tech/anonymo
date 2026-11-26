@@ -9,7 +9,7 @@ export const mediaTables: Record<string, TableDoc> = {
   media_jobs: {
     category: "request",
     request: "yes",
-    purpose: "One row per asynchronous video job (POST /v1/video/generations): which model and upstream ran it, its size and length, its status and what it cost. Never the prompt and never the video: the output lives only in process memory for the signed-URL window.",
+    purpose: "One row per asynchronous video job (POST /v1/video/generations): which model and upstream ran it, its size and length, its status and what it cost. The random vid_w_ job ID, account and status also enforce one successful sponsored clip per root key. Failed and blocked jobs allow a retry. A vid_c_ job is attributed to the separate operator-configured clip allowance. Its active status prevents overlapping complimentary jobs. Never the prompt and never the video: the output lives only in process memory for the signed-URL window.",
     retention: "No automatic deletion: no job or route in the code removes rows from this table.",
     columns: {
       id: "Random job id (vid_…), also the id of the job's ledger hold.",
@@ -24,7 +24,7 @@ export const mediaTables: Record<string, TableDoc> = {
       width: "Output width in pixels.",
       height: "Output height in pixels.",
       explicit_allowed: "Whether region rules allowed explicit output at submission; derived from the country code, which is not stored.",
-      price_pico: "Quoted price in pico-USD, the amount held.",
+      price_pico: "Quoted user price in pico-USD, the amount held. A sponsored clip quotes and settles zero.",
       charged_pico: "Amount actually charged; null until settled.",
       error_type: {
         purpose: "A fixed machine-readable reason (upstream_failed, media_blocked:nsfw_minor …); never upstream or request text.",
@@ -44,7 +44,7 @@ export const mediaBodyReader: ExternalDoc["bodyReaders"][number] = {
   carries: "prompt-or-answer",
   reads: "An image, speech or video request: model, prompt or input text, size, count, seed and voice; for image edits one uploaded image (multipart or a data URL); for provenance checks a media file.",
   then: "Runs the floor gate on the text, region rules, a ledger hold, the upstream, the media gate on every visual output and provenance (watermark and signed C2PA manifest). The upload and the output are held in memory only; the output stays in memory for the signed-URL window (default one hour) and is then dropped.",
-  kept: "Video job metadata in media_jobs and the usual ledger hold and settlement. Sponsored images also store account-level availability, a transient random reservation ID and an aggregate UTC-day budget counter in KV. The hourly free-generation rate limit uses a keyed digest. No prompt, input text, address, upload or output is stored.",
+  kept: "Video job metadata in media_jobs and the usual ledger hold and settlement. Welcome and operator-configured complimentary video dispatches each add their provider quote to their own aggregate UTC-day budget counter. The configured public EVM key commitment is compared during authentication and is not copied into job rows, counters or responses. Sponsored images also store account-level availability, a transient random reservation ID and an aggregate UTC-day budget counter in KV. Each hourly free-generation rate limit uses a keyed digest. No prompt, input text, address, upload or output is stored.",
   evidence: [ev("src/anonymo/media/routes.ts", "const body = await readJson("), ev("src/anonymo/media/routes.ts", "raw.formData();"), ev("src/anonymo/media/routes.ts", "req.arrayBuffer())")],
 };
 

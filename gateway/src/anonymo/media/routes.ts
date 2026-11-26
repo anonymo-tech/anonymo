@@ -27,12 +27,14 @@ import { release, reserve, settle } from "../../ledger/ledger.ts";
 import { ApiError, fail } from "../../lib/errors.ts";
 import { picoToUsd, usdToPico, type Pico } from "../../lib/money.ts";
 import { log } from "../../lib/util.ts";
+import { evmKeyCommit } from "../deposits/addresses.ts";
 import { readKeyPolicy } from "../keys/caps.ts";
-import { assertDashboardIp, dashboardOrigin, takeDashboardImageLimit } from "../keys/routes.ts";
+import { assertDashboardIp, dashboardOrigin, takeDashboardImageLimit, takeDashboardVideoLimit } from "../keys/routes.ts";
 import type { FloorInput } from "../seams.ts";
 import { DEFAULT_MAX_IMAGES, type ImageModel, type MediaModel, type SpeechModel, type VideoModel } from "./catalog.ts";
 import { containerFor, wavDuration, wavSeconds } from "./containers.ts";
 import { firstImageOffer, finishFirstImage, MAX_FIRST_IMAGE_PRICE, startFirstImage } from "./first-image.ts";
+import { COMP_VIDEO_PREFIX, FIRST_VIDEO_PREFIX, firstVideoOffer, isSponsoredVideo, MAX_FIRST_VIDEO_PRICE, recoverFirstVideoJobs, startFirstVideo, videoUnavailable } from "./first-video.ts";
 import type { GateReason } from "./gate.ts";
 import { ProvenanceError } from "./provenance.ts";
 import { countryOf } from "./region.ts";
@@ -227,10 +229,10 @@ function requireDashboard(ctx: Ctx, c: Context) {
   c.header("cache-control", "no-store");
   const origin = c.req.header("origin") ?? (c.req.header("sec-fetch-site") === "same-origin" ? new URL(c.req.url).origin : undefined);
   if (dashboardOrigin(origin, ctx.cfg.siteUrl)) return;
-  fail(403, "Open the image studio to use your first generation.", "dashboard_required");
+  fail(403, "Open the Anonymo dashboard to use your first generation.", "dashboard_required");
 }
 
-const rootImageKey = (key: KeyRow) => key.management && key.scope !== "inference" && !key.parentHash && key.accountId === accountIdFor(key.chainKeyHash);
+const rootMediaKey = (key: KeyRow) => key.management && key.scope !== "inference" && !key.parentHash && key.accountId === accountIdFor(key.chainKeyHash);
 
 function welcomeModel(s: MediaServices, model: ImageModel, key?: KeyRow) {
   const price = usdToPico(model.usdPerImage);
@@ -243,7 +245,7 @@ async function imageWelcome(ctx: Ctx, c: Context) {
   const key = c.req.header("authorization") ? await caller(ctx, c) : undefined;
   if (key) {
     await assertDashboardIp(ctx, c, key);
-    if (!rootImageKey(key) || (await readKeyPolicy(ctx.db, key.keyHash))?.sealedOnly) return c.json({ available: false, eligible_models: [] });
+    if (!rootMediaKey(key) || (await readKeyPolicy(ctx.db, key.keyHash))?.sealedOnly) return c.json({ available: false, eligible_models: [] });
   }
   const s = mediaServices(ctx);
   const offer = await firstImageOffer(ctx.db, key?.accountId);
@@ -488,35 +490,87 @@ export async function runTranscription(ctx: Ctx, c: Context, live?: { file: File
 // ---- Video ---------------------------------------------------------------------------------------------------------
 type JobRow = typeof mediaJobs.$inferSelect;
 
-async function submitVideo(ctx: Ctx, c: Context): Promise<Response> {
+function welcomeDuration(s: MediaServices, model: VideoModel, key?: KeyRow): number | null {
+  const seconds = model.allowedSeconds?.length ? Math.min(...model.allowedSeconds) : model.seconds[0];
+  const quote = priceOf(model.usdPerSecond, seconds);
+  return s.video[model.upstream] && (!s.offered || s.offered.has(model.upstream)) &&
+    (!key?.allowedModels?.length || key.allowedModels.includes(model.id)) && quote > 0n && quote <= MAX_FIRST_VIDEO_PRICE ? seconds : null;
+}
+
+function compForVideo(s: MediaServices, key?: KeyRow) {
+  return s.compVideo && key && rootMediaKey(key) && evmKeyCommit(key.keyHash) === s.compVideo.keyCommit ? s.compVideo : undefined;
+}
+
+async function videoWelcome(ctx: Ctx, c: Context) {
+  requireDashboard(ctx, c);
+  const key = c.req.header("authorization") ? await caller(ctx, c) : undefined;
+  const s = mediaServices(ctx);
+  const comp = compForVideo(s, key);
+  const mode = comp ? "complimentary" : "welcome";
+  if (key) {
+    await assertDashboardIp(ctx, c, key);
+    if (!rootMediaKey(key) || (await readKeyPolicy(ctx.db, key.keyHash))?.sealedOnly) return c.json({ mode, available: false, eligible_clips: [] });
+  }
+  const offer = await firstVideoOffer(ctx.db, key?.accountId, comp);
+  const clips = s.catalog.models.flatMap(model => {
+    if (model.kind !== "video") return [];
+    const seconds = welcomeDuration(s, model, key);
+    return seconds && priceOf(model.usdPerSecond, seconds) <= offer.remaining ? [{ model: model.id, seconds }] : [];
+  });
+  return c.json({ mode, available: offer.available && clips.length > 0, eligible_clips: clips });
+}
+
+async function submitVideo(ctx: Ctx, c: Context, welcome = false): Promise<Response> {
   const key = await caller(ctx, c);
   const s = mediaServices(ctx);
+  const comp = compForVideo(s, key);
+  // The configured root always uses its operator allowance, including on an older client's standard route.
+  const sponsored = welcome || !!comp;
+  if (sponsored) requireDashboard(ctx, c);
   const body = await readJson(c);
   const model = modelOr404(s.catalog.get("video", body.model), "video");
   if (Object.entries(body).some(([field, value]) => value != null && VIDEO_UPLOAD_FIELD.test(field.replace(/[_-]/g, ""))))
     fail(400, "Video takes a text prompt only; references and uploads are not accepted.", "video_uploads_not_supported");
   const prompt = str(body.prompt);
   if (!prompt.trim() || prompt.length > MAX_VIDEO_PROMPT) fail(400, `Enter a prompt of 1–${MAX_VIDEO_PROMPT.toLocaleString("en-US")} characters.`);
-  const seconds = body.seconds ?? body.duration ?? model.defaultSeconds;
+  const freeSeconds = sponsored ? welcomeDuration(s, model, key) : null;
+  const seconds = body.seconds ?? body.duration ?? freeSeconds ?? model.defaultSeconds;
   const secs = Number(typeof seconds === "string" ? seconds.replace(/s$/, "") : seconds);
   if (!Number.isInteger(secs) || secs < model.seconds[0] || secs > model.seconds[1]) fail(400, `seconds must be a whole number from ${model.seconds[0]} to ${model.seconds[1]}.`);
   if (model.allowedSeconds && !model.allowedSeconds.includes(secs)) fail(400, `Choose a length this model offers: ${model.allowedSeconds.join(", ")} seconds.`, "invalid_duration");
   const { width, height, size } = parseSize(model, body.size);
   const seed = parseSeed(body.seed);
-  const id = requestId().replace("med_", "vid_");
+  const id = requestId().replace("med_", comp ? COMP_VIDEO_PREFIX : sponsored ? FIRST_VIDEO_PREFIX : "vid_");
+  const quote = priceOf(model.usdPerSecond, secs);
+  if (sponsored) {
+    if (!rootMediaKey(key)) fail(403, "Only a root key can claim the first clip.", "root_key_required");
+    if (secs !== freeSeconds) fail(400, "Select an eligible model and its free clip length.", "first_video_options");
+    if (c.req.header("x-anonymo-sealed")?.trim().toLowerCase() === "required") fail(409, "Video generation is not attested.", "sealed_unavailable");
+    const offer = await firstVideoOffer(ctx.db, key.accountId, comp);
+    if (!offer.available || offer.remaining < quote) videoUnavailable(!!comp);
+  }
   await checkVisualPrompt(ctx, s, c, { text: prompt, modality: "video", hasUpload: false }, { requestId: id, model, units: secs, unit: "second" });
   regionPolicy(ctx, c, s);
-  const price = priceOf(model.usdPerSecond, secs);
+  const price = sponsored ? 0n : quote;
   await reserve(ctx.db, { id, accountId: key.accountId, keyHash: key.keyHash, amount: price, kind: "media_video", ttlMs: VIDEO_HOLD_MS });
-  await ctx.db.insert(mediaJobs).values({ id, accountId: key.accountId, keyHash: key.keyHash, holdId: id, model: model.id, upstream: model.upstream, status: "queued", seconds: secs, width, height, explicitAllowed: false, pricePico: price });
+  const job = { id, accountId: key.accountId, keyHash: key.keyHash, holdId: id, model: model.id, upstream: model.upstream, status: "queued", seconds: secs, width, height, explicitAllowed: false, pricePico: price };
   try {
     const upstream = s.video[model.upstream];
     if (!upstream) throw new UpstreamError("no video upstream", 503);
-    const ref = await upstream.submit({ model: model.upstreamModel, prompt, seconds: secs, width, height, seed, safe: true }, AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(60_000)]));
-    await ctx.db.update(mediaJobs).set({ upstreamRef: ref, status: "running", updatedAt: new Date() }).where(eq(mediaJobs.id, id));
+    const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(60_000)]);
+    signal.throwIfAborted();
+    if (sponsored) {
+      await takeDashboardVideoLimit(ctx, c);
+      await startFirstVideo(ctx.db, job, quote, comp);
+    } else await ctx.db.insert(mediaJobs).values(job);
+    const ref = await upstream.submit({ model: model.upstreamModel, prompt, seconds: secs, width, height, seed, safe: true }, signal);
+    const accepted = await ctx.db.update(mediaJobs).set({ upstreamRef: ref, status: "running", updatedAt: new Date() })
+      .where(and(eq(mediaJobs.id, id), eq(mediaJobs.status, "queued"))).returning({ id: mediaJobs.id });
+    if (!accepted.length) throw new UpstreamError("job expired", 503);
   } catch (e) {
     await release(ctx.db, id).catch(() => undefined);
-    await ctx.db.update(mediaJobs).set({ status: "failed", errorType: e instanceof UpstreamError && e.status === 503 ? "upstream_unavailable" : "upstream_failed", updatedAt: new Date() }).where(eq(mediaJobs.id, id));
+    await ctx.db.update(mediaJobs).set({ status: "failed", errorType: e instanceof UpstreamError && e.status === 503 ? "upstream_unavailable" : "upstream_failed", updatedAt: new Date() })
+      .where(and(eq(mediaJobs.id, id), eq(mediaJobs.status, "queued")));
     throw mediaError(e, "video");
   }
   return c.json({ id, object: "video.generation", model: model.id, status: "queued", created: Math.floor(Date.now() / 1000), seconds: secs, size }, 202);
@@ -535,9 +589,12 @@ async function advance(ctx: Ctx, s: MediaServices, job: JobRow): Promise<void> {
   if (!claimed.length) return;
   const model = s.catalog.get("video", job.model);
   const upstream = model ? s.video[model.upstream] : undefined;
+  // A second poll can finish while an earlier poll is in flight. Only the current stage owner
+  // may make its terminal write or release its hold. A reclaimed finish step gets a new timestamp.
+  let owner = and(eq(mediaJobs.id, job.id), eq(mediaJobs.status, "running"));
   const end = async (status: "failed" | "blocked", errorType: string) => {
-    await release(ctx.db, job.holdId).catch(() => undefined);
-    await ctx.db.update(mediaJobs).set({ status, errorType, updatedAt: new Date() }).where(eq(mediaJobs.id, job.id));
+    const ended = await ctx.db.update(mediaJobs).set({ status, errorType, updatedAt: new Date() }).where(owner).returning({ id: mediaJobs.id });
+    if (ended.length) await release(ctx.db, job.holdId).catch(() => undefined);
   };
   if (!model || !upstream) return end("failed", "model_unavailable");
   let polled;
@@ -548,8 +605,10 @@ async function advance(ctx: Ctx, s: MediaServices, job: JobRow): Promise<void> {
   }
   if (polled.state === "running") return;
   if (polled.state === "failed") return polled.blocked ? end("blocked", "upstream_blocked") : end("failed", "upstream_failed");
-  const finishing = await ctx.db.update(mediaJobs).set({ status: "finishing", updatedAt: new Date() }).where(and(eq(mediaJobs.id, job.id), eq(mediaJobs.status, "running"))).returning({ id: mediaJobs.id });
-  if (!finishing.length) return;
+  const [finishing] = await ctx.db.update(mediaJobs).set({ status: "finishing", updatedAt: new Date() }).where(owner)
+    .returning({ lease: mediaJobs.updatedAt });
+  if (!finishing) return;
+  owner = and(eq(mediaJobs.id, job.id), eq(mediaJobs.status, "finishing"), eq(mediaJobs.updatedAt, finishing.lease));
   let mediaId: string | null = null;
   const safety: StudioSafety | undefined = s.studio ? { prompt: "safe", outputs: [] } : undefined;
   try {
@@ -557,7 +616,9 @@ async function advance(ctx: Ctx, s: MediaServices, job: JobRow): Promise<void> {
     const put = s.store.put({ bytes: out.bytes, mime: out.mime, accountId: job.accountId, ...(safety ? { safety } : {}) }, s.ttlMs);
     mediaId = put.id;
     const charged = await charge(ctx, job.holdId, job.pricePico, "media_video", `Video: ${model.name}`);
-    await ctx.db.update(mediaJobs).set({ status: "completed", mediaId: put.id, mediaExpiresAt: new Date(put.expiresAt), chargedPico: charged, updatedAt: new Date() }).where(eq(mediaJobs.id, job.id));
+    const completed = await ctx.db.update(mediaJobs).set({ status: "completed", mediaId: put.id, mediaExpiresAt: new Date(put.expiresAt), chargedPico: charged, updatedAt: new Date() })
+      .where(owner).returning({ id: mediaJobs.id });
+    if (!completed.length) s.store.delete(put.id);
   } catch (e) {
     if (mediaId) s.store.delete(mediaId);
     if (e instanceof MediaBlocked) {
@@ -577,6 +638,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   upstream_unavailable: "The video provider was unavailable. Nothing was charged.",
   upstream_failed: "The video provider failed. Nothing was charged.",
   upstream_blocked: "The video provider blocked this request. Nothing was charged.",
+  job_expired: "The free clip timed out. You can try again.",
   model_unavailable: "This video model is no longer available. Nothing was charged.",
   media_gate_unavailable: "The video could not be safety-checked, so it was not returned. Nothing was charged.",
   explicit_media_unavailable: "Anonymo makes no explicit video. Nothing was returned or charged.",
@@ -618,16 +680,68 @@ function videoJson(ctx: Ctx, s: MediaServices, job: JobRow) {
   return { body, studioBlocked: declined && job.status === "blocked" };
 }
 
+/** A completed welcome job can outlive the replica that held its output. During the original
+ * signed-URL window recover the same provider result. Never submit another generation, extend
+ * retention, or reopen the grant. New bytes get their own URL and signed digest. */
+async function restoreFirstVideo(ctx: Ctx, s: MediaServices, job: JobRow) {
+  if (job.status !== "completed" || !job.mediaId || !job.mediaExpiresAt || job.mediaExpiresAt.getTime() <= Date.now() ||
+      s.store.get(job.mediaId) || !job.upstreamRef) return;
+  const lease = new Date();
+  const [claim] = await ctx.db.update(mediaJobs).set({ lastPolledAt: lease }).where(and(
+    eq(mediaJobs.id, job.id), eq(mediaJobs.status, "completed"), eq(mediaJobs.mediaId, job.mediaId),
+    or(isNull(mediaJobs.lastPolledAt), lt(mediaJobs.lastPolledAt, new Date(Date.now() - 30_000))),
+  )).returning({ id: mediaJobs.id });
+  if (!claim) return;
+  const owned = and(eq(mediaJobs.id, job.id), eq(mediaJobs.mediaId, job.mediaId), eq(mediaJobs.lastPolledAt, lease));
+  const model = s.catalog.get("video", job.model);
+  const upstream = model && s.video[model.upstream];
+  if (!model || !upstream) return;
+  let local: string | null = null;
+  try {
+    const signal = AbortSignal.timeout(60_000);
+    const polled = await upstream.poll(job.upstreamRef, model.upstreamModel, signal);
+    if (polled.state === "running") return;
+    if (polled.state === "failed") {
+      await ctx.db.update(mediaJobs).set({ mediaExpiresAt: new Date() }).where(owned);
+      return;
+    }
+    const safety: StudioSafety | undefined = s.studio ? { prompt: "safe", outputs: [] } : undefined;
+    const output = await finishOutput(s, polled.media, { requestId: job.id, model: job.model, visual: true, signal, safety });
+    const ttl = job.mediaExpiresAt.getTime() - Date.now();
+    if (ttl <= 0) return;
+    const put = s.store.put({ ...output, accountId: job.accountId, ...(safety ? { safety } : {}) }, ttl);
+    local = put.id;
+    const updated = await ctx.db.update(mediaJobs).set({ mediaId: put.id, mediaExpiresAt: new Date(put.expiresAt), updatedAt: new Date() })
+      .where(owned).returning({ id: mediaJobs.id });
+    if (!updated.length) s.store.delete(put.id);
+  } catch (e) {
+    if (local) s.store.delete(local);
+    // A definitive content block must never be retried into a successful delivery. Transient
+    // provider and classifier outages can retry the same clip once the lookup lease elapses.
+    if (e instanceof MediaBlocked && e.reason !== "unscored") await ctx.db.update(mediaJobs).set({ mediaExpiresAt: new Date() }).where(owned);
+  }
+}
+
 async function getVideo(ctx: Ctx, c: Context): Promise<Response> {
   const key = await caller(ctx, c);
   const s = mediaServices(ctx);
   const id = c.req.param("id") ?? "";
   const load = async () => (await ctx.db.select().from(mediaJobs).where(and(eq(mediaJobs.id, id), eq(mediaJobs.accountId, key.accountId))))[0];
+  if (isSponsoredVideo(id)) {
+    await assertDashboardIp(ctx, c, key);
+    regionPolicy(ctx, c, s);
+    await recoverFirstVideoJobs(ctx.db, key.accountId);
+  }
   const job = await load();
   if (!job) fail(404, "Unknown video job.", "not_found");
   if (job.status === "running") await advance(ctx, s, job);
+  if (isSponsoredVideo(job.id)) await restoreFirstVideo(ctx, s, job);
   const current = (await load())!;
-  const { body, studioBlocked } = videoJson(ctx, s, current);
+  // A restart can leave metadata without bytes in this replica. Poll again while recovery is
+  // underway, instead of handing back a URL that cannot serve the file.
+  const restoring = isSponsoredVideo(id) && current.status === "completed" && current.mediaId &&
+    current.mediaExpiresAt && current.mediaExpiresAt.getTime() > Date.now() && !s.store.get(current.mediaId);
+  const { body, studioBlocked } = videoJson(ctx, s, restoring ? { ...current, status: "finishing" } : current);
   if (studioBlocked) {
     const signed = body.anonymo.receipt;
     return c.json(body, 451, signed ? { "x-anonymo-receipt": receiptHeader(signed), "x-anonymo-request-id": current.id } : undefined);
@@ -720,7 +834,7 @@ export function mediaRoutes(app: Hono, ctx: Ctx) {
     if (["image", "image_url", "input_image", "mask"].some((f) => body[f] != null)) fail(400, "Uploads go to /v1/images/edits.", "wrong_endpoint");
     const input = readImageFields(s, body, false);
     if (sponsored) {
-      if (!rootImageKey(key)) fail(403, "Only a root key can claim the first generation.", "root_key_required");
+      if (!rootMediaKey(key)) fail(403, "Only a root key can claim the first generation.", "root_key_required");
       if (!welcomeModel(s, input.model, key) || input.n !== 1) fail(400, "Select an eligible model and generate one image.", "first_image_options");
       if (c.req.header("x-anonymo-sealed")?.trim().toLowerCase() === "required") fail(409, "Image generation is not attested.", "sealed_unavailable");
       const offer = await firstImageOffer(ctx.db, key.accountId);
@@ -739,6 +853,8 @@ export function mediaRoutes(app: Hono, ctx: Ctx) {
     both("post", "/audio/speech", (c) => runSpeech(ctx, c));
     both("post", "/audio/transcriptions", (c) => runTranscription(ctx, c));
   }
+  both("get", "/video/welcome", c => videoWelcome(ctx, c));
+  both("post", "/video/generations/sponsored", c => submitVideo(ctx, c, true));
   both("post", "/video/generations", (c) => submitVideo(ctx, c));
   both("get", "/video/generations/:id", (c) => getVideo(ctx, c));
   both("get", "/media/models", (c) => listModels(ctx, c));
@@ -749,6 +865,7 @@ export function mediaRoutes(app: Hono, ctx: Ctx) {
 
 /** Advance every running video job once (for a periodic worker; polling GETs also advance jobs on their own). */
 export async function sweepVideoJobs(ctx: Ctx, limit = 50) {
+  await recoverFirstVideoJobs(ctx.db);
   const s = mediaServices(ctx);
   const rows = await ctx.db.select().from(mediaJobs).where(eq(mediaJobs.status, "running")).orderBy(sql`${mediaJobs.updatedAt} asc`).limit(limit);
   for (const job of rows) await advance(ctx, s, job).catch((e) => log.warn("video job advance failed", { job: job.id, error: (e as Error).message }));

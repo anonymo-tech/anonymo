@@ -38,7 +38,8 @@ async function mint(ctx: Ctx, deps: MoneyDeps, o: { caps?: z.infer<typeof capsIn
     wallet: o.wallet ?? null,
     caps: capsJson(caps),
     deposit,
-    first_chat_available: eligible && await firstChatAvailable(ctx.db, row.accountId),
+    first_chat_available: eligible && await firstChatAvailable(ctx.db, row.accountId, ctx.cfg.freePool),
+    ...(ctx.cfg.freePool ? { free_pool: true } : {}),
   };
 }
 
@@ -72,6 +73,15 @@ export async function takeDashboardImageLimit(ctx: Ctx, c: Context) {
   if (!result.ok) fail(429, "Too many first images requested. Try again later.", "rate_limited");
 }
 
+export async function takeDashboardVideoLimit(ctx: Ctx, c: Context) {
+  const from = addressBucket(c, ctx.cfg);
+  const windowMs = 3_600_000;
+  const hour = Math.floor(Date.now() / windowMs);
+  const digest = hmac(ctx.cfg.appSecret, `anonymo:first-video:${hour}:${from.id}`);
+  const result = await ctx.limiter.take(`first-video:${digest}`, 1, from.scale(ctx.cfg.limits.newKeysPerHour), windowMs);
+  if (!result.ok) fail(429, "Too many first videos requested. Try again later.", "rate_limited");
+}
+
 export function keysRoutes(app: Hono, ctx: Ctx, deps: MoneyDeps) {
   const siweDomain = () => deps.config.siweDomain ?? new URL(ctx.cfg.publicUrl).host;
 
@@ -99,7 +109,7 @@ export function keysRoutes(app: Hono, ctx: Ctx, deps: MoneyDeps) {
     await assertDashboardIp(ctx, c, key);
     const { dashboard_signup } = z.object({ dashboard_signup: z.uuidv4() }).strict().parse(await readJson(c));
     await issueFirstChat(ctx.db, key.accountId, dashboard_signup);
-    return c.json({ first_chat_available: await firstChatAvailable(ctx.db, key.accountId) });
+    return c.json({ first_chat_available: await firstChatAvailable(ctx.db, key.accountId, ctx.cfg.freePool), ...(ctx.cfg.freePool ? { free_pool: true } : {}) });
   });
 
   app.get("/keys/siwe/nonce", async (c) => {
@@ -117,7 +127,7 @@ export function keysRoutes(app: Hono, ctx: Ctx, deps: MoneyDeps) {
   app.get("/keys/me", async (c) => {
     const key = await requireKey(ctx, c.req.header("authorization"));
     const caps = await readCaps(ctx.db, key.keyHash);
-    return c.json({ key_hash: key.keyHash, label: key.label, first_chat_available: await firstChatAvailable(ctx.db, key.accountId), caps: capsJson(caps), deposit: await depositInstructions(ctx, deps, key.keyHash) });
+    return c.json({ key_hash: key.keyHash, label: key.label, first_chat_available: await firstChatAvailable(ctx.db, key.accountId, ctx.cfg.freePool), ...(ctx.cfg.freePool ? { free_pool: true } : {}), caps: capsJson(caps), deposit: await depositInstructions(ctx, deps, key.keyHash) });
   });
 
   app.patch("/keys/caps", async (c) => {

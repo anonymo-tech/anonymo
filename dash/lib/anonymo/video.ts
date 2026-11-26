@@ -9,6 +9,7 @@ export type VideoModel = {
   sizes: string[];
 };
 
+export type VideoWelcome = { mode?: 'welcome' | 'complimentary'; available: boolean; eligible_clips: { model: string; seconds: number }[] };
 export type VideoRequest = { model: string; prompt: string; seconds: number; size: string };
 type StudioVerdict = 'safe' | 'unsafe' | 'unavailable';
 
@@ -42,12 +43,20 @@ export type VideoJob = Omit<VideoRequest, 'prompt'> & {
   anonymo?: { request_id: string; cost_usd: number; quoted_usd: number; receipt?: VideoReceipt };
 };
 
+export function studioVideoModels(models: VideoModel[], offer: VideoWelcome | null) {
+  if (offer?.mode !== 'complimentary') return models;
+  if (!offer.available) return [];
+  return models.filter(model => offer.eligible_clips.some(clip => clip.model === model.id));
+}
+
 export function videoDurations(model: VideoModel): readonly number[] {
   const { allowed, min, max } = model.seconds;
   return allowed ?? Array.from({ length: max - min + 1 }, (_, i) => min + i);
 }
 
 export const videoCost = (model: VideoModel, seconds: number) => usdToMusd(model.pricing.usd_per_second) * seconds;
+// Only the latest job ID is kept in the tab so a refresh can recover its authenticated status.
+export const videoJobSlot = (demo: boolean) => demo ? 'anonymo.video-job.demo.v1' : 'anonymo.video-job.v1';
 export const videoPending = (job: VideoJob) => job.status === 'queued' || job.status === 'in_progress';
 export const videoBlocked = (job: VideoJob) =>
   job.status === 'failed' && ['explicit_media_unavailable', 'media_blocked', 'upstream_blocked', 'floor_blocked', 'region_blocked'].includes(job.error?.type ?? '');

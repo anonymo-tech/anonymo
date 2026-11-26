@@ -417,7 +417,9 @@ export function sleepStep(state: SleepState, event: SleepEvent): SleepState {
       if (state.phase === 'fading' && event.now >= state.until) return { phase: 'done', minutes: state.minutes };
       return state;
     case 'sentence-end':
-      return state.phase === 'finishing' ? { phase: 'fading', minutes: state.minutes, until: event.now + FADE_MS } : state;
+      if (state.phase === 'finishing' || (state.phase === 'running' && event.now >= state.endsAt))
+        return { phase: 'fading', minutes: state.minutes, until: event.now + FADE_MS };
+      return state;
   }
 }
 

@@ -5,7 +5,7 @@ import test from 'node:test';
 import { API_PATHS, createAnonymoClient } from '../lib/anonymo/client.ts';
 import { createMockGateway } from '../lib/anonymo/mock/gateway.ts';
 import { parseUpdates, updateOn } from '../lib/anonymo/updates.ts';
-import { formatVideoUsd, pollWhileVisible, videoBlocked, videoCost, videoDurations } from '../lib/anonymo/video.ts';
+import { formatVideoUsd, pollWhileVisible, studioVideoModels, videoBlocked, videoCost, videoDurations } from '../lib/anonymo/video.ts';
 
 const base = 'https://demo.anonymo.invalid';
 const prompt = 'A ribbon of pale light across a violet sky';
@@ -19,7 +19,7 @@ async function demo(credit = 2_000_000) {
     return { key, client: createAnonymoClient({ baseUrl: base, fetch: mock.fetch, key }) };
   }
   const { key, client } = await connect();
-  await mock.simulateDeposit(key, 'rhc', 'USDG', credit);
+  if (credit > 0) await mock.simulateDeposit(key, 'rhc', 'USDG', credit);
   return { mock, client, key, connect, storage, advance: (ms) => { now += ms; } };
 }
 
@@ -129,4 +129,45 @@ test('polling pauses and aborts in a hidden tab, resumes once visible, and stops
   } finally {
     stop();
   }
+});
+
+test('free clips cover only an eligible short duration and carry a zero charge through completion', async () => {
+  const { client, advance } = await demo(0);
+  const offer = await client.videoWelcome();
+  assert.ok(offer.available);
+  assert.deepEqual(offer.eligible_clips.find(clip => clip.model === 'alibaba/wan-3.0'), { model: 'alibaba/wan-3.0', seconds: 2 });
+  const body = { model: 'alibaba/wan-3.0', seconds: 2, prompt, size: '1280x720' };
+  await assert.rejects(client.sponsoredVideo({ ...body, seconds: 5 }), { status: 400, code: 'first_video_options' });
+  const submitted = await Promise.allSettled([client.sponsoredVideo(body), client.sponsoredVideo(body)]);
+  const successes = submitted.filter(result => result.status === 'fulfilled');
+  assert.equal(successes.length, 1);
+  assert.equal((await client.videoWelcome()).available, false);
+  advance(8000);
+  const done = await client.videoStatus(successes[0].value.id);
+  assert.equal(done.status, 'completed');
+  assert.equal(done.anonymo.receipt.payload.cost_usd, 0);
+  await assert.rejects(client.sponsoredVideo(body), { status: 409 });
+  await assert.rejects(client.generateVideo(body), { status: 402 });
+  assert.equal((await client.imageWelcome()).available, true);
+});
+
+test('video demo has its own daily budget and offers only clips within the remaining amount', async () => {
+  const { connect, advance } = await demo(0);
+  const body = { model: 'bytedance/seedance-2.0-fast', seconds: 5, prompt, size: '1280x720' };
+  for (let i = 0; i < 13; i++) await (await connect()).client.sponsoredVideo(body);
+  const { client } = await connect();
+  assert.deepEqual((await client.videoWelcome()).eligible_clips.map(c => c.model), ['alibaba/wan-3.0', 'lightricks/ltx-2.3-fast']);
+  await assert.rejects(client.sponsoredVideo(body), { status: 409 });
+  advance(86400000);
+  assert.equal((await client.videoWelcome()).eligible_clips.length, 5);
+});
+
+test('complimentary accounts see only covered models, including after the budget runs out', async () => {
+  const { client } = await demo(0);
+  const models = await client.videoModels();
+  const ltx = models.find(model => model.id === 'lightricks/ltx-2.3-fast');
+  const covered = { mode: 'complimentary', available: true, eligible_clips: [{ model: ltx.id, seconds: 6 }] };
+  assert.deepEqual(studioVideoModels(models, covered), [ltx]);
+  assert.deepEqual(studioVideoModels(models, { ...covered, available: false }), []);
+  assert.deepEqual(studioVideoModels(models, { ...covered, mode: 'welcome', available: false }), models);
 });

@@ -221,6 +221,8 @@ test('the sleep timer finishes the sentence, fades, then ends on the farewell', 
 test('the sleep timer skips straight to the fade in silence, and never waits forever', () => {
   const running = sleepStep(SLEEP_OFF, { type: 'set', minutes: 10, now: 0 });
   assert.deepEqual(sleepStep(running, { type: 'tick', now: 600_000, speaking: false }), { phase: 'fading', minutes: 10, until: 600_000 + FADE_MS });
+  assert.equal(sleepStep(running, { type: 'sentence-end', now: 599_999 }), running);
+  assert.deepEqual(sleepStep(running, { type: 'sentence-end', now: 600_000 }), { phase: 'fading', minutes: 10, until: 600_000 + FADE_MS });
   const finishing = sleepStep(running, { type: 'tick', now: 600_000, speaking: true });
   assert.deepEqual(sleepStep(finishing, { type: 'tick', now: 600_100, speaking: false }).phase, 'fading', 'a missed sentence end is caught by the next tick');
   assert.deepEqual(sleepStep(finishing, { type: 'tick', now: 600_000 + FINISH_LIMIT_MS, speaking: true }).phase, 'fading', 'a sentence that never ends is not waited for');

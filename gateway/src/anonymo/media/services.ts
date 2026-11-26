@@ -27,6 +27,7 @@ import type { Ctx } from "../../context.ts";
 import type { RegionRules } from "../seams.ts";
 import { MediaCatalog, type Upstream } from "./catalog.ts";
 import { provenanceKeyFromSeed } from "./c2pa.ts";
+import { compVideoConfig, type CompVideoAllowance } from "./first-video.ts";
 import { createMediaGate, httpClassifier, unconfiguredClassifier, type MediaClassifier, type MediaOutputGate } from "./gate.ts";
 import { hostedClassifier } from "./hosted-classifier.ts";
 import { nanogptSpeechAdapter, type TranscriptionUpstream } from "./nanogpt-speech.ts";
@@ -42,6 +43,7 @@ import { workflowSet } from "./workflows.ts";
 
 export type MediaServices = {
   catalog: MediaCatalog;
+  compVideo?: CompVideoAllowance;
   /** Upstreams this gateway has configured: GET /v1/media/models lists only their models. Unset lists everything. */
   offered?: ReadonlySet<Upstream>;
   gate: MediaOutputGate;
@@ -110,6 +112,7 @@ export function buildMediaServices(ctx: Pick<Ctx, "cfg">, env: Env = process.env
   const comfy = env.ANONYMO_COMFY_URL ? comfyAdapter({ base: env.ANONYMO_COMFY_URL, token: env.ANONYMO_COMFY_TOKEN, workflows: workflowSet(env.ANONYMO_COMFY_WORKFLOWS_DIR) }) : unconfigured("The ComfyUI worker pool");
   return {
     catalog: MediaCatalog.fromEnv(env),
+    compVideo: compVideoConfig(env),
     offered: new Set<Upstream>([
       ...(env.ANONYMO_NANOGPT_API_KEY?.trim() ? (["nanogpt"] as const) : []),
       ...(env.ANONYMO_VENICE_API_KEY ? (["venice"] as const) : []),

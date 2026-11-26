@@ -41,7 +41,7 @@ import { demoStatus } from './status.ts';
 import { DEMO_TRANSCRIPT, DEMO_VOICE_MODELS, DEMO_VOICE_REPLY, demoTranscription } from './talk.ts';
 import { demoStoryReply } from './story.ts';
 import { expiredKeyRefusal } from './tickets.ts';
-import { createDemoVideo } from './video.ts';
+import { createDemoVideo, type DemoVideoEntry } from './video.ts';
 import { createDemoSpeech, demoStoryReply as bedtimeStoryReply, DEMO_SPEECH_MODELS } from './voice.ts';
 import { activityCsv, runway, sampleHistory, spendReport, spentWindows, type UsageEntry } from './usage.ts';
 import { COUNCIL_MERGED, DEMO_NYMO, DEMO_COIN_PAY, DEMO_LEADERBOARD, DEMO_MANIFEST, DEMO_MODELS, DEMO_PRICES, DEMO_ROUTER, DEMO_ROUTES, DEMO_VIDEO_MODELS, demoReply } from './fixtures.ts';
@@ -66,6 +66,7 @@ type Row = DepositRow & { musd: number };
 type KeyState = {
   keyHash: string;
   firstImageUsed?: boolean;
+  firstVideo?: DemoVideoEntry;
   firstChatAvailable?: boolean;
   firstChatCampaign?: number;
   caps: KeyCaps;
@@ -87,6 +88,7 @@ type State = {
   v: 2;
   keys: Record<string, KeyState>;
   receipts: Record<string, StoredReceipt>;
+  videoSpend?: { day: string; used: number };
   redeemedCodes?: string[];
   creatorCards?: CreatorStats[];
   creatorInvites?: Record<string, string>;
@@ -276,7 +278,16 @@ export function createMockGateway(options: MockOptions = {}) {
     return null;
   }
 
+  const videoDay = () => new Date((options.videoNow ?? Date.now)()).toISOString().slice(0, 10);
+  const videoSpent = () => state.videoSpend?.day === videoDay() ? state.videoSpend.used : 0;
   const video = createDemoVideo<KeyState>({
+    remaining: () => 10_000_000 - videoSpent(),
+    sponsor: (key, entry) => {
+      state.videoSpend = { day: videoDay(), used: videoSpent() + entry.cost };
+      key.firstVideo = entry;
+      persist();
+    },
+    save: persist,
     json, fail, now: options.videoNow ?? Date.now, id: () => `vid_demo_${randomHex(12)}`,
     check: (k, cost) => k.balance - k.held < cost ? fail(402, 'insufficient_balance', 'Not enough credit for this request.') : capRefusal(k),
     charge: (k, cost, job) => { spend(k, cost, { model: job.model, kind: 'call', requestId: job.id }); persist(); },
@@ -968,6 +979,7 @@ export function createMockGateway(options: MockOptions = {}) {
     if (method === 'POST' && path === API_PATHS.chat && request.headers.has(FREE_TOKEN_HEADER) && !request.headers.has('authorization'))
       return freeChat(request, false);
 
+    if (method === 'GET' && path === API_PATHS.videoWelcome && !request.headers.has('authorization')) return json(video.welcome());
     if (method === 'GET' && path === API_PATHS.imageWelcome && !request.headers.has('authorization'))
       return json({ available: true, eligible_models: DEMO_IMAGE_MODELS.map(model => model.id) });
     const k = await keyState(request);
@@ -1033,6 +1045,8 @@ export function createMockGateway(options: MockOptions = {}) {
     // One stock speech model in the demo, as in production: Night Call's mock serves it for both voice updates.
     if (method === 'POST' && path === API_PATHS.speech) return speech.speak(request, k);
     if (method === 'POST' && path === API_PATHS.transcriptions) return demoTranscription(request);
+    if (method === 'GET' && path === API_PATHS.videoWelcome) return json(video.welcome(k));
+    if (method === 'POST' && path === API_PATHS.sponsoredVideo) return video.submit(request, k, true);
     if (method === 'POST' && path === API_PATHS.videos) return video.submit(request, k);
     if (method === 'GET' && path.startsWith(`${API_PATHS.videos}/`)) return video.status(path.slice(API_PATHS.videos.length + 1), k);
     if (method === 'PATCH' && path === API_PATHS.caps) return patchCaps(request, k);

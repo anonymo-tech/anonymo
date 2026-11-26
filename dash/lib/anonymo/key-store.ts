@@ -2,6 +2,7 @@
 // asks before remembering it and offers to forget it at any time. It is sent nowhere except as the Authorization
 // header of gateway calls.
 
+import { videoJobSlot } from './video.ts';
 import { isDemoMode } from './config.ts';
 import { deviceStore } from './device-store.ts';
 import { clearAllAttempts } from './topup-attempt.ts';
@@ -70,6 +71,7 @@ export function saveKey(demo: boolean, key: string, remember: boolean) {
 }
 
 export function forgetKey(demo: boolean) {
+  try { sessionStorage.removeItem(videoJobSlot(demo)); } catch { /* Storage may be unavailable. */ }
   if (!demo && updateOn('telegram', false) && telegramSession()) {
     forgetTelegramSession();
     keyStore.changed();

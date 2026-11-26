@@ -55,7 +55,7 @@ import type {
   WithdrawResponse,
   Withdrawal,
 } from './types.ts';
-import type { VideoJob, VideoModel, VideoRequest } from './video.ts';
+import type { VideoJob, VideoModel, VideoRequest, VideoWelcome } from './video.ts';
 import type {
   ArtifactInfo,
   CreateVentureBody,
@@ -117,6 +117,8 @@ export const API_PATHS = {
   images: '/v1/images/generations',
   speech: '/v1/audio/speech',
   transcriptions: '/v1/audio/transcriptions',
+  videoWelcome: '/v1/video/welcome',
+  sponsoredVideo: '/v1/video/generations/sponsored',
   videos: '/v1/video/generations',
   video: (id: string) => `/v1/video/generations/${encodeURIComponent(id)}`,
   // Update "ventures" (gateway/src/anonymo/ventures/routes.ts).
@@ -314,7 +316,7 @@ export function createAnonymoClient(options: ClientOptions) {
     referralLink: () => json<{ code: string }>(`${CREATOR_API}/referral-link`, { method: 'POST' }),
     acceptReferral: (code: string) => json<{ accepted: true }>(`${CREATOR_API}/referral-accept`, { method: 'POST', body: JSON.stringify({ code }) }),
     claimFirstChat: (dashboard_signup: string, signal?: AbortSignal) =>
-      json<{ first_chat_available: boolean }>(API_PATHS.claimFirstChat, { method: 'POST', body: JSON.stringify({ dashboard_signup }), signal }),
+      json<{ first_chat_available: boolean; free_pool?: boolean }>(API_PATHS.claimFirstChat, { method: 'POST', body: JSON.stringify({ dashboard_signup }), signal }),
     keyInfo: () => json<KeyInfo>(API_PATHS.keyInfo),
     balance: (signal?: AbortSignal) => json<Balance>(API_PATHS.balance, { signal }),
     deposits: (signal?: AbortSignal) => json<Deposits>(API_PATHS.deposits, { signal }),
@@ -414,6 +416,10 @@ export function createAnonymoClient(options: ClientOptions) {
       const list = await data<(Partial<Omit<VideoModel, 'kind'>> & { kind: string })[]>(API_PATHS.mediaModels, { auth: false, signal });
       return list.filter((m): m is VideoModel => m.kind === 'video' && !!m.id && !!m.name && !!m.pricing?.usd_per_second && !!m.seconds && !!m.sizes?.length);
     },
+    videoWelcome: (signal?: AbortSignal) =>
+      json<VideoWelcome>(API_PATHS.videoWelcome, { auth: !!key, cache: 'no-store', signal }),
+    sponsoredVideo: (body: VideoRequest, signal?: AbortSignal) =>
+      json<VideoJob>(API_PATHS.sponsoredVideo, { method: 'POST', body: JSON.stringify(body), signal }),
     generateVideo: (body: VideoRequest, signal?: AbortSignal) =>
       json<VideoJob>(API_PATHS.videos, { method: 'POST', body: JSON.stringify(body), signal }),
     async videoStatus(id: string, signal?: AbortSignal): Promise<VideoJob> {

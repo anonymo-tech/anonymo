@@ -104,7 +104,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
 }) {
   const { ready, demo, key, setKey, client, turns, setTurns, chatId, openChat, rememberReceipt, balance, refreshBalance, liveModels, catalog, catalogError, refreshCatalog } = useAnonymo();
   const adult = useDeviceStore(adultStore);
-  const [firstChat, setFirstChat] = useState<{ key: string; available: boolean; error?: string } | null>(null);
+  const [firstChat, setFirstChat] = useState<{ key: string; available: boolean; pool?: boolean; error?: string } | null>(null);
   const [claimAttempt, retryClaim] = useState(0);
   const [newChatKey, setNewChatKey] = useState<string | null>(null);
   const [chooseForDraft, setChooseForDraft] = useState(false);
@@ -115,7 +115,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     if (!key || !isApiKey(key) || !ready || !adult) return;
     const abort = new AbortController();
     void dashboardSignup(demo).then(id => client.claimFirstChat(id, abort.signal)).then(info => {
-      if (!abort.signal.aborted) setFirstChat({ key, available: info.first_chat_available });
+      if (!abort.signal.aborted) setFirstChat({ key, available: info.first_chat_available, pool: !!info.free_pool });
     }, error => {
       if (abort.signal.aborted) return;
       const restricted = error instanceof AnonymoApiError && error.code === 'root_key_required';
@@ -767,7 +767,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       abort.signal.throwIfAborted();
       const recalled = vaultMemoryOn ? memory.addToPrompt(messages, memoryQuery(turn.prompt)) : messages;
       const context = withAboutYou(recalled, currentAboutYouNote(demo));
-      const guestMessages = sponsoredChat ? freeContext(context as ChatMessage[], 8192, 16) : guest ? freeContext(context as ChatMessage[]) : null;
+      const guestMessages = sponsoredChat ? (offer?.pool ? freeContext(context as ChatMessage[], 49_152, 200) : freeContext(context as ChatMessage[], 8192, 16)) : guest ? freeContext(context as ChatMessage[]) : null;
       const access = guest ? await free.authorize(abort.signal) : null;
       if (access) {
         servedModel = access.model;
@@ -785,7 +785,11 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
           onDelta: (delta) => update(id, (t) => ({ content: t.content + delta })),
         },
       );
-      if (sponsoredChat && key) setFirstChat({ key, available: false });
+      // The free pool lasts many messages: ask again after each one. A one-time free reply is simply used.
+      if (sponsoredChat && key) {
+        if (offer?.pool) retryClaim(n => n + 1);
+        else setFirstChat({ key, available: false });
+      }
       receiptId = result.receiptId;
       haveReceipt = result.receipt !== null;
       update(id, { status: 'done', content: result.content, council: result.council, receiptId, receipt: result.receipt, answeredBy: result.model, autoClass: result.autoClass ?? null, ...(result.citations?.length ? { citations: result.citations } : {}) });
@@ -1225,7 +1229,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
         ? <>{offer.error} <button type="button" onClick={() => { setFirstChat(null); retryClaim(n => n + 1); }}>Retry free reply check</button></>
         : 'Checking your free reply…'}</div>}
       {starting && <output className="ai-notice">Preparing your chat…</output>}
-      {sponsoredChat && !streaming && <output className="ai-notice">Your first message is on us.</output>}
+      {sponsoredChat && !streaming && <output className="ai-notice">{offer?.pool ? 'Free today, up to the site’s daily free limit.' : 'Your first message is on us.'}</output>}
       {!research && freeMode && free.remaining !== null && (
         <output className="ai-notice">
           Free today: {free.remaining} left{free.solving ? ' · Checking this device…' : turns.length === 0 && !freeExhausted ? ' · Try it free. No account.' : ''}
@@ -1239,6 +1243,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
               : research ? 'Research uses paid web search. Add funds to send your question.'
               : setupSheet.step === 'key'
               ? 'Your message is ready. To send it, make a free key and add a little balance. No account, no email, about a minute.'
+              : offer?.pool && !offer.available ? 'Today’s free messages are used up. They’re back tomorrow, or add a little balance to keep going.'
               : 'Add a little balance to send this.'}</span>
             {setupSheet.hasAttachment && <><br /><small className="muted">Add your photos or attachments again after setup.</small></>}
             {!setupSheet.saved && <><br /><small className="muted">This browser couldn’t save your draft.</small></>}

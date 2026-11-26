@@ -359,3 +359,36 @@ test('Images lets a new visitor choose a model and make one free image before fu
   await page.getByRole('link', { name: 'Add funds' }).waitFor();
   assert.equal(await picker.count(), 0);
 });
+
+test('Video Studio creates a tab key, quotes longer clips and restores the free clip after reload', async t => {
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH, channel: process.env.BROWSER_CHANNEL });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  await page.route('**/*', route => new URL(route.request().url()).origin === origin.origin ? route.continue() : route.abort());
+  await page.addInitScript(() => localStorage.setItem('anonymo.adult.v1', 'true'));
+  await page.goto(new URL('/dashboard/video?demo=1', origin).href);
+  const picker = page.getByRole('dialog', { name: 'Choose your video model' });
+  const choice = picker.getByRole('button', { name: /Wan 3.0/ });
+  await choice.getByText('2s free').waitFor();
+  await choice.click();
+  const editor = page.getByRole('textbox', { name: 'Describe your shot' });
+  await page.getByRole('button', { name: 'Use Palace after hours prompt' }).click();
+  assert.match(await editor.inputValue(), /Spider-Man/);
+  const duration = page.getByRole('combobox', { name: 'Duration' });
+  await duration.selectOption('5');
+  await page.getByRole('button', { name: /Generate clip.*\$0\.625/ }).waitFor();
+  await duration.selectOption('2');
+  await page.getByRole('combobox', { name: 'Aspect ratio' }).selectOption('720x1280');
+  await page.getByRole('button', { name: 'Generate free clip' }).click();
+  await page.getByRole('heading', { name: 'Your clips' }).waitFor();
+  const key = await page.evaluate(() => sessionStorage.getItem('anonymo.demo.key'));
+  assert.ok(key);
+  await page.reload();
+  await page.getByRole('link', { name: 'Download', exact: true }).waitFor({ timeout: 20000 });
+  await page.getByText('Demo preview · $0.00 charged', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('dialog', { name: 'Choose your video model' }).count(), 0);
+  await editor.fill('A second shot of the ballroom.');
+  await page.getByRole('button', { name: /Generate clip.*\$/ }).click();
+  await page.getByRole('link', { name: 'Add funds' }).waitFor();
+  assert.equal(await page.evaluate(() => sessionStorage.getItem('anonymo.demo.key')), key);
+});

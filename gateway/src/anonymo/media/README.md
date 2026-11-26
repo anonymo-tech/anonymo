@@ -13,12 +13,21 @@ Drizzle. Spec: Overview §2 (media table) and §6, Backend §2 (media-gate, prov
 | `POST /v1/images/edits` | multipart `image` (or JSON `image` as a data URL), same fields. No masks. Image URLs are never fetched |
 | `POST /v1/audio/speech` | `model`, `input`, `voice` (stock only), `speed`. Returns WAV with provenance |
 | `POST /v1/audio/transcriptions` | Multipart `file`, `model`, optional `language`. Returns `{ "text": "…" }` |
+| `GET /v1/video/welcome` | Dashboard origin. Returns `mode` (`welcome` or `complimentary`), `available` and `eligible_clips` with the shortest sponsored length for each model. An authenticated lookup checks the root key's remaining clip. |
+| `POST /v1/video/generations/sponsored` | Dashboard origin and root key. Creates one eligible short clip at a zero user quote. Poll the normal job URL for its result and receipt. A used or in-progress welcome grant returns 409. The configured complimentary root can submit again after completion, within its separate daily budget. |
 | `POST /v1/video/generations` | `model`, `prompt`, `seconds`, `size`, `seed`. Returns `202` with a job id |
 | `GET /v1/video/generations/{id}` | Polls the job. `queued` → `in_progress` → `completed` (with a signed `url`) or `failed` |
 | `GET /v1/media/{id}?expires=&sig=` | Short-lived signed download. No key needed, the signature is the credential |
 | `GET /v1/media/models` | Models, prices, voices, sizes, licences and per-model image batch limits (`max_images`) |
 | `GET /v1/media/provenance/keys` | The Ed25519 keys that sign manifests (JWK) |
 | `POST /v1/media/provenance/verify` | Body = a media file (API key required). Reports the manifest check and the watermark |
+
+### Complimentary Video Studio access
+
+Set `ANONYMO_VIDEO_COMP_KEY_COMMIT` to one root key's full public EVM key commitment shown on Balance. The gateway derives that commitment from the authenticated root key. Keys with management privileges on other accounts and child keys receive the normal welcome offer.
+
+`ANONYMO_VIDEO_COMP_DAILY_USD` sets the aggregate UTC-day budget for the configured allowance. Its default is $0.24. Each dispatched attempt reserves its quoted cost, including failed or blocked attempts. An eligible clip remains zero-cost to the root on both video generation routes. Unsupported settings, an in-progress clip or an exhausted pool reject the request before dispatch. The response keeps `mode: "complimentary"` when the budget is exhausted.
+
 
 Each is also served under `/api/v1`. Errors use the gateway's OpenAI-shaped envelope.
 

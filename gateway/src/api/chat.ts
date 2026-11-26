@@ -23,7 +23,7 @@ import { namesPrivateModel } from "../anonymo/trust/sealed.ts";
 import { type Pico, maxPico, picoToUsd, picoToUsdString, usdToPico } from "../lib/money.ts";
 import { canonical, canonicalJson, decrypt, genId, log, sha256 } from "../lib/util.ts";
 import { reserve, release, settle } from "../ledger/ledger.ts";
-import { reserveFirstChat, startFirstChat, finishFirstChat } from "../anonymo/keys/first-chat.ts";
+import { reserveFirstChat, startFirstChat, finishFirstChat, type FreePool } from "../anonymo/keys/first-chat.ts";
 import { offerLane } from "../router/regular-ppq.ts";
 import { selectProviders, type ProviderPrefs } from "../router/select.ts";
 import { isAnonymoRoute } from "../anonymo/models.ts";
@@ -227,12 +227,16 @@ const FIRST_CHAT_FIELDS = new Set(["model", "messages", "stream", "max_tokens", 
 const FIRST_CHAT_MAX_ATTEMPTS = 2; // allow the normal refusal retry on another family
 const FIRST_CHAT_ROUTE_BUDGET = usdToPico("0.005"); // at most one cent across both attempts
 
-export function firstChatInputBound(body: Record<string, unknown>): number | null {
+/** The free pool allows a real conversation; the one-time first reply stays small. */
+const firstChatInputLimits = (pool?: FreePool | null) => pool ? { bytes: 49_152, messages: 200, output: 1_500 } : { bytes: 8_192, messages: 16, output: 256 };
+
+export function firstChatInputBound(body: Record<string, unknown>, pool?: FreePool | null): number | null {
+  const limits = firstChatInputLimits(pool);
   const model = body.model;
   if (typeof model !== "string" || (model !== "anonymo-1" && !ppqChatModel(model))) return null;
   if (Object.keys(body).some((field) => !FIRST_CHAT_FIELDS.has(field))) return null;
   const messages = body.messages;
-  if (!Array.isArray(messages) || messages.length > 16) return null;
+  if (!Array.isArray(messages) || messages.length > limits.messages) return null;
   if (messages.at(-1)?.role !== "user") return null;
   let bytes = 0;
   for (const m of messages) {
@@ -240,14 +244,14 @@ export function firstChatInputBound(body: Record<string, unknown>): number | nul
         Object.keys(m).some((field) => field !== "role" && field !== "content")) return null;
     if (m.role === "user" && !m.content.trim()) return null;
     bytes += Buffer.byteLength(m.content, "utf8");
-    if (bytes > 8192) return null;
+    if (bytes > limits.bytes) return null;
   }
   return bytes + (16 * messages.length) + 32;
 }
 
-async function endFirstChat(ctx: Ctx, billing: ChatBilling, outcome: "completed" | "failed" | "empty") {
+async function endFirstChat(ctx: Ctx, billing: ChatBilling, outcome: "completed" | "failed" | "empty", spent = 0n) {
   if (billing.mode === "prepaid" && billing.firstChat)
-    await finishFirstChat(ctx.db, billing.accountId, billing.firstChat, outcome);
+    await finishFirstChat(ctx.db, billing.accountId, billing.firstChat, outcome, spent);
 }
 
 /** Undo a hold whose request was not served. */
@@ -329,7 +333,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string, as
   validateMulti(ctx, kind, body);
   const stream = body.stream === true;
   const bodySha = requestHash(body);
-  const firstChatRequested = dashboardChat && kind === "chat" && !characterId && publishedId === undefined && firstChatInputBound(body) !== null;
+  const firstChatRequested = dashboardChat && kind === "chat" && !characterId && publishedId === undefined && firstChatInputBound(body, ctx.cfg.freePool) !== null;
   // Private Web Search: `:online`, plugins web, web_search_options, stripped here (after firstChatRequested, so a search is never a sponsored first chat).
   const askMoAnswer = askMo && !askMo.opinion ? askMo : null;
   const searchAsk = askMoAnswer ? { via: "web_search_options" as const } : webSearchPath.takeWebSearch(body);
@@ -573,9 +577,12 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string, as
     c.header(FREE_REMAINING_HEADER, String(await consumeFreeChat(ctx, freeProof!)));
   }
   const inputBound = sponsorRequest && billing.mode === "prepaid" && !cacheSpec && resolved.length === 1 && primary.id === body.model
-    ? firstChatInputBound(body) : null;
+    ? firstChatInputBound(body, ctx.cfg.freePool) : null;
   if (inputBound !== null && billing.mode === "prepaid") {
-    const maxOutput = Math.min(256, outputBudgetOf(body) ?? 256);
+    const { output } = firstChatInputLimits(ctx.cfg.freePool);
+    const maxOutput = Math.min(output, outputBudgetOf(body) ?? output);
+    // Two attempts (a refusal retry) must fit inside what a pool request reserves.
+    const routeBudget = ctx.cfg.freePool ? usdToPico(ctx.cfg.freePool.requestUsd, "floor") / BigInt(FIRST_CHAT_MAX_ATTEMPTS) : FIRST_CHAT_ROUTE_BUDGET;
     const boundedUsage: Usage = {
       prompt: inputBound, completion: maxOutput, reasoning: 0, cachedRead: 0, cacheWrite: 0,
       webSearch: 0, images: 0, estimated: true,
@@ -586,13 +593,13 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string, as
         (primary.id === "anonymo-1" || cand.providerModelId === primary.id) &&
         !byok.has(cand.providerId) && (cand.ctx ?? target.model.ctx) >= inputBound + maxOutput &&
         priceUsage({ ...cand, pricePrompt: maxPico(cand.pricePrompt, cand.priceCacheWrite ?? 0n, cand.priceCacheRead ?? 0n),
-          priceCompletion: maxPico(cand.priceCompletion, cand.priceReasoning) }, target.model, boundedUsage, "prepaid", fees, false).total <= FIRST_CHAT_ROUTE_BUDGET,
+          priceCompletion: maxPico(cand.priceCompletion, cand.priceReasoning) }, target.model, boundedUsage, "prepaid", fees, false).total <= routeBudget,
       ), maxOutput),
     })).filter((target) => target.ordered.length);
     c.req.raw.signal.throwIfAborted();
     if (sponsoredOnly && !eligible.length)
       fail(409, "The selected model has no available route within the free reply budget. Try another model or a shorter question.", "first_chat_route_unavailable");
-    const claim = eligible.length ? await reserveFirstChat(ctx.db, billing.accountId) : null;
+    const claim = eligible.length ? await reserveFirstChat(ctx.db, billing.accountId, ctx.cfg.freePool) : null;
     if (claim) {
       billing = { ...billing, firstChat: claim };
       try {
@@ -1073,7 +1080,8 @@ async function finalize(p: FinalizeInput) {
     completion_tokens_details: { reasoning_tokens: p.usage.reasoning },
     ...webSearchPath.webSearchUsage(p.meta.webSearch, searchFee),
   };
-  await endFirstChat(ctx, billing, p.cancelled || p.finishReason === "error" ? "failed" : "completed");
+  // A pool claim settles to what this reply actually cost, cancelled or not.
+  await endFirstChat(ctx, billing, p.cancelled || p.finishReason === "error" ? "failed" : "completed", cost.total);
   const receiptJson = {
     id,
     sig: signed.sig,

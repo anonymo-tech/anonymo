@@ -306,6 +306,14 @@ const redisFamilies: RedisFamily[] = [
     evidence: [ev("src/anonymo/keys/routes.ts", "const digest = hmac(ctx.cfg.appSecret, `anonymo:first-image:"), ev("src/anonymo/keys/routes.ts", "await ctx.limiter.take(`first-image:${digest}`")],
   }),
   limit({
+    prefix: "first-video:",
+    shape: "first-video:<hourly caller-address digest>",
+    purpose: "Limits sponsored video attempts per caller address per hour. The counter uses a keyed digest of the address bucket and UTC hour.",
+    holds: "digest",
+    seconds: 3600,
+    evidence: [ev("src/anonymo/keys/routes.ts", "`anonymo:first-video:"), ev("src/anonymo/keys/routes.ts", "`first-video:${digest}`")],
+  }),
+  limit({
     prefix: "wallet-login:",
     shape: "wallet-login:<caller address>",
     purpose: `Wallet sign-in challenges per minute. ${ADDRESS_NOTE}`,
@@ -514,8 +522,8 @@ const addressReaders: Touchpoint[] = [
   },
   {
     file: "src/anonymo/keys/routes.ts",
-    reads: "The caller address selected by the ingress helper for dashboard signups, sponsored image requests and key IP-allowlist checks.",
-    then: "Each limiter uses its own hourly address digest. The image limiter uses HMAC. The key policy check compares the address in memory with the current IP allowlist.",
+    reads: "The caller address selected by the ingress helper for dashboard signups, sponsored image and video requests, and key IP-allowlist checks.",
+    then: "Each limiter uses its own hourly address digest. The image and video limiters use HMAC with separate namespaces. The key policy check compares the address in memory with the current IP allowlist.",
     kept: "Each limiter retains its digest and counter for one hour plus one second. The allowlist check retains no caller address.",
     evidence: [ev("src/anonymo/keys/routes.ts", "const from = addressBucket(c, ctx.cfg);"), ev("src/anonymo/keys/routes.ts", "const callerIp = clientIp(c, ctx.cfg.trustProxy);")],
   },

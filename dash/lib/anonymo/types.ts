@@ -45,6 +45,8 @@ export type CreateKeyRequest = { caps?: KeyCapsInput; dashboard_signup?: string 
 /** `POST /keys` (201). `key` is returned exactly once; the gateway stores only sha256(key) as `key_hash`. */
 export type CreateKeyResponse = {
   first_chat_available?: boolean;
+  /** True when the gateway runs a shared daily free pool, so the free offer lasts many messages. */
+  free_pool?: boolean;
   key: string; // anm_live_…
   key_hash: string;
   wallet: string | null;
@@ -53,7 +55,7 @@ export type CreateKeyResponse = {
 };
 
 /** `GET /keys/me`. */
-export type KeyInfo = { first_chat_available?: boolean; key_hash: string; label: string | null; caps: KeyCaps; deposit: DepositInstructions };
+export type KeyInfo = { first_chat_available?: boolean; free_pool?: boolean; key_hash: string; label: string | null; caps: KeyCaps; deposit: DepositInstructions };
 
 // ---- deposits (gateway/src/anonymo/deposits/instructions.ts, routes.ts) ------------------------------------------
 

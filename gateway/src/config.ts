@@ -248,6 +248,11 @@ const schema = z.object({
   ANONYMO_FREE_DAILY: z.coerce.number().int().min(1).max(1000).default(10),
   ANONYMO_FREE_ROUTES: opt, // comma-separated moderated self-hosted route IDs; defaults to moderated anonymo-rp offers
   ANONYMO_FREE_POW_DIFFICULTY: z.coerce.number().int().min(12).max(22).default(16),
+  // Free pool: free dashboard chat for keys with no balance, paid by Anonymo up to a daily amount shared by everyone
+  // (UTC day), with a smaller daily cap per key and a ceiling per request. 0 keeps the pool off (one free first reply only).
+  ANONYMO_FREE_POOL_USD: z.coerce.number().min(0).max(10_000).default(0),
+  ANONYMO_FREE_POOL_PER_KEY_USD: z.coerce.number().min(0.001).max(100).default(0.25),
+  ANONYMO_FREE_POOL_REQUEST_USD: z.coerce.number().min(0.002).max(1).default(0.04),
   ANONYMO_FEATURE_ASK_MO: bool.default(false),
   ANONYMO_ASK_MO_SEARCH_FALLBACK: opt, // same JSON as ANONYMO_WEB_SEARCH
   ANONYMO_FEATURE_COMPLIANCE: bool.default(false),
@@ -626,6 +631,11 @@ export function loadConfig(overrides: Record<string, unknown> = {}) {
       routes: new Set((e.ANONYMO_FREE_ROUTES ?? "").split(",").map((id) => id.trim()).filter(Boolean)),
       difficulty: e.ANONYMO_FREE_POW_DIFFICULTY,
     },
+    freePool: e.ANONYMO_FREE_POOL_USD > 0 ? {
+      dailyUsd: e.ANONYMO_FREE_POOL_USD,
+      perKeyUsd: Math.min(e.ANONYMO_FREE_POOL_PER_KEY_USD, e.ANONYMO_FREE_POOL_USD),
+      requestUsd: Math.min(e.ANONYMO_FREE_POOL_REQUEST_USD, e.ANONYMO_FREE_POOL_PER_KEY_USD, e.ANONYMO_FREE_POOL_USD),
+    } : null,
     telegram: {
       botToken: e.ANONYMO_TELEGRAM_BOT_TOKEN,
       webhookSecret: e.ANONYMO_TELEGRAM_WEBHOOK_SECRET,

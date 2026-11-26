@@ -10,6 +10,9 @@ import { balanceOf, verifyInvariants } from "../../src/ledger/ledger.ts";
 import { usdToPico } from "../../src/lib/money.ts";
 import type { FloorGate, FloorInput } from "../../src/anonymo/seams.ts";
 import { provenanceKeyFromSeed } from "../../src/anonymo/media/c2pa.ts";
+import { evmKeyCommit } from "../../src/anonymo/deposits/addresses.ts";
+import { anonymoKeys } from "../../src/anonymo/deposits/schema.ts";
+import { compVideoConfig, FIRST_VIDEO_DAILY_BUDGET, firstVideoOffer } from "../../src/anonymo/media/first-video.ts";
 import { FIRST_IMAGE_DAILY_BUDGET, firstImageOffer, finishFirstImage, startFirstImage } from "../../src/anonymo/media/first-image.ts";
 import { MediaCatalog } from "../../src/anonymo/media/catalog.ts";
 import { createMediaGate, type FrameScore, type MediaClassifier } from "../../src/anonymo/media/gate.ts";
@@ -761,6 +764,220 @@ describe("studio's independent first image", () => {
     } finally {
       await h.ctx.db.delete(kv).where(eq(kv.key,budgetKey));
       if(old) await h.ctx.db.insert(kv).values(old);
+    }
+  });
+});
+
+describe("studio's independent first video", () => {
+  const origin = { origin: "https://anonymo.tech", ...US };
+  const params = { model: "wan-2.2", prompt: "A green meadow at dawn" };
+  const path = "/v1/video/generations/sponsored";
+  const lookup = async (headers: Record<string, string>) => {
+    const response = await h.request("/v1/video/welcome", { headers });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    return response.json() as Promise<{ available: boolean; eligible_clips: { model: string; seconds: number }[] }>;
+  };
+  const poll = async (id: string, headers: Record<string, string>) => {
+    const response = await h.request(`/v1/video/generations/${id}`, { headers });
+    return response.json();
+  };
+
+  test("a zero-balance root gets one shortest clip under simultaneous sends, with normal gating, downloadable provenance and zero receipt", async () => {
+    const key = await h.newKey();
+    const headers = { ...origin, ...key.auth };
+    const offered = await lookup(origin);
+    expect(offered.available).toBe(true);
+    expect(offered.eligible_clips).toContainEqual({model:"bytedance/seedance-2.0-fast", seconds:5});
+    expect(offered.eligible_clips).toContainEqual({model:"wan-2.2", seconds:2});
+    const before = calls.videoSubmit;
+    const responses = await Promise.all([post(path, params, headers), post("/api"+path, params, headers)]);
+    expect(responses.map(r=>r.status).sort()).toEqual([202,409]);
+    expect(calls.videoSubmit - before).toBe(1);
+    const job = await responses.find(r=>r.ok)!.json();
+    expect(job.seconds).toBe(2);
+    expect((await lookup(headers)).available).toBe(false);
+    const jobPath = `/v1/video/generations/${job.id}`;
+    expect((await h.request(jobPath, {headers:{...headers,"x-anonymo-country":"KP"}})).status).toBe(451);
+    await h.ctx.db.insert(anonymoKeys).values({ keyHash:key.hash, ipAllow:["192.0.2.1"] })
+      .onConflictDoUpdate({ target:anonymoKeys.keyHash,set:{ipAllow:["192.0.2.1"]} });
+    expect((await h.request(jobPath, {headers})).status).toBe(403);
+    await h.ctx.db.update(anonymoKeys).set({ipAllow:null}).where(eq(anonymoKeys.keyHash,key.hash));
+    videoPolls = [{ state:"done", media:{ bytes:tinyMp4(7), mime:"video/mp4" } }];
+    const done = await poll(job.id,headers);
+    expect(done.status).toBe("completed");
+    expect(done.anonymo).toMatchObject({ cost_usd:0, quoted_usd:0, receipt:{payload:{unit:"second",media_units:2,cost_usd:0},sig:expect.any(String)} });
+    const bytes = new Uint8Array(await (await h.request(pathOf(done.url))).arrayBuffer());
+    await verified(bytes);
+    expect(done.anonymo.receipt.payload.outputs_sha256[0]).toBe(new Bun.CryptoHasher("sha256").update(bytes).digest("hex"));
+    expect((await (await h.request("/v1/images/welcome", {headers})).json()).available).toBe(true);
+    const chat = await post("/keys/first-chat/claim",{dashboard_signup:crypto.randomUUID()},headers);
+    expect((await chat.json()).first_chat_available).toBe(true);
+    expect((await post(path,params,headers)).status).toBe(409);
+    expect((await post("/v1/video/generations",params,headers)).status).toBe(402);
+
+    // The same upstream job can restore a lost replica-local result without re-rendering, billing
+    // another clip, or making a completed grant eligible for a retry.
+    const [row] = await h.ctx.db.select().from(mediaJobs).where(eq(mediaJobs.id,job.id));
+    s.store.delete(row.mediaId!);
+    await h.ctx.db.update(mediaJobs).set({lastPolledAt:null}).where(eq(mediaJobs.id,job.id));
+    videoPolls = [{ state:"done", media:{ bytes:tinyMp4(7), mime:"video/mp4" } }];
+    const restored = await poll(job.id,headers);
+    expect(restored.status).toBe("completed");
+    expect(restored.url).not.toBe(done.url);
+    expect((await h.request(pathOf(restored.url))).status).toBe(200);
+    expect(restored.anonymo.receipt.payload.cost_usd).toBe(0);
+    expect(calls.videoSubmit - before).toBe(1);
+    expect((await lookup(headers)).available).toBe(false);
+  });
+
+  test("wrong duration, caps, uploads, origin and floor fail before provider dispatch; funded users never fall through to paid", async () => {
+    const key = await h.fundedKey();
+    const headers = { ...origin, ...key.auth };
+    const [row] = await h.ctx.db.select().from(keys).where(eq(keys.keyHash,key.hash));
+    const balanceBefore = (await balanceOf(h.ctx.db,row.accountId)).balance;
+    const before = calls.videoSubmit;
+    expect((await post(path,params,key.auth)).status).toBe(403);
+    expect((await post(path,params,origin)).status).toBe(401);
+    expect((await post(path,{...params,seconds:4},headers)).status).toBe(400);
+    expect((await post(path,{...params,reference_image:"ignored"},headers)).status).toBe(400);
+    expect((await post(path,params,{...headers,"x-anonymo-sealed":"required"})).status).toBe(409);
+    await h.ctx.db.update(keys).set({allowedModels:["google/veo-3.1-lite"]}).where(eq(keys.keyHash,key.hash));
+    expect((await lookup(headers)).eligible_clips).toEqual([{model:"google/veo-3.1-lite",seconds:4}]);
+    expect((await post(path,params,headers)).status).toBe(400);
+    await h.ctx.db.update(keys).set({allowedModels:null}).where(eq(keys.keyHash,key.hash));
+    h.ctx.anonymo.floor = { check: async () => ({ ok:false, category:"csam" }) };
+    expect((await post(path,params,headers)).status).toBe(451);
+    expect(calls.videoSubmit).toBe(before);
+    h.ctx.anonymo.floor = allow;
+    const job = await (await post(path,params,headers)).json();
+    videoPolls = [{state:"done",media:{bytes:tinyMp4(8),mime:"video/mp4"}}];
+    expect((await poll(job.id,headers)).status).toBe("completed");
+    expect((await post(path,params,headers)).status).toBe(409);
+    expect((await balanceOf(h.ctx.db,row.accountId)).balance).toBe(balanceBefore);
+    await h.ctx.db.update(keys).set({management:false}).where(eq(keys.keyHash,key.hash));
+    expect(await lookup(headers)).toEqual({mode:"welcome",available:false,eligible_clips:[]});
+    expect((await post(path,params,headers)).status).toBe(403);
+  });
+
+  test("failed safety check releases the grant; an abandoned finish polls the same provider job after restart", async () => {
+    const k = await h.newKey();
+    const headers = {...origin, ...k.auth};
+    const before = calls.videoSubmit;
+    const first = await (await post(path,params,headers)).json();
+    videoFrames = [{nsfw:0.9,apparentAge:15}];
+    videoPolls = [{state:"done",media:{bytes:tinyMp4(9),mime:"video/mp4"}}];
+    expect((await poll(first.id,headers)).status).toBe("failed");
+    expect((await lookup(headers)).available).toBe(true);
+    videoFrames = [{nsfw:0.1,apparentAge:30}];
+    const second = await (await post(path,params,headers)).json();
+    await h.ctx.db.update(mediaJobs).set({status:"finishing",updatedAt:sql`now() - interval '11 minutes'`}).where(eq(mediaJobs.id,second.id));
+    videoPolls = [{state:"done",media:{bytes:tinyMp4(10),mime:"video/mp4"}}];
+    expect((await poll(second.id,headers)).status).toBe("completed");
+    expect(calls.videoSubmit - before).toBe(2);
+    expect((await lookup(headers)).available).toBe(false);
+  });
+
+  test("an abandoned submit or a timed-out job releases eligibility without refunding its dispatch", async () => {
+    const k = await h.newKey();
+    const headers = {...origin, ...k.auth};
+    const [key] = await h.ctx.db.select().from(keys).where(eq(keys.keyHash,k.hash));
+    const remaining = (await firstVideoOffer(h.ctx.db)).remaining;
+    for (const state of ["queued","running"]) {
+      const job = await (await post(path,params,headers)).json();
+      await h.ctx.db.update(mediaJobs).set({status:state,createdAt:sql`now() - interval '2 hours'`,updatedAt:sql`now() - interval '3 minutes'`})
+        .where(eq(mediaJobs.id,job.id));
+      expect((await poll(job.id,headers)).error.type).toBe("job_expired");
+      expect((await lookup(headers)).available).toBe(true);
+      const [hold] = await h.ctx.db.select().from(holds).where(eq(holds.id,job.id));
+      expect(hold.status).toBe("released");
+    }
+    expect((await firstVideoOffer(h.ctx.db,key.accountId)).remaining).toBe(remaining - 2n * usdToPico("0.1"));
+  });
+
+  test("different accounts cannot overrun the UTC pool and failed jobs still count against its limit", async () => {
+    const daily = sql<string>`'first-video:v1:daily:' || to_char(timezone('UTC', now()), 'YYYY-MM-DD')`;
+    const [prior] = await h.ctx.db.select().from(kv).where(eq(kv.key,daily));
+    const spent = Number(FIRST_VIDEO_DAILY_BUDGET-usdToPico("0.1"));
+    await h.ctx.db.insert(kv).values({key:daily,value:spent}).onConflictDoUpdate({target:kv.key,set:{value:spent}});
+    try {
+      const keys = await Promise.all([h.newKey(),h.newKey()]);
+      const headers = keys.map(k=>({...origin,...k.auth}));
+      const before = calls.videoSubmit;
+      const results = await Promise.all(headers.map(auth=>post(path,params,auth)));
+      expect(results.map(r=>r.status).sort()).toEqual([202,409]);
+      expect(calls.videoSubmit-before).toBe(1);
+      const i = results.findIndex(r=>r.ok);
+      const job = await results[i].json();
+      videoPolls = [{state:"failed",blocked:true}];
+      expect((await poll(job.id,headers[i])).status).toBe("failed");
+      expect((await lookup(headers[i])).available).toBe(false);
+      expect((await firstVideoOffer(h.ctx.db)).remaining).toBe(0n);
+    } finally {
+      await h.ctx.db.delete(kv).where(eq(kv.key,daily));
+      if(prior) await h.ctx.db.insert(kv).values(prior);
+    }
+  });
+});
+
+describe("operator-funded Video Studio allowance", () => {
+  const origin = { origin: "https://anonymo.tech", ...US };
+  const path = "/v1/video/generations";
+  const params = { prompt: "A green hillside", model: "wan-2.2", seconds: 2 };
+  const lookup = async (headers: Record<string, string>) => (await h.request("/v1/video/welcome", { headers })).json();
+
+  test("requires the entire public commitment and a finite budget; setting a zero budget pauses the allowance", () => {
+    const commit = "0x" + "6a".repeat(32);
+    expect(compVideoConfig({})).toBeUndefined();
+    expect(compVideoConfig({ ANONYMO_VIDEO_COMP_KEY_COMMIT: commit })).toEqual({keyCommit:commit, dailyBudget:usdToPico("0.24")});
+    expect(compVideoConfig({ ANONYMO_VIDEO_COMP_KEY_COMMIT: commit, ANONYMO_VIDEO_COMP_DAILY_USD:"0" })?.dailyBudget).toBe(0n);
+    expect(() => compVideoConfig({ ANONYMO_VIDEO_COMP_DAILY_USD:"3" })).toThrow();
+    expect(() => compVideoConfig({ ANONYMO_VIDEO_COMP_KEY_COMMIT: commit.slice(0, -1) })).toThrow();
+    expect(() => compVideoConfig({ ANONYMO_VIDEO_COMP_KEY_COMMIT: commit, ANONYMO_VIDEO_COMP_DAILY_USD:"-1" })).toThrow();
+    expect(() => compVideoConfig({ ANONYMO_VIDEO_COMP_KEY_COMMIT: commit, ANONYMO_VIDEO_COMP_DAILY_USD:"NaN" })).toThrow();
+  });
+
+  test("only the matched root gets repeated independent zero-cost clips; neither endpoint can spend its own balance", async () => {
+    const account = await h.newKey();
+    const secondAccount = await h.fundedKey();
+    const [key] = await h.ctx.db.select().from(keys).where(eq(keys.keyHash,account.hash));
+    const keyCommit = evmKeyCommit(account.hash);
+    const allowance = compVideoConfig({ ANONYMO_VIDEO_COMP_KEY_COMMIT:keyCommit, ANONYMO_VIDEO_COMP_DAILY_USD:"0.20" })!;
+    const headers = {...origin,...account.auth};
+    const newcomerBefore = (await firstVideoOffer(h.ctx.db,key.accountId)).remaining;
+    setMediaServices(h.ctx,{compVideo:allowance});
+    try {
+      expect((await lookup(headers)).mode).toBe("complimentary");
+      expect((await lookup(origin)).mode).toBe("welcome");
+      const spoof = {...origin, ...secondAccount.auth, "x-key-commit":keyCommit};
+      expect((await lookup(spoof)).mode).toBe("welcome");
+      expect((await post(path,{...params,seconds:3},headers)).status).toBe(400);
+      expect((await balanceOf(h.ctx.db,key.accountId)).balance).toBe(0n);
+      for (const endpoint of [path + "/sponsored", path]) {
+        const pair = await Promise.all([post(endpoint,params,headers),post(endpoint,params,headers)]);
+        expect(pair.map(r=>r.status).sort()).toEqual([202,409]);
+        const job = await pair.find(r=>r.ok)!.json();
+        expect(job.id).toStartWith("vid_c_");
+        videoPolls = [{state:"done",media:{bytes:tinyMp4(12),mime:"video/mp4"}}];
+        const result = await (await h.request(path+"/"+job.id,{headers})).json();
+        expect(result).toMatchObject({status:"completed",anonymo:{cost_usd:0,quoted_usd:0,receipt:{payload:{cost_usd:0},sig:expect.any(String)}}});
+      }
+      expect(await lookup(headers)).toEqual({mode:"complimentary",available:false,eligible_clips:[]});
+      expect(await firstVideoOffer(h.ctx.db,key.accountId)).toEqual({available:true,remaining:newcomerBefore});
+      // Even a real balance cannot be used by an old client or an explicit standard-endpoint call.
+      await h.chain.deposit(h.ctx,account.chainKeyHash,1_000_000n);
+      const before = (await balanceOf(h.ctx.db,key.accountId)).balance;
+      expect(before).toBeGreaterThan(0n);
+      for (const endpoint of [path,path+"/sponsored"]) {
+        const response = await post(endpoint,params,headers);
+        expect(response.status).toBe(409);
+        expect((await response.json()).error.type).toBe("complimentary_video_unavailable");
+        expect((await post(endpoint,{...params,seconds:3},headers)).status).toBe(400);
+      }
+      expect((await balanceOf(h.ctx.db,key.accountId)).balance).toBe(before);
+      expect((await post(path,{...params,seconds:3},spoof)).status).toBe(202);
+    } finally {
+      setMediaServices(h.ctx,{compVideo:undefined});
     }
   });
 });
