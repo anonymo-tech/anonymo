@@ -5,9 +5,14 @@
 .video-workspace .studio-options summary::-webkit-details-marker { display: none; }
 .video-workspace .studio-options summary span { font-size: 12px; }
 .video-ideas h2 { margin: 0 0 12px; font: 600 16px/1.35 var(--sans); letter-spacing: -.02em; }
+.video-featured-shot { overflow: hidden; margin: 0 0 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.video-featured-shot video { display: block; width: 100%; aspect-ratio: 16/9; background: #100c13; }
+.video-featured-shot figcaption { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; }
+.video-featured-shot strong, .video-featured-shot small { display: block; }
+.video-featured-shot strong { font: 600 clamp(18px,2vw,24px)/1.2 var(--sans); letter-spacing: -.03em; }
+.video-featured-shot small { margin-top: 3px; color: var(--muted); }
 .video-frames { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .video-frames button { position: relative; isolation: isolate; display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; overflow: hidden; min-width: 0; aspect-ratio: 2.7; border: 1px solid var(--line); border-radius: 12px; padding: 12px; color: white; background: var(--surface); text-align: left; cursor: pointer; }
-.video-frames button:first-child { grid-column: 1/-1; aspect-ratio: 2.25; padding: clamp(14px, 2vw, 26px); }
 .video-frames img, .video-frames button::before { position: absolute; z-index: -1; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .video-frames button::before { content: ''; background: linear-gradient(0deg, #0c0710ec, #0c071005 80%); }
 .video-frames img { z-index: -2; }
@@ -16,7 +21,6 @@
 .video-frames small, .video-frames strong { display: block; }
 .video-frames small { font: 500 12px/1.4 var(--sans); color: #f3dee9; }
 .video-frames strong { font: 600 clamp(16px,1.5vw,21px)/1.15 var(--sans); letter-spacing: -.035em; }
-.video-frames button:first-child strong { font-size: clamp(25px,2.6vw,40px); }
 .video-frames svg { flex: none; }
 .video-copy-key { justify-self: start; }
 .video-workspace .video-job { width: 100%; }
@@ -26,7 +30,6 @@
 @media(max-width:600px) {
   .video-frames { gap: 7px; }
   .video-frames button { padding: 9px; aspect-ratio: 1.7; }
-  .video-frames button:first-child { aspect-ratio: 1.9; }
   .video-frames strong { font-size: 15px; }
   .video-frames small { font-size: 11px; }
   .video-workspace .studio-panel { gap: 10px; }

@@ -372,6 +372,12 @@ test('Video Studio creates a tab key, quotes longer clips and restores the free 
   await choice.getByText('2s free').waitFor();
   await choice.click();
   const editor = page.getByRole('textbox', { name: 'Describe your shot' });
+  const sample = page.getByLabel('Palace after hours, a stop-motion ballroom scene');
+  await sample.waitFor();
+  await page.waitForFunction(() => {
+    const clip = document.querySelector('.video-featured-shot video');
+    return clip?.controls && clip.videoWidth > 0 && clip.duration >= 3.9;
+  });
   await page.getByRole('button', { name: 'Use Palace after hours prompt' }).click();
   assert.match(await editor.inputValue(), /Spider-Man/);
   const duration = page.getByRole('combobox', { name: 'Duration' });
