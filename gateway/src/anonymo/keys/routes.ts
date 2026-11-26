@@ -2,6 +2,7 @@
 //   POST /keys              → a new anm_live_… key, shown exactly once; only its sha256 is stored.
 //   GET  /keys/siwe/nonce   → a one-time nonce for Sign-In with Ethereum.
 //   POST /keys/siwe         → a new key bound to the signing wallet; withdrawals may then go to that wallet.
+//   POST /keys/first-chat/claim → enroll a dashboard root key once for the fresh-start campaign.
 //   GET  /keys/me           → the calling key's caps, wallet and deposit instructions (never the secret).
 //   PATCH /keys/caps        → change the calling key's caps.
 
@@ -10,7 +11,7 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { Ctx } from "../../context.ts";
 import { ANONYMO_KEY_PREFIX } from "../../chain/keys.ts";
-import { registerRootKey, requireKey } from "../../api/auth.ts";
+import { accountIdFor, registerRootKey, requireKey } from "../../api/auth.ts";
 import { addressBucket, clientIp, readJson } from "../../api/common.ts";
 import { fail } from "../../lib/errors.ts";
 import { sha256 } from "../../lib/util.ts";
@@ -72,6 +73,19 @@ export function keysRoutes(app: Hono, ctx: Ctx, deps: MoneyDeps) {
       if (!limit.ok) fail(429, "Too many new keys from this address. Try again later.", "rate_limited");
     }
     return c.json(await mint(ctx, deps, { caps: body.caps, signup }), 201);
+  });
+
+  app.post("/keys/first-chat/claim", async (c) => {
+    noStore(c);
+    if (!dashboardOrigin(c.req.header("origin"), ctx.cfg.siteUrl))
+      fail(403, "Open the dashboard to claim your first chat.", "dashboard_required");
+    const key = await requireKey(ctx, c.req.header("authorization"));
+    if (!key.management || key.accountId !== accountIdFor(key.chainKeyHash))
+      fail(403, "Only a root key can claim this message.", "root_key_required");
+    assertIpAllowed((await readKeyPolicy(ctx.db, key.keyHash))?.ipAllow ?? null, clientIp(c, ctx.cfg.trustProxy));
+    const { dashboard_signup } = z.object({ dashboard_signup: z.uuidv4() }).strict().parse(await readJson(c));
+    await issueFirstChat(ctx.db, key.accountId, dashboard_signup);
+    return c.json({ first_chat_available: await firstChatAvailable(ctx.db, key.accountId) });
   });
 
   app.get("/keys/siwe/nonce", async (c) => {

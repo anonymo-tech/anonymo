@@ -21,7 +21,7 @@ import { Stage, StageTools } from './stage';
 import { ChatBar, ChatHistoryPanel } from './chat-history';
 import type { Turn } from './chat-types';
 import { dashboardSignup } from '@/lib/anonymo/dashboard-signup';
-import { loadKey } from '@/lib/anonymo/key-store';
+import { isApiKey, loadKey } from '@/lib/anonymo/key-store';
 import { CopyButton } from '../copy-button';
 import { ModelWelcome } from './model-welcome';
 import { modelIdentity, ModelPicker } from './model-picker';
@@ -100,19 +100,27 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   threadHost: HTMLDivElement | null;
   composerHost: HTMLDivElement | null;
 }) {
-  const { ready, demo, key, setKey, client, balanceVersion, turns, setTurns, chatId, openChat, rememberReceipt, balance, refreshBalance, liveModels, catalog, catalogError, refreshCatalog } = useAnonymo();
-  const [firstChat, setFirstChat] = useState<{ key: string; available: boolean } | null>(null);
-  const [newChatKey, setNewChatKey] = useState<string | null>(null);
-  const funded = (balance?.available_usd ?? 0) > 0;
-  useEffect(() => {
-    if (!key || !ready || funded) return;
-    let current = true;
-    client.keyInfo().then(info => {
-      if (current) setFirstChat({ key, available: info.first_chat_available === true });
-    }, () => {});
-    return () => { current = false; };
-  }, [ready, key, client, funded, balanceVersion]);
+  const { ready, demo, key, setKey, client, turns, setTurns, chatId, openChat, rememberReceipt, balance, refreshBalance, liveModels, catalog, catalogError, refreshCatalog } = useAnonymo();
   const adult = useDeviceStore(adultStore);
+  const [firstChat, setFirstChat] = useState<{ key: string; available: boolean; error?: string } | null>(null);
+  const [claimAttempt, retryClaim] = useState(0);
+  const [newChatKey, setNewChatKey] = useState<string | null>(null);
+  const [chooseForDraft, setChooseForDraft] = useState(false);
+  const [queuedSend, setQueuedSend] = useState<{ key: string; prompt: string } | null>(null);
+  const provisioning = useRef(false);
+  const [starting, setStarting] = useState(false);
+  useEffect(() => {
+    if (!key || !isApiKey(key) || !ready || !adult) return;
+    const abort = new AbortController();
+    void dashboardSignup(demo).then(id => client.claimFirstChat(id, abort.signal)).then(info => {
+      if (!abort.signal.aborted) setFirstChat({ key, available: info.first_chat_available });
+    }, error => {
+      if (abort.signal.aborted) return;
+      const restricted = error instanceof AnonymoApiError && error.code === 'root_key_required';
+      setFirstChat({ key, available: false, error: restricted ? undefined : 'Could not check your free reply. Your message has not been sent.' });
+    });
+    return () => abort.abort();
+  }, [ready, key, client, adult, demo, claimAttempt]);
   const welcomeDone = useDeviceStore(modelWelcomeDone);
   const stored = useDeviceStore(chatModelStore);
   const freeMode = ready && adult && !key && isAnonymoModel(stored) && updateOn('free', demo);
@@ -352,18 +360,28 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     }
   };
 
-  async function startWelcomeChat(id: string) {
-    if (!loadKey(demo)) {
-      const fresh = await client.createKey({ dashboard_signup: await dashboardSignup(demo) });
-      if (!loadKey(demo)) {
-        setKey(fresh.key, false);
-        setNewChatKey(fresh.key);
-        setFirstChat({ key: fresh.key, available: fresh.first_chat_available === true });
+  async function startWelcomeChat(id: string, prompt?: string) {
+    if (provisioning.current) return;
+    provisioning.current = true;
+    setStarting(true);
+    try {
+      let activeKey = loadKey(demo);
+      if (!activeKey) {
+        const fresh = await client.createKey({ dashboard_signup: await dashboardSignup(demo) });
+        activeKey = loadKey(demo);
+        if (!activeKey) {
+          activeKey = fresh.key;
+          setKey(fresh.key, false);
+          setNewChatKey(fresh.key);
+        }
       }
+      chooseModel(id);
+      if (prompt) setQueuedSend({ key: activeKey, prompt });
+    } finally {
+      provisioning.current = false;
+      setStarting(false);
     }
-    chooseModel(id);
   }
-
   function pickMode(next: ChatMode | null) {
     if (next && !availableModes.includes(next)) return;
     pendingScan.current++;
@@ -458,9 +476,12 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const passChat = !!rights?.hasPass && model === 'anonymo-1' && mode !== 'picture' && mode !== 'three' &&
     !extraUsd && !tray.photos.length && !excerpt?.image;
   const sponsoredModel = model === 'anonymo-1' || welcomeModels.some(entry => entry.id === model);
-  const firstText = sponsoredModel && !mode && !turns.some(turn => turn.status === 'done') &&
+  const plainText = !mode &&
     !extraUsd && !tray.photos.length && !paper && !excerpt;
-  const sponsoredChat = firstText && !!key && firstChat?.key === key && firstChat.available && !funded;
+  const firstText = plainText && sponsoredModel;
+  const offer = key && firstChat?.key === key ? firstChat : null;
+  const checkingOffer = plainText && !!key && isApiKey(key) && (!offer || !!offer.error);
+  const sponsoredChat = firstText && !!offer?.available;
   const mayUseIncluded = key && (sponsoredChat || readEveryday && everyday?.client !== client ||
     passChat || !!rights?.hasPass && mode === 'picture' || !!rights?.availableCreditsUsd && mode !== 'three');
   const setupForBalance = guestChat ? (freeExhausted ? 'key' : null) : mayUseIncluded ? null : chatSetupStep(!!key, balance?.available_usd);
@@ -492,13 +513,13 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const audioSpend = { charged: price.spend.charged + pendingVoiceCost };
   const voiceBusy = modesOn && price.limit !== null && voice.playing !== null;
   const voiceOverLimit = (estimate: ReturnType<typeof flatEstimate>) => checkLimit(price.limit, audioSpend, estimate).blocked;
-  const offer = price.estimate ?? (modesOn && priceMessages ? estimateMessage({ model: priced, messages: priceMessages, demo, extraUsd }) : null);
-  const estimateBlocked = price.blocked || (mode === 'talk' && offer !== null && voiceOverLimit(offer));
+  const costOffer = price.estimate ?? (modesOn && priceMessages ? estimateMessage({ model: priced, messages: priceMessages, demo, extraUsd }) : null);
+  const estimateBlocked = (!sponsoredChat && price.blocked) || (mode === 'talk' && costOffer !== null && voiceOverLimit(costOffer));
   const shownPrice = sponsoredChat || guestChat ? '' : mode === 'talk' && voice.transcription
     ? (perMinute === null ? '' : transcriptionRate(voice.transcription))
     : passChat ? 'Included with your Pass'
-    : offer?.known
-      ? mode === 'picture' ? spentLabel(offer.typical) : `${mode === 'three' ? 'up to' : 'about'} ${priceLabel(offer.typical, mode === 'three' ? 'up' : 'nearest')}`
+    : costOffer?.known
+      ? mode === 'picture' ? spentLabel(costOffer.typical) : `${mode === 'three' ? 'up to' : 'about'} ${priceLabel(costOffer.typical, mode === 'three' ? 'up' : 'nearest')}`
       : '';
 
   function clearDraft() {
@@ -668,14 +689,14 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       abort.signal.throwIfAborted();
       const recalled = vaultMemoryOn ? memory.addToPrompt(messages, memoryQuery(turn.prompt)) : messages;
       const context = withAboutYou(recalled, currentAboutYouNote(demo));
-      const guestMessages = guest ? freeContext(context as ChatMessage[]) : null;
+      const guestMessages = sponsoredChat ? freeContext(context as ChatMessage[], 8192, 16) : guest ? freeContext(context as ChatMessage[]) : null;
       const access = guest ? await free.authorize(abort.signal) : null;
       if (access) {
         servedModel = access.model;
         update(id, { model: servedModel });
       }
       const result = await client.chat(
-        { model: access?.model ?? onlineModel(model, !!turn.search), messages: guestMessages ?? context, ...(!guest && plainChat && !turn.attachment && !turn.recap && !turn.search && !turn.photoCount ? { dashboard_chat: true as const } : {}) },
+        { model: access?.model ?? onlineModel(model, !!turn.search), messages: guestMessages ?? context, ...(!guest && plainChat && !turn.attachment && !turn.recap && !turn.search && !turn.photoCount ? { dashboard_chat: sponsoredChat ? 'sponsored' as const : true as const } : {}) },
         {
           signal: abort.signal,
           ...(access ? { free: { ...access, onRemaining: (left: number) => { freeLeft = left; free.setRemaining(left); } } } : {}),
@@ -699,22 +720,26 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       const stopped = abort.signal.aborted;
       const needsFunds = !stopped && isOutOfCredit(error);
       update(id, { status: stopped ? 'stopped' : 'error', error: stopped ? null : describeError(error), needsFunds });
-      if ((needsFunds || (guest && !stopped && freeLeft === null)) && !turn.attachment && !turn.recap)
+      if ((needsFunds || (sponsoredChat && !stopped) || (guest && !stopped && freeLeft === null)) && !turn.attachment && !turn.recap)
         setText(draft => draft || turn.prompt);
       if (guest && error instanceof AnonymoApiError) {
         if (error.code === 'free_daily_limit') {
           free.setRemaining(0);
-          showSetup('key', turn.prompt, null, true);
+          setChooseForDraft(true);
         } else if (error.status === 404 || error.code === 'free_unavailable') {
-          showSetup('key', turn.prompt, null, false);
+          setChooseForDraft(true);
         }
       }
-      if (needsFunds && sponsoredChat && key) setFirstChat({ key, available: false });
+      if (sponsoredChat && key) {
+        setFirstChat(null);
+        retryClaim(n => n + 1);
+        if (error instanceof AnonymoApiError && ['first_chat_route_unavailable', 'funded_key_required'].includes(error.code ?? '')) setChooseForDraft(true);
+      }
       if (needsFunds && (sponsoredChat || turn.modeResult?.mode === 'talk')) showSetup('funds', turn.prompt, null);
     } finally {
       if (controller.current === abort) controller.current = null;
       if (!guest) refreshBalance();
-      if (freeLeft === 0) showSetup('key', '', null, true);
+
     }
     if (receiptId) {
       rememberReceipt({ id: receiptId, model: servedModel, at: new Date().toISOString() });
@@ -788,6 +813,19 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       return;
     }
     if (!prompt && !(photosOn && tray.photos.length && !withExcerpt)) return;
+    if (starting || checkingOffer) return;
+    if (plainText && !withExcerpt) {
+      if (!key && (!guestChat || freeExhausted)) {
+        if (!sponsoredModel) { setChooseForDraft(true); return; }
+        try { await startWelcomeChat(model, prompt); }
+        catch (error) { setGuardNote({ redacted: '', message: describeError(error) }); }
+        return;
+      }
+      if (key && offer?.available && !sponsoredModel && !balance?.available_usd) {
+        setChooseForDraft(true);
+        return;
+      }
+    }
     if (openSetup(source, withExcerpt) || (!key && !guestChat)) return;
     if (!standalone && model !== 'anonymo-sealed') voice.prepare(mode === 'talk' ? settings.talk.aloud : undefined);
     const draft = standalone ? prompt : draftFor(prompt, withExcerpt);
@@ -847,6 +885,15 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     void send({ prompt: reviewed.prompt, message: outgoing, excerpt: review.excerpt }, confirmed);
   }
 
+  // Creating a tab key changes the provider and starts a new chat. Resume only with that key and its settled entitlement.
+  useEffect(() => {
+    if (!queuedSend || queuedSend.key !== key || !modelReady || checkingOffer || !offer || streaming || controller.current) return;
+    setQueuedSend(null);
+    setText(queuedSend.prompt);
+    if (offer.available) void submit(queuedSend.prompt, null);
+    else setGuardNote({ redacted: '', message: 'The free reply is unavailable for this key right now. Your message is still here.' });
+  }, [queuedSend, key, modelReady, checkingOffer, offer, streaming]);
+
   const textarea = (
     <>
       <label className="sr-only" htmlFor="composer">
@@ -858,7 +905,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
         rows={1}
         value={text}
         placeholder={mode ? MODE_LABELS[mode].placeholder : character ? `Write to ${character.card.data.name}…` : 'Ask anything…'}
-        disabled={!ready}
+        disabled={!ready || starting || !!queuedSend}
         onChange={(e) => {
           pendingScan.current++;
           setText(e.target.value);
@@ -1031,12 +1078,12 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   if (price.limit !== null) activeTools.push({ label: `Limit ${usdText(price.limit)}`, remove: () => setChatLimit(demo, chatId, null) });
 
   const composerPrice = { ...price, estimate: null };
-  const sendDisabled = !modeReady || checking || tray.busy || voiceBusy || (!text.trim() && (standalone || !photosOn || !tray.photos.length))
+  const sendDisabled = starting || checkingOffer || !modeReady || checking || tray.busy || voiceBusy || (!text.trim() && (standalone || !photosOn || !tray.photos.length))
     || (!guestChat && !setupForBalance && ((!standalone && !modelReady) || estimateBlocked));
   const verb = mode === 'picture' || mode === 'three' ? MODE_LABELS[mode].verb : null;
   const sendButton = (
     <button type="button" className={verb ? 'mode-send mode-send-wide' : 'mode-send'} aria-label={verb ?? 'Send'}
-      title={mode === 'talk' && offer?.known ? `Chat reply about ${priceLabel(offer.typical, 'nearest')}` : undefined}
+      title={mode === 'talk' && costOffer?.known ? `Chat reply about ${priceLabel(costOffer.typical, 'nearest')}` : undefined}
       disabled={sendDisabled} onClick={() => void submit()}>
       {verb && <span>{verb}</span>}<ArrowUp size={17} aria-hidden="true" />
     </button>
@@ -1088,6 +1135,10 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
 
   const composer = (
     <div className={modesOn ? 'dock-composer dock-composer-modes' : 'dock-composer'}>
+      {checkingOffer && <div className="ai-notice" role="status">{offer?.error
+        ? <>{offer.error} <button type="button" onClick={() => { setFirstChat(null); retryClaim(n => n + 1); }}>Retry free reply check</button></>
+        : 'Checking your free reply…'}</div>}
+      {starting && <output className="ai-notice">Preparing your chat…</output>}
       {sponsoredChat && !streaming && <output className="ai-notice">Your first message is on us.</output>}
       {freeMode && free.remaining !== null && (
         <output className="ai-notice">
@@ -1213,7 +1264,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
               <Square size={14} fill="currentColor" aria-hidden="true" />
             </button>
           ) : (
-            <button type="submit" className="send" aria-label="Send" disabled={!ready || (!text.trim() && !(photosOn && tray.photos.length)) || (photosOn && tray.busy) || (!guestChat && !setupForBalance && (!modelReady || price.blocked))}>
+            <button type="submit" className="send" aria-label="Send" disabled={starting || checkingOffer || !ready || (!text.trim() && !(photosOn && tray.photos.length)) || (photosOn && tray.busy) || (!guestChat && !setupForBalance && (!modelReady || (price.blocked && !sponsoredChat)))}>
               <ArrowUp size={18} aria-hidden="true" />
             </button>
           )}
@@ -1314,9 +1365,10 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     <RegionPage mode={compliance.restricted} client={client} onVerified={compliance.refresh} />
   ) : (
     <>
-      {ready && adult && !compact && !key && !turns.length && !welcomeDone && (
+      {ready && adult && (chooseForDraft || (!compact && !key && !character && !turns.length && !welcomeDone)) && (
         <ModelWelcome models={welcomeModels} loading={catalog === null} error={catalogError} retry={refreshCatalog}
-          onPick={startWelcomeChat} onDismiss={() => {
+          onPick={id => startWelcomeChat(id, chooseForDraft ? text.trim() : undefined)} onDismiss={() => {
+            setChooseForDraft(false);
             dismissModelWelcome();
             requestAnimationFrame(() => input.current?.focus({ preventScroll: true }));
           }} />

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { eq, like, sql } from "drizzle-orm";
 import { kv, keys, ledger } from "../../src/db/schema.ts";
-import { FIRST_CHAT_DAILY_LIMIT, finishFirstChat, firstChatAvailable, issueFirstChat, reserveFirstChat, startFirstChat } from "../../src/anonymo/keys/first-chat.ts";
+import { FIRST_CHAT_DAILY_LIMIT, finishFirstChat, firstChatAvailable, freshStartSlot, issueFirstChat, reserveFirstChat, startFirstChat } from "../../src/anonymo/keys/first-chat.ts";
 import { moneyHarness, type MoneyHarness } from "./harness.ts";
 
 let m: MoneyHarness;
@@ -82,7 +82,7 @@ test("concurrent claims yield one dispatch; completion and partial-stream failur
     const starts = await Promise.all([startFirstChat(db(), id, winner), startFirstChat(db(), id, winner)]);
     expect(starts.filter(Boolean)).toHaveLength(1);
     // A worker can disappear after dispatch without running finish.
-    await db().update(kv).set({ updatedAt: sql`now() - interval '1 day'` }).where(eq(kv.key, `first-chat:account:${id}`));
+    await db().update(kv).set({ updatedAt: sql`now() - interval '1 day'` }).where(eq(kv.key, freshStartSlot(id)));
     expect(await reserveFirstChat(db(), id)).toBeNull();
     await finishFirstChat(db(), id, winner, outcome);
     await finishFirstChat(db(), id, winner, "failed");
@@ -94,7 +94,7 @@ test("concurrent claims yield one dispatch; completion and partial-stream failur
 test("abandoned pre-send leases expire; old workers cannot act on a replacement; failed preflight retries are bounded", async () => {
   const { id } = await eligible();
   const first = (await reserveFirstChat(db(), id))!;
-  await db().update(kv).set({ updatedAt: sql`now() - interval '3 minutes'` }).where(eq(kv.key, `first-chat:account:${id}`));
+  await db().update(kv).set({ updatedAt: sql`now() - interval '3 minutes'` }).where(eq(kv.key, freshStartSlot(id)));
   expect(await startFirstChat(db(), id, first)).toBe(false);
   const second = (await reserveFirstChat(db(), id))!;
   expect(second).not.toBe(first);
@@ -107,12 +107,13 @@ test("abandoned pre-send leases expire; old workers cannot act on a replacement;
   expect(await reserveFirstChat(db(), id)).toBeNull();
 });
 
-test("deposited funds and the shared UTC-day cap take precedence, including races at the dispatch boundary", async () => {
+test("a deposit after reservation preserves the sponsored message and the shared UTC-day cap still applies", async () => {
   const funded = await eligible();
   const claim = (await reserveFirstChat(db(), funded.id))!;
   await m.deposit(funded.keyHash, "1", "0xabababababababababababababababababababab");
-  expect(await startFirstChat(db(), funded.id, claim)).toBe(false);
-  await finishFirstChat(db(), funded.id, claim, "failed");
+  expect(await startFirstChat(db(), funded.id, claim)).toBe(true);
+  await finishFirstChat(db(), funded.id, claim, "completed");
+  expect((await (await m.req("/balance", { headers: funded.auth })).json()).available_usd).toBe(1);
   expect(await reserveFirstChat(db(), funded.id)).toBeNull();
 
   const a = await eligible();
@@ -125,4 +126,108 @@ test("deposited funds and the shared UTC-day cap take precedence, including race
   expect(starts.filter(Boolean)).toHaveLength(1);
   expect((await db().select().from(kv).where(eq(kv.key, day)))[0].value).toBe(FIRST_CHAT_DAILY_LIMIT);
   await db().delete(kv).where(eq(kv.key, day));
+});
+
+const claimEndpoint = "/keys/first-chat/claim";
+const campaign = (auth: Record<string, string>, id: string) => m.req(claimEndpoint, {
+  headers: { ...auth, origin: "https://anonymo.tech" }, json: { dashboard_signup: id },
+});
+async function accountId(keyHash: string) {
+  const [k] = await db().select({ id: keys.accountId }).from(keys).where(eq(keys.keyHash, keyHash));
+  return k.id;
+}
+
+test("a funded returning dashboard root refreshes a spent legacy entitlement exactly once across concurrent sessions", async () => {
+  const root = await m.newKey();
+  const id = await accountId(root.keyHash);
+  const signupId = randomUUID();
+  await db().insert(kv).values({ key: `first-chat:account:${id}`, value: { state: "completed" } });
+  await m.deposit(root.keyHash, "1", "0xabababababababababababababababababababab");
+  const claims = await Promise.all(Array.from({ length: 6 }, (_, i) => campaign(root.auth, i % 2 ? signupId : randomUUID())));
+  for (const res of claims) {
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ first_chat_available: true });
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  }
+  const attempts = await Promise.all(Array.from({ length: 4 }, () => reserveFirstChat(db(), id)));
+  const winners = attempts.filter((value): value is string => value !== null);
+  expect(winners).toHaveLength(1);
+  expect(await startFirstChat(db(), id, winners[0])).toBe(true);
+  await finishFirstChat(db(), id, winners[0], "completed");
+  expect(await (await campaign(root.auth, randomUUID())).json()).toEqual({ first_chat_available: false });
+  expect((await (await m.req("/keys/me", { headers: root.auth })).json()).first_chat_available).toBe(false);
+  expect((await (await m.req("/balance", { headers: root.auth })).json()).available_usd).toBe(1);
+});
+
+test("an in-flight legacy lease can finish without consuming or releasing the new campaign reservation", async () => {
+  const root = await m.newKey();
+  const id = await accountId(root.keyHash);
+  const legacy = randomUUID();
+  await db().insert(kv).values({ key: `first-chat:account:${id}`, value: { state: "reserved", attempts: 1, claim: legacy } });
+  expect(await (await campaign(root.auth, randomUUID())).json()).toEqual({ first_chat_available: false });
+  expect(await reserveFirstChat(db(), id)).toBeNull();
+  expect(await startFirstChat(db(), id, legacy)).toBe(true);
+  const fresh = await reserveFirstChat(db(), id);
+  expect(fresh).not.toBeNull();
+  await finishFirstChat(db(), id, legacy, "failed");
+  expect(await reserveFirstChat(db(), id)).toBeNull();
+  expect(await startFirstChat(db(), id, fresh!)).toBe(true);
+  await finishFirstChat(db(), id, fresh!, "completed");
+  expect(await reserveFirstChat(db(), id)).toBeNull();
+});
+
+test("campaign recovery requires a valid root credential, allowed dashboard origin and valid signup marker", async () => {
+  const root = await m.newKey();
+  const id = randomUUID();
+  for (const origin of ["", "https://outside.example"]) {
+    expect((await m.req(claimEndpoint, { headers: { ...root.auth, origin }, json: { dashboard_signup: id } })).status).toBe(403);
+  }
+  expect((await campaign({}, id)).status).toBe(401);
+  expect((await campaign(root.auth, "invalid")).status).toBe(400);
+  await db().update(keys).set({ management: false }).where(eq(keys.keyHash, root.keyHash));
+  expect((await campaign(root.auth, id)).status).toBe(403);
+  expect(await firstChatAvailable(db(), await accountId(root.keyHash))).toBe(false);
+});
+
+test("confirmed empty campaign replies can retry twice without refunding any system dispatches", async () => {
+  const { id } = await eligible();
+  const day = "first-chat:daily:" + new Date().toISOString().slice(0, 10);
+  const daily = async () => Number((await db().select().from(kv).where(eq(kv.key, day)))[0]?.value ?? 0);
+  const before = await daily();
+  let previous = "";
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const claim = (await reserveFirstChat(db(), id))!;
+    expect(claim).toBeString();
+    await finishFirstChat(db(), id, claim, "empty"); // still reserved
+    expect(await startFirstChat(db(), id, claim)).toBe(true);
+    if (previous) {
+      await finishFirstChat(db(), id, previous, "empty");
+      expect(await reserveFirstChat(db(), id)).toBeNull();
+    }
+    await Promise.all([finishFirstChat(db(), id, claim, "empty"), finishFirstChat(db(), id, claim, "empty")]);
+    expect(await firstChatAvailable(db(), id)).toBe(attempt < 3);
+    expect(await daily()).toBe(before + attempt);
+    previous = claim;
+  }
+  expect(await reserveFirstChat(db(), id)).toBeNull();
+  expect(await db().select().from(ledger).where(eq(ledger.accountId, id))).toHaveLength(0);
+});
+
+test("empty responses cannot reopen expired, legacy or already failed dispatches", async () => {
+  for (const scenario of ["stale", "legacy", "failed", "unknown-attempts"] as const) {
+    const root = await m.newKey();
+    const id = await accountId(root.keyHash);
+    if (scenario === "legacy")
+      await db().insert(kv).values({ key: `first-chat:account:${id}`, value: { state: "available", attempts: 0 } });
+    else await issueFirstChat(db(), id, randomUUID());
+    const claim = (await reserveFirstChat(db(), id))!;
+    expect(await startFirstChat(db(), id, claim)).toBe(true);
+    if (scenario === "stale")
+      await db().update(kv).set({ updatedAt: sql`now() - interval '3 minutes'` }).where(eq(kv.key, freshStartSlot(id)));
+    if (scenario === "unknown-attempts")
+      await db().update(kv).set({ value: { state: "started", claim } }).where(eq(kv.key, freshStartSlot(id)));
+    if (scenario === "failed") await finishFirstChat(db(), id, claim, "failed");
+    await finishFirstChat(db(), id, claim, "empty");
+    expect(await reserveFirstChat(db(), id)).toBeNull();
+  }
 });

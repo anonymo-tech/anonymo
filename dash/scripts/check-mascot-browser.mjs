@@ -98,11 +98,7 @@ for (const width of [1250, 390]) {
       const input = pop.getByRole('textbox', { name: 'Message', exact: true });
       await input.fill('A quiet morning in the park');
       await pop.getByRole('button', { name: 'Send', exact: true }).click();
-      await pop.getByRole('link', { name: 'Create a free key' }).click();
-      await btn('Create key').click();
-      await page.getByLabel('I have stored this key somewhere safe').check();
-      await btn('Open chat').click();
-      await page.waitForURL('**/dashboard/chat');
+      await pop.getByRole('button', { name: 'Reply details' }).waitFor();
       await page.goto(base + '/dashboard/funds');
       await btn('Send test USDG').click();
       await page.getByRole('link', { name: 'Continue to chat', exact: true }).waitFor();

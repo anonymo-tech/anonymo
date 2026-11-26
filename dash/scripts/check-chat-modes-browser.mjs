@@ -27,11 +27,6 @@ test('chat modes stay opt-in per message, survive setup, and put results in the 
   await suggestion.waitFor();
   assert.equal(await page.locator('.mode-mirror mark').textContent(), 'Draw');
   assert.equal(await makePicture.count(), 0);
-  await message.press('Enter');
-  await sheet.getByRole('link', { name: 'Create a free key' }).waitFor();
-  assert.equal(await turns.count(), 0);
-  await sheet.getByRole('button', { name: 'Not now' }).click();
-
   await message.press('Tab');
   await makePicture.waitFor();
   assert.equal(await message.inputValue(), picture);

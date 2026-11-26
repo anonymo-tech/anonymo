@@ -5,7 +5,7 @@ import { keccak256, stringToHex } from 'viem';
 export function useUpDemoFreeChat(page) {
   const token = randomBytes(32).toString('hex');
   return page.addInitScript(({ token, digest }) => {
-    localStorage.setItem('anonymo.chat-model-welcome.v1', 'true');
+    localStorage.setItem('anonymo.chat-model-welcome.v2', 'true');
     const deviceSlot = 'anonymo.free-device.demo';
     if (localStorage.getItem(deviceSlot)) return;
     localStorage.setItem(deviceSlot, token);

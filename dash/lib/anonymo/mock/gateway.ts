@@ -66,6 +66,7 @@ type Row = DepositRow & { musd: number };
 type KeyState = {
   keyHash: string;
   firstChatAvailable?: boolean;
+  firstChatCampaign?: number;
   caps: KeyCaps;
   keyCommit: string;
   balance: number; // micro-USD
@@ -363,6 +364,7 @@ export function createMockGateway(options: MockOptions = {}) {
     const k: KeyState = {
       keyHash,
       firstChatAvailable: !!body.dashboard_signup,
+      firstChatCampaign: body.dashboard_signup ? 2 : undefined,
       caps: capsOut(body.caps),
       keyCommit: keccakHex(enc.encode(`anonymo-deposit-v1:${keyHash}`)),
       balance: 0,
@@ -520,11 +522,12 @@ export function createMockGateway(options: MockOptions = {}) {
     const tin = tokensOf(promptText);
     const p = price ?? DEMO_PRICES['anonymo-1'];
     const estimate = Math.ceil((tin * p.in + 900 * p.out) / 1_000_000);
-    const sponsored = body.dashboard_chat === true && !asked.searching &&
+    const sponsored = (body.dashboard_chat === true || body.dashboard_chat === 'sponsored') && !asked.searching &&
       (model === 'anonymo-1' || DEMO_MODELS.some(row => row.id === model && uncensoredChatModel(row))) &&
       body.messages.length <= 16 && body.messages.every(m => typeof m.content === 'string') &&
-      body.messages.filter(m => m.role === 'user').length === 1 && k.firstChatAvailable === true
-      && k.balance === 0 && enc.encode(promptText).byteLength <= 8192;
+      body.messages.at(-1)?.role === 'user' && k.firstChatAvailable === true
+      && body.messages.reduce((size, m) => size + enc.encode(m.content as string).byteLength, 0) <= 8192;
+    if (body.dashboard_chat === 'sponsored' && !sponsored) return fail(409, 'first_chat_unavailable', 'The sponsored reply is unavailable. Nothing was charged.');
     const maxCost = sponsored ? 0 : estimate + searchMusd;
     if (k.balance - k.held < maxCost) return fail(402, 'insufficient_balance', 'Not enough credit for this request.');
     const capped = capRefusal(k);
@@ -970,6 +973,16 @@ export function createMockGateway(options: MockOptions = {}) {
     }
     const lapsed = expiredKeyRefusal(k.caps, Date.now(), fail);
     if (lapsed) return lapsed;
+    if (method === 'POST' && path === API_PATHS.claimFirstChat) {
+      const body = await request.json();
+      if (typeof body.dashboard_signup !== 'string') return fail(400, 'invalid_request', 'A signup ID is required.');
+      if (k.firstChatCampaign !== 2) {
+        k.firstChatCampaign = 2;
+        k.firstChatAvailable = true;
+        persist();
+      }
+      return json({ first_chat_available: !!k.firstChatAvailable });
+    }
     if (method === 'GET' && path === API_PATHS.keyInfo) return json({ first_chat_available: k.firstChatAvailable ?? false, key_hash: k.keyHash, label: null, caps: k.caps, deposit: instructions(k) });
     const referral = state.creatorReferrals?.[k.keyHash];
     if (referral && !referral.credited && (k.deposits.length || k.codeCredit)) {
@@ -998,7 +1011,7 @@ export function createMockGateway(options: MockOptions = {}) {
       );
     }
     if (method === 'POST' && path === API_PATHS.withdraw) return withdraw(request, k);
-    if (method === 'POST' && path === API_PATHS.chat) return chat(request, k);
+    if (method === 'POST' && (path === API_PATHS.chat || path === API_PATHS.sponsoredChat)) return chat(request, k);
     if (method === 'POST' && (path === API_PATHS.askMo || path === API_PATHS.secondOpinion)) {
       const body = (await request.json().catch(() => null)) as Partial<AskMoRequest> | null;
       const question = typeof body?.question === 'string' ? body.question.trim() : '';

@@ -222,7 +222,7 @@ export type ChatPartsMessage = { role: 'user'; content: ChatPart[] };
 export type ChatRequest = {
   characterId?: string;
   creatorAdult?: boolean;
-  dashboard_chat?: true;
+  dashboard_chat?: true | 'sponsored';
   model: string;
   messages: ChatMessage[];
   max_tokens?: number;

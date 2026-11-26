@@ -81,6 +81,7 @@ export const API_PATHS = {
   keySafeLookup: '/v1/key-safe/lookup',
   redeemCode: '/v1/codes/redeem',
   keyInfo: '/keys/me',
+  claimFirstChat: '/keys/first-chat/claim',
   balance: '/balance',
   withdraw: '/withdraw',
   withdrawals: '/withdrawals',
@@ -89,6 +90,7 @@ export const API_PATHS = {
   depositContracts: '/deposits/contracts',
   nymoQuote: '/deposits/coin/quote',
   chat: '/v1/chat/completions',
+  sponsoredChat: '/v1/chat/completions/sponsored',
   freeChallenge: '/v1/free/challenge',
   askMo: '/v1/ask',
   secondOpinion: '/v1/ask/second-opinion',
@@ -309,6 +311,8 @@ export function createAnonymoClient(options: ClientOptions) {
     creatorVotes: (signal?: AbortSignal) => json<CreatorVotes>(`${CREATOR_API}/votes`, { auth: false, signal, cache: 'no-store' }),
     referralLink: () => json<{ code: string }>(`${CREATOR_API}/referral-link`, { method: 'POST' }),
     acceptReferral: (code: string) => json<{ accepted: true }>(`${CREATOR_API}/referral-accept`, { method: 'POST', body: JSON.stringify({ code }) }),
+    claimFirstChat: (dashboard_signup: string, signal?: AbortSignal) =>
+      json<{ first_chat_available: boolean }>(API_PATHS.claimFirstChat, { method: 'POST', body: JSON.stringify({ dashboard_signup }), signal }),
     keyInfo: () => json<KeyInfo>(API_PATHS.keyInfo),
     balance: (signal?: AbortSignal) => json<Balance>(API_PATHS.balance, { signal }),
     deposits: (signal?: AbortSignal) => json<Deposits>(API_PATHS.deposits, { signal }),
@@ -482,7 +486,7 @@ export function createAnonymoClient(options: ClientOptions) {
         stream: streaming,
         ...(body.model === 'anonymo-council' && opts.headers?.councilMode ? { council: { mode: opts.headers.councilMode } } : {}),
       };
-      const response = await request(API_PATHS.chat, {
+      const response = await request(body.dashboard_chat === 'sponsored' ? API_PATHS.sponsoredChat : API_PATHS.chat, {
         method: 'POST',
         body: JSON.stringify(payload),
         ...(opts.free ? {

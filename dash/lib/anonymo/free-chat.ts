@@ -40,12 +40,12 @@ export async function solveFreeWork(challenge: string, difficulty: number, expir
 }
 
 /** Keep the system instructions and newest context within the free lane's input budget. */
-export function freeContext(messages: ChatMessage[]) {
+export function freeContext(messages: ChatMessage[], byteLimit = 32_768, messageLimit = 32) {
   const first = messages.findIndex((message) => message.role === 'user');
   const instructions = messages.slice(0, first).filter((message) => message.role === 'system');
   const context = [];
-  let left = 32_768 - instructions.reduce((bytes, message) => bytes + encoder.encode(message.content).byteLength, 0);
-  for (let i = messages.length - 1; i >= Math.max(0, first) && context.length < 32 - instructions.length; i--) {
+  let left = byteLimit - instructions.reduce((bytes, message) => bytes + encoder.encode(message.content).byteLength, 0);
+  for (let i = messages.length - 1; i >= Math.max(0, first) && context.length < messageLimit - instructions.length; i--) {
     const message = messages[i];
     left -= encoder.encode(message.content).byteLength;
     if (left < 0) break;

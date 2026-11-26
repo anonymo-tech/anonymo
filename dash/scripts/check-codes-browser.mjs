@@ -23,14 +23,16 @@ test('a voucher from chat setup makes a funded key and restores the draft after 
   const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || undefined });
   try {
     const page = await openPage(browser, '/dashboard/chat');
-    // With free messages on, Send only opens the setup sheet once today's allowance is used.
+    // A picture needs prepaid credit even when ordinary text chat has an introductory reply.
     await useUpDemoFreeChat(page);
     await page.reload();
     await page.getByText('Free today: 0 left', { exact: true }).waitFor();
     const message = page.getByRole('textbox', { name: 'Message', exact: true });
     const draft = 'Tell me about a lighthouse.';
     await message.fill(draft);
-    await page.getByRole('button', { name: 'Send', exact: true }).tap();
+    await page.getByRole('button', { name: 'Modes and tools' }).tap();
+    await page.getByRole('button', { name: 'Picture', exact: true }).tap();
+    await page.getByRole('button', { name: 'Make picture', exact: true }).tap();
     await page.getByRole('link', { name: 'Have a code?' }).tap();
     await page.waitForURL((url) => url.pathname === '/redeem');
     const code = page.getByRole('textbox', { name: 'Anonymo Code' });

@@ -174,9 +174,9 @@ test('a visitor can connect a key, fund it, chat and inspect the receipt from mo
       .getByRole('heading', { name: 'Start your first chat' })
       .waitFor();
     await page.getByRole('link', { name: 'Open chat', exact: true }).click();
-    // With chat modes on, the model picker sits under +; the message box shows the chat is ready.
+    // A funded key also gets its first ordinary reply on the house.
     await page.locator('#composer').waitFor();
-    assert.equal(await page.locator('.dock-composer .ai-notice').count(), 0);
+    await page.getByText('Your first message is on us.', { exact: true }).waitFor();
     await page.locator('#composer').fill('Give me a short greeting.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.locator('.thread[aria-busy="false"] .answer-body').waitFor();

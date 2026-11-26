@@ -21,10 +21,10 @@ export function setChatModel(id: string) {
   modelStore.changed();
   chatModelStore.changed();
 }
-const MODEL_WELCOME = 'anonymo.chat-model-welcome.v1';
+const MODEL_WELCOME = 'anonymo.chat-model-welcome.v2';
 let dismissedWithoutStorage = false;
 export const modelWelcomeDone = deviceStore(() =>
-  dismissedWithoutStorage || readJson(MODEL_WELCOME, false) || readJson(MODEL, null) !== null, true);
+  dismissedWithoutStorage || readJson(MODEL_WELCOME, false), true);
 export function dismissModelWelcome() {
   dismissedWithoutStorage = !writeJson(MODEL_WELCOME, true);
   modelWelcomeDone.changed();

@@ -31,12 +31,10 @@ test('character chat survives key creation, funding, and reloading the original 
     const draft = 'Where should we travel next?';
     await composer.fill(draft);
     await page.getByRole('button', { name: 'Send', exact: true }).tap();
-    await page.getByRole('link', { name: 'Create a free key', exact: true }).tap();
-    await page.waitForURL(url => url.pathname === '/dashboard/key');
-    assert.equal(new URL(page.url()).searchParams.get('returnTo'), destination);
-    await page.getByRole('button', { name: 'Create key', exact: true }).tap();
-    await page.getByLabel('I have stored this key somewhere safe').check();
-    await page.getByRole('button', { name: 'Add funds', exact: true }).tap();
+    await page.getByRole('button', { name: 'Reply details' }).waitFor();
+    await composer.fill(draft);
+    await page.getByRole('button', { name: 'Send', exact: true }).tap();
+    await page.getByRole('region', { name: 'Set up chat' }).getByRole('link', { name: 'Add funds' }).tap();
     await page.waitForURL(url => url.pathname === '/dashboard/funds');
     await page.getByRole('heading', { name: 'Add funds', exact: true }).waitFor();
     assert.equal(new URL(page.url()).searchParams.get('returnTo'), destination);

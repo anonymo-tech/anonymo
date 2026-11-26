@@ -35,36 +35,11 @@ test('a guest chats for free, uses the allowance, then funds a key and sends the
       await page.getByText(new RegExp(`^Free today: ${left} left`)).waitFor();
       await main.locator('.thread[aria-busy="false"] article.turn').nth(9 - left).getByRole('link', { name: /receipt/i }).waitFor();
     }
-    await sheet.getByText(/You’ve used your free messages today/).waitFor();
     await page.reload();
     await page.getByText('Free today: 0 left', { exact: true }).waitFor();
-    await main.getByRole('button', { name: 'Give me three ideas for a short mystery story.' }).tap();
-    assert.match(await message.inputValue(), /mystery story/);
-    await message.fill(next);
-    assert.equal(await page.evaluate((slot) => sessionStorage.getItem(slot), slot), null);
-    await send.tap();
-    await sheet.getByText(/You’ve used your free messages today/).waitFor();
-    assert.equal(await main.locator('.turn').count(), 0);
-    assert.equal(await page.evaluate((slot) => JSON.parse(sessionStorage.getItem(slot)).text, slot), next);
-    assert.equal(await page.evaluate((text) => Object.values(localStorage).some(value => value.includes(text)), next), false);
-    await sheet.getByRole('button', { name: 'Not now' }).tap();
-    await sheet.waitFor({ state: 'hidden' });
-    assert.equal(await message.inputValue(), next);
-    await message.fill('');
-    assert.equal(await page.evaluate((slot) => sessionStorage.getItem(slot), slot), null);
     await message.fill(next);
     await send.tap();
-    await sheet.getByRole('link', { name: 'Create a free key' }).tap();
-    await page.waitForURL(url => url.pathname === '/dashboard/key' && url.searchParams.get('returnTo') === '/dashboard/chat');
-    await main.getByRole('button', { name: 'Create key', exact: true }).tap();
-    await page.getByLabel('I have stored this key somewhere safe').check();
-    await main.getByRole('button', { name: 'Open chat', exact: true }).tap();
-    await page.waitForURL('**/dashboard/chat');
     const waiting = page.getByText('Your message is waiting. Press send.', { exact: true });
-    await waiting.waitFor();
-    assert.equal(await message.inputValue(), next);
-    await page.getByRole('link', { name: 'Balance $0.00' }).waitFor();
-    await send.tap();
     await main.getByText(next, { exact: true }).waitFor();
     const welcomeReply = main.locator('.thread[aria-busy="false"] article.turn');
     await welcomeReply.getByRole('button', { name: 'Reply details' }).tap();
@@ -100,6 +75,10 @@ test('Open app creates a tab-only key on model selection and sponsors one direct
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
   await page.route('**/*', route => new URL(route.request().url()).origin === origin.origin ? route.continue() : route.abort());
+  await page.addInitScript(() => {
+    localStorage.setItem('anonymo.chat-model-welcome.v1', 'true');
+    localStorage.setItem('anonymo.model.v1', JSON.stringify('anonymo-1'));
+  });
   await page.goto(origin.href);
   await page.waitForFunction(() => document.activeElement?.textContent?.trim() === 'I am 18 or older');
   await page.getByRole('button', { name: 'I am 18 or older' }).click();
@@ -137,4 +116,46 @@ test('Open app creates a tab-only key on model selection and sponsors one direct
   await message.fill('Another question.');
   await message.press('Enter');
   await page.getByRole('region', { name: 'Set up chat' }).getByRole('link', { name: 'Add funds' }).waitFor();
+});
+
+test('a returning funded key gets the fresh offer once, reusing the key and keeping its balance', async t => {
+  const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL, executablePath: process.env.CHROMIUM_PATH });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.route('**/*', route => new URL(route.request().url()).origin === origin.origin ? route.continue() : route.abort());
+  await page.addInitScript(() => localStorage.setItem('anonymo.adult.v1', 'true'));
+  await page.goto(new URL('/dashboard/key?demo=1', origin).href);
+  await page.getByRole('button', { name: 'Create key', exact: true }).click();
+  await page.getByLabel('I have stored this key somewhere safe').check();
+  await page.getByRole('button', { name: 'Open chat', exact: true }).click();
+  await page.waitForURL('**/dashboard/chat');
+  // Recreate a pre-campaign key. Older demo records have no campaign field.
+  await page.evaluate(() => {
+    const slot = 'anonymo.demo.state.v2';
+    const state = JSON.parse(localStorage.getItem(slot));
+    const account = Object.values(state.keys)[0];
+    account.firstChatAvailable = false;
+    delete account.firstChatCampaign;
+    account.balance = 5_000_000;
+    localStorage.setItem(slot, JSON.stringify(state));
+    localStorage.setItem('anonymo.chat-model-welcome.v1', 'true');
+  });
+  await page.reload();
+  const offer = page.getByText('Your first message is on us.', { exact: true });
+  await offer.waitFor();
+  const message = page.getByRole('textbox', { name: 'Message', exact: true });
+  await message.fill('Tell me a fun fact.');
+  await message.press('Enter');
+  await page.getByRole('button', { name: 'Reply details' }).waitFor();
+  const check = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem('anonymo.demo.state.v2'));
+    return [Object.keys(state.keys).length, Object.values(state.keys)[0].balance, Object.values(state.receipts)[0].view.receipt.cost];
+  });
+  assert.deepEqual(check, [1, 5_000_000, '0']);
+  await page.reload();
+  await message.fill('One more fact.');
+  await message.press('Enter');
+  await page.getByRole('link', { name: 'Signed receipt' }).waitFor();
+  assert.equal(await offer.count(), 0);
+  assert.ok(await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('anonymo.demo.state.v2')).keys)[0].balance < 5_000_000));
 });

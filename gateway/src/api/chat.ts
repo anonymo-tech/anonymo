@@ -233,32 +233,36 @@ export function firstChatInputBound(body: Record<string, unknown>): number | nul
   if (Object.keys(body).some((field) => !FIRST_CHAT_FIELDS.has(field))) return null;
   const messages = body.messages;
   if (!Array.isArray(messages) || messages.length > 16) return null;
-  let userMessages = 0;
+  if (messages.at(-1)?.role !== "user") return null;
   let bytes = 0;
   for (const m of messages) {
     if (!m || typeof m.content !== "string" || !["system", "user", "assistant"].includes(m.role) ||
         Object.keys(m).some((field) => field !== "role" && field !== "content")) return null;
-    if (m.role === "user") {
-      if (!m.content.trim()) return null;
-      userMessages++;
-    }
+    if (m.role === "user" && !m.content.trim()) return null;
     bytes += Buffer.byteLength(m.content, "utf8");
     if (bytes > 8192) return null;
   }
-  return userMessages === 1 ? bytes + (16 * messages.length) + 32 : null;
+  return bytes + (16 * messages.length) + 32;
 }
 
-async function endFirstChat(ctx: Ctx, billing: ChatBilling, outcome: "completed" | "failed") {
+async function endFirstChat(ctx: Ctx, billing: ChatBilling, outcome: "completed" | "failed" | "empty") {
   if (billing.mode === "prepaid" && billing.firstChat)
     await finishFirstChat(ctx.db, billing.accountId, billing.firstChat, outcome);
 }
 
 /** Undo a hold whose request was not served. */
-async function giveBack(ctx: Ctx, billing: ChatBilling, holdId: string) {
+async function giveBack(ctx: Ctx, billing: ChatBilling, holdId: string, outcome: "failed" | "empty" = "failed") {
   if (billing.mode === "free") return;
   try { await release(ctx.db, holdId); }
-  finally { await endFirstChat(ctx, billing, "failed"); }
+  finally { await endFirstChat(ctx, billing, outcome); }
 }
+
+const sponsored = (billing: ChatBilling) => billing.mode === "prepaid" && !!billing.firstChat;
+const emptyFirstReply = (retryable = true) => retryable
+  ? new ApiError(502, "The model returned no answer text. Try another model. Nothing was charged.", "first_chat_empty_reply")
+  : new ApiError(502, "The model did not return an answer. Nothing was charged.", "first_chat_no_answer");
+const retryableEmptyFinish = (finish: unknown) => finish === "length" || finish === "stop";
+const onlyEmptyAttempts = (attempts: Attempt[]) => attempts.length > 0 && attempts.every(a => a.error_kind === "empty200");
 
 /** x402: the settlement receipt rides on the served response. */
 const paymentHeaders = (b: ChatBilling): Record<string, string> => (b.mode === "per_call" && b.paymentResponse ? x402ResponseHeaders(b.paymentResponse) : {});
@@ -284,12 +288,16 @@ export async function runChat(ctx: Ctx, c: Context, kind: Kind, characterId?: st
   }
 }
 
+const SPONSORED_CHAT_PATH = "/v1/chat/completions/sponsored";
+
 export function chatRoutes(app: Hono, ctx: Ctx) {
   const run = (c: Context, kind: Kind) => runChat(ctx, c, kind);
   app.post("/api/v1/chat/completions", (c) => run(c, "chat"));
   app.post("/api/v1/completions", (c) => run(c, "completion"));
   // OpenAI-SDK style base URLs (…/api/v1) already covered; also accept /v1/* for convenience.
   app.post("/v1/chat/completions", (c) => run(c, "chat"));
+  // A new dashboard talking to an older gateway gets 404 here, never an ordinary paid reply.
+  app.post(SPONSORED_CHAT_PATH, (c) => run(c, "chat"));
   app.post("/v1/completions", (c) => run(c, "completion"));
 }
 
@@ -313,7 +321,8 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string, as
     delete body.characterId;
     delete body.creatorAdult;
   }
-  const dashboardChat = body.dashboard_chat === true;
+  const sponsoredOnly = c.req.path === SPONSORED_CHAT_PATH || body.dashboard_chat === "sponsored";
+  const dashboardChat = sponsoredOnly || body.dashboard_chat === true;
   delete body.dashboard_chat; // control plane only; not part of the provider payload or request fingerprint
   validate(kind, body);
   validateCacheTtl(body, ctx.cfg.gateway.cacheTtlS);
@@ -327,6 +336,7 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string, as
 
   // ---- 1. Who is calling -------------------------------------------------------------------
   const secret = bearer(c.req.header("authorization"));
+  if (sponsoredOnly && !secret) fail(401, "A dashboard key is required for the free reply.", "invalid_key");
   // A line of a batch (POST /api/v1/batches), dispatched in process by the batch runner as the key that submitted it.
   const batchLine = batchLineOf(c);
   const telegramSession = ctx.cfg.features.telegram && SESSION_KEY.test(secret ?? "");
@@ -405,6 +415,12 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string, as
   // Photos in chat: every image part passes the upload rule before the floor reads the text (floor/chat-photos.ts).
   await checkChatPhotos(ctx, body, disc.lane !== "public" || requiresAttestedUpstream(body, disc), c.req.raw.signal);
   await floorCheck(ctx, body);
+  // A displayed free offer is an explicit zero-charge request, including when another tab has already used it.
+  const sponsorRequest = firstChatRequested && key && !party && !telegramSession && !batchLine &&
+    !alias && !savedRoute && !preset && !character && !sealed && !strict && disc.lane === "public" &&
+    !c.req.header("x-anonymo-cache") && !c.req.header("x-wallet-auth") && !paymentHeaderOf(c);
+  if (sponsoredOnly && !sponsorRequest)
+    fail(409, "This request does not qualify for the free text reply. Nothing was charged.", "first_chat_ineligible");
   if (publication && key && !ctx.creatorCounters)
     fail(503, "Paid character chat is temporarily unavailable.", "creators_unavailable");
   const rights = await keyEntitlements(ctx, key?.keyHash);
@@ -555,19 +571,10 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string, as
   if (billing.mode === "free") {
     c.req.raw.signal.throwIfAborted();
     c.header(FREE_REMAINING_HEADER, String(await consumeFreeChat(ctx, freeProof!)));
-  } else try {
-    await reserve(ctx.db, {
-      ...reservation, accountId: billing.accountId,
-      ...(billing.key && rights ? { cover: everydayCoverage(billing.key.keyHash, rights, includedChat ? "chat" : "credits", hold) } : {}),
-    });
-  } catch (e) {
-    if (!isApiError(e) || e.type !== "insufficient_credits") throw e;
-    if (paywithNote) e.metadata = { ...e.metadata, pay_with: paywithNote };
-    if (telegramSession || !firstChatRequested || billing.mode !== "prepaid" || batchLine || alias || savedRoute || preset || character ||
-        sealed || strict || disc.lane !== "public" || cacheSpec || resolved.length !== 1 || primary.id !== body.model ||
-        c.req.header("x-wallet-auth") || paymentHeaderOf(c)) throw e;
-    const inputBound = firstChatInputBound(body);
-    if (inputBound === null) throw e;
+  }
+  const inputBound = sponsorRequest && billing.mode === "prepaid" && !cacheSpec && resolved.length === 1 && primary.id === body.model
+    ? firstChatInputBound(body) : null;
+  if (inputBound !== null && billing.mode === "prepaid") {
     const maxOutput = Math.min(256, outputBudgetOf(body) ?? 256);
     const boundedUsage: Usage = {
       prompt: inputBound, completion: maxOutput, reasoning: 0, cachedRead: 0, cacheWrite: 0,
@@ -582,24 +589,40 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string, as
           priceCompletion: maxPico(cand.priceCompletion, cand.priceReasoning) }, target.model, boundedUsage, "prepaid", fees, false).total <= FIRST_CHAT_ROUTE_BUDGET,
       ), maxOutput),
     })).filter((target) => target.ordered.length);
-    if (!eligible.length || c.req.raw.signal.aborted) throw e;
-
-    const claim = await reserveFirstChat(ctx.db, billing.accountId);
-    if (!claim) throw e;
-    billing = { ...billing, firstChat: claim };
-    try {
-      await reserve(ctx.db, { ...reservation, accountId: billing.accountId, amount: 0n });
-      if (c.req.raw.signal.aborted || !(await startFirstChat(ctx.db, billing.accountId, claim))) throw e;
-    } catch (setupError) {
-      await giveBack(ctx, billing, holdId);
-      throw setupError;
+    c.req.raw.signal.throwIfAborted();
+    if (sponsoredOnly && !eligible.length)
+      fail(409, "The selected model has no available route within the free reply budget. Try another model or a shorter question.", "first_chat_route_unavailable");
+    const claim = eligible.length ? await reserveFirstChat(ctx.db, billing.accountId) : null;
+    if (claim) {
+      billing = { ...billing, firstChat: claim };
+      try {
+        await reserve(ctx.db, { ...reservation, accountId: billing.accountId, amount: 0n });
+        c.req.raw.signal.throwIfAborted();
+        if (!(await startFirstChat(ctx.db, billing.accountId, claim)))
+          fail(409, "The free reply is unavailable right now. Nothing was charged.", "first_chat_unavailable");
+      } catch (setupError) {
+        await giveBack(ctx, billing, holdId);
+        throw setupError;
+      }
+      targets = eligible;
+      maxAttempts = Math.min(maxAttempts, FIRST_CHAT_MAX_ATTEMPTS);
+      // Refusal rerouting can skip a candidate of the same family and reach a later one.
+      attemptable = targets.flatMap((t) => t.ordered.map((cand) => ({ cand, model: t.model })));
+      body.max_tokens = maxOutput;
+      delete body.max_completion_tokens;
     }
-    targets = eligible;
-    maxAttempts = Math.min(maxAttempts, FIRST_CHAT_MAX_ATTEMPTS);
-    // Refusal rerouting can skip a candidate of the same family and reach a later one.
-    attemptable = targets.flatMap((t) => t.ordered.map((cand) => ({ cand, model: t.model })));
-    body.max_tokens = maxOutput;
-    delete body.max_completion_tokens;
+  }
+  if (billing.mode !== "free" && !(billing.mode === "prepaid" && billing.firstChat)) {
+    if (sponsoredOnly) fail(409, "The free reply is unavailable for this request. Nothing was charged.", "first_chat_unavailable");
+    try {
+      await reserve(ctx.db, {
+        ...reservation, accountId: billing.accountId,
+        ...(billing.key && rights ? { cover: everydayCoverage(billing.key.keyHash, rights, includedChat ? "chat" : "credits", hold) } : {}),
+      });
+    } catch (e) {
+      if (isApiError(e) && e.type === "insufficient_credits" && paywithNote) e.metadata = { ...e.metadata, pay_with: paywithNote };
+      throw e;
+    }
   }
 
   // Private Web Search: the one query leaves now, after the floor and the hold. A failure releases the hold (502, nothing charged).
@@ -649,7 +672,9 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string, as
     throw e;
   }
   if (!result.ok) {
-    await giveBack(ctx, billing, holdId);
+    const empty = sponsored(billing) && !abort.signal.aborted && onlyEmptyAttempts(result.attempts);
+    await giveBack(ctx, billing, holdId, empty ? "empty" : "failed");
+    if (empty) throw emptyFirstReply();
     if (askMoAnswer || publication || party) throw common.unavailable(result.attempts.map(({ message: _, ...attempt }) => attempt),
       result.last && { ...result.last, message: "invalid request" });
     throw common.unavailable(result.attempts, result.last); // B121
@@ -675,6 +700,12 @@ async function handle(ctx: Ctx, c: Context, kind: Kind, characterId?: string, as
         role: "assistant", content: refused ? text : checkedAnswer(text, askMoAnswer.question, webSearch?.results?.length ?? 0, askMoAnswer.topic),
       } };
     });
+  }
+  const visible = json.choices?.[0]?.message?.content;
+  if (sponsored(billing) && !(typeof visible === "string" && visible.trim())) {
+    const clean = !abort.signal.aborted && r.refusal?.served !== "refused" && retryableEmptyFinish(json.choices?.[0]?.finish_reason);
+    await giveBack(ctx, billing, holdId, clean ? "empty" : "failed");
+    throw emptyFirstReply(clean);
   }
   const responseText = (json.choices ?? []).map((ch: any) => (typeof ch?.message?.content === "string" ? ch.message.content : ch?.text ?? "")).join("");
   // An attested gateway's receipt for this exchange: checked before anything is returned.
@@ -1112,8 +1143,9 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
       }
       clearInterval(keepalive);
       if (!result.ok) {
-        await giveBack(ctx, p.billing, p.holdId);
-        const err = p.unavailable(result.attempts, result.last); // B121
+        const empty = sponsored(p.billing) && !p.abort.signal.aborted && onlyEmptyAttempts(result.attempts);
+        await giveBack(ctx, p.billing, p.holdId, empty ? "empty" : "failed");
+        const err = empty ? emptyFirstReply() : p.unavailable(result.attempts, result.last); // B121
         event(err.toJSON());
         send("data: [DONE]\n\n");
         closed = true;
@@ -1141,7 +1173,7 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
       let toolText = "";
       // The floor's reply check: events are released only once the guard has passed the text they carry
       // (anonymo/floor/reply.ts). Without a guard model (local development) they go straight out.
-      const replyGate = checksReplies(ctx.anonymo.floor) ? new StreamReplyGate(ctx.anonymo.floor, sink, () => `${reasoningText}\n${text}\n${toolText}`, { signal: p.abort.signal }) : null;
+      const replyGate = checksReplies(ctx.anonymo.floor) ? new StreamReplyGate(ctx.anonymo.floor, obj => { if (obj !== null) sink(obj); }, () => `${reasoningText}\n${text}\n${toolText}`, { signal: p.abort.signal }) : null;
       const relay = (obj: unknown) => (replyGate ? replyGate.push(obj) : sink(obj));
       const holdKeepalive = hold || replyGate ? setInterval(() => send(": ANONYMO PROCESSING\n\n"), 5_000) : undefined;
       let finish: string | null = null;
@@ -1153,6 +1185,8 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
       // trimmed before it is counted or relayed (GHSA-j499-32cc-f5w4).
       const servedRefusal = r.refusal?.served === "refused";
       const captionsOnly = servedRefusal && isVoiceDispatch(p.c);
+      const plainFirstReply = sponsored(p.billing);
+      let sawAnswerText = false;
       let refusedLeft = REFUSED_MAX_CHARS;
       let refusedCut = false;
       const emit = (ev: any) => {
@@ -1174,6 +1208,16 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
             finish = ch.finish_reason;
             nativeFinish = ch.native_finish_reason ?? ch.finish_reason;
           }
+        }
+        const firstDelta = choices[0]?.delta?.content;
+        if (plainFirstReply) {
+          // Only visible text is delivered for a sponsored turn. Hidden reasoning still passes the reply floor above.
+          const content = typeof firstDelta === "string" ? firstDelta : "";
+          const reason = choices[0]?.finish_reason ?? null;
+          if (content.trim()) sawAnswerText = true;
+          if (content || reason) relay({ ...base, choices: [{ index: 0, delta: { content }, finish_reason: reason }] });
+          else if (choices.length) replyGate?.push(null); // Check withheld channels without emitting a placeholder.
+          return;
         }
         if (!choices.length && ev?.usage) return; // usage-only chunk: we send our own at the end
         const { usage: _u, id: _i, model: _m, created: _c, object: _o, ...rest } = ev ?? {};
@@ -1209,11 +1253,12 @@ function streamResponse(p: Common & { unavailable: typeof allFailed; run: () => 
         }
       }
       const stopped = replyGate && !cancelled ? await replyGate.finish() : replyGate?.outcome;
-      if (stopped) {
-        // Withheld: nothing past the last checked piece went out, the hold is released and nothing is charged.
+      const empty = plainFirstReply && !sawAnswerText;
+      if (stopped || empty) {
         clearInterval(holdKeepalive);
-        await giveBack(ctx, p.billing, p.holdId);
-        event({ ...replyFloorError(stopped).toJSON(), id: p.holdId });
+        const clean = empty && !stopped && !midError && !servedRefusal && retryableEmptyFinish(finish) && !cancelled && !p.abort.signal.aborted;
+        await giveBack(ctx, p.billing, p.holdId, clean ? "empty" : "failed");
+        if (stopped || !midError) event({ ...(stopped ? replyFloorError(stopped) : emptyFirstReply(clean)).toJSON(), id: p.holdId });
         send("data: [DONE]\n\n");
         closed = true;
         try {
