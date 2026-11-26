@@ -21,15 +21,18 @@ import { randomBytes, randomInt } from "node:crypto";
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import type { Context, Hono } from "hono";
 import type { Ctx } from "../../context.ts";
-import { requireKey, requireRole, type KeyRow } from "../../api/auth.ts";
+import { accountIdFor, requireKey, requireRole, type KeyRow } from "../../api/auth.ts";
 import { readJson } from "../../api/common.ts";
 import { release, reserve, settle } from "../../ledger/ledger.ts";
 import { ApiError, fail } from "../../lib/errors.ts";
 import { picoToUsd, usdToPico, type Pico } from "../../lib/money.ts";
 import { log } from "../../lib/util.ts";
+import { readKeyPolicy } from "../keys/caps.ts";
+import { assertDashboardIp, dashboardOrigin, takeDashboardImageLimit } from "../keys/routes.ts";
 import type { FloorInput } from "../seams.ts";
 import { DEFAULT_MAX_IMAGES, type ImageModel, type MediaModel, type SpeechModel, type VideoModel } from "./catalog.ts";
 import { containerFor, wavDuration, wavSeconds } from "./containers.ts";
+import { firstImageOffer, finishFirstImage, MAX_FIRST_IMAGE_PRICE, startFirstImage } from "./first-image.ts";
 import type { GateReason } from "./gate.ts";
 import { ProvenanceError } from "./provenance.ts";
 import { countryOf } from "./region.ts";
@@ -219,6 +222,35 @@ async function charge(ctx: Ctx, holdId: string, amount: Pico, kind: string, desc
 // ---- Images --------------------------------------------------------------------------------------------------------
 type ImageInput = { model: ImageModel; prompt: string; n: number; width: number; height: number; seed: number; format: "url" | "b64_json"; upload?: Media };
 
+// First-party is a UX boundary. The atomic budget and key reservation are authoritative even for scripted clients.
+function requireDashboard(ctx: Ctx, c: Context) {
+  c.header("cache-control", "no-store");
+  const origin = c.req.header("origin") ?? (c.req.header("sec-fetch-site") === "same-origin" ? new URL(c.req.url).origin : undefined);
+  if (dashboardOrigin(origin, ctx.cfg.siteUrl)) return;
+  fail(403, "Open the image studio to use your first generation.", "dashboard_required");
+}
+
+const rootImageKey = (key: KeyRow) => key.management && key.scope !== "inference" && !key.parentHash && key.accountId === accountIdFor(key.chainKeyHash);
+
+function welcomeModel(s: MediaServices, model: ImageModel, key?: KeyRow) {
+  const price = usdToPico(model.usdPerImage);
+  return !model.edit && !!s.images[model.upstream] && (!s.offered || s.offered.has(model.upstream)) &&
+    (!key?.allowedModels?.length || key.allowedModels.includes(model.id)) && price > 0n && price <= MAX_FIRST_IMAGE_PRICE;
+}
+
+async function imageWelcome(ctx: Ctx, c: Context) {
+  requireDashboard(ctx, c);
+  const key = c.req.header("authorization") ? await caller(ctx, c) : undefined;
+  if (key) {
+    await assertDashboardIp(ctx, c, key);
+    if (!rootImageKey(key) || (await readKeyPolicy(ctx.db, key.keyHash))?.sealedOnly) return c.json({ available: false, eligible_models: [] });
+  }
+  const s = mediaServices(ctx);
+  const offer = await firstImageOffer(ctx.db, key?.accountId);
+  const models = s.catalog.models.filter((m): m is ImageModel => m.kind === "image" && welcomeModel(s, m, key) && usdToPico(m.usdPerImage) <= offer.remaining);
+  return c.json({ available: offer.available && models.length > 0, eligible_models: models.map(m => m.id) });
+}
+
 function readImageFields(s: MediaServices, f: Record<string, unknown>, edit: boolean): Omit<ImageInput, "upload"> {
   const model = modelOr404(s.catalog.get("image", f.model), "image");
   if (model.edit !== edit) fail(400, edit ? "This model does not edit images; use /v1/images/generations." : "This model edits an uploaded image; use /v1/images/edits.", "wrong_endpoint");
@@ -269,7 +301,7 @@ async function readEditRequest(s: MediaServices, c: Context): Promise<ImageInput
   return { ...readImageFields(s, body, true), upload: uploadOf(new Uint8Array(Buffer.from(m[1], "base64"))) };
 }
 
-async function runImages(ctx: Ctx, c: Context, key: KeyRow, s: MediaServices, input: ImageInput, maxInlineBytes?: number): Promise<Response> {
+async function runImages(ctx: Ctx, c: Context, key: KeyRow, s: MediaServices, input: ImageInput, options: { maxInlineBytes?: number; sponsored?: boolean } = {}): Promise<Response> {
   const edit = !!input.upload;
   const id = requestId();
   const receiptInput = { requestId: id, model: input.model, units: input.n, unit: "image" };
@@ -295,20 +327,26 @@ async function runImages(ctx: Ctx, c: Context, key: KeyRow, s: MediaServices, in
     }
   }
   const price = priceOf(input.model.usdPerImage, input.n);
-  const rights = await keyEntitlements(ctx, key.keyHash);
-  await reserve(ctx.db, { id, accountId: key.accountId, keyHash: key.keyHash, amount: price, kind: "media_image", ttlMs: IMAGE_DEADLINE_MS + 60_000,
-    cover: everydayCoverage(key.keyHash, rights, "image", price, input.n) });
+  const billable = options.sponsored ? 0n : price;
+  const cover = options.sponsored ? undefined : everydayCoverage(key.keyHash, await keyEntitlements(ctx, key.keyHash), "image", price, input.n);
+  await reserve(ctx.db, { id, accountId: key.accountId, keyHash: key.keyHash, amount: billable, kind: "media_image", ttlMs: IMAGE_DEADLINE_MS + 60_000, cover });
   const stored: string[] = [];
   try {
     const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(IMAGE_DEADLINE_MS)]);
     const upstream = s.images[input.model.upstream];
     if (!upstream) throw new UpstreamError("no image upstream", 503);
+    signal.throwIfAborted();
+    if (options.sponsored) {
+      await takeDashboardImageLimit(ctx, c);
+      await startFirstImage(ctx.db, key.accountId, id, price);
+    }
     const raw = await upstream.generate({ model: input.model.upstreamModel, prompt: input.prompt, n: input.n, width: input.width, height: input.height, seed: input.seed, safe: true, image: input.upload }, signal);
     if (raw.length !== input.n) throw new UpstreamError("wrong number of images", 502);
     // Every image passes the gate and gets provenance before any of them is delivered: one block stops the batch.
     const outputs: Media[] = [];
     for (const out of raw) outputs.push(await finishOutput(s, out, { requestId: id, model: input.model.id, fromUpload: edit, prompt: input.prompt, visual: true, signal, safety }));
-    if (maxInlineBytes && outputs.some((output) => output.bytes.length > maxInlineBytes))
+    const { maxInlineBytes } = options;
+    if (maxInlineBytes !== undefined && outputs.some((output) => output.bytes.length > maxInlineBytes))
       fail(503, "Turn art is too large for the room.", "studio_image_too_large");
     const data = outputs.map((o) => {
       if (input.format === "b64_json") return { b64_json: Buffer.from(o.bytes).toString("base64") };
@@ -316,10 +354,13 @@ async function runImages(ctx: Ctx, c: Context, key: KeyRow, s: MediaServices, in
       stored.push(put.id);
       return { url: absolute(ctx, signedMediaPath(ctx.cfg.appSecret, put.id, put.expiresAt)), expires_at: Math.floor(put.expiresAt / 1000) };
     });
-    const charged = await charge(ctx, id, price, "media_image", `${edit ? "Image edit" : "Image"}: ${input.model.name}`);
+    const charged = await charge(ctx, id, billable, "media_image", `${edit ? "Image edit" : "Image"}: ${input.model.name}`);
     const r = receipt(ctx, { ...receiptInput, charged, outputs, safety });
-    return c.json({ created: Math.floor(Date.now() / 1000), data, anonymo: { request_id: id, model: input.model.id, cost_usd: usd(charged), provenance: { c2pa: true, watermark: true }, receipt: r } }, 200, { "x-anonymo-receipt": receiptHeader(r), "x-anonymo-request-id": id });
+    const response = c.json({ created: Math.floor(Date.now() / 1000), data, anonymo: { request_id: id, model: input.model.id, cost_usd: usd(charged), provenance: { c2pa: true, watermark: true }, receipt: r } }, 200, { "x-anonymo-receipt": receiptHeader(r), "x-anonymo-request-id": id });
+    if (options.sponsored) await finishFirstImage(ctx.db, key.accountId, id, true);
+    return response;
   } catch (e) {
+    if (options.sponsored) await finishFirstImage(ctx.db, key.accountId, id, false).catch(() => undefined);
     for (const m of stored) s.store.delete(m);
     await release(ctx.db, id).catch(() => undefined);
     if (e instanceof MediaBlocked) log.warn("media output blocked", { kind: "image", reason: e.reason, model: input.model.id });
@@ -337,7 +378,7 @@ export async function partyTurnArt(ctx: Ctx, c: Context, key: KeyRow, prompt: st
   const model = s.catalog.models.find((m) => m.kind === "image" && !m.edit &&
     (!s.offered || s.offered.has(m.upstream)) && (!key.allowedModels?.length || key.allowedModels.includes(m.id)));
   if (!model) fail(503, "Studio is unavailable.", "studio_unavailable");
-  return runImages(ctx, c, key, s, readImageFields(s, { model: model.id, prompt, response_format: "b64_json" }, false), 2_000_000);
+  return runImages(ctx, c, key, s, readImageFields(s, { model: model.id, prompt, response_format: "b64_json" }, false), { maxInlineBytes: 2_000_000 });
 }
 
 // ---- Speech --------------------------------------------------------------------------------------------------------
@@ -670,13 +711,25 @@ export function mediaRoutes(app: Hono, ctx: Ctx) {
     app[method](`/v1${path}`, h);
     app[method](`/api/v1${path}`, h);
   };
-  both("post", "/images/generations", async (c) => {
+  both("get", "/images/welcome", c => imageWelcome(ctx, c));
+  const generate = (sponsored: boolean) => async (c: Context) => {
+    if (sponsored) requireDashboard(ctx, c);
     const key = await caller(ctx, c);
     const s = mediaServices(ctx);
     const body = await readJson(c);
     if (["image", "image_url", "input_image", "mask"].some((f) => body[f] != null)) fail(400, "Uploads go to /v1/images/edits.", "wrong_endpoint");
-    return runImages(ctx, c, key, s, readImageFields(s, body, false));
-  });
+    const input = readImageFields(s, body, false);
+    if (sponsored) {
+      if (!rootImageKey(key)) fail(403, "Only a root key can claim the first generation.", "root_key_required");
+      if (!welcomeModel(s, input.model, key) || input.n !== 1) fail(400, "Select an eligible model and generate one image.", "first_image_options");
+      if (c.req.header("x-anonymo-sealed")?.trim().toLowerCase() === "required") fail(409, "Image generation is not attested.", "sealed_unavailable");
+      const offer = await firstImageOffer(ctx.db, key.accountId);
+      if (!offer.available || offer.remaining < usdToPico(input.model.usdPerImage)) fail(409, "The free generation is unavailable. Nothing was charged.", "first_image_unavailable");
+    }
+    return runImages(ctx, c, key, s, input, { sponsored });
+  };
+  both("post", "/images/generations", generate(false));
+  both("post", "/images/generations/sponsored", generate(true));
   both("post", "/images/edits", async (c) => {
     const key = await caller(ctx, c);
     const s = mediaServices(ctx);

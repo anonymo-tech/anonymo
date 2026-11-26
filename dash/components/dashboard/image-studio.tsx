@@ -1,5 +1,10 @@
 'use client';
 
+import './image-studio.css';
+import { ImageModelDialog, ImageModelMark, imagePrice } from './image-model-dialog';
+import { adultStore } from '@/lib/anonymo/prefs';
+import { loadKey } from '@/lib/anonymo/key-store';
+import { dashboardSignup } from '@/lib/anonymo/dashboard-signup';
 import { setupHref } from '@/lib/anonymo/setup-return';
 
 // Update "images": the image studio. Prompt, model, size and count; images come back as base64 PNGs with provenance
@@ -7,13 +12,14 @@ import { setupHref } from '@/lib/anonymo/setup-return';
 // sexual prompts before anything is made and checks every image before it is returned (gateway src/anonymo/media).
 
 import Link from 'next/link';
+import { CopyButton } from '../copy-button';
 import { Photo } from '../photo';
-import { Download, ImageIcon, Loader2, ShieldCheck, Sparkles, Stamp, Trash2 } from 'lucide-react';
+import { ArrowLeftRight, ArrowUpRight, ChevronDown, Download, ImageIcon, Maximize2, Proportions, WandSparkles, X, Loader2, SlidersHorizontal, Stamp, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
-import { isOutOfCredit } from '@/lib/anonymo/client';
-import { formatUsd, usdToMusd } from '@/lib/anonymo/money';
-import { IMAGE_PROMPT_LIMIT, imageCounts, imageError, imageModels, shapeOf } from '@/lib/anonymo/chat-modes';
+import { describeError, isOutOfCredit } from '@/lib/anonymo/client';
+import { usdToMusd } from '@/lib/anonymo/money';
+import { IMAGE_PROMPT_LIMIT, imageCounts, imageError, imageModels } from '@/lib/anonymo/chat-modes';
 import { takeStudioDraft } from './image-studio-draft';
 import type { MediaImageModel } from '@/lib/anonymo/types';
 import { updateOn } from '@/lib/anonymo/updates';
@@ -30,11 +36,30 @@ type Shot = { id: string; src: string; prompt: string; model: string; size: stri
 type Job = { id: string; n: number; ratio: string; started: number };
 
 const IDEAS = [
-  'A neon-lit ramen stall in the rain at 2 a.m., film photo, shallow depth of field',
-  'An isometric cutaway of a tiny cozy apartment inside a hollowed-out tree',
-  'Vintage travel poster for a city on Saturn’s rings, bold flat colours',
-  'A detective’s desk in 1947: case files, cigarette smoke, a single desk lamp',
+  {
+    title: 'Unredacted',
+    art: 'unredacted',
+    prompt: 'A punk zine portrait with one eye staring through a torn black redaction strip. Raspberry ink, grainy halftone and rough paper edges.',
+  },
+  {
+    title: 'Pirate radio',
+    art: 'pirate-radio',
+    prompt: 'Inside a pirate radio booth at midnight. A silver microphone under a red on-air lamp, amber mixer lights and deep shadows on grainy analog film.',
+  },
+  {
+    title: 'Banned pages',
+    art: 'banned-pages',
+    prompt: 'A banned book breaks open and black ink birds fly through a split redaction bar. Screen print in cobalt and vermilion on warm ivory paper.',
+  },
 ];
+
+// The catalog provides pixel dimensions, including nonstandard model-specific ratios.
+function aspectLabel(size: string) {
+  const [w, h] = size.split('x').map(Number);
+  let a = w, b = h;
+  while (b) [a, b] = [b, a % b];
+  return `${w / a}:${h / a}`;
+}
 
 const ratioOf = (size: string) => {
   const [w, h] = size.split('x').map(Number);
@@ -43,7 +68,21 @@ const ratioOf = (size: string) => {
 const makeJob = (n: number, size: string): Job => ({ id: crypto.randomUUID(), n, ratio: ratioOf(size), started: Date.now() });
 
 export function ImageStudio() {
-  const { ready, key, client, refreshBalance, demo } = useAnonymo();
+  const { ready, key, setKey, client, refreshBalance, demo } = useAnonymo();
+  const adult = useDeviceStore(adultStore);
+  const [picker, showPicker] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [createdKey, setCreatedKey] = useState<string | null>(null);
+  const pickingNow = useRef(false);
+  const making = useRef(false);
+  const initialized = useRef(false);
+  const editor = useRef<HTMLTextAreaElement>(null);
+  const [retry, refresh] = useState(0);
+  const [pickError, setPickError] = useState<string | null>(null);
+  const [offer, setOffer] = useState<{client: typeof client; available: boolean; eligible_models: string[]} | null>(null);
+  const [offerError, setOfferError] = useState(false);
+  const currentOffer = offer?.client === client ? offer : null;
+  const modelSlot = demo ? 'anonymo.image-model.demo.v1' : 'anonymo.image-model.v1';
   const compareOn = updateOn('compare', demo);
   const studioOn = updateOn('studio', demo);
   const characters = useDeviceStore(charactersStore);
@@ -61,6 +100,14 @@ export function ImageStudio() {
   const [prompt, setPrompt] = useState('');
   const [jobs, setJobs] = useState<Job[]>([]);
   const [shots, setShots] = useState<Shot[]>([]);
+  const [preview, setPreview] = useState<Shot | null>(null);
+  const viewer = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (!preview) return;
+    const node = viewer.current;
+    node?.showModal();
+    return () => node?.close();
+  }, [preview]);
   const [error, setError] = useState<{ text: string; funds: boolean } | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const urls = useRef<string[]>([]);
@@ -68,6 +115,7 @@ export function ImageStudio() {
   useEffect(() => {
     if (!ready) return;
     let stale = false;
+    setModelsError(null);
     client.mediaModels().then(
       (list) => {
         if (stale) return;
@@ -79,17 +127,57 @@ export function ImageStudio() {
           setN(draft.settings.n);
         }
         setModels(images);
-        setModelId((id) => {
-          const chosen = draft?.settings.model || id;
-          return images.some((image) => image.id === chosen) ? chosen : (images[0]?.id ?? '');
-        });
+        let saved = '';
+        try { saved = localStorage.getItem(modelSlot) ?? ''; } catch { /* Device storage is optional. */ }
+        const preferred = draft?.settings.model ?? saved;
+        const valid = images.some(entry => entry.id === preferred);
+        if (draft || !initialized.current) {
+          setModelId(valid ? preferred : '');
+          showPicker(!(valid && key));
+          initialized.current = true;
+        }
       },
       () => !stale && setModelsError('Images are not switched on for this gateway yet.'),
     );
     return () => {
       stale = true;
     };
-  }, [ready, client, demo, key]);
+  }, [ready, client, demo, key, retry, modelSlot]);
+  useEffect(() => {
+    if (!ready || !adult) return;
+    const abort = new AbortController();
+    setOffer(null);
+    setOfferError(false);
+    client.imageWelcome(abort.signal).then(info => {
+      if (!abort.signal.aborted) setOffer({client, ...info});
+    }).catch(() => { if (!abort.signal.aborted) setOfferError(true); });
+    return () => abort.abort();
+  }, [ready, adult, client, retry]);
+
+  async function pickModel(id: string) {
+    if (pickingNow.current) return;
+    pickingNow.current = true;
+    setPickError(null);
+    setPicking(true);
+    try {
+      if (!loadKey(demo)) {
+        const fresh = await client.createKey({dashboard_signup: await dashboardSignup(demo)});
+        if (!loadKey(demo)) {
+          setKey(fresh.key, false);
+          setCreatedKey(fresh.key);
+        }
+      }
+      setModelId(id);
+      try { localStorage.setItem(modelSlot, id); } catch { /* Kept for this visit. */ }
+      showPicker(false);
+      requestAnimationFrame(() => editor.current?.focus({preventScroll: true}));
+    } catch (e) {
+      setPickError(describeError(e));
+    } finally {
+      pickingNow.current = false;
+      setPicking(false);
+    }
+  }
   useEffect(() => () => urls.current.forEach((u) => URL.revokeObjectURL(u)), []);
   useEffect(() => {
     if (!jobs.length) return;
@@ -106,13 +194,17 @@ export function ImageStudio() {
   const text = studioOn ? studioPrompt(prompt, preset, character?.card.data) : prompt.trim();
   const tooLong = studioOn && text.length > IMAGE_PROMPT_LIMIT;
 
+  const sponsored = !!model && n === 1 && !!currentOffer?.available && currentOffer.eligible_models.includes(model.id);
   async function generate() {
-    if (!text || tooLong || !model || !key) return;
+    if (!text || tooLong || making.current) return;
+    if (!model || !key) { showPicker(true); return; }
+    if (!currentOffer) return;
+    making.current = true;
     setError(null);
     const job = makeJob(n, size);
     setJobs((j) => [job, ...j]);
     try {
-      const res = await client.generateImages({ model: model.id, prompt: text, n, size });
+      const res = await (sponsored ? client.sponsoredImage : client.generateImages)({ model: model.id, prompt: text, n, size });
       const made: Shot[] = res.data.flatMap((d, i) => {
         if (!d.b64_json) return [];
         const bytes = Uint8Array.from(atob(d.b64_json), (c) => c.charCodeAt(0));
@@ -120,32 +212,30 @@ export function ImageStudio() {
         urls.current.push(src);
         return [{ id: `${res.anonymo.request_id}-${i}`, src, prompt: prompt.trim(), model: model.name, size, costUsd: res.anonymo.cost_usd, requestId: res.anonymo.request_id, at: Date.now(), preset: preset || undefined, characterId: character?.id }];
       });
+      if (!made.length) throw new Error('No image came back. Please try again.');
       setShots((s) => [...made, ...s]);
     } catch (e) {
       setError({ text: imageError(e), funds: isOutOfCredit(e) });
     } finally {
       setJobs((j) => j.filter((x) => x.id !== job.id));
+      making.current = false;
+      if (sponsored) { setOffer(null); refresh(i => i + 1); }
       refreshBalance();
     }
   }
 
-  if (ready && !key)
-    return (
-      <div className="notice row">
-        <span style={{ flex: 1 }}>Connect an API key to generate your first image.</span>
-        <Link className="btn btn-primary btn-small" href={setupHref('key', '/dashboard/images')}>
-          Create a key
-        </Link>
-      </div>
-    );
-
-  return (<>
-    {compareOn && (
+  const freeModels = currentOffer ? (currentOffer.available ? currentOffer.eligible_models : []) : null;
+  return (<div className="image-workspace">
+    <header className="image-heading"><div><h1>Image studio</h1>
+      {compareOn && key && <button type="button" className="image-compare-link" ref={studioModeButton}
+        onClick={() => setCompareMode(!comparing)}><ArrowLeftRight size={14} />{comparing ? 'Back to studio' : 'Compare models'}</button>}
+    </div><p>From uncensored chat to image generation, you choose the model.</p></header>
+    {picker && ready && adult && <ImageModelDialog models={models ?? []} selected={modelId} free={freeModels}
+      loading={!models && !modelsError} error={pickError ?? modelsError} busy={picking}
+      onRetry={() => { setPickError(null); refresh(i => i + 1); }} onPick={id => void pickModel(id)} onClose={() => showPicker(false)} />}
+    {modelsError && !picker && <p role="alert">{modelsError} <button onClick={() => refresh(i => i + 1)}>Retry</button></p>}
+    {compareOn && key && (
       <>
-        <fieldset className="compare-mode" aria-label="Image studio mode" style={{ border: 0, margin: 0, padding: 0 }}>
-          <button ref={studioModeButton} type="button" className="size-chip" aria-pressed={!comparing} onClick={() => setCompareMode(false)}>Studio</button>
-          <button type="button" className="size-chip" aria-pressed={comparing} onClick={() => setCompareMode(true)}>Compare</button>
-        </fieldset>
         <div hidden={!comparing}>
           <ImageCompare
             models={models} modelsError={modelsError} prompt={prompt} setPrompt={setPrompt}
@@ -168,6 +258,38 @@ export function ImageStudio() {
           void generate();
         }}
       >
+        <label className="field image-prompt-field">
+          <span className="image-field-label">Describe your image</span>
+          <textarea
+            className="textarea studio-prompt"
+            ref={editor} rows={3}
+            maxLength={IMAGE_PROMPT_LIMIT}
+            value={prompt}
+            placeholder="What do you want to make?"
+            onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                void generate();
+              }
+            }}
+          />
+        </label>
+        {tooLong && <p className="muted">Shorten your description to leave room for the preset and character details.</p>}
+        <div className="image-controls">
+          <button type="button" className="image-model-trigger" onClick={() => showPicker(true)}>
+            {model ? <ImageModelMark id={model.id} /> : <ImageIcon size={15} />}
+            <span>{model?.name ?? 'Choose a model'}</span><ChevronDown size={14} />
+          </button>
+          {model && <label className="aspect-select"><Proportions size={15} aria-hidden="true" />
+            <select aria-label="Aspect ratio" value={size} onChange={e => setSize(e.target.value)}>
+              {model.sizes.map(s => <option key={s} value={s}>{aspectLabel(s)}</option>)}
+            </select></label>}
+        </div>
+        {offerError && <p role="alert">Couldn’t check the image offer. <button type="button" onClick={() => refresh(i => i + 1)}>Retry</button></p>}
+        <details className="studio-options field-help">
+          <summary><SlidersHorizontal size={14} /> Image options <span>{n === 1 ? '' : n + ' images'}</span><ChevronDown size={14} /></summary>
+          <div className="studio-options-fields">
         {studioOn && (
           <>
             <fieldset className="field">
@@ -186,71 +308,6 @@ export function ImageStudio() {
             <StudioCharacter characters={characters} selected={character?.id ?? ''} onChange={setCharacterId} />
           </>
         )}
-        <label className="field">
-          <span>Describe the image</span>
-          <textarea
-            className="textarea studio-prompt"
-            rows={5}
-            maxLength={IMAGE_PROMPT_LIMIT}
-            value={prompt}
-            placeholder="A lighthouse on black rocks at dusk, oil painting"
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                void generate();
-              }
-            }}
-          />
-        </label>
-        {tooLong && <p className="muted">Shorten your description to leave room for the preset and character details.</p>}
-        {!prompt && !preset && (
-          <div className="studio-ideas">
-            {IDEAS.map((idea) => (
-              <button key={idea} type="button" className="chip" onClick={() => setPrompt(idea)}>
-                <Sparkles size={12} aria-hidden="true" /> {idea.split(',')[0]}
-              </button>
-            ))}
-          </div>
-        )}
-
-        <fieldset className="field">
-          <legend>Model</legend>
-          {modelsError ? (
-            <p className="muted">{modelsError}</p>
-          ) : !models ? (
-            <p className="muted">Loading models…</p>
-          ) : (
-            <div className="studio-models">
-              {models.map((m) => (
-                <label key={m.id} className={m.id === modelId ? 'studio-model is-on' : 'studio-model'}>
-                  <input type="radio" name="model" value={m.id} checked={m.id === modelId} onChange={() => setModelId(m.id)} />
-                  <strong>{m.name}</strong>
-                  <small>{formatUsd(usdToMusd(m.pricing.usd_per_image))} an image</small>
-                </label>
-              ))}
-            </div>
-          )}
-        </fieldset>
-
-        <details className="studio-options field-help">
-          <summary>Image options <span>{model ? shapeOf(size) + ' · ' : ''}{n === 1 ? '1 image' : n + ' images'}</span></summary>
-          <div className="studio-options-fields">
-        {model && (
-          <fieldset className="field">
-            <legend>Shape</legend>
-            <div className="studio-sizes">
-              {model.sizes.map((s) => (
-                <button key={s} type="button" className={s === size ? 'size-chip is-on' : 'size-chip'} aria-pressed={s === size} onClick={() => setSize(s)}>
-                  <span className="size-box" style={{ aspectRatio: ratioOf(s) }} aria-hidden="true" />
-                  <span>
-                    {shapeOf(s)} <small>{s.replace('x', '×')}</small>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </fieldset>
-        )}
 
         {!stickerPack && <fieldset className="field">
           <legend>How many</legend>
@@ -266,13 +323,13 @@ export function ImageStudio() {
           </div>
         </details>
 
-        <button type="submit" className="btn btn-primary studio-go" disabled={!model || !text || tooLong || !key}>
-          <ImageIcon size={18} aria-hidden="true" /> Make {stickerPack ? 'sticker pack' : n === 1 ? 'image' : `${n} images`}
-          {model && <span className="studio-cost">{formatUsd(cost)}</span>}
+        <button type="submit" className="btn btn-primary studio-go"
+          disabled={!text || tooLong || picking || jobs.length > 0 || (!!key && !!model && !currentOffer)}>
+          <WandSparkles size={16} aria-hidden="true" />
+          {jobs.length ? 'Generating…' : sponsored ? (stickerPack ? 'Generate free sticker pack' : 'Generate free image')
+            : stickerPack ? 'Make sticker pack' : n > 1 ? `Make ${n} images` : 'Generate image'}
+          {model && currentOffer && !sponsored && <span className="studio-cost">{imagePrice(cost)}</span>}
         </button>
-        <p className="studio-note">
-          <ShieldCheck size={14} aria-hidden="true" /> Safe for work only. Every image is checked. Refused or failed images cost nothing.
-        </p>
       </form>
 
       <section className="studio-board" aria-live="polite" aria-label="Your images">
@@ -286,13 +343,14 @@ export function ImageStudio() {
             )}
           </div>
         )}
-        {!jobs.length && !shots.length && !error && (
-          <div className="studio-empty">
-            <ImageIcon size={34} strokeWidth={1.25} aria-hidden="true" />
-            <strong>Your images appear here.</strong>
-            <p className="muted">They stay in this tab only. Download the ones you want to keep: each PNG carries a hidden watermark and a signed label saying it was made with AI.</p>
-          </div>
-        )}
+        {!jobs.length && !shots.length && <section className="image-ideas" aria-label="Prompt ideas">
+          <h2>Prompt ideas</h2><div>{IDEAS.map(idea => <button key={idea.art} type="button"
+            onClick={() => { setPrompt(idea.prompt); editor.current?.focus(); }}>
+            <img className="idea-art" src={`/image-studio/${idea.art}.webp`} alt="" />
+            <span>{idea.title} <ArrowUpRight size={15} /></span>
+          </button>)}</div>
+        </section>}
+        {(jobs.length > 0 || shots.length > 0) && <h2 className="image-results-title">Your images</h2>}
         <div className="studio-grid">
           {jobs.flatMap((job) =>
             Array.from({ length: job.n }, (_, i) => (
@@ -307,7 +365,10 @@ export function ImageStudio() {
           )}
           {shots.map((s) => (
             <figure key={s.id} className="shot">
-              <Photo src={s.src} alt={s.prompt || (s.preset ? IMAGE_PRESETS[s.preset].label : 'Generated image')} style={{ aspectRatio: ratioOf(s.size) }} />
+              <button type="button" className="shot-open" aria-label="View full image" onClick={() => setPreview(s)}>
+                <Photo src={s.src} alt={s.prompt || (s.preset ? IMAGE_PRESETS[s.preset].label : 'Generated image')} style={{ aspectRatio: ratioOf(s.size) }} />
+                <span aria-hidden="true"><Maximize2 size={16} /></span>
+              </button>
               <figcaption>
                 <p title={s.prompt}>{s.prompt || (s.preset && IMAGE_PRESETS[s.preset].label)}</p>
                 <div className="shot-meta">
@@ -315,12 +376,13 @@ export function ImageStudio() {
                     <Stamp size={12} aria-hidden="true" /> C2PA + watermark
                   </span>
                   <span className="chip">{s.model}</span>
-                  <span className="chip">{formatUsd(usdToMusd(s.costUsd))}</span>
+                  <span className="chip">{imagePrice(usdToMusd(s.costUsd))}</span>
                 </div>
                 <div className="shot-actions">
                   <a className="btn btn-small" href={s.src} download={`anonymo-${s.requestId}.png`}>
                     <Download size={15} aria-hidden="true" /> Download PNG
                   </a>
+                  {key && key === createdKey && s === shots[0] && <CopyButton text={key} label="Copy your key" className="btn btn-small" />}
                   {updateOn('vault', demo) && <SaveLibraryImage demo={demo} src={s.src} title={s.model} />}
                   <button type="button" className="btn btn-ghost btn-small" onClick={() => {
                     setPrompt(s.prompt);
@@ -348,6 +410,14 @@ export function ImageStudio() {
         </div>
       </section>
     </div>
-  </>
+    {preview && <dialog ref={viewer} className="image-viewer" aria-label="Full image" onCancel={() => setPreview(null)}>
+      <header><strong>{preview.model}</strong><button type="button" autoFocus aria-label="Close full image" onClick={() => setPreview(null)}><X size={19} /></button></header>
+      <Photo src={preview.src} alt={preview.prompt || 'Generated image'} />
+      <footer><span>{preview.size.replace('x', ' × ')}</span>
+        <a className="btn btn-small" href={preview.src} download={`anonymo-${preview.requestId}.png`}><Download size={14} /> Download PNG</a>
+      </footer>
+    </dialog>}
+    <p className="image-policy">Image generation is safe for work. Download images to keep them.</p>
+  </div>
   );
 }

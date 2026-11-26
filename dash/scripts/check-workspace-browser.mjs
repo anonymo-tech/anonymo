@@ -197,6 +197,8 @@ test('a visitor can connect a key, fund it, chat and inspect the receipt from mo
       'page',
     );
     await nav.getByRole('link', { name: 'Image studio' }).click();
+    const picker = page.getByRole('dialog', { name: 'Choose your image model' });
+    await picker.getByRole('listitem').first().getByRole('button').click();
     const options = page.locator('details.studio-options');
     await options.locator('summary').click();
     await options.getByRole('button', { name: '2', exact: true }).click();
@@ -307,4 +309,42 @@ test('phone onboarding offers a preset template, validates receipt IDs and carri
   } finally {
     await browser.close();
   }
+});
+
+
+test('Images lets a new visitor choose a model and make one free image before funding', async t => {
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH, channel: process.env.BROWSER_CHANNEL });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  await page.route('**/*', route => new URL(route.request().url()).origin === origin.origin ? route.continue() : route.abort());
+  await page.addInitScript(() => localStorage.setItem('anonymo.adult.v1', 'true'));
+  await page.goto(new URL('/dashboard/images?demo=1', origin).href);
+  const picker = page.getByRole('dialog', { name: 'Choose your image model' });
+  const choice = picker.getByRole('button', { name: /Ideogram/ });
+  assert.equal(await choice.locator('img').getAttribute('src'), '/model-logos/ideogram.svg');
+  await choice.click();
+  const editor = page.getByRole('textbox', { name: 'Describe your image', exact:true });
+  for (const [name, prompt] of [['Pirate radio', /pirate radio booth/], ['Banned pages', /banned book/], ['Unredacted', /redaction strip/]]) {
+    const idea = page.getByRole('button', { name, exact: true });
+    await idea.locator('img').evaluate(image => image.decode());
+    await idea.click();
+    assert.match(await editor.inputValue(), prompt);
+  }
+  const free = page.getByRole('button', { name: 'Generate free image' });
+  await page.getByRole('combobox', { name: 'Aspect ratio' }).selectOption('1280x720');
+  await free.click();
+  await page.getByRole('link', { name: 'Download PNG' }).waitFor();
+  assert.ok(await page.evaluate(() => sessionStorage.getItem('anonymo.demo.key') && !localStorage.getItem('anonymo.demo.key')));
+  await page.getByRole('button', { name: 'Copy your key' }).waitFor();
+  await page.getByRole('button', { name: 'View full image' }).click();
+  const viewer = page.getByRole('dialog', { name: 'Full image' });
+  await viewer.getByText('1280 × 720').waitFor();
+  await viewer.getByRole('link', { name: 'Download PNG' }).waitFor();
+  await page.keyboard.press('Escape');
+  await viewer.waitFor({state:'hidden'});
+  await page.reload();
+  await editor.fill('A treehouse in a forest');
+  await page.getByRole('button', { name: /Generate image.*\$0\.076/ }).click();
+  await page.getByRole('link', { name: 'Add funds' }).waitFor();
+  assert.equal(await picker.count(), 0);
 });

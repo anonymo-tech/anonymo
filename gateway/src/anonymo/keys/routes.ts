@@ -11,10 +11,10 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { Ctx } from "../../context.ts";
 import { ANONYMO_KEY_PREFIX } from "../../chain/keys.ts";
-import { accountIdFor, registerRootKey, requireKey } from "../../api/auth.ts";
+import { accountIdFor, registerRootKey, requireKey, type KeyRow } from "../../api/auth.ts";
 import { addressBucket, clientIp, readJson } from "../../api/common.ts";
 import { fail } from "../../lib/errors.ts";
-import { sha256 } from "../../lib/util.ts";
+import { hmac, sha256 } from "../../lib/util.ts";
 import { firstChatAvailable, issueFirstChat } from "./first-chat.ts";
 import type { MoneyDeps } from "../deposits/services.ts";
 import { depositInstructions } from "../deposits/instructions.ts";
@@ -46,7 +46,7 @@ const noStore = (c: Context) => c.header("cache-control", "no-store");
 
 // Origin selects the first-party browser flow. The signup throttle and the shared dispatch quota
 // also apply to scripted clients, which can supply an Origin header themselves.
-function dashboardOrigin(origin: string | undefined, siteUrl: string) {
+export function dashboardOrigin(origin: string | undefined, siteUrl: string) {
   if (!origin) return false;
   const site = new URL(siteUrl);
   if (origin === site.origin || origin === "https://anonymo.tech" || origin === "https://www.anonymo.tech") return true;
@@ -56,6 +56,20 @@ function dashboardOrigin(origin: string | undefined, siteUrl: string) {
     const candidate = new URL(origin);
     return candidate.origin === origin && /^https?:$/.test(candidate.protocol) && local.has(candidate.hostname);
   } catch { return false; }
+}
+
+export async function assertDashboardIp(ctx: Ctx, c: Context, key: Pick<KeyRow, "keyHash">) {
+  const policy = await readKeyPolicy(ctx.db, key.keyHash);
+  assertIpAllowed(policy?.ipAllow ?? null, clientIp(c, ctx.cfg.trustProxy));
+}
+
+export async function takeDashboardImageLimit(ctx: Ctx, c: Context) {
+  const from = addressBucket(c, ctx.cfg);
+  const windowMs = 3_600_000;
+  const hour = Math.floor(Date.now() / windowMs);
+  const digest = hmac(ctx.cfg.appSecret, `anonymo:first-image:${hour}:${from.id}`);
+  const result = await ctx.limiter.take(`first-image:${digest}`, 1, from.scale(ctx.cfg.limits.newKeysPerHour), windowMs);
+  if (!result.ok) fail(429, "Too many first images requested. Try again later.", "rate_limited");
 }
 
 export function keysRoutes(app: Hono, ctx: Ctx, deps: MoneyDeps) {
@@ -82,7 +96,7 @@ export function keysRoutes(app: Hono, ctx: Ctx, deps: MoneyDeps) {
     const key = await requireKey(ctx, c.req.header("authorization"));
     if (!key.management || key.accountId !== accountIdFor(key.chainKeyHash))
       fail(403, "Only a root key can claim this message.", "root_key_required");
-    assertIpAllowed((await readKeyPolicy(ctx.db, key.keyHash))?.ipAllow ?? null, clientIp(c, ctx.cfg.trustProxy));
+    await assertDashboardIp(ctx, c, key);
     const { dashboard_signup } = z.object({ dashboard_signup: z.uuidv4() }).strict().parse(await readJson(c));
     await issueFirstChat(ctx.db, key.accountId, dashboard_signup);
     return c.json({ first_chat_available: await firstChatAvailable(ctx.db, key.accountId) });

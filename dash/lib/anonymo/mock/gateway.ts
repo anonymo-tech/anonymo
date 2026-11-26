@@ -65,6 +65,7 @@ const DEMO_EVM_CHAINS = [
 type Row = DepositRow & { musd: number };
 type KeyState = {
   keyHash: string;
+  firstImageUsed?: boolean;
   firstChatAvailable?: boolean;
   firstChatCampaign?: number;
   caps: KeyCaps;
@@ -804,7 +805,7 @@ export function createMockGateway(options: MockOptions = {}) {
   }
 
   // Images: priced like the gateway, refused like the gateway's nudity check, painted in the browser (demoImage).
-  async function images(request: Request, k: KeyState) {
+  async function images(request: Request, k: KeyState, sponsored = false) {
     const body = (await request.json().catch(() => null)) as { model?: string; prompt?: string; n?: number; size?: string } | null;
     const model = DEMO_IMAGE_MODELS.find((m) => m.id === body?.model);
     if (!model) return fail(404, 'model_not_found', 'Unknown image model. GET /v1/media/models lists them.');
@@ -817,7 +818,9 @@ export function createMockGateway(options: MockOptions = {}) {
     if (!Number.isInteger(n) || n < 1 || n > maxImages) return fail(400, 'invalid_request', `n must be 1–${maxImages}.`);
     const size = body?.size ?? model.sizes[0];
     if (!model.sizes.includes(size)) return fail(400, 'invalid_request', `size must be one of ${model.sizes.join(', ')}.`);
-    const cost = usdToMusd(model.pricing.usd_per_image) * n;
+    if (sponsored && n !== 1) return fail(400, 'first_image_options', 'Choose one image for your free generation.');
+    if (sponsored && k.firstImageUsed) return fail(409, 'first_image_unavailable', 'This key has used its free image.');
+    const cost = sponsored ? 0 : usdToMusd(model.pricing.usd_per_image) * n;
     if (k.balance - k.held < cost) return fail(402, 'insufficient_balance', 'Not enough credit for this request.');
     const capped = capRefusal(k);
     if (capped) return capped;
@@ -830,6 +833,8 @@ export function createMockGateway(options: MockOptions = {}) {
     if (k.balance - k.held < cost) return fail(402, 'insufficient_balance', 'Not enough credit for this request.');
     const cappedAtSettlement = capRefusal(k);
     if (cappedAtSettlement) return cappedAtSettlement;
+    if (sponsored && k.firstImageUsed) return fail(409, 'first_image_unavailable', 'This key has used its free image.');
+    if (sponsored) k.firstImageUsed = true;
     const requestId = `img-${Math.floor(Date.now() / 1000)}-${randomHex(7)}`;
     const costUsd = musdToUsdString(cost);
     const receipt = {
@@ -963,6 +968,8 @@ export function createMockGateway(options: MockOptions = {}) {
     if (method === 'POST' && path === API_PATHS.chat && request.headers.has(FREE_TOKEN_HEADER) && !request.headers.has('authorization'))
       return freeChat(request, false);
 
+    if (method === 'GET' && path === API_PATHS.imageWelcome && !request.headers.has('authorization'))
+      return json({ available: true, eligible_models: DEMO_IMAGE_MODELS.map(model => model.id) });
     const k = await keyState(request);
     if (k instanceof Response) return k;
     if (method === 'GET' && path === '/api/v1/generation') {
@@ -1019,6 +1026,9 @@ export function createMockGateway(options: MockOptions = {}) {
       if (!question || question.length > 4000 || (topic !== null && !Object.hasOwn(ASK_TOPICS, topic))) return fail(400, 'invalid_request', 'Send an Ask Mo question and an optional topic.');
       return chat(request, k, { question, topic }, path === API_PATHS.secondOpinion);
     }
+    if (method === 'GET' && path === API_PATHS.imageWelcome)
+      return json({ available: !k.firstImageUsed, eligible_models: DEMO_IMAGE_MODELS.map(model => model.id) });
+    if (method === 'POST' && path === API_PATHS.sponsoredImage) return images(request, k, true);
     if (method === 'POST' && path === API_PATHS.images) return images(request, k);
     // One stock speech model in the demo, as in production: Night Call's mock serves it for both voice updates.
     if (method === 'POST' && path === API_PATHS.speech) return speech.speak(request, k);

@@ -156,16 +156,18 @@ export const operationTables: Record<string, TableDoc> = {
 
   kv: {
     category: "operations",
-    purpose: "The router's small key-value store: job status, cursors, cached facts about providers, pending sign-in challenges and first-chat sponsorship. No request or answer text is written here.",
+    purpose: "The router's small key-value store: job status, cursors, cached facts about providers, pending sign-in challenges and sponsorship of first chats and images. No request or answer text is written here.",
     request: "no",
     retention:
-      "Per key family: a wallet sign-in challenge is deleted when used and any older than 10 minutes is deleted when the next challenge is made; first-chat signup markers, per-account eligibility records and daily aggregate counters have no automatic deletion. Other families are overwritten in place.",
+      "Per key family: a wallet sign-in challenge is deleted when used and any older than 10 minutes is deleted when the next challenge is made; first-chat signup markers, per-account eligibility records and daily aggregate counters have no automatic deletion. Successful first-image claims and their daily spend totals also have no automatic deletion. Other families are overwritten in place.",
     notes: [
       ...rushKvNotes, // ON3
       ...Object.values(everydayStoreNotes),
       "memory-sync:verifier:<vault ID> holds the SHA-256 verifier of the device-derived sync credential for an enabled Vault Memory vault. It has no funding key, memory secret or account association.",
       "first-chat:signup:<digest> marks a dashboard signup UUID as enrolled. first-chat:account:<account ID> records eligibility, the number of pre-dispatch attempts or a terminal outcome. A reserved or dispatched attempt carries a random claim ID. A reservation may be reclaimed after two minutes; a dispatched attempt stays spent if its worker stops.",
       "first-chat:daily:<UTC date> counts sponsored dispatches across all workers. These counters contain no account IDs, wallet addresses or conversation content.",
+      "first-image:v1:account:<account ID> holds a random request ID while a generation is in progress. Success replaces it with a used marker. Failure deletes the matching reservation. An abandoned reservation can be replaced after 10 minutes.",
+      "first-image:v1:daily:<UTC date> totals the reserved price of sponsored image dispatches in pico-USD across all accounts, including unsuccessful dispatches. The counter contains no account identifier or image data.",
       "wallet-login:<nonce>: a sign-in challenge (wallet address, the router's own origin, chain id, expiry and the message to sign). Deleted when used; older ones are pruned.",
       "job-health:<job>, alerts:state, alerts:lease, backup:last: when each background job last ran, a fixed failure marker (operator job snapshots and queue failures redact configured private chain RPC URLs), alert state, an alert lease and the time and checksum of the last database backup.",
       "tls-pin:<provider>, aci-gateway:<provider>, aci-gpu:<model>, attest-policy:<provider>, attest-allow:<provider>, static-models-pending:<provider>, apply-token:<application id>: facts about providers (pinned certificate keys, verified gateway keysets, operator allow-lists, a pending model list, and the SHA-256 of an application token).",

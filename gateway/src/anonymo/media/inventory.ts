@@ -44,7 +44,7 @@ export const mediaBodyReader: ExternalDoc["bodyReaders"][number] = {
   carries: "prompt-or-answer",
   reads: "An image, speech or video request: model, prompt or input text, size, count, seed and voice; for image edits one uploaded image (multipart or a data URL); for provenance checks a media file.",
   then: "Runs the floor gate on the text, region rules, a ledger hold, the upstream, the media gate on every visual output and provenance (watermark and signed C2PA manifest). The upload and the output are held in memory only; the output stays in memory for the signed-URL window (default one hour) and is then dropped.",
-  kept: "Only video job metadata in media_jobs and the usual ledger hold and settlement. No prompt, input text, upload or output is written to the database, Redis or logs. Rate limits use the existing per-key family; no caller-address reader.",
+  kept: "Video job metadata in media_jobs and the usual ledger hold and settlement. Sponsored images also store account-level availability, a transient random reservation ID and an aggregate UTC-day budget counter in KV. The hourly free-generation rate limit uses a keyed digest. No prompt, input text, address, upload or output is stored.",
   evidence: [ev("src/anonymo/media/routes.ts", "const body = await readJson("), ev("src/anonymo/media/routes.ts", "raw.formData();"), ev("src/anonymo/media/routes.ts", "req.arrayBuffer())")],
 };
 

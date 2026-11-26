@@ -8,6 +8,8 @@ Drizzle. Spec: Overview §2 (media table) and §6, Backend §2 (media-gate, prov
 | Endpoint | Notes |
 |---|---|
 | `POST /v1/images/generations` | `model`, `prompt`, `n` from 1 to the model's `max_images`, `size`, `response_format` `url` \| `b64_json`, `seed` |
+| `GET /v1/images/welcome` | Dashboard origin. Returns `available` and the current `eligible_models`. Supply a key to check its remaining generation. |
+| `POST /v1/images/generations/sponsored` | Dashboard origin and root key. One image, with the normal generation fields, output checks, provenance and a signed zero-cost receipt. Conflicts return 409. |
 | `POST /v1/images/edits` | multipart `image` (or JSON `image` as a data URL), same fields. No masks. Image URLs are never fetched |
 | `POST /v1/audio/speech` | `model`, `input`, `voice` (stock only), `speed`. Returns WAV with provenance |
 | `POST /v1/audio/transcriptions` | Multipart `file`, `model`, optional `language`. Returns `{ "text": "…" }` |

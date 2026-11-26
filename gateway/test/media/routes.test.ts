@@ -5,11 +5,12 @@
 // or charged on a block; every returned output carries verifiable provenance; and no prompt text reaches the database.
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { holds, keys } from "../../src/db/schema.ts";
+import { holds, keys, kv } from "../../src/db/schema.ts";
 import { balanceOf, verifyInvariants } from "../../src/ledger/ledger.ts";
 import { usdToPico } from "../../src/lib/money.ts";
 import type { FloorGate, FloorInput } from "../../src/anonymo/seams.ts";
 import { provenanceKeyFromSeed } from "../../src/anonymo/media/c2pa.ts";
+import { FIRST_IMAGE_DAILY_BUDGET, firstImageOffer, finishFirstImage, startFirstImage } from "../../src/anonymo/media/first-image.ts";
 import { MediaCatalog } from "../../src/anonymo/media/catalog.ts";
 import { createMediaGate, type FrameScore, type MediaClassifier } from "../../src/anonymo/media/gate.ts";
 import { decodePng } from "../../src/anonymo/media/png.ts";
@@ -645,5 +646,121 @@ describe("media store, provenance endpoints and privacy", () => {
     }
     expect((await verifyInvariants(h.ctx.db)).ok).toBe(true);
     expect(mediaServices(h.ctx)).toBe(s);
+  });
+});
+
+describe("studio's independent first image", () => {
+  const origin = { origin: "https://anonymo.tech", ...US };
+  const params = { model: "flux.1-schnell", prompt: "A quiet green garden", response_format: "b64_json" };
+  const path = "/v1/images/generations/sponsored";
+  const status = async (headers: Record<string, string>) => {
+    const response = await h.request("/v1/images/welcome", { headers });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    return response.json() as Promise<{ available: boolean; eligible_models: string[] }>;
+  };
+
+  test("a zero-balance root gets one signed, gated image even across concurrent sends; chat and paid billing stay independent", async () => {
+    const key = await h.newKey();
+    const headers = { ...origin, ...key.auth };
+    expect((await status(origin)).eligible_models).toContain(params.model);
+    expect((await status(headers)).available).toBe(true);
+    const claim = await post("/keys/first-chat/claim", { dashboard_signup: crypto.randomUUID() }, headers);
+    expect((await claim.json()).first_chat_available).toBe(true);
+    const before = calls.image.length;
+    const pair = await Promise.all([post(path, params, headers), post(path, params, headers)]);
+    expect(pair.map(r => r.status).sort()).toEqual([200,409]);
+    expect(calls.image.length - before).toBe(1);
+    const body = await pair.find(r => r.ok)!.json();
+    expect(body.data).toHaveLength(1);
+    expect((await verified(Buffer.from(body.data[0].b64_json, "base64"))).ok).toBe(true);
+    expect(body.anonymo.cost_usd).toBe(0);
+    expect(Number(body.anonymo.receipt.payload.cost_usd)).toBe(0);
+    expect(body.anonymo.receipt.sig).toBeTruthy();
+    expect((await status(headers)).available).toBe(false);
+    expect((await errorOf(await post(path, params, headers))).type).toBe("first_image_unavailable");
+    expect((await post("/v1/images/generations", params, headers)).status).toBe(402);
+    expect((await (await h.request("/keys/me", { headers })).json()).first_chat_available).toBe(true);
+  });
+
+  test("unauthorized, sealed, batched, disallowed and edit requests cannot dispatch; funded keys also get a free first image", async () => {
+    const k = await h.fundedKey();
+    const headers = { ...k.auth, ...origin };
+    const [key] = await h.ctx.db.select().from(keys).where(eq(keys.keyHash,k.hash));
+    const initial = (await balanceOf(h.ctx.db,key.accountId)).balance;
+    const before = calls.image.length;
+    expect((await post(path,params,k.auth)).status).toBe(403);
+    expect((await post(path,params,origin)).status).toBe(401);
+    expect((await post(path,params,{...headers,"x-anonymo-sealed":"required"})).status).toBe(409);
+    expect((await post(path,{...params,n:2},headers)).status).toBe(400);
+    expect((await post(path,{...params,image_url:"https://example.invalid/image.png"},headers)).status).toBe(400);
+    await h.ctx.db.update(keys).set({allowedModels:["z-image-turbo"]}).where(eq(keys.keyHash,k.hash));
+    expect((await status(headers)).eligible_models).toEqual(["z-image-turbo"]);
+    expect((await post(path,params,headers)).status).toBe(400);
+    expect(calls.image.length).toBe(before);
+    expect((await post(path,{...params,model:"z-image-turbo"},headers)).status).toBe(200);
+    expect((await balanceOf(h.ctx.db,key.accountId)).balance).toBe(initial);
+    expect((await post(path,{...params,model:"z-image-turbo"},headers)).status).toBe(409);
+    expect((await balanceOf(h.ctx.db,key.accountId)).balance).toBe(initial);
+    await h.ctx.db.update(keys).set({management:false}).where(eq(keys.keyHash,k.hash));
+    expect(await status(headers)).toEqual({available:false,eligible_models:[]});
+    expect((await post(path,{...params,model:"z-image-turbo"},headers)).status).toBe(403);
+  });
+
+  test("floor and output gate blocks consume no grant; successful retry spends it once", async () => {
+    const k = await h.newKey();
+    const headers = { ...k.auth, ...origin };
+    h.ctx.anonymo.floor = { check: async () => ({ ok:false, category:"csam" }) };
+    const callsBefore = calls.image.length;
+    expect((await post(path,params,headers)).status).toBe(451);
+    expect(calls.image.length).toBe(callsBefore);
+    expect((await status(headers)).available).toBe(true);
+    h.ctx.anonymo.floor = allow;
+    expect((await post(path,{...params,prompt:"A red leaf"},headers)).status).toBe(451);
+    expect((await status(headers)).available).toBe(true);
+    expect((await post(path,params,headers)).status).toBe(200);
+    expect((await status(headers)).available).toBe(false);
+  });
+
+  test("a crashed request expires; its stale completion cannot replace or erase the new reservation", async () => {
+    const account = "image-sample-expired";
+    const price = usdToPico("0.01");
+    await startFirstImage(h.ctx.db, account, "old-request", price);
+    expect((await firstImageOffer(h.ctx.db, account)).available).toBe(false);
+    await h.ctx.db.update(kv).set({ updatedAt: sql`now() - interval '11 minutes'` })
+      .where(eq(kv.key, `first-image:v1:account:${account}`));
+    expect((await firstImageOffer(h.ctx.db, account)).available).toBe(true);
+    await startFirstImage(h.ctx.db, account, "new-request", price);
+    await expect(finishFirstImage(h.ctx.db, account, "old-request", true)).rejects.toThrow();
+    await finishFirstImage(h.ctx.db, account, "old-request", false);
+    expect((await firstImageOffer(h.ctx.db, account)).available).toBe(false);
+    await finishFirstImage(h.ctx.db, account, "new-request", true);
+    expect((await firstImageOffer(h.ctx.db, account)).available).toBe(false);
+  });
+
+  test("budget is exact across accounts, including failed dispatches; a losing reservation can try when the pool resets", async () => {
+    const budgetKey = sql<string>`'first-image:v1:daily:' || to_char(timezone('UTC',now()),'YYYY-MM-DD')`;
+    const [old] = await h.ctx.db.select().from(kv).where(eq(kv.key, budgetKey));
+    const price = usdToPico("0.004");
+    await h.ctx.db.insert(kv).values({key:budgetKey,value:Number(FIRST_IMAGE_DAILY_BUDGET-price)})
+      .onConflictDoUpdate({target:kv.key,set:{value:Number(FIRST_IMAGE_DAILY_BUDGET-price)}});
+    try {
+      const accounts = ["image-sample-a","image-sample-b"];
+      const pair = await Promise.allSettled(accounts.map(a=>startFirstImage(h.ctx.db,a,"attempt",price)));
+      expect(pair.filter(r=>r.status==="fulfilled")).toHaveLength(1);
+      expect((await firstImageOffer(h.ctx.db)).remaining).toBe(0n);
+      const success = accounts[pair.findIndex(r=>r.status==="fulfilled")];
+      const other = accounts.find(a=>a!==success)!;
+      await finishFirstImage(h.ctx.db,success,"attempt",false);
+      expect(await firstImageOffer(h.ctx.db,success)).toEqual({available:true,remaining:0n});
+      expect(await firstImageOffer(h.ctx.db,other)).toEqual({available:true,remaining:0n});
+      await h.ctx.db.delete(kv).where(eq(kv.key,budgetKey));
+      await startFirstImage(h.ctx.db,other,"new-attempt",price);
+      await finishFirstImage(h.ctx.db,other,"new-attempt",true);
+      expect((await firstImageOffer(h.ctx.db,other)).available).toBe(false);
+    } finally {
+      await h.ctx.db.delete(kv).where(eq(kv.key,budgetKey));
+      if(old) await h.ctx.db.insert(kv).values(old);
+    }
   });
 });

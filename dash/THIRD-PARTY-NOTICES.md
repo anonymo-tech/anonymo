@@ -30,4 +30,4 @@ Build and development tools run only on the developer's machine: Vite, `@vitejs/
 
 Model family names (DeepSeek, GLM, Qwen, Gemma, Mistral, Kimi, Llama) and upstream names (Venice, Phala, Chutes, NanoGPT, Featherless) identify where a route runs. They belong to their owners and do not imply endorsement. "Built in Venice" is shown only behind `NEXT_PUBLIC_ANONYMO_VENICE_BADGE=1`, following Venice's badge terms.
 
-The model picker uses the OpenAI, Claude and Mistral marks distributed on the [PPQ website](https://ppq.ai/). Gemini, DeepSeek, Gemma, Qwen, GLM (Zhipu), Meta and Venice icons are supplied by [LobeHub Icons](https://lobehub.com/icons) (`@lobehub/icons-static-svg` 1.105.0, MIT). The marks identify their respective products and belong to their owners.
+The model picker uses the OpenAI, Claude and Mistral marks distributed on the [PPQ website](https://ppq.ai/). Gemini, DeepSeek, Gemma, Qwen, GLM (Zhipu), Meta, Venice, FLUX, Grok, Ideogram, Krea and Recraft icons are supplied by [LobeHub Icons](https://lobehub.com/icons) (`@lobehub/icons-static-svg` 1.105.0, MIT). The marks identify their respective products and belong to their owners.

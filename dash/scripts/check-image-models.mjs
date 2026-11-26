@@ -41,3 +41,27 @@ void test('demo lists all eight image models and generates billable PNG batches 
     assert.equal(usdToMusd((await client.balance()).available_usd), balance);
   }
 });
+
+test('one sponsored image per demo key, independent of chat, preserves the balance on retries and concurrent sends', async () => {
+  const mock = createMockGateway({ delayMs: 0, imageDelayMs: 0 });
+  const transport = { baseUrl: 'https://demo.anonymo.invalid', fetch: mock.fetch };
+  const visitor = createAnonymoClient(transport);
+  const signup = crypto.randomUUID();
+  const { key } = await visitor.createKey({ dashboard_signup: signup });
+  const client = createAnonymoClient({ ...transport, key });
+  const model = 'bfl/flux.2-flash';
+  const request = { model, prompt: 'A lighthouse at dusk', n: 1 };
+  assert.equal((await visitor.imageWelcome()).available, true);
+  assert.ok((await client.imageWelcome()).eligible_models.includes(model));
+  await assert.rejects(client.sponsoredImage({ ...request, n: 2 }), e => e.code === 'first_image_options');
+  await assert.rejects(client.sponsoredImage({ ...request, prompt: 'A nude figure' }), e => e.status === 451);
+  const attempts = await Promise.allSettled([client.sponsoredImage(request), client.sponsoredImage(request)]);
+  assert.equal(attempts.filter(x => x.status === 'fulfilled').length, 1);
+  const result = attempts.find(x => x.status === 'fulfilled').value;
+  assert.equal(Number(result.anonymo.cost_usd), 0);
+  assert.equal(result.data.length, 1);
+  assert.equal(attempts.find(x => x.status === 'rejected').reason.code, 'first_image_unavailable');
+  assert.equal((await client.imageWelcome()).available, false);
+  assert.equal((await client.claimFirstChat(signup)).first_chat_available, true);
+  assert.equal((await client.balance()).available_usd, 0);
+});

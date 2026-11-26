@@ -8,6 +8,7 @@ import { createSiweMessage } from "viem/siwe";
 import { keys, kv } from "../../src/db/schema.ts";
 import { anonymoKeys } from "../../src/anonymo/deposits/schema.ts";
 import { keyPolicyMiddleware } from "../../src/anonymo/keys/caps.ts";
+import { assertDashboardIp, dashboardOrigin, takeDashboardImageLimit } from "../../src/anonymo/keys/routes.ts";
 import { ApiError } from "../../src/lib/errors.ts";
 import { sha256 } from "../../src/lib/util.ts";
 import { usdToPico } from "../../src/lib/money.ts";
@@ -162,4 +163,38 @@ describe("deposited credit pays for chat (M1 money half)", () => {
     expect(bal.balance_usd).toBeLessThan(5);
     expect(bal.balance_usd).toBeGreaterThan(4.9);
   });
+});
+
+test("dashboard first-image checks honor origin, key IP policy and the hourly address quota", async () => {
+  expect(dashboardOrigin("https://anonymo.tech", "https://anonymo.tech")).toBe(true);
+  expect(dashboardOrigin("https://anonymo.tech.other.example", "https://anonymo.tech")).toBe(false);
+  expect(dashboardOrigin("http://localhost:4000", "https://anonymo.tech")).toBe(false);
+  expect(dashboardOrigin("http://localhost:4000", "http://127.0.0.1:3000")).toBe(true);
+  const key = await m.newKey({ ip_allow: ["203.0.113.0/24"] });
+  const ctx = m.h.ctx;
+  const calls: { key: string; count: number; cap: number; window: number }[] = [];
+  const limiter = { ...ctx.limiter, take: async (key: string, count: number, cap: number, window: number) => {
+    calls.push({ key, count, cap, window });
+    return { ok: calls.length === 1, retryAfterMs: 1000, remaining: 0 };
+  } };
+  const app = new Hono();
+  app.onError((error, c) => {
+    if (error instanceof ApiError) return c.json(error.toJSON(), error.status as never);
+    throw error;
+  });
+  app.post("/", async c => {
+    await assertDashboardIp(ctx, c, key);
+    await takeDashboardImageLimit({ ...ctx, limiter }, c);
+    return c.body(null, 204);
+  });
+  const request = (address: string) => app.request("/", { method: "POST" }, { requestIP: () => ({ address }) });
+  expect((await request("198.51.100.1")).status).toBe(403);
+  expect(calls).toHaveLength(0);
+  expect((await request("203.0.113.8")).status).toBe(204);
+  expect((await request("203.0.113.8")).status).toBe(429);
+  expect((await request("203.0.113.9")).status).toBe(429);
+  expect(calls[1]).toEqual(calls[0]);
+  expect(calls[2].key).not.toBe(calls[0].key);
+  expect(calls[0]).toEqual({ key: expect.stringMatching(/^first-image:[0-9a-f]{64}$/),
+    count: 1, cap: ctx.cfg.limits.newKeysPerHour, window: 3_600_000 });
 });

@@ -104,6 +104,8 @@ export const API_PATHS = {
   manifest: '/manifest',
   leaderboard: '/leaderboard',
   mediaModels: '/v1/media/models',
+  imageWelcome: '/v1/images/welcome',
+  sponsoredImage: '/v1/images/generations/sponsored',
   caps: '/keys/caps',
   spend: '/api/v1/spend',
   runway: '/api/v1/account/runway',
@@ -356,6 +358,10 @@ export function createAnonymoClient(options: ClientOptions) {
     url: (path: string) => `${base}${path}`,
 
     mediaModels: () => json<MediaModelList>(API_PATHS.mediaModels, { auth: false }),
+    imageWelcome: (signal?: AbortSignal) => json<{ available: boolean; eligible_models: string[] }>(
+      API_PATHS.imageWelcome, { auth: !!key, signal }),
+    sponsoredImage: (body: ImageRequest, signal?: AbortSignal) =>
+      json<ImageGeneration>(API_PATHS.sponsoredImage, { method: 'POST', body: JSON.stringify({ ...body, response_format: 'b64_json' }), signal }),
     /** Images come back as base64 (`b64_json`): nothing is stored on the gateway, and the PNG carries its provenance. */
     generateImages: (body: ImageRequest, signal?: AbortSignal) =>
       json<ImageGeneration>(API_PATHS.images, { method: 'POST', body: JSON.stringify({ ...body, response_format: 'b64_json' }), signal }),
