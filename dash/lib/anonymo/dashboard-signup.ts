@@ -1,4 +1,4 @@
-// A random ID scopes the dashboard's first chat to this browser. Only key creation sends it.
+// A random, non-identifying signup ID marks dashboard key creation requests.
 const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const temporary = new Map<string, string>();
 

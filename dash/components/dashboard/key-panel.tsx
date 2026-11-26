@@ -125,7 +125,7 @@ export function KeyPanel() {
             <Link className="btn" href={fundsHref}>
               Add funds
             </Link>
-            {keySafe && <CopyButton text={key} label="Copy key" />}
+            <CopyButton text={key} label="Copy key" />
             <button type="button" className="btn btn-danger" onClick={clearKey}>
               Forget key on this device
             </button>

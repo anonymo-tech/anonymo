@@ -5,6 +5,7 @@ import { ASK_TOPICS, type AskMoRequest } from '../askmo.ts';
 // key, streams chat as SSE, and signs nothing for real: receipts and proofs are structurally valid (the Merkle path
 // verifies) but the signature is a placeholder. It never sends anything over the network.
 
+import { uncensoredChatModel } from '../chat-models.ts';
 import { API_PATHS } from '../client.ts';
 import { canonicalCode, DEMO_CODE } from '../codes.ts';
 import { musdToUsdString, parseUsd, usdToMusd } from '../money.ts';
@@ -64,7 +65,6 @@ const DEMO_EVM_CHAINS = [
 type Row = DepositRow & { musd: number };
 type KeyState = {
   keyHash: string;
-  signupHash?: string;
   firstChatAvailable?: boolean;
   caps: KeyCaps;
   keyCommit: string;
@@ -360,12 +360,9 @@ export function createMockGateway(options: MockOptions = {}) {
   async function prepareKey(body: { caps?: KeyCapsInput; dashboard_signup?: string } = {}) {
     const key = `anm_live_${randomHex(32)}`;
     const keyHash = await sha256Hex(key);
-    const signupHash = typeof body.dashboard_signup === 'string' ? await sha256Hex(body.dashboard_signup) : undefined;
-    const firstChatAvailable = !!signupHash && !Object.values(state.keys).some(other => other.signupHash === signupHash);
     const k: KeyState = {
       keyHash,
-      signupHash,
-      firstChatAvailable,
+      firstChatAvailable: !!body.dashboard_signup,
       caps: capsOut(body.caps),
       keyCommit: keccakHex(enc.encode(`anonymo-deposit-v1:${keyHash}`)),
       balance: 0,
@@ -523,7 +520,10 @@ export function createMockGateway(options: MockOptions = {}) {
     const tin = tokensOf(promptText);
     const p = price ?? DEMO_PRICES['anonymo-1'];
     const estimate = Math.ceil((tin * p.in + 900 * p.out) / 1_000_000);
-    const sponsored = body.dashboard_chat === true && !asked.searching && model === 'anonymo-1' && k.firstChatAvailable === true
+    const sponsored = body.dashboard_chat === true && !asked.searching &&
+      (model === 'anonymo-1' || DEMO_MODELS.some(row => row.id === model && uncensoredChatModel(row))) &&
+      body.messages.length <= 16 && body.messages.every(m => typeof m.content === 'string') &&
+      body.messages.filter(m => m.role === 'user').length === 1 && k.firstChatAvailable === true
       && k.balance === 0 && enc.encode(promptText).byteLength <= 8192;
     const maxCost = sponsored ? 0 : estimate + searchMusd;
     if (k.balance - k.held < maxCost) return fail(402, 'insufficient_balance', 'Not enough credit for this request.');

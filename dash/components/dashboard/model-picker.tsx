@@ -21,14 +21,14 @@ const familyLogos: [RegExp, string][] = [
   [/^~?openai\//i, 'openai.svg'], [/\bmistral|\bmixtral/i, 'mistral.svg'], [/\bllama|^~?meta-llama\//i, 'meta.svg'],
 ];
 
-function directLogo(model: ModelInfo) {
+export function directLogo(model: ModelInfo) {
   const name = chatModelName(model);
   if (/^venice(?:\s|:)/i.test(name)) return '/model-logos/venice.svg';
   const family = familyLogos.find(([pattern]) => pattern.test(`${model.id} ${name}`));
   return family ? `/model-logos/${family[1]}` : null;
 }
 
-function ModelLogo({ src }: { src: string | null }) {
+export function ModelLogo({ src }: { src: string | null }) {
   return <span className="model-logo" aria-hidden="true">{src ? <img src={src} width="24" height="24" alt="" /> : <Box size={20} />}</span>;
 }
 

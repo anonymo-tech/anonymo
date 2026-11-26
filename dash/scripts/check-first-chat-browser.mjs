@@ -19,6 +19,9 @@ test('a guest chats for free, uses the allowance, then funds a key and sends the
     await page.waitForFunction(() => document.activeElement?.textContent?.trim() === 'I am 18 or older');
     await confirmAge.tap();
     await confirmAge.waitFor({ state: 'hidden' });
+    const welcome = page.getByRole('dialog', { name: 'Choose your chat model' });
+    await welcome.getByRole('listitem').first().waitFor();
+    await welcome.getByRole('button', { name: 'Close model chooser' }).tap();
     const main = page.getByRole('main');
     const message = page.getByRole('textbox', { name: 'Message', exact: true });
     const send = page.getByRole('button', { name: 'Send', exact: true });
@@ -62,8 +65,12 @@ test('a guest chats for free, uses the allowance, then funds a key and sends the
     assert.equal(await message.inputValue(), next);
     await page.getByRole('link', { name: 'Balance $0.00' }).waitFor();
     await send.tap();
+    await main.getByText(next, { exact: true }).waitFor();
+    await main.locator('.thread[aria-busy="false"] article.turn').getByRole('link', { name: /receipt/i }).waitFor();
+    await message.fill(next);
+    await send.tap();
     await sheet.getByText('Add a little balance to send this.').waitFor();
-    assert.equal(await main.locator('.turn').count(), 0);
+    assert.equal(await main.locator('.turn').count(), 1);
     await sheet.getByRole('link', { name: 'Add funds', exact: true }).tap();
     await page.waitForURL(url => url.pathname === '/dashboard/funds' && url.searchParams.get('returnTo') === '/dashboard/chat');
     await page.reload();
@@ -84,4 +91,33 @@ test('a guest chats for free, uses the allowance, then funds a key and sends the
   } finally {
     await browser.close();
   }
+});
+
+test('Open app creates a tab-only key on model selection and sponsors one direct text reply', async t => {
+  const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || undefined, executablePath: process.env.CHROMIUM_PATH });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
+  await page.route('**/*', route => new URL(route.request().url()).origin === origin.origin ? route.continue() : route.abort());
+  await page.goto(origin.href);
+  await page.waitForFunction(() => document.activeElement?.textContent?.trim() === 'I am 18 or older');
+  await page.getByRole('button', { name: 'I am 18 or older' }).click();
+  await page.getByRole('link', { name: 'Open app', exact: true }).click();
+  const chooser = page.getByRole('dialog', { name: 'Choose your chat model' });
+  await chooser.getByRole('listitem').first().getByRole('button').click();
+  await page.getByText('Your first message is on us.', { exact: true }).waitFor();
+  assert.ok(await page.evaluate(() => !!sessionStorage.getItem('anonymo.demo.key') && !localStorage.getItem('anonymo.demo.key')));
+  const message = page.getByRole('textbox', { name: 'Message', exact: true });
+  await message.fill('Explain a rainbow.');
+  await message.press('Enter');
+  await page.getByRole('button', { name: 'Copy your key', exact: true }).waitFor();
+  const reply = page.locator('.thread[aria-busy="false"] article.turn').first();
+  assert.ok((await reply.locator('.answer-body').innerText()).trim());
+  assert.equal(await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem('anonymo.demo.state.v2') ?? 'null');
+    return state?.receipts ? Object.values(state.receipts)[0]?.view.receipt.cost : undefined;
+  }), '0');
+  await page.reload();
+  await message.fill('Another question.');
+  await message.press('Enter');
+  await page.getByRole('region', { name: 'Set up chat' }).getByRole('link', { name: 'Add funds' }).waitFor();
 });

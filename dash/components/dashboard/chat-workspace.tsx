@@ -20,6 +20,10 @@ import { FaceAvatar, TurnFace, hasFace, useFaces } from './face';
 import { Stage, StageTools } from './stage';
 import { ChatBar, ChatHistoryPanel } from './chat-history';
 import type { Turn } from './chat-types';
+import { dashboardSignup } from '@/lib/anonymo/dashboard-signup';
+import { loadKey } from '@/lib/anonymo/key-store';
+import { CopyButton } from '../copy-button';
+import { ModelWelcome } from './model-welcome';
 import { ModelPicker } from './model-picker';
 import { MemorySuggestions, useChatMemory } from './memory-chat';
 import { PaperTrail } from './paper-trail';
@@ -41,8 +45,8 @@ import { freeContext } from '@/lib/anonymo/free-chat';
 import type { EverydayAccess } from '@/lib/anonymo/everyday';
 import { AnonymoApiError, describeError, isOutOfCredit } from '@/lib/anonymo/client';
 import { useDeviceStore } from '@/lib/anonymo/device-store';
-import { chatModels, isAnonymoModel, publishedPpqChat } from '@/lib/anonymo/chat-models';
-import { adultStore, chatModelStore, setChatModel } from '@/lib/anonymo/prefs';
+import { chatModels, isAnonymoModel, publishedPpqChat, uncensoredChatModel } from '@/lib/anonymo/chat-models';
+import { adultStore, chatModelStore, dismissModelWelcome, modelWelcomeDone, setChatModel } from '@/lib/anonymo/prefs';
 import type { ChatMessage, ChatPhotoMessage, MediaImageModel } from '@/lib/anonymo/types';
 import { attachPhotos, photoHint, photoSupport, withPhotoNote } from '@/lib/anonymo/photos';
 import { paperPrompt, type PaperSource } from '@/lib/paper-trail';
@@ -96,13 +100,26 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   threadHost: HTMLDivElement | null;
   composerHost: HTMLDivElement | null;
 }) {
-  const { ready, demo, key, client, turns, setTurns, chatId, openChat, rememberReceipt, balance, refreshBalance, liveModels, catalog, catalogError, refreshCatalog } = useAnonymo();
+  const { ready, demo, key, setKey, client, balanceVersion, turns, setTurns, chatId, openChat, rememberReceipt, balance, refreshBalance, liveModels, catalog, catalogError, refreshCatalog } = useAnonymo();
+  const [firstChat, setFirstChat] = useState<{ key: string; available: boolean } | null>(null);
+  const [newChatKey, setNewChatKey] = useState<string | null>(null);
+  const funded = (balance?.available_usd ?? 0) > 0;
+  useEffect(() => {
+    if (!key || !ready || funded) return;
+    let current = true;
+    client.keyInfo().then(info => {
+      if (current) setFirstChat({ key, available: info.first_chat_available === true });
+    }, () => {});
+    return () => { current = false; };
+  }, [ready, key, client, funded, balanceVersion]);
   const adult = useDeviceStore(adultStore);
-  const freeMode = ready && adult && !key && updateOn('free', demo);
+  const welcomeDone = useDeviceStore(modelWelcomeDone);
+  const stored = useDeviceStore(chatModelStore);
+  const freeMode = ready && adult && !key && isAnonymoModel(stored) && updateOn('free', demo);
   const free = useFreeChat(client, freeMode, demo);
   const freeExhausted = freeMode && free.remaining === 0;
-  const stored = useDeviceStore(chatModelStore);
   const directModels = useMemo(() => chatModels(catalog ?? []), [catalog]);
+  const welcomeModels = useMemo(() => directModels.filter(demo ? uncensoredChatModel : publishedPpqChat), [directModels, demo]);
   // Update "auto": Auto is offered only while the update is on; a stored Auto choice falls back to anonymo-1 otherwise.
   const autoOn = ready && updateOn('auto', demo);
   const branded = isAnonymoModel(stored) || isAutoModel(stored);
@@ -335,6 +352,18 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     }
   };
 
+  async function startWelcomeChat(id: string) {
+    if (!loadKey(demo)) {
+      const fresh = await client.createKey({ dashboard_signup: await dashboardSignup(demo) });
+      if (!loadKey(demo)) {
+        setKey(fresh.key, false);
+        setNewChatKey(fresh.key);
+        setFirstChat({ key: fresh.key, available: fresh.first_chat_available === true });
+      }
+    }
+    chooseModel(id);
+  }
+
   function pickMode(next: ChatMode | null) {
     if (next && !availableModes.includes(next)) return;
     pendingScan.current++;
@@ -428,7 +457,11 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const rights = readEveryday && everyday?.client === client ? everyday.access : null;
   const passChat = !!rights?.hasPass && model === 'anonymo-1' && mode !== 'picture' && mode !== 'three' &&
     !extraUsd && !tray.photos.length && !excerpt?.image;
-  const mayUseIncluded = key && (readEveryday && everyday?.client !== client ||
+  const sponsoredModel = model === 'anonymo-1' || welcomeModels.some(entry => entry.id === model);
+  const firstText = sponsoredModel && !mode && !turns.some(turn => turn.status === 'done') &&
+    !extraUsd && !tray.photos.length && !paper && !excerpt;
+  const sponsoredChat = firstText && !!key && firstChat?.key === key && firstChat.available && !funded;
+  const mayUseIncluded = key && (sponsoredChat || readEveryday && everyday?.client !== client ||
     passChat || !!rights?.hasPass && mode === 'picture' || !!rights?.availableCreditsUsd && mode !== 'three');
   const setupForBalance = guestChat ? (freeExhausted ? 'key' : null) : mayUseIncluded ? null : chatSetupStep(!!key, balance?.available_usd);
   const hasAttachment = !!(excerpt || paper || picture || tray.photos.length);
@@ -461,7 +494,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const voiceOverLimit = (estimate: ReturnType<typeof flatEstimate>) => checkLimit(price.limit, audioSpend, estimate).blocked;
   const offer = price.estimate ?? (modesOn && priceMessages ? estimateMessage({ model: priced, messages: priceMessages, demo, extraUsd }) : null);
   const estimateBlocked = price.blocked || (mode === 'talk' && offer !== null && voiceOverLimit(offer));
-  const shownPrice = guestChat ? '' : mode === 'talk' && voice.transcription
+  const shownPrice = sponsoredChat || guestChat ? '' : mode === 'talk' && voice.transcription
     ? (perMinute === null ? '' : transcriptionRate(voice.transcription))
     : passChat ? 'Included with your Pass'
     : offer?.known
@@ -619,7 +652,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   async function run(turn: Turn, messages: (ChatMessage | ChatPhotoMessage)[], guest = false) {
     const { id, model } = turn;
     const listed = directModels.find(m => m.id === model);
-    const plainChat = model === 'anonymo-1' || !!(listed && (publishedPpqChat(listed) || listed.ppq_uncensored === true));
+    const plainChat = (demo && !!listed && uncensoredChatModel(listed)) || model === 'anonymo-1' || !!(listed && (publishedPpqChat(listed) || listed.ppq_uncensored === true));
     const councilMode = turn.councilMode ?? 'merge';
     const abort = new AbortController();
     controller.current = abort;
@@ -652,6 +685,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
           onDelta: (delta) => update(id, (t) => ({ content: t.content + delta })),
         },
       );
+      if (sponsoredChat && key) setFirstChat({ key, available: false });
       receiptId = result.receiptId;
       haveReceipt = result.receipt !== null;
       update(id, { status: 'done', content: result.content, council: result.council, receiptId, receipt: result.receipt, answeredBy: result.model, autoClass: result.autoClass ?? null, ...(result.citations?.length ? { citations: result.citations } : {}) });
@@ -674,7 +708,8 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
           showSetup('key', turn.prompt, null, false);
         }
       }
-      if (needsFunds && turn.modeResult?.mode === 'talk') showSetup('funds', turn.prompt, null);
+      if (needsFunds && sponsoredChat && key) setFirstChat({ key, available: false });
+      if (needsFunds && (sponsoredChat || turn.modeResult?.mode === 'talk')) showSetup('funds', turn.prompt, null);
     } finally {
       if (controller.current === abort) controller.current = null;
       if (!guest) refreshBalance();
@@ -1055,6 +1090,9 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
 
   const composer = (
     <div className={modesOn ? 'dock-composer dock-composer-modes' : 'dock-composer'}>
+      {sponsoredChat && !streaming && <output className="ai-notice">Your first message is on us.</output>}
+      {newChatKey && key === newChatKey && turns.some(turn => turn.status === 'done') &&
+        <div className="row"><span className="faint">Your key is in this tab.</span><CopyButton text={key} label="Copy your key" /></div>}
       {freeMode && free.remaining !== null && (
         <output className="ai-notice">
           Free today: {free.remaining} left{free.solving ? ' · Checking this device…' : turns.length === 0 && !freeExhausted ? ' · Try it free. No account.' : ''}
@@ -1269,6 +1307,13 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     <RegionPage mode={compliance.restricted} client={client} onVerified={compliance.refresh} />
   ) : (
     <>
+      {ready && adult && !compact && !key && !turns.length && !welcomeDone && (
+        <ModelWelcome models={welcomeModels} loading={catalog === null} error={catalogError} retry={refreshCatalog}
+          onPick={startWelcomeChat} onDismiss={() => {
+            dismissModelWelcome();
+            requestAnimationFrame(() => input.current?.focus({ preventScroll: true }));
+          }} />
+      )}
       {compliance.disclosure && <CompanionDisclosure />}
       {(historyOn || catchupOn) && (
         <>

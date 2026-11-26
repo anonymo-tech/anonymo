@@ -30,14 +30,14 @@ async function mint(ctx: Ctx, deps: MoneyDeps, o: { caps?: z.infer<typeof capsIn
   const row = await registerRootKey(ctx, secret);
   const caps = await writeCaps(ctx.db, row.keyHash, o.caps ?? {}, { wallet: o.wallet ?? null });
   const deposit = await depositInstructions(ctx, deps, row.keyHash);
-  const eligible = o.signup && await issueFirstChat(ctx.db, row.accountId, o.signup);
+  const eligible = await issueFirstChat(ctx.db, row.accountId, o.signup);
   return {
     key: secret, // shown once; the router keeps only sha256(key)
     key_hash: row.keyHash,
     wallet: o.wallet ?? null,
     caps: capsJson(caps),
     deposit,
-    first_chat_available: !!eligible && await firstChatAvailable(ctx.db, row.accountId),
+    first_chat_available: eligible && await firstChatAvailable(ctx.db, row.accountId),
   };
 }
 

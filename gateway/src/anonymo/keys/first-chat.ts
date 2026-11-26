@@ -1,13 +1,11 @@
 // A first chat is one sponsored request, never a balance or ledger credit. The KV entries contain only
-// a signup digest, account ID, state, counters and a transient reservation ID. All replicas share Postgres.
+// an account ID, state, counters and a transient reservation ID. All replicas share Postgres.
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import type { Db, Tx } from "../../db/client.ts";
 import { accounts, kv } from "../../db/schema.ts";
-import { sha256 } from "../../lib/util.ts";
 
 const accountSlot = (accountId: string) => `first-chat:account:${accountId}`;
-const signupSlot = (id: string) => `first-chat:signup:${sha256("anonymo:first-chat:v1:" + id.toLowerCase())}`;
 const dailySlot = sql<string>`'first-chat:daily:' || to_char(timezone('UTC', now()), 'YYYY-MM-DD')`;
 // With the chat route's $0.01 worst-case request ceiling, all workers combined can sponsor at most $10 per UTC day.
 export const FIRST_CHAT_DAILY_LIMIT = 1_000;
@@ -18,18 +16,15 @@ const claimable = sql`(${kv.value}->>'attempts')::int < ${maxReservations} AND
 const activeReservation = (claimId: string) => sql`${kv.value}->>'state' = 'reserved' AND
   ${kv.value}->>'claim' = ${claimId} AND ${kv.updatedAt} > now() - interval '2 minutes'`;
 
-export async function issueFirstChat(db: Db, accountId: string, signupId: string): Promise<boolean> {
+export async function issueFirstChat(db: Db, accountId: string, dashboardSignup: string | undefined): Promise<boolean> {
+  if (!dashboardSignup) return false;
   return db.transaction(async (tx) => {
-    // Lock the owning account so concurrent enrollments cannot consume a second signup ID for it.
-    const [account] = await tx.select({ id: accounts.id }).from(accounts).where(eq(accounts.id, accountId)).for("update");
+    const [account] = await tx.select({ id: accounts.id }).from(accounts).where(eq(accounts.id, accountId)).for("key share");
     if (!account) return false;
-    const [existing] = await tx.select({ key: kv.key }).from(kv).where(eq(kv.key, accountSlot(accountId)));
-    if (existing) return false;
-    const issued = await tx.insert(kv).values({ key: signupSlot(signupId), value: true })
+    // Each root key owns its own account. Re-enrollment must never reset a claimed or spent message.
+    const issued = await tx.insert(kv).values({ key: accountSlot(accountId), value: { state: "available", attempts: 0 } })
       .onConflictDoNothing().returning({ key: kv.key });
-    if (!issued.length) return false;
-    await tx.insert(kv).values({ key: accountSlot(accountId), value: { state: "available", attempts: 0 } });
-    return true;
+    return issued.length === 1;
   });
 }
 

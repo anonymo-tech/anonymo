@@ -21,6 +21,14 @@ export function setChatModel(id: string) {
   modelStore.changed();
   chatModelStore.changed();
 }
+const MODEL_WELCOME = 'anonymo.chat-model-welcome.v1';
+let dismissedWithoutStorage = false;
+export const modelWelcomeDone = deviceStore(() =>
+  dismissedWithoutStorage || readJson(MODEL_WELCOME, false) || readJson(MODEL, null) !== null, true);
+export function dismissModelWelcome() {
+  dismissedWithoutStorage = !writeJson(MODEL_WELCOME, true);
+  modelWelcomeDone.changed();
+}
 export function setStoredModel(id: AnonymoModelId) {
   setChatModel(id);
 }

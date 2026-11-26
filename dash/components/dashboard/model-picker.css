@@ -30,3 +30,74 @@
 /* Update "auto": Auto sits on its own above the other choices, with one line saying what it does. */
 .model-auto { padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
 .model-auto-note { padding: 0 7px 4px 46px; font-size: 12.5px; line-height: 1.4; color: var(--muted); }
+
+.model-welcome[open] {
+  --paper: #fff7ee;
+  --ink: #301730;
+  --secondary: #614e60;
+  display: grid;
+  grid-template-columns: minmax(0, .83fr) minmax(0, 1.3fr);
+  width: min(860px, calc(100vw - 40px));
+  height: min(620px, 86dvh);
+  max-height: 92dvh;
+  overflow: hidden;
+  border: 1px solid #75556f;
+  border-radius: 22px;
+  background: var(--paper);
+  box-shadow: 0 30px 100px #100811a6;
+}
+.model-welcome::backdrop { background: #170d1dc2; backdrop-filter: blur(4px); }
+.welcome-cover {
+  position: relative; isolation: isolate; display: flex; flex-direction: column; padding: 29px; overflow: hidden;
+  color: #fff4e8; background: #310f29;
+}
+.welcome-cover::before {
+  content: ''; order: 1; flex: 1; min-height: 0; margin: 8px -29px -29px;
+  background: linear-gradient(#310f29 0%, transparent 24%), url('/mascot/headphones.jpg') center 60% / cover;
+}
+.welcome-brand { display: flex; align-items: center; gap: 6px; font-size: 20px; font-weight: 700; letter-spacing: -.06em; }
+.model-welcome h2 { margin: 32px 0 10px; font-size: clamp(36px, 4.4vw, 47px); font-weight: 570; line-height: 1.02; letter-spacing: -.065em; }
+.model-welcome h2 em { display: block; color: #ffd1df; font-family: Georgia, serif; font-weight: 400; letter-spacing: -.065em; }
+.model-welcome h2:focus { outline: none; }
+.welcome-cover p { margin: 0; max-width: 19ch; color: #eed6e2; font-size: 14px; line-height: 1.5; }
+.welcome-catalog { display: flex; flex-direction: column; min-height: 0; color: var(--ink); }
+.welcome-list-heading { display: flex; align-items: center; gap: 9px; border-bottom: 1px solid #e0d3cd; padding: 12px 15px 12px 24px; }
+.welcome-list-heading h3 { margin: 0; font-size: 20px; font-weight: 650; letter-spacing: -.045em; }
+.welcome-list-heading span { padding: 1px 7px; border: 1px solid #d9c9cd; border-radius: 20px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.welcome-list-heading button { display: grid; place-items: center; margin-left: auto; width: 40px; height: 40px; color: var(--secondary); background: transparent; border: 0; border-radius: 50%; cursor: pointer; }
+.welcome-list-heading button:hover { background: #ecdfe4; }
+.model-welcome .model-results { flex: 1; padding: 0 14px; scrollbar-width: thin; scrollbar-color: #baa3ae var(--paper); color-scheme: light; }
+.model-welcome .model-results > p { margin: 18px 10px; }
+.model-welcome li + li { border-top: 1px solid #e4d8d2; }
+.model-welcome .model-option { padding: 15px 10px; gap: 13px; border-radius: 9px; color: var(--ink); }
+.model-welcome .model-option:hover, .model-welcome .model-option:focus-visible { background: #f3e6e7; }
+.model-welcome .welcome-catalog :focus-visible { outline: 2px solid #873f72; outline-offset: -2px; }
+.model-welcome .model-logo { height: 43px; flex-basis: 43px; border-radius: 13px; background: #fff; border: 1px solid #ded1d1; color: #452843; }
+.model-welcome .model-name { font-size: 16px; font-weight: 650; letter-spacing: -.025em; }
+.model-welcome small { display: block; margin-top: 4px; color: var(--secondary); font-size: 13px; font-weight: 400; line-height: 1.4; letter-spacing: 0; }
+.welcome-arrow { flex: none; color: #7f607a; }
+.model-welcome footer { flex: none; border-top: 1px solid #dccdca; padding: 12px 24px; background: #f6ece4; }
+.model-welcome footer button { padding: 0; min-height: 32px; color: var(--ink); font-weight: 650; font-size: 14px; text-decoration: underline; text-underline-offset: 4px; }
+.model-welcome footer button:hover { background: transparent; color: #823b6a; }
+@media (max-width: 650px) {
+  .model-welcome[open] { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); width: min(460px, calc(100vw - 20px)); height: min(730px, 90dvh); border-radius: 18px; }
+  .welcome-cover { display: block; padding: 17px 21px 19px; }
+  .welcome-cover::before { position: absolute; z-index: -1; inset: 0 0 0 49%; margin: 0; background: linear-gradient(90deg, #310f29 0%, transparent 35%), url('/mascot/headphones.jpg') center 43% / cover; }
+  .welcome-brand { font-size: 16px; }
+  .welcome-brand svg { width: 26px; }
+  .model-welcome h2 { width: 59%; margin: 13px 0 7px; font-size: clamp(28px, 8vw, 34px); }
+  .welcome-cover p { max-width: 20ch; font-size: 12px; }
+  .welcome-list-heading { padding: 5px 9px 5px 18px; }
+  .welcome-list-heading h3 { font-size: 17px; }
+  .model-welcome .model-results { padding: 0 8px; }
+  .model-welcome .model-option { padding: 12px 8px; gap: 10px; }
+  .model-welcome .model-logo { height: 36px; flex-basis: 36px; border-radius: 10px; }
+  .model-welcome .model-name { font-size: 15px; }
+  .model-welcome footer { padding: 9px 18px; }
+}
+@media (max-height: 520px) {
+  .welcome-cover { padding: 10px 16px; }
+  .model-welcome h2 { margin: 5px 0; font-size: 25px; }
+  .welcome-brand, .welcome-cover p { display: none; }
+  .model-welcome h2 em { display: inline; }
+}

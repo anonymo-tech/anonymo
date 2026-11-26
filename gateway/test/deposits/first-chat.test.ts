@@ -19,7 +19,7 @@ async function eligible() {
   return { ...key, id: row.id };
 }
 
-test("only explicit dashboard signup can mint a first chat; duplicate UUIDs do not grant another key a trial", async () => {
+test("each dashboard root gets one independent first chat even when both are created by the same browser", async () => {
   const id = randomUUID();
   for (const origin of [undefined, "https://other.example"]) {
     const res = await signup(id, origin);
@@ -29,11 +29,18 @@ test("only explicit dashboard signup can mint a first chat; duplicate UUIDs do n
   const responses = await Promise.all([signup(id, "https://anonymo.tech"), signup(id.toUpperCase(), "https://anonymo.tech")]);
   expect(responses.map(r => r.status)).toEqual([201, 201]);
   const minted = await Promise.all(responses.map(r => r.json()));
-  expect(minted.filter(k => k.first_chat_available)).toHaveLength(1);
+  expect(minted.filter(k => k.first_chat_available)).toHaveLength(2);
+  expect(minted[0].key_hash).not.toBe(minted[1].key_hash);
   for (const k of minted) {
     const headers = { authorization: `Bearer ${k.key}` };
     expect((await (await m.req("/keys/me", { headers })).json()).first_chat_available).toBe(k.first_chat_available);
     expect((await (await m.req("/balance", { headers })).json()).available_usd).toBe(0);
+    const [row] = await db().select({ id: keys.accountId }).from(keys).where(eq(keys.keyHash, k.key_hash));
+    const claim = await reserveFirstChat(db(), row.id);
+    expect(claim).not.toBeNull();
+    expect(await startFirstChat(db(), row.id, claim!)).toBe(true);
+    await finishFirstChat(db(), row.id, claim!, "completed");
+    expect((await (await m.req("/keys/me", { headers })).json()).first_chat_available).toBe(false);
   }
   const rows = await db().select().from(kv).where(like(kv.key, "first-chat:%"));
   expect(JSON.stringify(rows).toLowerCase()).not.toContain(id.toLowerCase());

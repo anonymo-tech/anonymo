@@ -39,6 +39,7 @@ function useNav() {
 
 export function PublicHeader() {
   const pathname = usePathname();
+  const { key } = useAnonymo();
   const nav = useNav();
   return (
     <header className="public-head">
@@ -51,7 +52,7 @@ export function PublicHeader() {
           </Link>
         ))}
       </nav>
-      <Link href="/dashboard" className="btn btn-outline btn-small btn-square public-head-cta">
+      <Link href={key ? "/dashboard" : "/dashboard/chat"} className="btn btn-outline btn-small btn-square public-head-cta">
         Open app
       </Link>
     </header>

@@ -87,3 +87,69 @@ test('Phone model picker selects verified and regular chat routes across full Ch
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Hello again.');
   assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).isDisabled(), true);
 });
+
+test('a new visitor chooses from the scrollable uncensored catalog before composing', async t => {
+  const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || undefined, executablePath: process.env.CHROMIUM_PATH });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 700 }, serviceWorkers: 'block' });
+  let created = 0;
+  let failOnce = true;
+  let received = null;
+  const sampleKey = 'anm_test_onboarding_fixture_example';
+  await page.route('**/*', async route => {
+    const req = route.request(), url = new URL(req.url());
+    if (url.origin === origin.origin) return route.continue();
+    const headers = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'cache-control': 'no-store' };
+    const json = (data, status = 200) => route.fulfill({ status, headers, json: data });
+    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
+    if (url.pathname === '/v1/models') return json({ data: [...rows, { ...verified[0], id: 'demo/offline', availability: 'temporarily_unavailable' }] });
+    if (url.pathname === '/keys' && req.method() === 'POST') {
+      assert.ok(req.postDataJSON().dashboard_signup);
+      if (failOnce) { failOnce = false; return json({ error: { message: 'Try again.', code: 'unavailable' } }, 503); }
+      created++;
+      return json({ key: sampleKey, first_chat_available: true }, 201);
+    }
+    if (url.pathname === '/keys/me') return json({ first_chat_available: !received });
+    if (url.pathname === '/balance') return json({ available_usd: 0, held_usd: 0, withdraw_to: [] });
+    if (url.pathname === '/v1/chat/completions') {
+      assert.equal(req.headers().authorization, 'Bearer ' + sampleKey);
+      assert.equal(received, null);
+      received = req.postDataJSON();
+      const id = 'gen-1795000000-fixturefirst';
+      const receipt = { request_id: id, model_id: received.model, routes: [], weights_hash: [], tokens: { in: 1, out: 1 }, cost: '0', refused: false, sealed: false };
+      const chunk = { id, choices: [{ delta: { content: 'First reply.' } }], anonymo_receipt: { payload: receipt } };
+      return route.fulfill({ headers, contentType: 'text/event-stream', body: 'data: ' + JSON.stringify(chunk) + '\n\ndata: [DONE]\n\n' });
+    }
+    return json({ data: [] });
+  });
+  await page.goto(origin.href);
+  const welcome = page.getByRole('dialog', { name: 'Choose your chat model' });
+  assert.equal(await welcome.count(), 0);
+  await page.waitForFunction(() => document.activeElement?.textContent?.trim() === 'I am 18 or older');
+  await page.getByRole('button', { name: 'I am 18 or older' }).click();
+  await page.getByRole('link', { name: 'Open app', exact: true }).click();
+  await page.waitForURL('**/dashboard/chat');
+  await welcome.getByRole('listitem').first().waitFor();
+  assert.equal(await welcome.getByRole('listitem').count(), verified.length);
+  assert.ok(await welcome.locator('.model-results').evaluate(el => el.scrollHeight > el.clientHeight));
+  assert.equal(await welcome.locator('li img').first().getAttribute('src'), '/model-logos/deepseek.svg');
+  assert.ok(await welcome.locator('li small').first().innerText());
+  await welcome.getByRole('listitem').last().getByRole('button').click();
+  await welcome.getByRole('alert').waitFor();
+  await welcome.getByRole('listitem').last().getByRole('button').click();
+  await welcome.waitFor({ state: 'hidden' });
+  assert.equal(created, 1);
+  assert.equal(await page.evaluate(() => localStorage.getItem('anonymo.key')), null);
+  await page.reload();
+  await page.getByRole('button', { name: 'Choose model: Published title 12' }).waitFor();
+  assert.equal(await welcome.count(), 0);
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Hello.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.getByText('First reply.', { exact: true }).waitFor();
+  assert.equal(received.model, verified.at(-1).id);
+  assert.equal(received.dashboard_chat, true);
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('One more.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.getByRole('region', { name: 'Set up chat' }).getByRole('link', { name: 'Add funds' }).waitFor();
+  assert.equal(created, 1);
+});

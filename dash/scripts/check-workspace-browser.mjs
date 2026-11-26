@@ -238,7 +238,8 @@ test('the public receipt story keeps its original desktop and phone layouts alon
         assert.ok(await story.locator('.printer .paper').isVisible());
       }
       await page.locator('.public-head').getByRole('link', { name: 'Open app' }).click();
-      await page.getByRole('heading', { name: 'Your private workspace' }).waitFor();
+      await page.waitForURL('**/dashboard/chat');
+      await page.getByRole('dialog', { name: 'Choose your chat model' }).getByRole('listitem').first().waitFor();
       await page.close();
     }
   } finally {

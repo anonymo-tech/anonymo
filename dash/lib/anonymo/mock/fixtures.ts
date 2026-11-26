@@ -104,6 +104,8 @@ export const DEMO_MODELS: ModelInfo[] = [...Object.keys(MODEL_INFO), ...DIRECT_I
     id,
     architecture: { input_modalities: DEMO_VISION_IDS.has(id) ? ['text', 'image'] : ['text'], output_modalities: ['text'] },
     ...MODEL_INFO[id],
+    ...(id.endsWith('-abliterated') ? { variant: 'abliterated' as const } :
+      id === 'gemma-4-26b-uncensored' ? { variant: 'native_low_refusal' as const } : {}),
     family: shared(rows.map((r) => r.family)) ?? rows[0]?.family ?? null,
     quant: shared(rows.map((r) => r.quant)),
     weights_hash: shared(rows.map((r) => r.weights_hash)),
