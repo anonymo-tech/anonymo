@@ -5,7 +5,7 @@ export const metadata = { title: 'API key — Anonymo' };
 
 export default function KeyPage() {
   return (
-    <WorkspaceShell section="API key" title="API key">
+    <WorkspaceShell section="Key" title="Your key">
       <KeyPanel />
     </WorkspaceShell>
   );

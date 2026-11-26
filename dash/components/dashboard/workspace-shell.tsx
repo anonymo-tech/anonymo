@@ -1,138 +1,38 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import {
-  AudioLines,
-  Archive,
-  BarChart3,
-  BookOpen,
-  ChevronRight,
-  Columns3,
-  Coins,
-  Drama,
-  Compass,
-  HeartHandshake,
-  Vote,
-  Ellipsis,
-  Headphones,
-  IdCard,
-  Dices,
-  ImageIcon,
-  Images,
-  KeyRound,
-  LayoutGrid,
-  ListTree,
-  MessageSquare,
-  PackageOpen,
-  Link2,
-  Phone,
-  Plug,
-  ShieldCheck,
-  ReceiptText,
-  Rocket,
-  Ticket,
-  Trophy,
-  Video,
-  Wallet,
-  X,
-} from 'lucide-react';
+import { usePathname, useSearchParams } from 'next/navigation';
+import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Check, ChevronRight, Ellipsis, Wallet, X } from 'lucide-react';
 import { useAnonymo } from '../anonymo-provider';
 import { AdultsOnly, VeniceBadge, Wordmark } from '../brand';
 import { DemoNotice } from '../demo-notice';
-import { ContractAddressChip } from '../contract-address';
 import { VaultMemorySync } from './vault-memory-state';
 import { WipeDevice } from './chat-history';
 import { useVanishWorkspace } from './panic-key';
 import { VaultTopBar } from './vault-controls';
-import { updateOn, type UpdateId } from '@/lib/anonymo/updates';
+import { updateOn } from '@/lib/anonymo/updates';
 import { formatUsdAmount } from '@/lib/anonymo/money';
+import { setupReturn } from '@/lib/anonymo/setup-return';
+import {
+  account,
+  accountTabs,
+  area,
+  available,
+  characters,
+  chat,
+  extras,
+  settings,
+  settingsTabs,
+  sidebarCurrent,
+  tabCurrent,
+  tools,
+  type Destination,
+} from './workspace-sections';
 
-type Destination = {
-  href: string;
-  label: string;
-  icon: typeof LayoutGrid;
-  feature?: UpdateId;
-};
-const overview = { href: '/dashboard', label: 'Overview', icon: LayoutGrid };
-const chat = { href: '/dashboard/chat', label: 'Chat', icon: MessageSquare };
-const funds = { href: '/dashboard/funds', label: 'Balance', icon: Wallet };
-const shortcuts = [overview, chat, funds];
-const folds = ['more', 'developers'] as const;
+const shortcuts = [chat, characters, account];
+const folds = ['more'] as const;
 type Fold = (typeof folds)[number];
-const groups: { title: string; fold?: Fold; links: Destination[] }[] = [
-  {
-    title: 'Workspace',
-    links: [
-      overview,
-      chat,
-      { href: '/dashboard/characters', label: 'Characters', icon: Drama },
-      { href: '/dashboard/key', label: 'API key', icon: KeyRound },
-      funds,
-      { href: '/dashboard/receipts', label: 'History', icon: ReceiptText },
-    ],
-  },
-  {
-    title: 'More',
-    fold: 'more',
-    links: [
-      { href: '/dashboard/party', label: 'Party', icon: Dices, feature: 'party' },
-      { href: '/dashboard/discover', label: 'Discover', icon: Compass, feature: 'creators' },
-      { href: '/dashboard/creators', label: 'Creator Cut', icon: HeartHandshake, feature: 'creators' },
-      { href: '/dashboard/nymo', label: '$NYMO', icon: Coins, feature: 'stake' },
-      { href: '/dashboard/votes', label: 'Votes', icon: Vote, feature: 'creators' },
-      { href: '/dashboard/story', label: 'Story Studio', icon: BookOpen, feature: 'story' },
-      { href: '/dashboard/mo-voice', label: 'Mo Voice', icon: Phone, feature: 'movoice' },
-      { href: '/dashboard/voices', label: 'Voices', icon: AudioLines, feature: 'movoice' },
-      { href: '/dashboard/call', label: 'Night Call', icon: Headphones, feature: 'voice' },
-      { href: '/dashboard/side-by-side', label: 'Side by side', icon: Columns3, feature: 'sidebyside' },
-      {
-        href: '/dashboard/images',
-        label: 'Image studio',
-        icon: ImageIcon,
-        feature: 'images',
-      },
-      { href: '/dashboard/video', label: 'Video studio', icon: Video, feature: 'video' },
-      { href: '/dashboard/library', label: 'Library', icon: Images, feature: 'vault' },
-      { href: '/dashboard/move-in', label: 'Move in', icon: PackageOpen, feature: 'movein' },
-      { href: '/dashboard/memory', label: 'Memory', icon: Archive, feature: 'vaultsync' },
-      { href: '/dashboard/about-you', label: 'About you', icon: IdCard, feature: 'aboutyou' },
-      { href: '/dashboard/ventures', label: 'Ventures', icon: Rocket, feature: 'ventures' },
-      { href: '/dashboard/tickets', label: 'Tickets', icon: Ticket, feature: 'tickets' },
-      {
-        href: '/dashboard/usage',
-        label: 'Usage & limits',
-        icon: BarChart3,
-        feature: 'usage',
-      },
-      { href: '/dashboard/wallet-review', label: 'Wallet request', icon: ShieldCheck, feature: 'walletreview' },
-    ],
-  },
-  {
-    title: 'For developers',
-    fold: 'developers',
-    links: [
-      { href: '/dashboard/presets', label: 'Frontend presets', icon: Plug },
-      { href: '/dashboard/connect', label: 'Pair a coding tool', icon: Link2, feature: 'connect' },
-      { href: '/manifest', label: 'Model manifest', icon: ListTree },
-      { href: '/leaderboard', label: 'Leaderboard', icon: Trophy },
-      { href: '/docs', label: 'Docs', icon: BookOpen },
-      {
-        href: '/status',
-        label: 'Service status',
-        icon: AudioLines,
-        feature: 'status',
-      },
-    ],
-  },
-];
-
-function matches(path: string, href: string) {
-  return (
-    path === href || (path === '/dashboard/move-in' && href === '/dashboard/lifeboat') || (href !== overview.href && path.startsWith(href + '/'))
-  );
-}
 
 function useNavGroups(pathname: string) {
   const [preferences, setPreferences] = useState<Partial<Record<Fold, boolean>>>({});
@@ -178,61 +78,86 @@ function WorkspaceNav({
   navGroups: ReturnType<typeof useNavGroups>;
   close?: (href: string) => void;
 }) {
+  const listed = (links: Destination[]) => available(links, demo)
+    .filter((item) => !close || !shortcuts.some((shortcut) => shortcut.href === item.href));
+  const link = ({ href, label, icon: Icon }: Destination) => (
+    <Link
+      key={href}
+      href={href}
+      aria-current={sidebarCurrent(pathname, href) ? 'page' : undefined}
+      replace={!!close}
+      onClick={(event) => {
+        if (!close || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        if (href === pathname) event.preventDefault();
+        close(href);
+      }}
+    >
+      <Icon size={16} strokeWidth={1.65} aria-hidden="true" />
+      {label}
+    </Link>
+  );
+  const main = listed(tools);
+  const more = listed(extras);
+  const active = more.some(({ href }) => sidebarCurrent(pathname, href));
+  const open = navGroups.isOpen('more', active);
   return (
     <nav className="ws-nav" aria-label="Workspace">
-      {groups.map(({ title, fold, links }) => {
-        const visible = links
-          .filter((item) => !close || !shortcuts.some((shortcut) => shortcut.href === item.href))
-          .filter((item) => !item.feature || updateOn(item.feature, demo)
-            || ((item.feature === 'images' || item.feature === 'video') && updateOn('studio', demo)))
-          .map((item) => item.feature === 'movein' && updateOn('lifeboat', demo)
-            ? { ...item, href: '/dashboard/lifeboat', label: 'Lifeboat' }
-            : item);
-        if (!visible.length) return null;
-        const items = visible.map(({ href, label, icon: Icon }) => (
-          <Link
-            key={href}
-            href={href}
-            aria-current={matches(pathname, href) ? 'page' : undefined}
-            replace={!!close}
-            onClick={(event) => {
-              if (!close || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-              if (href === pathname) event.preventDefault();
-              close(href);
-            }}
-          >
-            <Icon size={16} strokeWidth={1.65} aria-hidden="true" />
-            {label}
-          </Link>
-        ));
-        if (!fold) {
-          return (
-            <div className="nav-group" key={title}>
-              <span className="nav-label">{title}</span>
-              {items}
-            </div>
-          );
-        }
-        const active = visible.some(({ href }) => matches(pathname, href));
-        const open = navGroups.isOpen(fold, active);
-        return (
-          <details
-            className="nav-fold"
-            key={fold}
-            open={open}
-            onToggle={(event) => {
-              const next = event.currentTarget.open;
-              if (next !== open) navGroups.setOpen(fold, next, active);
-            }}
-          >
-            <summary className="nav-label">
-              {title}
-              <ChevronRight size={13} aria-hidden="true" />
-            </summary>
-            <div className="nav-group">{items}</div>
-          </details>
-        );
-      })}
+      {main.length > 0 && <div className="nav-group">{main.map((item) => link(item))}</div>}
+      {more.length > 0 && (
+        <details
+          className="nav-fold"
+          open={open}
+          onToggle={(event) => {
+            const next = event.currentTarget.open;
+            if (next !== open) navGroups.setOpen('more', next, active);
+          }}
+        >
+          <summary className="nav-label">
+            More
+            <ChevronRight size={13} aria-hidden="true" />
+          </summary>
+          <div className="nav-group">{more.map((item) => link(item))}</div>
+        </details>
+      )}
+      <div className="nav-group nav-foot">
+        {!close && link(account)}
+        {link(settings)}
+      </div>
+    </nav>
+  );
+}
+
+/** The tab row shared by the pages of one area, or the setup steps when a tool sent someone here to get set up. */
+function AreaTabs({ pathname, demo }: { pathname: string; demo: boolean }) {
+  const target = setupReturn(useSearchParams().get('returnTo'));
+  const { key } = useAnonymo();
+  const which = area(pathname);
+  if (target && (pathname === '/dashboard/key' || pathname === '/dashboard/funds')) {
+    const steps = [
+      { label: 'Your key', done: !!key, here: pathname === '/dashboard/key' },
+      ...(target.needsCredit ? [{ label: 'Add funds', done: false, here: pathname === '/dashboard/funds' }] : []),
+      { label: target.href.split('?')[0] === '/dashboard/chat' ? 'Back to chat' : `Back to ${target.label}`, done: false, here: false },
+    ];
+    return (
+      <ol className="ws-steps" aria-label="Setup">
+        {steps.map((step, i) => (
+          <li key={step.label} aria-current={step.here ? 'step' : undefined} data-done={step.done && !step.here}>
+            <span className="ws-step-dot" aria-hidden="true">{step.done && !step.here ? <Check size={12} /> : i + 1}</span>
+            {step.label}
+          </li>
+        ))}
+      </ol>
+    );
+  }
+  if (!which) return null;
+  const tabs = available(which === 'account' ? accountTabs : settingsTabs, demo);
+  return (
+    <nav className="ws-tabs" aria-label={which === 'account' ? 'Account' : 'Settings'}>
+      {tabs.map(({ href, label }) => (
+        <Link key={href} href={href} aria-current={tabCurrent(pathname, href) ? 'page' : undefined}>
+          {label}
+        </Link>
+      ))}
     </nav>
   );
 }
@@ -274,7 +199,7 @@ function MobileNav({ pathname, demo, navGroups }: {
           <Link
             key={href}
             href={href}
-            aria-current={matches(pathname, href) ? 'page' : undefined}
+            aria-current={sidebarCurrent(pathname, href) ? 'page' : undefined}
           >
             <Icon size={18} aria-hidden="true" />
             {label}
@@ -286,7 +211,7 @@ function MobileNav({ pathname, demo, navGroups }: {
           aria-controls="workspace-menu"
           aria-expanded={open}
           data-active={
-            !shortcuts.some((item) => matches(pathname, item.href)) || open
+            !shortcuts.some((item) => sidebarCurrent(pathname, item.href)) || open
           }
           onClick={() => {
             history.pushState({ workspaceMenu: pathname }, '', window.location.href);
@@ -353,7 +278,8 @@ export function WorkspaceShell({
 }) {
   const pathname = usePathname();
   const navGroups = useNavGroups(pathname);
-  const inFunds = pathname === '/dashboard/funds';
+  const inAccount = area(pathname) === 'account';
+  const group = area(pathname);
   const { ready, demo, key } = useAnonymo();
   if (useVanishWorkspace()) return null;
   return (
@@ -369,22 +295,20 @@ export function WorkspaceShell({
       <div className="ws-body">
         <header className="ws-top">
           <div className="ws-context">
-            <LayoutGrid size={15} aria-hidden="true" />
-            <Link href="/dashboard">Workspace</Link>
-            {section !== 'Overview' && (
+            {group && (
               <>
+                <Link href={group === 'account' ? account.href : settings.href}>{group === 'account' ? 'Account' : 'Settings'}</Link>
                 <span aria-hidden="true">/</span>
-                <span>{section}</span>
               </>
             )}
+            <span>{section}</span>
           </div>
           <span className="ws-mobile-brand">
             <Wordmark href="/" />
           </span>
           <div className="ws-top-right">
-            {!inFunds && <ContractAddressChip />}
             <AdultsOnly compact />
-            {ready && key && !inFunds && <Purse />}
+            {ready && key && !inAccount && <Purse />}
             {ready && updateOn('vault', demo) && <VaultTopBar />}
             {ready && (updateOn('history', demo) || updateOn('vault', demo) || updateOn('faces', demo) || updateOn('aboutyou', demo)) && <WipeDevice />}
           </div>
@@ -395,6 +319,9 @@ export function WorkspaceShell({
           className={composer ? 'ws-main ws-main-chat' : 'ws-main'}
         >
           <DemoNotice />
+          <Suspense fallback={null}>
+            <AreaTabs pathname={pathname} demo={ready && demo} />
+          </Suspense>
           {title && (
             <div className="ws-head">
               <h1>{title}</h1>

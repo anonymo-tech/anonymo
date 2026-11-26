@@ -1,14 +1,11 @@
-import { Overview } from '@/components/dashboard/overview';
-import { WorkspaceShell } from '@/components/dashboard/workspace-shell';
-import { ContractAddress } from '@/components/contract-address';
+import { redirect } from 'next/navigation';
 
-export const metadata = { title: 'Overview — Anonymo' };
-
-export default function DashboardPage() {
-  return (
-    <WorkspaceShell section="Overview">
-      <Overview />
-      <details className="contract-details"><summary>Coin contract address</summary><ContractAddress /></details>
-    </WorkspaceShell>
-  );
+// The workspace opens on Chat. Old links to /dashboard keep their query (demo mode, offer codes) on the way.
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const query = new URLSearchParams();
+  for (const [name, value] of Object.entries(await searchParams)) {
+    for (const one of Array.isArray(value) ? value : value === undefined ? [] : [value]) query.append(name, one);
+  }
+  const rest = query.toString();
+  redirect(`/dashboard/chat${rest ? `?${rest}` : ''}`);
 }

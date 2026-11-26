@@ -20,24 +20,10 @@ for (const [width, height, outfit] of [[320, 667, 'Pilot'], [360, 844, 'Astronau
       await page.waitForFunction(() => document.activeElement?.textContent?.trim() === 'I am 18 or older');
       await confirm.tap();
       await confirm.waitFor({state: 'hidden'});
-      const preview = button('See an example chat');
-      const sample = page.getByRole('dialog', { name: 'Example chat', exact: true });
-      await preview.tap();
-      await sample.getByRole('heading', { name: 'Illustrative receipt' }).waitFor();
-      assert.match(await sample.innerText(), /At low tide/);
-      const realReceipt = sample.getByRole('link', { name: /View a real \$0 refusal receipt/ });
-      assert.equal(new URL(await realReceipt.getAttribute('href')).hostname, 'anonymo.tech');
-      await sample.getByRole('button', { name: 'Close example' }).tap();
-      await sample.waitFor({ state: 'hidden' });
-      assert.ok(await preview.evaluate((el) => document.activeElement === el));
-
-      await page.getByRole('link', { name: 'Try chat' }).tap();
+      // The workspace opens on Chat; Characters is one of the three shortcuts.
       await page.waitForURL((url) => url.pathname === '/dashboard/chat');
-      await page.goBack();
-      await preview.tap();
-      await page.keyboard.press('Escape');
-      await sample.waitFor({ state: 'hidden' });
-      await page.getByRole('link', { name: 'Create a free character' }).tap();
+      await button('Close model chooser').tap();
+      await page.getByRole('navigation', { name: 'Quick navigation' }).getByRole('link', { name: 'Characters', exact: true }).tap();
       await page.getByRole('heading', { name: 'Character studio' }).waitFor();
       const choose = button(outfit);
       // Test the real contact point, including any foreground element that intercepts a tap.
@@ -82,8 +68,8 @@ for (const [width, height, outfit] of [[320, 667, 'Pilot'], [360, 844, 'Astronau
       await menu.waitFor({ state: 'hidden' });
       assert.equal(new URL(page.url()).pathname, '/dashboard/characters');
       await more.tap();
-      await menu.getByRole('link', { name: 'API key', exact: true }).tap();
-      await page.waitForURL('**/dashboard/key');
+      await menu.getByRole('link', { name: 'Settings', exact: true }).tap();
+      await page.waitForURL('**/dashboard/settings');
       await page.goBack();
       await page.getByRole('heading', { name: 'Character studio' }).waitFor();
       assert.equal(await menu.isVisible(), false);

@@ -351,7 +351,8 @@ table.data th.num { text-align: right; }
 .ws { min-height: 100svh; display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); }
 .ws-side { position: sticky; top: 0; height: 100dvh; display: flex; flex-direction: column; gap: 32px; padding: 25px 17px; border-right: 1px solid var(--line); background: var(--side); overflow-y: auto; }
 .ws-side .wordmark { padding: 0 8px; }
-.ws-nav { display: grid; gap: 22px; }
+.ws-nav { display: flex; flex: 1; flex-direction: column; gap: 18px; }
+.nav-foot { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--line); }
 .nav-group { display: grid; gap: 2px; }
 .nav-label { margin: 0 10px 5px; font-size: 10.5px; font-weight: 650; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); }
 .nav-fold > summary { display: flex; align-items: center; justify-content: space-between; min-height: 35px; margin: 0; padding: 5px 10px; border-radius: 8px; list-style: none; cursor: pointer; }
@@ -378,9 +379,32 @@ table.data th.num { text-align: right; }
 .ws-foot:empty { display: none; }
 .ws-main { flex: 1; width: 100%; max-width: 1440px; margin-inline: auto; padding: clamp(20px,3vw,44px) clamp(16px,3.3vw,52px) 48px; }
 .ws-main-chat { max-width: none; padding-bottom: 16px; display: flex; flex-direction: column; }
-.ws-head { display: grid; gap: 8px; padding: clamp(18px,2.7vw,36px); margin-bottom: 22px; border: 1px solid #594153; border-radius: var(--radius-lg); background: radial-gradient(ellipse at top right,#49243c,transparent 65%),var(--surface); }
-.ws-head h1 { font-size: clamp(30px, 3.7vw, 44px); }
-.ws-head p { color: var(--muted); font-size: 16.5px; }
+.ws-head { display: grid; gap: 6px; margin-bottom: 26px; }
+.ws-head h1 { font-size: clamp(26px, 2.6vw, 34px); letter-spacing: -.02em; }
+.ws-head p { max-width: 62ch; color: var(--muted); font-size: 15.5px; }
+/* Account and Settings: one tab row across the pages of the area. */
+.ws-tabs { display: flex; gap: 4px; margin: -6px 0 26px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.ws-tabs a { flex: none; padding: 10px 12px 11px; color: var(--muted); font-size: 14px; text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.ws-tabs a:hover { color: var(--text); }
+.ws-tabs a[aria-current='page'] { color: var(--text); border-bottom-color: var(--pink); }
+/* Setup: key, funds, back to what you were doing. */
+.ws-steps { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 6px 0 24px; padding: 0; list-style: none; color: var(--faint); font-size: 13.5px; }
+.ws-steps li { display: flex; align-items: center; gap: 8px; }
+.ws-steps li + li::before { content: ''; width: 28px; height: 1px; background: var(--line-strong); }
+.ws-step-dot { display: inline-grid; place-items: center; width: 22px; height: 22px; border: 1px solid var(--line-strong); border-radius: 50%; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.ws-steps li[aria-current='step'] { color: var(--text); }
+.ws-steps li[aria-current='step'] .ws-step-dot { border-color: var(--pink); background: var(--pink); color: #1b0b1d; font-weight: 650; }
+.ws-steps li[data-done='true'] { color: var(--muted); }
+.ws-steps li[data-done='true'] .ws-step-dot { border-color: #ffafd7; color: #ffafd7; }
+/* Plain rows of places (Settings, Developers). */
+.link-rows { display: grid; max-width: 760px; border-block: 1px solid var(--line); }
+.link-rows a { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center; padding: 16px 6px; color: var(--muted); text-decoration: none; }
+.link-rows a + a { border-top: 1px solid var(--line); }
+.link-rows a:hover { color: var(--text); background: var(--surface); }
+.link-rows a > svg:first-child { color: #dca8c8; }
+.link-rows a > svg:last-child { color: var(--faint); }
+.link-rows strong { display: block; color: var(--text); font-weight: 560; font-size: 15px; }
+.link-rows small { display: block; margin-top: 2px; font-size: 13.5px; }
 .ws-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin: 0 clamp(16px, 3vw, 36px); padding: 18px 0 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13.5px; }
 .ws-foot .spacer { flex: 1; }
 .ws-composer { position: sticky; bottom: 0; z-index: 15; padding: 0 clamp(16px, 3vw, 36px) 16px; background: linear-gradient(#1b0b1d00, var(--bg) 28%); }

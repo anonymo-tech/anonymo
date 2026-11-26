@@ -134,7 +134,7 @@ test('08 failure states: failed and unsupported simulation, signature requests, 
   }
 });
 
-test('08 from chat and More: a pasted request opens the review without reaching a model, and both new pages are in More', async () => {
+test('08 from chat and Settings: a pasted request opens the review without reaching a model, and both pages are listed under Developers', async () => {
   const browser = await launch();
   try {
     const { page, main } = await open(browser);
@@ -154,17 +154,15 @@ test('08 from chat and More: a pasted request opens the review without reaching 
     // The demo gateway keeps every chat turn it served: none was made from this request.
     const gens = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('anonymo.demo.state.v2') ?? '{"keys":{}}').keys).flatMap(k => k.gens ?? []));
     assert.equal(gens.length, 0);
-    // Both new destinations are listed under More on a phone (switched on in demo mode).
+    // Both destinations are listed on the Developers page, reached from Settings in the phone menu (on in demo mode).
     await page.getByRole('button', { name: 'More', exact: true }).tap();
     const menu = page.getByRole('dialog', { name: 'Workspace menu' });
-    // Wallet request sits in the folded More group, Pair a coding tool in For developers.
-    for (const name of ['More', 'For developers']) {
-      const fold = menu.locator('details.nav-fold').filter({ has: page.locator('summary', { hasText: new RegExp(`^${name}$`) }) });
-      if (!(await fold.evaluate((el) => el.open))) await fold.locator('summary').tap();
-    }
-    await menu.getByRole('link', { name: 'Pair a coding tool' }).waitFor();
-    await menu.getByRole('link', { name: 'Wallet request' }).waitFor();
-    await menu.getByRole('button', { name: 'Close menu' }).tap();
+    await menu.getByRole('link', { name: 'Settings', exact: true }).tap();
+    await page.waitForURL('**/dashboard/settings');
+    await page.getByRole('navigation', { name: 'Settings', exact: true }).getByRole('link', { name: 'Developers' }).tap();
+    const tools = page.getByRole('navigation', { name: 'Developer tools' });
+    await tools.getByRole('link', { name: /Pair a coding tool/ }).waitFor();
+    await tools.getByRole('link', { name: /Wallet request/ }).waitFor();
     assert.deepEqual(await page.evaluate(() => window.walletCalls), []);
   } finally {
     await browser.close();

@@ -123,14 +123,10 @@ for (const width of [1250, 390]) {
       await pop.locator('.prompt').waitFor();
       await btn('Minimize chat').click();
       if (width === 390) await btn('More').click();
-      // Docs sits in the folded "For developers" group of the sidebar.
-      const developers = page.locator('details.nav-fold').filter({ visible: true }).filter({ hasText: 'For developers' }).first();
-      if (!(await developers.evaluate((el) => el.open))) await developers.locator('summary').click();
-      await page
-        .getByRole('link', { name: 'Docs', exact: true })
-        .filter({ visible: true })
-        .first()
-        .click();
+      // Docs is listed on the Developers page, under Settings (the sidebar, or the phone menu).
+      await page.getByRole('link', { name: 'Settings', exact: true }).filter({ visible: true }).first().click();
+      await page.getByRole('navigation', { name: 'Settings', exact: true }).getByRole('link', { name: 'Developers' }).click();
+      await page.getByRole('navigation', { name: 'Developer tools' }).getByRole('link', { name: /^Docs/ }).click();
       await launcher.click();
       await pop.locator('.answer-body').filter({ hasText: /\w/ }).waitFor();
       await pop.locator('.thread[aria-busy="false"]').waitFor();
