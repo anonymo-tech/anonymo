@@ -34,7 +34,7 @@ import type { FloorInput } from "../seams.ts";
 import { DEFAULT_MAX_IMAGES, type ImageModel, type MediaModel, type SpeechModel, type VideoModel } from "./catalog.ts";
 import { containerFor, wavDuration, wavSeconds } from "./containers.ts";
 import { firstImageOffer, finishFirstImage, MAX_FIRST_IMAGE_PRICE, startFirstImage } from "./first-image.ts";
-import { COMP_VIDEO_PREFIX, FIRST_VIDEO_PREFIX, firstVideoOffer, isSponsoredVideo, MAX_FIRST_VIDEO_PRICE, recoverFirstVideoJobs, startFirstVideo, videoUnavailable } from "./first-video.ts";
+import { COMP_VIDEO_PREFIX, FIRST_VIDEO_PREFIX, firstVideoOffer, isSponsoredVideo, MAX_FIRST_VIDEO_PRICE, recoverFirstVideoJobs, recoverVideoDownload, startFirstVideo, videoUnavailable } from "./first-video.ts";
 import type { GateReason } from "./gate.ts";
 import { ProvenanceError } from "./provenance.ts";
 import { countryOf } from "./region.ts";
@@ -601,13 +601,22 @@ async function advance(ctx: Ctx, s: MediaServices, job: JobRow): Promise<void> {
     if (ended.length) await release(ctx.db, job.holdId).catch(() => undefined);
   };
   if (!model || !upstream) return end("failed", "model_unavailable");
+  const sponsored = isSponsoredVideo(job.id);
+  const remaining = job.createdAt.getTime() + VIDEO_HOLD_MS - Date.now();
+  if (sponsored && remaining <= 0) return end("failed", "job_expired");
+  const pollSignal = AbortSignal.timeout(sponsored ? Math.min(remaining, 60_000) : 60_000);
   let polled;
   try {
-    polled = await upstream.poll(job.upstreamRef, model.upstreamModel, AbortSignal.timeout(60_000));
+    polled = await upstream.poll(job.upstreamRef, model.upstreamModel, pollSignal);
   } catch {
     return; // transient: try again on the next poll; the hold's own expiry bounds how long
   }
   if (polled.state === "running") return;
+  // The provider already rendered this clip. Retry retrieval of the same reference, never generation.
+  if (polled.state === "failed" && !polled.blocked && sponsored && job.upstream === "nanogpt" && polled.reason === "upstream_output_unavailable") {
+    await ctx.db.update(mediaJobs).set({ errorType: polled.reason }).where(owner);
+    return;
+  }
   if (polled.state === "failed") return polled.blocked ? end("blocked", "upstream_blocked") : end("failed", polled.reason ?? "upstream_failed");
   const [finishing] = await ctx.db.update(mediaJobs).set({ status: "finishing", updatedAt: new Date() }).where(owner)
     .returning({ lease: mediaJobs.updatedAt });
@@ -617,10 +626,11 @@ async function advance(ctx: Ctx, s: MediaServices, job: JobRow): Promise<void> {
   const safety: StudioSafety | undefined = s.studio ? { prompt: "safe", outputs: [] } : undefined;
   try {
     const out = await finishOutput(s, polled.media, { requestId: job.id, model: model.id, visual: true, safety });
+    if (sponsored && Date.now() >= job.createdAt.getTime() + VIDEO_HOLD_MS) return end("failed", "job_expired");
     const put = s.store.put({ bytes: out.bytes, mime: out.mime, accountId: job.accountId, ...(safety ? { safety } : {}) }, s.ttlMs);
     mediaId = put.id;
     const charged = await charge(ctx, job.holdId, job.pricePico, "media_video", `Video: ${model.name}`);
-    const completed = await ctx.db.update(mediaJobs).set({ status: "completed", mediaId: put.id, mediaExpiresAt: new Date(put.expiresAt), chargedPico: charged, updatedAt: new Date() })
+    const completed = await ctx.db.update(mediaJobs).set({ status: "completed", errorType: null, mediaId: put.id, mediaExpiresAt: new Date(put.expiresAt), chargedPico: charged, updatedAt: new Date() })
       .where(owner).returning({ id: mediaJobs.id });
     if (!completed.length) s.store.delete(put.id);
   } catch (e) {
@@ -660,6 +670,9 @@ const ERROR_MESSAGES: Record<string, string> = {
 
 function videoJson(ctx: Ctx, s: MediaServices, job: JobRow) {
   const status = job.status === "completed" ? "completed" : job.status === "failed" || job.status === "blocked" ? "failed" : job.status === "queued" ? "queued" : "in_progress";
+  const retryDelivery = isSponsoredVideo(job.id) && job.upstream === "nanogpt" && job.upstreamRef
+    && job.errorType === "upstream_output_unavailable" && Date.now() < job.createdAt.getTime() + VIDEO_HOLD_MS
+    && (job.status === "running" || job.status === "finishing");
   const expires = job.mediaExpiresAt?.getTime() ?? 0;
   const live = job.status === "completed" && job.mediaId && expires > Date.now();
   const [type, reason, shieldgemma2, llavaguard] = (job.errorType ?? "").split(":");
@@ -683,7 +696,8 @@ function videoJson(ctx: Ctx, s: MediaServices, job: JobRow) {
     size: `${job.width}x${job.height}`,
     ...(live ? { url: absolute(ctx, signedMediaPath(ctx.cfg.appSecret, job.mediaId!, expires)), expires_at: Math.floor(expires / 1000) } : {}),
     ...(job.status === "completed" && !live ? { expired: true } : {}),
-    ...(job.errorType
+    ...(retryDelivery ? { can_retry_delivery: true } : {}),
+    ...(job.errorType && status === "failed"
       ? { error: { type, message: reason === "studio_unsafe" ? "The video did not pass the safe-for-work check. Nothing was charged." : type === "media_blocked" ? "The video crossed a line Anonymo blocks for everyone. Nothing was returned, stored or charged." : (ERROR_MESSAGES[type] ?? ERROR_MESSAGES.internal), ...(reason ? { reason } : {}) } }
       : {}),
     anonymo: { request_id: job.id, cost_usd: job.chargedPico != null ? usd(job.chargedPico) : 0, quoted_usd: usd(job.pricePico), ...(job.status === "completed" ? { provenance: { c2pa: true, watermark: true } } : {}), ...(signed ? { receipt: signed } : {}) },
@@ -743,8 +757,10 @@ async function getVideo(ctx: Ctx, c: Context): Promise<Response> {
     regionPolicy(ctx, c, s);
     await recoverFirstVideoJobs(ctx.db, key.accountId);
   }
-  const job = await load();
+  let job = await load();
   if (!job) fail(404, "Unknown video job.", "not_found");
+  const recovery = job.status === "failed" ? await recoverVideoDownload(ctx.db, job) : undefined;
+  job = recovery?.job ?? job;
   if (job.status === "running") await advance(ctx, s, job);
   if (isSponsoredVideo(job.id)) await restoreFirstVideo(ctx, s, job);
   const current = (await load())!;
@@ -752,7 +768,7 @@ async function getVideo(ctx: Ctx, c: Context): Promise<Response> {
   // underway, instead of handing back a URL that cannot serve the file.
   const restoring = isSponsoredVideo(id) && current.status === "completed" && current.mediaId &&
     current.mediaExpiresAt && current.mediaExpiresAt.getTime() > Date.now() && !s.store.get(current.mediaId);
-  const { body, studioBlocked } = videoJson(ctx, s, restoring ? { ...current, status: "finishing" } : current);
+  const { body, studioBlocked } = videoJson(ctx, s, restoring || recovery?.pendingRelease && current.status === "failed" ? { ...current, status: "finishing" } : current);
   if (studioBlocked) {
     const signed = body.anonymo.receipt;
     return c.json(body, 451, signed ? { "x-anonymo-receipt": receiptHeader(signed), "x-anonymo-request-id": current.id } : undefined);

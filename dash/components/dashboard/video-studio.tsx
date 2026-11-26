@@ -290,23 +290,25 @@ function VideoJobCard({ job, client, modelName, save, refreshBalance, refreshOff
 }) {
   const [connection, setConnection] = useState('');
   const [playbackError, setPlaybackError] = useState(false);
+  const [checkingDelivery, setCheckingDelivery] = useState(false);
   const pending = videoPending(job);
   const id = job.id;
 
   useEffect(() => {
-    if (!pending) return;
+    if (!pending && !checkingDelivery) return;
     return pollWhileVisible(document, async (signal) => {
       try {
         const current = await client.videoStatus(id, signal);
         if (signal.aborted) return true;
         setConnection('');
-        if (current.status !== job.status) save(current);
+        if (current.status !== job.status || current.can_retry_delivery !== job.can_retry_delivery) save(current);
         if (videoPending(current)) return true;
       } catch (error) {
         if (signal.aborted) return true;
         if (error instanceof AnonymoApiError && error.status === 451) {
           save({ ...job, status: 'failed', error: { type: 'upstream_blocked', message: 'Video request blocked. Nothing was charged.' } });
         } else if (error instanceof AnonymoApiError && [401, 403, 404].includes(error.status)) {
+          setCheckingDelivery(false);
           setConnection('Video status is unavailable.');
           return false;
         } else {
@@ -314,11 +316,12 @@ function VideoJobCard({ job, client, modelName, save, refreshBalance, refreshOff
           return true;
         }
       }
+      setCheckingDelivery(false);
       refreshBalance();
       refreshOffer();
       return false;
     });
-  }, [client, id, job, pending, refreshBalance, refreshOffer, save]);
+  }, [client, id, job, pending, checkingDelivery, refreshBalance, refreshOffer, save]);
 
   const blocked = videoBlocked(job);
   const status = job.status === 'queued' ? 'Queued' : job.status === 'in_progress' ? 'Generating' : job.status === 'completed' ? 'Complete' : blocked ? 'Blocked' : 'Failed';
@@ -335,7 +338,12 @@ function VideoJobCard({ job, client, modelName, save, refreshBalance, refreshOff
       {pending && <div className="video-wait" aria-hidden="true"><Film size={30} /></div>}
       {connection && <p className="video-job-note" role="status">{connection}</p>}
       {job.status === 'failed' && (
-        <p className="video-job-note" role="status">{blocked ? 'Video request blocked.' : 'Video generation failed.'} {freeRetry ? 'Your free clip is still available.' : 'Nothing was charged.'}</p>
+        job.can_retry_delivery ? <div className="video-job-footer">
+          <p className="video-job-note" role="status">Your render is ready at the provider. Delivery was interrupted.</p>
+          <button type="button" className="btn btn-small" disabled={checkingDelivery} onClick={() => setCheckingDelivery(true)}>
+            {checkingDelivery ? 'Checking…' : 'Recover clip'}
+          </button>
+        </div> : <p className="video-job-note" role="status">{blocked ? 'Video request blocked.' : 'Video generation failed.'} {freeRetry ? 'Your free clip is still available.' : 'Nothing was charged.'}</p>
       )}
       {job.status === 'completed' && (
         <>

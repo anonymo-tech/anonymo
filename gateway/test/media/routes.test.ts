@@ -831,6 +831,58 @@ describe("studio's independent first video", () => {
     expect((await lookup(headers)).available).toBe(false);
   });
 
+  test("recovers an undelivered sponsored render on its original job, hold and budget, even after 30 minutes", async () => {
+    const k = await h.newKey();
+    const headers = { ...origin, ...k.auth };
+    const before = calls.videoSubmit;
+    const created = await (await post(path, { prompt: "A green hillside", model: "google/veo-3.1-lite", seconds: 4 }, headers)).json();
+    await h.ctx.db.update(mediaJobs).set({ status: "failed", errorType: "upstream_output_unavailable",
+      createdAt: sql`now() - interval '30 minutes'` }).where(eq(mediaJobs.id, created.id));
+    await h.ctx.db.update(holds).set({ status: "released", result: { charged: "0", uncovered: "0" },
+      expiresAt: sql`now() + interval '30 minutes'` }).where(eq(holds.id, created.id));
+    const [prior] = await h.ctx.db.select().from(holds).where(eq(holds.id, created.id));
+    const remaining = (await firstVideoOffer(h.ctx.db)).remaining;
+    videoPolls = [{ state: "running" }, { state: "failed", reason: "upstream_output_unavailable", message: "" }];
+    for (let n = 0; n < 2; n++) {
+      const pending = await poll(created.id, headers);
+      expect(pending).toMatchObject({ status: "in_progress", can_retry_delivery: true });
+      expect(pending.error).toBeUndefined();
+    }
+    const [held] = await h.ctx.db.select().from(holds).where(eq(holds.id, created.id));
+    expect(held).toMatchObject({ status: "released", amount: 0n, expiresAt: prior.expiresAt });
+    const ready = { state: "done", media: { bytes: tinyMp4(7), mime: "video/mp4" } } as const;
+    videoPolls = [ready, ready];
+    const deliveries = await Promise.all([poll(created.id, headers), poll(created.id, headers)]);
+    expect(deliveries.some(job => job.status === "completed")).toBe(true);
+    const done = await poll(created.id, headers);
+    expect(done).toMatchObject({ status: "completed", anonymo: { quoted_usd: 0, cost_usd: 0, receipt: { sig: expect.any(String) } } });
+    expect(done.error).toBeUndefined();
+    expect(done.can_retry_delivery).toBeUndefined();
+    expect((await h.request(pathOf(done.url))).status).toBe(200);
+    const [hold] = await h.ctx.db.select().from(holds).where(eq(holds.id, created.id));
+    expect(hold).toEqual(prior);
+    expect((await firstVideoOffer(h.ctx.db)).remaining).toBe(remaining);
+    expect(calls.videoSubmit - before).toBe(1);
+    expect((await lookup(headers)).available).toBe(false);
+  });
+
+  test("expired, definitively invalid and policy-blocked outputs cannot reopen their free hold", async () => {
+    const k = await h.newKey();
+    const headers = { ...origin, ...k.auth };
+    const job = await (await post(path, { prompt: "A green hillside", model: "google/veo-3.1-lite", seconds: 4 }, headers)).json();
+    await h.ctx.db.update(holds).set({ status: "released" }).where(eq(holds.id, job.id));
+    const before = calls.videoPoll;
+    for (const [status, errorType, age] of [
+      ["failed", "upstream_output_unavailable", 61], ["failed", "upstream_output_invalid", 1], ["blocked", "upstream_blocked", 1],
+    ] as const) {
+      await h.ctx.db.update(mediaJobs).set({ status, errorType, createdAt: sql`now() - ${age}::int * interval '1 minute'` }).where(eq(mediaJobs.id, job.id));
+      const result = await poll(job.id, headers);
+      expect(result).toMatchObject({ status: "failed", error: { type: errorType } });
+      expect(result.can_retry_delivery).toBeUndefined();
+    }
+    expect(calls.videoPoll).toBe(before);
+  });
+
   test("wrong duration, caps, uploads, origin and floor fail before provider dispatch; funded users never fall through to paid", async () => {
     const key = await h.fundedKey();
     const headers = { ...origin, ...key.auth };

@@ -35,10 +35,11 @@ export function nanogptVideoAdapter(o: { base?: string; apiKey: string; fetch?: 
   const download = o.fetch ?? ((url: URL, init: RequestInit) => providerFetch(url, init, { production: true }));
   const auth = { "x-api-key": o.apiKey };
 
-  async function apiRequest(path: string, model: string, init: RequestInit): Promise<Response> {
+  async function apiRequest(path: string, model: string, init: RequestInit) {
     const send = async (endpoint: string) => {
       try {
-        return await request(endpoint + path, { ...init, redirect: "error" });
+        const response = await request(endpoint + path, { ...init, redirect: "error" });
+        return { response, endpoint };
       } catch (error) {
         const code = preSendCode(error);
         log.warn("video provider connection failed", {
@@ -58,13 +59,31 @@ export function nanogptVideoAdapter(o: { base?: string; apiKey: string; fetch?: 
       return send(ALTERNATE_API);
     }
   }
+  /** Only the documented proxy path resolves relative to the status responder. File requests
+   * carry no credentials. Each HTTPS redirect goes through a fresh public DNS/IP check. */
+  async function downloadClip(raw: string, endpoint: string, ref: string, signal: AbortSignal) {
+    let url = URL.parse(raw);
+    if (!url && raw.startsWith("/api/generate-video/content?")) {
+      url = URL.parse(raw, endpoint);
+      if (url?.pathname !== "/api/generate-video/content" || url.searchParams.get("runId") !== ref) return null;
+    }
+    for (let hops = 0; url && hops <= 3; hops++) {
+      if (url.protocol !== "https:" || url.username || url.password || url.port || url.hash) return null;
+      const file = await download(url, { signal, redirect: "error" });
+      if (![301, 302, 303, 307, 308].includes(file.status)) return file;
+      const location = file.headers.get("location");
+      await file.body?.cancel().catch(() => undefined);
+      url = location ? URL.parse(location, url.href) : null;
+    }
+    return null;
+  }
   return {
     async submit(r, signal) {
       const model = NANOGPT_VIDEO_MODELS.find((m) => m.upstreamModel === r.model);
       if (!model) throw new UpstreamError("Unknown NanoGPT video model", 400, true);
       const diagnose = (reason: string, providerStatus?: number) =>
         log.warn("video provider submission failed", { provider: "nanogpt", model: model.id, reason, provider_status: providerStatus });
-      const res = await apiRequest("/generate-video", model.id, {
+      const { response: res } = await apiRequest("/generate-video", model.id, {
         method: "POST", headers: { ...auth, "content-type": "application/json" }, signal,
         body: JSON.stringify({
           model: r.model,
@@ -100,7 +119,7 @@ export function nanogptVideoAdapter(o: { base?: string; apiKey: string; fetch?: 
     async poll(ref, modelName, signal) {
       if (!RUN_ID.test(ref)) return failed("upstream_job_missing");
       const model = NANOGPT_VIDEO_MODELS.find((m) => m.upstreamModel === modelName);
-      const res = await apiRequest("/video/status?" + new URLSearchParams({ requestId: ref }), model?.id ?? "unknown", { headers: auth, signal });
+      const { response: res, endpoint } = await apiRequest("/video/status?" + new URLSearchParams({ requestId: ref }), model?.id ?? "unknown", { headers: auth, signal });
       if (!res.ok) {
         await res.body?.cancel().catch(() => undefined);
         if (transient(res.status)) return { state: "running" };
@@ -114,11 +133,8 @@ export function nanogptVideoAdapter(o: { base?: string; apiKey: string; fetch?: 
       if (status?.status === "CANCELED") return failed("upstream_cancelled");
       if (status?.status !== "COMPLETED") return failed();
       if (typeof status.output?.video?.url !== "string") return failed("upstream_output_unavailable");
-      const url = URL.parse(status.output.video.url);
-      if (!url || url.protocol !== "https:" || url.username || url.password || url.port || url.hash) return failed("upstream_output_unavailable");
-
-      // The file link is separate from the API and never receives its credential.
-      const file = await download(url, { signal, redirect: "error" });
+      const file = await downloadClip(status.output.video.url, endpoint, ref, signal);
+      if (!file) return failed("upstream_output_invalid");
       if (!file.ok || Number(file.headers.get("content-length")) > MAX_MEDIA_BYTES) {
         await file.body?.cancel().catch(() => undefined);
         return transient(file.status) ? { state: "running" } : failed("upstream_output_unavailable");

@@ -1,8 +1,8 @@
 // The existing job row is also the per-account claim. Only completed jobs permanently consume
 // it. Daily pools also cover renders the provider may have charged for, including locally blocked output.
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Db, Tx } from "../../db/client.ts";
-import { accounts, kv } from "../../db/schema.ts";
+import { accounts, holds, kv } from "../../db/schema.ts";
 import { release } from "../../ledger/ledger.ts";
 import { fail } from "../../lib/errors.ts";
 import { usdToPico, type Pico } from "../../lib/money.ts";
@@ -50,6 +50,35 @@ export async function recoverFirstVideoJobs(db: Db, accountId?: string) {
   for (const row of expired) await release(db, row.id);
   await db.update(mediaJobs).set({ status: "running", lastPolledAt: null, updatedAt: sql`now()` })
     .where(and(scope, eq(mediaJobs.status, "finishing"), sql`${mediaJobs.updatedAt} <= now() - interval '10 minutes'`));
+}
+
+/** An older worker may have failed to follow the provider's signed download link. Only restore
+ * the original free, undelivered NanoGPT job under the same lock as a new claim. The released
+ * zero hold stays closed. Idempotent settlement reads its existing zero-charge result. */
+export async function recoverVideoDownload(db: Db, job: typeof mediaJobs.$inferSelect) {
+  const ref = job.upstreamRef;
+  if (!isSponsoredVideo(job.id) || job.status !== "failed" || job.errorType !== "upstream_output_unavailable"
+      || job.upstream !== "nanogpt" || !ref || job.pricePico !== 0n || job.mediaId || job.chargedPico != null
+      || job.createdAt.getTime() <= Date.now() - 3_600_000) return;
+  return db.transaction(async tx => {
+    const [account] = await tx.select({ id: accounts.id }).from(accounts).where(eq(accounts.id, job.accountId)).for("update");
+    if (!account) return;
+    const [prior] = await tx.select({ id: mediaJobs.id }).from(mediaJobs)
+      .where(blockingClaim(job.accountId, job.id.startsWith(COMP_VIDEO_PREFIX))).limit(1);
+    if (prior) return;
+    const [hold] = await tx.select({ id: holds.id, status: holds.status }).from(holds).where(and(
+      eq(holds.id, job.holdId), eq(holds.accountId, job.accountId), eq(holds.kind, "media_video"),
+      inArray(holds.status, ["held", "released"]), eq(holds.amount, 0n), sql`${holds.expiresAt} > now()`,
+    )).for("update");
+    if (!hold) return;
+    // A finishing poll writes the terminal job before releasing its hold. Wait for that release.
+    if (hold.status === "held") return { pendingRelease: true };
+    const [recovered] = await tx.update(mediaJobs).set({ status: "running", lastPolledAt: null, updatedAt: sql`now()` })
+      .where(and(eq(mediaJobs.id, job.id), eq(mediaJobs.status, "failed"), eq(mediaJobs.errorType, "upstream_output_unavailable"),
+        eq(mediaJobs.upstreamRef, ref), isNull(mediaJobs.chargedPico), isNull(mediaJobs.mediaId),
+        sql`${mediaJobs.createdAt} > now() - interval '1 hour'`)).returning();
+    return { job: recovered };
+  });
 }
 
 const quotePrefix = "video-sponsor:v1:quote:";

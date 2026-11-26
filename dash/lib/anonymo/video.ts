@@ -36,6 +36,7 @@ export type VideoJob = Omit<VideoRequest, 'prompt'> & {
   object: 'video.generation';
   status: 'queued' | 'in_progress' | 'completed' | 'failed';
   created: number;
+  can_retry_delivery?: boolean;
   url?: string;
   expires_at?: number;
   expired?: boolean;

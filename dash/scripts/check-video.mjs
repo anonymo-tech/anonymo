@@ -21,6 +21,25 @@ test('a failed clip shows free retry eligibility only after its exact offer is a
   assert.equal(canRetryVideoFree(offer, undefined), false);
 });
 
+test('delivery recovery checks the original job without submitting a second generation', async () => {
+  const id = 'vid_c_demo';
+  const statuses = [
+    { status: 'failed', can_retry_delivery: true },
+    { status: 'in_progress' },
+    { status: 'completed', url: '/demo/video.mp4', anonymo: { cost_usd: 0 } },
+  ];
+  const client = createAnonymoClient({ baseUrl: base, key: 'demo-key', fetch: async (input, init) => {
+    const req = new Request(input, init);
+    assert.equal(req.method, 'GET');
+    assert.equal(new URL(req.url).pathname, API_PATHS.video(id));
+    return Response.json({ id, object: 'video.generation', ...statuses.shift() });
+  } });
+  assert.equal((await client.videoStatus(id)).can_retry_delivery, true);
+  assert.equal((await client.videoStatus(id)).status, 'in_progress');
+  assert.equal((await client.videoStatus(id)).anonymo.cost_usd, 0);
+  assert.equal(statuses.length, 0);
+});
+
 async function demo(credit = 2_000_000) {
   let now = 1_700_000_000_000;
   const storage = new Map();

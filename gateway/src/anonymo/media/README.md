@@ -32,6 +32,8 @@ The $10 daily welcome pool uses the same accounting. The gateway locks the appli
 
 NanoGPT Video uses its canonical API host. If DNS resolution, certificate verification or the initial connection fails with a recognized pre-send error, the gateway may retry once on NanoGPT’s alternate HTTPS API host. Both endpoints require normal certificate verification. An explicitly configured `ANONYMO_NANOGPT_BASE` uses only that endpoint. An HTTP response, an ambiguous disconnect or a missing job ID ends the submission attempt.
 
+Video downloads accept NanoGPT’s signed content proxy on the status responder’s HTTPS origin and up to three validated public HTTPS redirects. They carry no API credentials. During the original hour a sponsored NanoGPT job that failed to download its rendered output can resume on the same authenticated job URL. It uses its original provider reference and zero-dollar hold. An in-progress delivery retry returns `can_retry_delivery: true`. Invalid media and policy blocks remain terminal.
+
 Each is also served under `/api/v1`. Errors use the gateway's OpenAI-shaped envelope.
 
 ## NanoGPT image models

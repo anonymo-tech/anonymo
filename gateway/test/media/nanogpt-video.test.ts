@@ -208,3 +208,43 @@ test("explicit bases, cancellation, ambiguous errors, HTTP responses and missing
     expect(JSON.stringify(warn.mock.calls)).not.toContain("private error code");
   } finally { warn.mockRestore(); }
 });
+
+test("a signed relative content link from the responding alternate resolves there and follows a credential-free storage redirect", async () => {
+  const path = "/api/generate-video/content?runId=" + ref + "&model=veo&expires=1&sig=fixture";
+  const calls: string[] = [];
+  const fake = (async (url, init) => {
+    const href = String(url);
+    calls.push(href);
+    expect(init?.redirect).toBe("error");
+    if (href.startsWith(canonical + "/video/status?")) throw connError("UNKNOWN_CERTIFICATE_VERIFICATION_ERROR");
+    if (href.startsWith(alternate + "/video/status?")) return completed(path);
+    expect(new Headers(init?.headers).get("x-api-key")).toBe(null);
+    expect(new Headers(init?.headers).get("authorization")).toBe(null);
+    if (href === "https://nano-gpt.com" + path) return new Response(null, { status: 302, headers: { location: clipUrl } });
+    expect(href).toBe(clipUrl);
+    return new Response(Buffer.from(videoBytes()));
+  }) as typeof fetch;
+  const adapter = nanogptVideoAdapter({ apiKey: key, fetch: fake });
+  expect((await adapter.poll(ref, "veo3-1-lite-video", signal)).state).toBe("done");
+  expect(calls).toHaveLength(4);
+});
+
+test("relative proxy downloads reject other paths, mismatched runs, unsafe redirects and unbounded chains", async () => {
+  for (const [first, redirect, expectedFileRequests] of [
+    ["/api/account", "", 0], ["//other.example/file", "", 0],
+    ["/api/generate-video/content?runId=vid_other", "", 0],
+    [clipUrl, "http://storage.example/file", 1],
+    [clipUrl, "https://name@storage.example/file", 1],
+    [clipUrl, clipUrl, 4],
+  ] as const) {
+    let files = 0;
+    const fake = (async url => {
+      if (String(url).includes("/video/status?")) return completed(first);
+      files++;
+      return new Response(null, { status: 302, headers: { location: redirect } });
+    }) as typeof fetch;
+    const adapter = nanogptVideoAdapter({ base, apiKey: key, fetch: fake });
+    expect(await adapter.poll(ref, "veo3-1-lite-video", signal)).toMatchObject({ state: "failed", reason: "upstream_output_invalid" });
+    expect(files).toBe(expectedFileRequests);
+  }
+});
