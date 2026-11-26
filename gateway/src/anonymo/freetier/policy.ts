@@ -46,15 +46,53 @@ export function freeChatModel(ctx: Ctx) {
 const FREE_FIELDS = new Set(["model", "messages", "stream", "stream_options", "max_tokens", "max_completion_tokens"]);
 const FREE_ROLES = new Set(["system", "developer", "user", "assistant"]);
 
+/** Free messages have ceilings on the newest message, the instructions and the recent context, so no single request runs away. */
+export const FREE_LIMITS = {
+  /** The message being answered (about 2,000 tokens): a long question or a pasted page. */
+  messageChars: 8_000,
+  /** System and developer instructions together, such as a full character card (about 3,000 tokens). */
+  instructionChars: 12_000,
+  /** Everything sent to the model, instructions included (about 12,000 tokens). Older turns are dropped to fit. */
+  contextChars: 48_000,
+  /** The reply (about 1,100 words). */
+  replyTokens: 1_500,
+} as const;
+
+/**
+ * Validates a free (or Telegram trial) chat body and shrinks it to the free limits in place. The newest message and the
+ * instructions are never cut: if they are too long the request is refused with a plain reason. Older turns are dropped,
+ * oldest first, until the rest fits, so a long free conversation keeps going with recent context only.
+ */
 export function boundFreeChat(body: Record<string, unknown>) {
   const messages = body.messages as { role: string; content: unknown }[];
-  if (Object.keys(body).some((field) => !FREE_FIELDS.has(field)) || messages.length > 32 ||
+  if (Object.keys(body).some((field) => !FREE_FIELDS.has(field)) || messages.length > 200 ||
       messages.some((m) => !FREE_ROLES.has(m.role) || typeof m.content !== "string" || Object.keys(m).length !== 2) ||
-      !messages.some((m) => m.role === "user" && (m.content as string).trim()) ||
-      messages.reduce((bytes, m) => bytes + Buffer.byteLength(m.content as string), 0) > 32_768)
-    fail(400, "Free chat accepts one text reply per request, with up to 32 messages and 32 KiB of context.", "free_text_only");
+      !messages.some((m) => m.role === "user" && (m.content as string).trim()))
+    fail(400, "Free chat accepts one text reply per request.", "free_text_only");
 
-  body.max_tokens = Math.min(Number(body.max_tokens ?? body.max_completion_tokens ?? 512), 512);
+  const text = messages as { role: string; content: string }[];
+  const last = text[text.length - 1];
+  if (last.role !== "user") fail(400, "Free chat answers the last message, which must be yours.", "free_text_only");
+  if (last.content.length > FREE_LIMITS.messageChars)
+    fail(400, `Free messages can be up to ${FREE_LIMITS.messageChars.toLocaleString("en-US")} characters. Shorten it, or add funds for longer messages.`, "free_message_too_long");
+
+  const instructions = text.filter((m) => m.role === "system" || m.role === "developer");
+  const instructionChars = instructions.reduce((n, m) => n + m.content.length, 0);
+  if (instructionChars > FREE_LIMITS.instructionChars)
+    fail(400, `Free chat allows up to ${FREE_LIMITS.instructionChars.toLocaleString("en-US")} characters of instructions or character description. Add funds for longer ones.`, "free_context_too_long");
+
+  // Keep the newest turns that fit, newest first, then restore their order behind the instructions.
+  const turns = text.filter((m) => m.role === "user" || m.role === "assistant");
+  const kept: typeof turns = [];
+  let used = instructionChars;
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (used + turns[i].content.length > FREE_LIMITS.contextChars && kept.length) break;
+    kept.unshift(turns[i]);
+    used += turns[i].content.length;
+  }
+  body.messages = [...instructions, ...kept];
+
+  body.max_tokens = Math.min(Number(body.max_tokens ?? body.max_completion_tokens ?? FREE_LIMITS.replyTokens) || FREE_LIMITS.replyTokens, FREE_LIMITS.replyTokens);
   delete body.max_completion_tokens;
 }
 
