@@ -10,21 +10,62 @@ const failed = (reason?: VideoFailure): VideoPoll => ({ state: "failed", reason,
 const blocked = (): VideoPoll => ({ state: "failed", blocked: true, message: "NanoGPT video was blocked" });
 const json = (response: Response) => boundedJson(response, 64 * 1024).catch(() => null);
 
+const CANONICAL_API = "https://api.nano-gpt.com/api";
+const ALTERNATE_API = "https://nano-gpt.com/api";
+const PRE_SEND_CODES = new Set([
+  "ECONNREFUSED", "EAI_AGAIN", "ENOTFOUND", "DNS_ENOTFOUND",
+  "UNKNOWN_CERTIFICATE_VERIFICATION_ERROR", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "CERT_HAS_EXPIRED", "ERR_TLS_CERT_ALTNAME_INVALID",
+  "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN",
+]);
+
+/** Bun puts its connect error code on the exception; other fetch implementations wrap it in cause. */
+function preSendCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return;
+  for (const cause of [error, "cause" in error ? error.cause : null]) {
+    if (cause && typeof cause === "object" && "code" in cause && typeof cause.code === "string")
+      return PRE_SEND_CODES.has(cause.code) ? cause.code : undefined;
+  }
+}
+
 /** NanoGPT's async video API lives under /api beside its OpenAI-compatible /api/v1 endpoints. */
-export function nanogptVideoAdapter(o: { base: string; apiKey: string; fetch?: typeof fetch }): VideoUpstream {
-  const base = o.base.replace(/\/+$/, "").replace(/\/v1$/, "");
+export function nanogptVideoAdapter(o: { base?: string; apiKey: string; fetch?: typeof fetch }): VideoUpstream {
+  const base = o.base?.replace(/\/+$/, "").replace(/\/v1$/, "");
   const request = (o.fetch ?? fetch);
   const download = o.fetch ?? ((url: URL, init: RequestInit) => providerFetch(url, init, { production: true }));
   const auth = { "x-api-key": o.apiKey };
 
+  async function apiRequest(path: string, model: string, init: RequestInit): Promise<Response> {
+    const send = async (endpoint: string) => {
+      try {
+        return await request(endpoint + path, { ...init, redirect: "error" });
+      } catch (error) {
+        const code = preSendCode(error);
+        log.warn("video provider connection failed", {
+          provider: "nanogpt", model, stage: init.method === "POST" ? "submit" : "poll",
+          endpoint: base ? "configured" : endpoint === CANONICAL_API ? "canonical" : "alternate",
+          reason: code ?? "connection_failed",
+        });
+        if (code) throw new VideoSubmissionDeclined("NanoGPT connection could not be established", 503);
+        throw new UpstreamError("NanoGPT video is unavailable", 503);
+      }
+    };
+    try {
+      return await send(base ?? CANONICAL_API);
+    } catch (error) {
+      // Neither an HTTP response nor an ambiguous disconnect can trigger a duplicate paid submission.
+      if (base || init.signal?.aborted || !(error instanceof VideoSubmissionDeclined)) throw error;
+      return send(ALTERNATE_API);
+    }
+  }
   return {
     async submit(r, signal) {
       const model = NANOGPT_VIDEO_MODELS.find((m) => m.upstreamModel === r.model);
       if (!model) throw new UpstreamError("Unknown NanoGPT video model", 400, true);
       const diagnose = (reason: string, providerStatus?: number) =>
         log.warn("video provider submission failed", { provider: "nanogpt", model: model.id, reason, provider_status: providerStatus });
-      const res = await request(base + "/generate-video", {
-        method: "POST", headers: { ...auth, "content-type": "application/json" }, signal, redirect: "error",
+      const res = await apiRequest("/generate-video", model.id, {
+        method: "POST", headers: { ...auth, "content-type": "application/json" }, signal,
         body: JSON.stringify({
           model: r.model,
           prompt: r.prompt,
@@ -36,9 +77,6 @@ export function nanogptVideoAdapter(o: { base: string; apiKey: string; fetch?: t
           ...(model.numericDuration ? { seed: r.seed } : {}),
           ...(model.audioSwitch ? { [model.audioSwitch]: false } : {}),
         }),
-      }).catch(() => {
-        diagnose("connection_failed");
-        throw new UpstreamError("NanoGPT video is unavailable", 503);
       });
       const result = await json(res) as { runId?: string; id?: string; error?: { type?: string } } | null;
       if (!res.ok) {
@@ -59,9 +97,10 @@ export function nanogptVideoAdapter(o: { base: string; apiKey: string; fetch?: t
       }
       return id;
     },
-    async poll(ref, _model, signal) {
+    async poll(ref, modelName, signal) {
       if (!RUN_ID.test(ref)) return failed("upstream_job_missing");
-      const res = await request(base + "/video/status?" + new URLSearchParams({ requestId: ref }), { headers: auth, signal, redirect: "error" });
+      const model = NANOGPT_VIDEO_MODELS.find((m) => m.upstreamModel === modelName);
+      const res = await apiRequest("/video/status?" + new URLSearchParams({ requestId: ref }), model?.id ?? "unknown", { headers: auth, signal });
       if (!res.ok) {
         await res.body?.cancel().catch(() => undefined);
         if (transient(res.status)) return { state: "running" };

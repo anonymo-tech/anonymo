@@ -135,7 +135,7 @@ export function buildMediaServices(ctx: Pick<Ctx, "cfg">, env: Env = process.env
     region: placeholderRegionRules(env),
     store: new MemoryMediaStore(Math.max(16, num(env.ANONYMO_MEDIA_STORE_MB, 512)) * 1024 * 1024),
     images: { venice, comfyui: comfy, nanogpt },
-    video: { venice, comfyui: comfy, ...(nanogptKey ? { nanogpt: nanogptVideoAdapter({ base: env.ANONYMO_NANOGPT_BASE?.trim() || "https://api.nano-gpt.com/api", apiKey: nanogptKey }) } : {}) },
+    video: { venice, comfyui: comfy, ...(nanogptKey ? { nanogpt: nanogptVideoAdapter({ base: env.ANONYMO_NANOGPT_BASE?.trim() || undefined, apiKey: nanogptKey }) } : {}) },
     speech: env.ANONYMO_TTS_URL ? ttsAdapter({ base: env.ANONYMO_TTS_URL, token: env.ANONYMO_TTS_TOKEN }) : unconfigured("The TTS worker pool"),
     nanogptSpeech: voice,
     transcription: voice,

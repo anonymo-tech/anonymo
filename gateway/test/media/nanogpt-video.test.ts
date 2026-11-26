@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { concatBytes, te, u32be } from "../../src/anonymo/media/bytes.ts";
 import { MediaCatalog } from "../../src/anonymo/media/catalog.ts";
 import { isSilentMp4 } from "../../src/anonymo/media/containers.ts";
+import { VideoSubmissionDeclined } from "../../src/anonymo/media/upstreams.ts";
 import { nanogptVideoAdapter } from "../../src/anonymo/media/nanogpt-video.ts";
 import { buildMediaServices } from "../../src/anonymo/media/services.ts";
 
@@ -127,4 +128,83 @@ test("submission diagnostics expose only a catalog model, fixed reason and HTTP 
   } finally {
     warn.mockRestore();
   }
+});
+
+const canonical = "https://api.nano-gpt.com/api";
+const alternate = "https://nano-gpt.com/api";
+const videoOptions = { ...req, model: "lightricks/ltx-2.3/fast", seconds: 6 };
+const connError = (code: string) => Object.assign(new Error("private network details"), { code });
+
+test("pre-send certificate, DNS and refusal failures retry once at the supplier's verified alternate with normal TLS", async () => {
+  const warn = spyOn(log, "warn").mockImplementation(() => {});
+  try {
+    for (const code of ["UNKNOWN_CERTIFICATE_VERIFICATION_ERROR", "ENOTFOUND", "ECONNREFUSED"]) {
+      const calls: string[] = [];
+      const fake = (async (url, init) => {
+        calls.push(String(url));
+        expect(init?.redirect).toBe("error");
+        expect(new Headers(init?.headers).get("x-api-key")).toBe(key);
+        expect(init).not.toHaveProperty("tls");
+        if (String(url).startsWith(canonical)) throw new TypeError("fetch failed", { cause: connError(code) });
+        if (init?.method === "POST") return Response.json({ runId: ref }, { status: 202 });
+        return Response.json({ data: { status: "IN_PROGRESS" } });
+      }) as typeof fetch;
+      const adapter = nanogptVideoAdapter({ apiKey: key, fetch: fake });
+      expect(await adapter.submit(videoOptions, signal)).toBe(ref);
+      expect(await adapter.poll(ref, videoOptions.model, signal)).toEqual({ state: "running" });
+      const lookup = "/video/status?requestId=" + ref;
+      expect(calls).toEqual([canonical + "/generate-video", alternate + "/generate-video", canonical + lookup, alternate + lookup]);
+      expect(warn).toHaveBeenLastCalledWith("video provider connection failed", {
+        provider: "nanogpt", model: "lightricks/ltx-2.3-fast", stage: "poll", endpoint: "canonical", reason: code,
+      });
+    }
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("private network details");
+  } finally { warn.mockRestore(); }
+});
+
+test("a confirmed pre-send failure at both origins releases the reservation; an ambiguous final failure retains it", async () => {
+  const warn = spyOn(log, "warn").mockImplementation(() => {});
+  try {
+    for (const [lastError, declined] of [["ENOTFOUND", true], ["ECONNRESET", false]] as const) {
+      let count = 0;
+      const fake = (async () => { throw connError(++count === 1 ? "UNKNOWN_CERTIFICATE_VERIFICATION_ERROR" : lastError); }) as typeof fetch;
+      const adapter = nanogptVideoAdapter({ apiKey: key, fetch: fake });
+      const error = await adapter.submit(videoOptions, signal).catch((e: unknown) => e);
+      expect(error instanceof VideoSubmissionDeclined).toBe(declined);
+      expect(count).toBe(2);
+    }
+  } finally { warn.mockRestore(); }
+});
+
+test("explicit bases, cancellation, ambiguous errors, HTTP responses and missing acknowledgements never replay submissions", async () => {
+  const warn = spyOn(log, "warn").mockImplementation(() => {});
+  try {
+    const aborted = new AbortController();
+    aborted.abort();
+    const cases = [
+      { base, error: connError("ENOTFOUND") },
+      { base: canonical, error: connError("ENOTFOUND") },
+      { error: connError("ENOTFOUND"), signal: aborted.signal },
+      { error: connError("ECONNRESET") },
+      { error: connError("ETIMEDOUT") },
+      { error: connError("private error code") },
+      { error: Object.assign(connError("ECONNRESET"), { cause: connError("ENOTFOUND") }) },
+      { response: Response.json({ error: { type: "CONTENT_POLICY_VIOLATION" } }, { status: 400 }) },
+      { response: new Response(null, { status: 502 }) },
+      { response: new Response(null, { status: 401 }) },
+      { response: Response.json({}, { status: 202 }) },
+    ];
+    for (const variant of cases) {
+      let count = 0;
+      const fake = (async () => {
+        count++;
+        if (variant.error) throw variant.error;
+        return variant.response!;
+      }) as typeof fetch;
+      const adapter = nanogptVideoAdapter({ base: variant.base, apiKey: key, fetch: fake });
+      await expect(adapter.submit(videoOptions, variant.signal ?? signal)).rejects.toThrow();
+      expect(count).toBe(1);
+    }
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("private error code");
+  } finally { warn.mockRestore(); }
 });

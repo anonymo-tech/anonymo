@@ -30,6 +30,8 @@ Set `ANONYMO_VIDEO_COMP_KEY_COMMIT` to one root key's full public EVM key commit
 
 The $10 daily welcome pool uses the same accounting. The gateway locks the applicable UTC-day pool before accepting a render and records its exact quote with the job. Every failed or blocked job releases the account claim. A local safety, stamping or storage failure after rendering still counts against the operator’s budget. Timeouts and missing provider results also retain their reservation because their cost is unknown. A delivered video continues to count after its download link expires. For older jobs with only an aggregate quote, a day containing only unaccepted submissions or confirmed provider rejections is fully restored. On a mixed legacy day the gateway retains at most the original aggregate or $0.75 per surviving legacy job, whichever is smaller.
 
+NanoGPT Video uses its canonical API host. If DNS resolution, certificate verification or the initial connection fails with a recognized pre-send error, the gateway may retry once on NanoGPT’s alternate HTTPS API host. Both endpoints require normal certificate verification. An explicitly configured `ANONYMO_NANOGPT_BASE` uses only that endpoint. An HTTP response, an ambiguous disconnect or a missing job ID ends the submission attempt.
+
 Each is also served under `/api/v1`. Errors use the gateway's OpenAI-shaped envelope.
 
 ## NanoGPT image models
