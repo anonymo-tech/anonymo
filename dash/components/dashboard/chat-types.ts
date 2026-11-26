@@ -23,6 +23,7 @@ export type Turn = {
   recap?: boolean; // update "catchup": this turn is a recap of an earlier chat, sent as context at the start of this one
   memoryCharge?: MemoryCharge;
   modeResult?: ModeResult;
+  research?: import('@/lib/anonymo/askmo').ResearchResult;
   answeredBy?: string | null; // update "auto": the model that answered an anonymo-auto turn
   autoClass?: string | null; // update "auto": the kind of request it read (x-anonymo-auto)
   search?: boolean; // update "search": sent as `<model>:online`

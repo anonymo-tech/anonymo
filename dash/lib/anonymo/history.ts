@@ -10,6 +10,7 @@ import { updateOn } from './updates.ts';
 import { chatTiming, hasExpired, sweepExpired } from './vanish.ts';
 import { loadVanishPrefs } from './vanish-prefs.ts';
 import { vault } from './vault-browser.ts';
+import type { ResearchResult } from './askmo.ts';
 import type { ModeResult } from './chat-modes.ts';
 import type { MemoryCharge } from './memory-request.ts';
 export { DEVICE_PREFIX, wipeDevice } from './device-store.ts';
@@ -28,6 +29,7 @@ export type SavedTurn = {
   recap?: boolean;
   memoryCharge?: MemoryCharge;
   modeResult?: ModeResult;
+  research?: ResearchResult;
   /** Update "photos": how many photos went with the message. The photos themselves are never saved. */
   photoCount?: number;
 };
@@ -72,6 +74,7 @@ export function toSaved(turns: TurnLike[]): SavedTurn[] {
       receiptId: t.receiptId,
       councilMode: t.councilMode,
       ...(t.recap ? { recap: true } : {}),
+      ...(t.research ? { research: t.research } : {}),
       ...(modeResult ? { modeResult } : {}),
       ...(t.memoryCharge ? { memoryCharge: t.memoryCharge } : {}),
       ...(t.photoCount ? { photoCount: t.photoCount } : {}),

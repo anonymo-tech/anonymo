@@ -1,6 +1,8 @@
+import { RESEARCH_CHAT } from './askmo.ts';
+
 // Only known workspace tools and their opaque local IDs can be carried through setup.
 const tools = new Map([
-  ['/dashboard/chat', 'chat'], ['/dashboard/party', 'Party'], ['/dashboard/ask', 'Ask Mo'], ['/dashboard/call', 'Night Call'],
+  ['/dashboard/chat', 'chat'], ['/dashboard/party', 'Party'], ['/dashboard/call', 'Night Call'],
   ['/dashboard/mo-voice', 'Mo Voice'], ['/dashboard/voices', 'Voices'],
   ['/dashboard/images', 'Image studio'], ['/dashboard/video', 'Video studio'],
   ['/dashboard/side-by-side', 'Side by side'], ['/dashboard/story', 'Story Studio'],
@@ -27,6 +29,7 @@ export function storyDestination(story: string, chapter: string) {
 
 export function setupReturn(value: string | null | undefined): { href: string; label: string; needsCredit: boolean } | null {
   if (!value || /[\s#\\%]/.test(value)) return null;
+  if (value === RESEARCH_CHAT || value === '/dashboard/ask') return { href: RESEARCH_CHAT, label: 'Research', needsCredit: true };
   const [path, query, extra] = value.split('?');
   if (extra !== undefined) return null;
   if (query === undefined && /^\/dashboard\/ventures\/v_(?:[a-f0-9]{24}|demo[a-f0-9]{12})$/.test(path)) {

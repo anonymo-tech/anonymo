@@ -1,15 +1,7 @@
-import { AskMo } from '@/components/dashboard/ask-mo';
-import { UpdateGate } from '@/components/dashboard/update-gate';
-import { WorkspaceShell } from '@/components/dashboard/workspace-shell';
+import { redirect } from 'next/navigation';
+import { RESEARCH_CHAT } from '@/lib/anonymo/askmo';
 
-export const metadata = { title: 'Ask Mo — Anonymo' };
-
-export default function AskMoPage() {
-  return (
-    <WorkspaceShell section="Ask Mo" title="Ask Mo" lede="Ask anything. Keep the receipt.">
-      <UpdateGate id="askmo">
-        <AskMo />
-      </UpdateGate>
-    </WorkspaceShell>
-  );
+export default async function AskMoPage({ searchParams }: { searchParams: Promise<{ demo?: string }> }) {
+  const { demo } = await searchParams;
+  redirect(demo === '1' ? RESEARCH_CHAT + '&demo=1' : RESEARCH_CHAT);
 }

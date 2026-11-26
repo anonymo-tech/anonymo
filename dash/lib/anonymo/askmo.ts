@@ -1,4 +1,4 @@
-import { citationsOf } from './search.ts';
+import { citationsOf, MAX_CITATIONS, type Citation } from './search.ts';
 import type { ChatCompletion } from './types.ts';
 
 export const ASK_TOPICS = {
@@ -11,14 +11,28 @@ export const ASK_TOPICS = {
 } as const;
 
 export type AskTopic = keyof typeof ASK_TOPICS;
+export const RESEARCH_CHAT = '/dashboard/chat?mode=research';
+
+export type ResearchResult = {
+  topic: AskTopic | null;
+  kind: 'answer' | 'opinion';
+  sources?: (Citation & { number?: number })[];
+  comparison?: { agree: string; disagree: string };
+  families?: string[];
+  refused?: boolean;
+};
+
 export type AskMoRequest = { question: string; topic: AskTopic | null };
 
 export function readAskMoReply(reply: ChatCompletion) {
   const message = reply.choices?.[0]?.message;
+  const annotations: unknown[] = Array.isArray(message?.annotations) ? message.annotations : [];
   const receipt = reply.anonymo_receipt?.payload ?? null;
   return {
     text: message?.content ?? '',
-    sources: citationsOf(message?.annotations),
+    // The gateway numbers the annotations in order. Keep those numbers even when a URL is discarded.
+    sources: annotations.slice(0, MAX_CITATIONS).flatMap((annotation, index) =>
+      citationsOf([annotation]).map(source => ({ ...source, number: index + 1 }))),
     receipt,
     receiptId: receipt?.request_id ?? null,
     model: reply.model,

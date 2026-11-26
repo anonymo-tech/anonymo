@@ -8,7 +8,7 @@ import { MascotSprite } from '../mascot-sprite';
 import { Photo } from '@/components/photo';
 import { InstallAppCard } from '@/components/phone-app';
 import Link from 'next/link';
-import { ArrowUp, Crop, Drama, ImageIcon, ShieldCheck, Square, X } from 'lucide-react';
+import { ArrowUp, Compass, Crop, Drama, ImageIcon, ShieldCheck, Square, X } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { mightBeWalletRequest, parseWalletRequest, WALLET_REVIEW_DRAFT } from '@/lib/anonymo/wallet-request';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -58,13 +58,15 @@ import { BUILT_WITH, updateOn } from '@/lib/anonymo/updates';
 import { setChatLimit } from '@/lib/anonymo/pricetag-store';
 import { PriceTag, usePriceTag } from './price-tag';
 import { isAutoModel } from '@/lib/anonymo/auto';
-import { onlineModel, WEB_SEARCH_PRICE_USD } from '@/lib/anonymo/search';
+import { canSearch, onlineModel, WEB_SEARCH_PRICE_USD } from '@/lib/anonymo/search';
 import { SearchToggle } from './web-sources';
 import { chatInputOn } from '@/lib/anonymo/chat-inputs';
 import { MaskVault, addMask, maskSegments, masksFromFindings, payloadDigest, sanitizedSlice, segmentsText, toggleMask, type Mask } from '@/lib/anonymo/masking';
 import { withAboutYou } from '@/lib/anonymo/about-you';
 import { currentAboutYouNote, loadAboutYouForChat, useAboutYouNote } from '@/lib/anonymo/about-you-store';
 
+import { ASK_TOPICS, RESEARCH_CHAT, type AskTopic } from '@/lib/anonymo/askmo';
+import { ResearchAnswer, ResearchWelcome } from './ask-mo';
 import { ChatModeComposer, type ActiveTool } from './chat-mode-composer';
 import { ChatModeSettings, MODE_LABELS } from './chat-mode-settings';
 import { ChatModeTurn, modeCharges } from './chat-mode-turn';
@@ -135,7 +137,11 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const modelReady = branded ? isLiveModel(liveModels, model) : directModels.some(m => m.id === model && m.availability !== 'temporarily_unavailable');
   // Features 02/03: a crop goes as an image only to a direct model whose catalog row lists image input.
   const visionModel = !branded && !!directModels.find((m) => m.id === model)?.architecture?.input_modalities?.includes('image');
-  const requestedCharacter = useSearchParams().get('character');
+  const params = useSearchParams();
+  const requestedCharacter = params.get('character');
+  const researchEnabled = ready && !compact && updateOn('askmo', demo);
+  const research = ready && !compact && params.get('mode') === 'research';
+  const [researchTopic, setResearchTopic] = useState<AskTopic | null>(null);
   const [councilMode, setCouncilMode] = useState<'merge' | 'select'>('merge');
   const [refusalCatch, setRefusalCatch] = useState(true);
   // Update "search": "Search the web" sends the model as `<model>:online` (sealed, council and :private never search).
@@ -169,7 +175,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const mergeReady = comparisonModels.some((entry) => entry.id === MERGE_MODEL);
   const [setupSheet, setSetupSheet] = useState<{ step: ChatSetupStep; hasAttachment: boolean; saved: boolean; freeUpsell: boolean } | null>(null);
   const [waitingDraft, setWaitingDraft] = useState(false);
-  const setupAction = useRef<HTMLAnchorElement>(null);
+  const setupAction = useRef<HTMLAnchorElement | HTMLButtonElement | null>(null);
   const voiceOn = ready && updateOn('talk', demo);
   const voice = useChatVoice({
     enabled: voiceOn && !!key, discover: voiceOn && (!!key || (modesOn && !compact)), client, chatId, turns, refreshBalance,
@@ -192,16 +198,16 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     if (updateOn('sidebyside', demo) && slots.length === SLOTS.length) availableModes.push('three');
     if (modelReady && voice.transcription && voice.speech?.voices.length) availableModes.push('talk');
   }
-  const mode = modesOn && model !== 'anonymo-sealed' ? selectedMode : null;
-  const guestChat = freeMode && !mode;
-  const modeReady = !mode || availableModes.includes(mode);
+  const mode = !research && modesOn && model !== 'anonymo-sealed' ? selectedMode : null;
+  const guestChat = freeMode && !mode && !research;
+  const modeReady = research ? researchEnabled && canSearch(model) : !mode || availableModes.includes(mode);
   const refusalTool = !guestChat && (branded || mode === 'three');
   const settings: ModePrefs = {
     picture: reconcilePicture(prefs.picture, images),
     three: { models: slots, merged: prefs.three.merged && mergeReady },
     talk: { ...prefs.talk, voice: voice.speech?.voices.includes(prefs.talk.voice) ? prefs.talk.voice : (voice.speech?.voices[0] ?? '') },
   };
-  const hint = modesOn && !mode ? modeHint(text, availableModes) : null;
+  const hint = modesOn && !mode && !research ? modeHint(text, availableModes) : null;
   const imageModel = images.find((image) => image.id === settings.picture.model);
   const [paper, setPaper] = useState<PaperSource | null>(null);
   // Update "photos": only a model that lists image input gets them; the tray lives in this tab's memory only.
@@ -256,7 +262,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const [chosenGreeting, setChosenGreeting] = useState<{ scope: string; index: number } | null>(null);
   const greeting = updateOn('lifeboat', demo) && chosenGreeting?.scope === greetingScope && greetings[chosenGreeting.index] ? chosenGreeting.index : 0;
   const pathname = usePathname();
-  const destination = characterDestination('chat', character?.id);
+  const destination = research ? RESEARCH_CHAT : characterDestination('chat', character?.id);
   const vaultMemoryOn = ready && updateOn('vaultsync', demo);
   const memoryOn = vaultMemoryOn || (ready && updateOn('memory', demo));
   const router = useRouter();
@@ -311,6 +317,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       clearSetupDraft(storage, scope);
       setText(draft.text);
       setSelectedMode(draft.mode);
+      if (destination === RESEARCH_CHAT) setResearchTopic(draft.topic ?? null);
       setWaitingDraft(true);
       setSetupSheet(null);
     });
@@ -332,7 +339,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   useEffect(() => { pendingScan.current++; }, [chatId]);
   useLayoutEffect(() => {
     if (modesOn) pendingScan.current++;
-  }, [modesOn, mode, model, client, prefs, catalog, imageCatalog, paper, tray.photos]);
+  }, [research, researchTopic, modesOn, mode, model, client, prefs, catalog, imageCatalog, paper, tray.photos]);
   useEffect(() => () => controller.current?.abort(), [key, demo]);
   useEffect(() => {
     const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -351,6 +358,20 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     if (compact && threadHost && followReply.current) threadHost.scrollTo(0, threadHost.scrollHeight);
   }, [turns, compact, threadHost]);
 
+  function switchResearch(on: boolean) {
+    pendingScan.current++;
+    setReview(null);
+    setGuardNote(null);
+    setSetupSheet(null);
+    setMenu(false);
+    setSelectedMode(null);
+    const query = new URLSearchParams(params.toString());
+    if (on) query.set('mode', 'research');
+    else query.delete('mode');
+    router.replace('/dashboard/chat' + (query.size ? '?' + query : ''), { scroll: false });
+    input.current?.focus({ preventScroll: true });
+  }
+
   const chooseModel = (id: string) => {
     setChatModel(id);
     if (modesOn) {
@@ -360,23 +381,43 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     }
   };
 
+  async function getChatKey() {
+    const existing = loadKey(demo);
+    if (existing) return existing;
+    const fresh = await client.createKey({ dashboard_signup: await dashboardSignup(demo) });
+    const current = loadKey(demo);
+    if (current) return current;
+    setKey(fresh.key, false);
+    setNewChatKey(fresh.key);
+    return fresh.key;
+  }
+
   async function startWelcomeChat(id: string, prompt?: string) {
     if (provisioning.current) return;
     provisioning.current = true;
     setStarting(true);
     try {
-      let activeKey = loadKey(demo);
-      if (!activeKey) {
-        const fresh = await client.createKey({ dashboard_signup: await dashboardSignup(demo) });
-        activeKey = loadKey(demo);
-        if (!activeKey) {
-          activeKey = fresh.key;
-          setKey(fresh.key, false);
-          setNewChatKey(fresh.key);
-        }
-      }
+      const activeKey = await getChatKey();
       chooseModel(id);
       if (prompt) setQueuedSend({ key: activeKey, prompt });
+    } finally {
+      provisioning.current = false;
+      setStarting(false);
+    }
+  }
+
+  async function fundResearch() {
+    if (provisioning.current) return;
+    provisioning.current = true;
+    setStarting(true);
+    const startUrl = window.location.href;
+    try {
+      await getChatKey();
+      if (window.location.href !== startUrl) return;
+      leaveForSetup();
+      router.push(setupHref('funds', RESEARCH_CHAT));
+    } catch (error) {
+      setGuardNote({ redacted: '', message: describeError(error) });
     } finally {
       provisioning.current = false;
       setStarting(false);
@@ -453,7 +494,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const priceMessages = priceDraft || (priceOn && aboutYouNote && tray.photos.length)
     ? withAboutYou(outgoing(priceDraft, draftFor(priceDraft, excerpt)), aboutYouNote)
     : null;
-  const modeEstimate = mode === 'picture' ? pictureEstimate(imageModel, settings.picture.n)
+  const modeEstimate = research ? flatEstimate(null) : mode === 'picture' ? pictureEstimate(imageModel, settings.picture.n)
     : mode === 'three' ? (priceDraft ? threeEstimate(priceDraft, settings.three, comparisonModels, demo, aboutYouNote) : null)
       : undefined;
   const charges = useMemo(() => modesOn ? turns.flatMap(modeCharges) : turns, [modesOn, turns]);
@@ -476,26 +517,26 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const passChat = !!rights?.hasPass && model === 'anonymo-1' && mode !== 'picture' && mode !== 'three' &&
     !extraUsd && !tray.photos.length && !excerpt?.image;
   const sponsoredModel = model === 'anonymo-1' || welcomeModels.some(entry => entry.id === model);
-  const plainText = !mode &&
+  const plainText = !research && !mode &&
     !extraUsd && !tray.photos.length && !paper && !excerpt;
   const firstText = plainText && sponsoredModel;
   const offer = key && firstChat?.key === key ? firstChat : null;
   const checkingOffer = plainText && !!key && isApiKey(key) && (!offer || !!offer.error);
   const sponsoredChat = firstText && !!offer?.available;
-  const mayUseIncluded = key && (sponsoredChat || readEveryday && everyday?.client !== client ||
+  const mayUseIncluded = !research && key && (sponsoredChat || readEveryday && everyday?.client !== client ||
     passChat || !!rights?.hasPass && mode === 'picture' || !!rights?.availableCreditsUsd && mode !== 'three');
   const setupForBalance = guestChat ? (freeExhausted ? 'key' : null) : mayUseIncluded ? null : chatSetupStep(!!key, balance?.available_usd);
   const hasAttachment = !!(excerpt || paper || picture || tray.photos.length);
-  const standalone = mode === 'picture' || mode === 'three';
+  const standalone = research || mode === 'picture' || mode === 'three';
 
   function showSetup(step: ChatSetupStep, source: string, withExcerpt: Excerpt | null, freeUpsell = guestChat && freeExhausted) {
-    const saved = writeSetupDraft(tabStorage(), { destination, demo }, source, mode);
+    const saved = writeSetupDraft(tabStorage(), { destination, demo }, source, mode, research ? researchTopic : null);
     setSetupSheet({ step, saved, freeUpsell, hasAttachment: !!(withExcerpt || paper || picture || tray.photos.length) });
   }
 
   function openSetup(source: string, withExcerpt: Excerpt | null, capture = false) {
     let step = setupForBalance;
-    if (!step && !guestChat && balance && (!mayUseIncluded || capture)) {
+    if (!research && !step && !guestChat && balance && (!mayUseIncluded || capture)) {
       const draft = source.trim();
       const estimate = capture ? flatEstimate(perMinute) : mode === 'three' ?
         threeEstimate(draft, settings.three, comparisonModels, demo, aboutYouNote) : modeEstimate ??
@@ -515,7 +556,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const voiceOverLimit = (estimate: ReturnType<typeof flatEstimate>) => checkLimit(price.limit, audioSpend, estimate).blocked;
   const costOffer = price.estimate ?? (modesOn && priceMessages ? estimateMessage({ model: priced, messages: priceMessages, demo, extraUsd }) : null);
   const estimateBlocked = (!sponsoredChat && price.blocked) || (mode === 'talk' && costOffer !== null && voiceOverLimit(costOffer));
-  const shownPrice = sponsoredChat || guestChat ? '' : mode === 'talk' && voice.transcription
+  const shownPrice = research || sponsoredChat || guestChat ? '' : mode === 'talk' && voice.transcription
     ? (perMinute === null ? '' : transcriptionRate(voice.transcription))
     : passChat ? 'Included with your Pass'
     : costOffer?.known
@@ -533,6 +574,38 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     tray.clear();
     setExcerpt(null);
     setPicture(null);
+  }
+
+  async function runResearch(question: string, topic: AskTopic | null, second = false) {
+    if (!key || !researchEnabled || !canSearch(model) || controller.current || streaming || price.limit !== null) return;
+    const id = crypto.randomUUID();
+    const abort = new AbortController();
+    controller.current = abort;
+    const result = { topic, kind: second ? 'opinion' as const : 'answer' as const };
+    setTurns(list => [...list, {
+      id, model: second ? 'anonymo-council' : 'anonymo-1', prompt: question, content: '', status: 'streaming',
+      error: null, attachment: null, character: null, receipt: null, receiptId: null, council: null, councilMode: null,
+      research: result, ...compliance.takeSignals(question),
+    }]);
+    if (!second) clearDraft();
+    try {
+      const request = { question, topic };
+      const reply = await (second ? client.secondOpinion(request, abort.signal) : client.askMo(request, abort.signal));
+      if (abort.signal.aborted) return;
+      update(id, { status: 'done', model: reply.model, content: reply.text, receiptId: reply.receiptId, receipt: reply.receipt,
+        research: { ...result, sources: reply.sources, comparison: reply.council?.comparison, refused: reply.receipt?.refused,
+          families: reply.council?.proposers.map(seat => seat.family).filter((family): family is string => !!family) } });
+      if (reply.receiptId) rememberReceipt({ id: reply.receiptId, model: reply.model, at: new Date().toISOString() });
+    } catch (error) {
+      if (!abort.signal.aborted) {
+        update(id, { status: 'error', error: describeError(error), needsFunds: isOutOfCredit(error) });
+        if (!second) setText(draft => draft || question);
+      }
+    } finally {
+      if (abort.signal.aborted) update(id, { status: 'stopped' });
+      if (controller.current === abort) controller.current = null;
+      refreshBalance();
+    }
   }
 
   async function runMode(result: Extract<ModeResult, { mode: 'picture' | 'three' }>, prompt: string, message: string) {
@@ -617,6 +690,11 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     if (confirmed !== undefined && payloadDigest(message, sentExcerpt?.image?.url) !== confirmed) return;
     if (standalone) {
       if (!message || hasAttachment) return;
+      if (research) {
+        if (message.length <= 4000) return runResearch(message, researchTopic);
+        setGuardNote({ redacted: '', message: 'Use up to 4,000 characters for a research question.' });
+        return;
+      }
       if (mode === 'picture' && imageModel) {
         if (message.length <= IMAGE_PROMPT_LIMIT) return runMode({ mode, settings: settings.picture, name: imageModel.name }, prompt, message);
         setGuardNote({ redacted: '', message: `Use ${IMAGE_PROMPT_LIMIT.toLocaleString()} characters or fewer for a picture.` });
@@ -808,6 +886,10 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
       setGuardNote({ redacted: '', message: 'Remove the attachment or return to Chat to send it.' });
       return;
     }
+    if (research && prompt.length > 4000) {
+      setGuardNote({ redacted: '', message: 'Use up to 4,000 characters for a research question.' });
+      return;
+    }
     if (mode === 'picture' && prompt.length > IMAGE_PROMPT_LIMIT) {
       setGuardNote({ redacted: '', message: `Use ${IMAGE_PROMPT_LIMIT.toLocaleString()} characters or fewer for a picture.` });
       return;
@@ -904,7 +986,8 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
         ref={input}
         rows={1}
         value={text}
-        placeholder={mode ? MODE_LABELS[mode].placeholder : character ? `Write to ${character.card.data.name}…` : 'Ask anything…'}
+        maxLength={research ? 4000 : undefined}
+        placeholder={research ? 'Ask a research question…' : mode ? MODE_LABELS[mode].placeholder : character ? `Write to ${character.card.data.name}…` : 'Ask anything…'}
         disabled={!ready || starting || !!queuedSend}
         onChange={(e) => {
           pendingScan.current++;
@@ -948,8 +1031,11 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     <ModelPicker value={model} onChange={chooseModel} live={liveModels} models={directModels}
           catalogError={catalogError} onRefresh={refreshCatalog} auto={autoOn} />
   );
+  const researchTool = researchEnabled && <button type="button" className="tool" disabled={!canSearch(model) || streaming || checking || hasAttachment}
+    title="Find an answer with web sources" onClick={() => switchResearch(true)}><Compass size={15} aria-hidden="true" /> Research</button>;
   const composerTools = (
     <>
+      {researchTool}
       <PaperTrail value={paper} onChange={(source) => { setPaper(source); setExcerpt(null); setReview(null); if (modesOn && source) setMenu(false); }} />
       {pickOn && paper && (
         <button type="button" className="tool" onClick={(e) => { opener.current = e.currentTarget; setEditor({ source: { kind: 'pdf', paper }, purpose: 'explain' }); }}>
@@ -1080,9 +1166,9 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   const composerPrice = { ...price, estimate: null };
   const sendDisabled = starting || checkingOffer || !modeReady || checking || tray.busy || voiceBusy || (!text.trim() && (standalone || !photosOn || !tray.photos.length))
     || (!guestChat && !setupForBalance && ((!standalone && !modelReady) || estimateBlocked));
-  const verb = mode === 'picture' || mode === 'three' ? MODE_LABELS[mode].verb : null;
+  const verb = research ? null : mode === 'picture' || mode === 'three' ? MODE_LABELS[mode].verb : null;
   const sendButton = (
-    <button type="button" className={verb ? 'mode-send mode-send-wide' : 'mode-send'} aria-label={verb ?? 'Send'}
+    <button type="button" className={verb ? 'mode-send mode-send-wide' : 'mode-send'} aria-label={research ? 'Send research question' : verb ?? 'Send'}
       title={mode === 'talk' && costOffer?.known ? `Chat reply about ${priceLabel(costOffer.typical, 'nearest')}` : undefined}
       disabled={sendDisabled} onClick={() => void submit()}>
       {verb && <span>{verb}</span>}<ArrowUp size={17} aria-hidden="true" />
@@ -1123,7 +1209,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   ) : sendButton;
 
   function leaveForSetup() {
-    writeSetupDraft(tabStorage(), { destination, demo }, text, mode);
+    writeSetupDraft(tabStorage(), { destination, demo }, text, mode, research ? researchTopic : null);
     setSetupSheet(null);
     setWaitingDraft(false);
     setReview(null);
@@ -1134,13 +1220,13 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
   }
 
   const composer = (
-    <div className={modesOn ? 'dock-composer dock-composer-modes' : 'dock-composer'}>
+    <div className={modesOn || research ? 'dock-composer dock-composer-modes' : 'dock-composer'}>
       {checkingOffer && <div className="ai-notice" role="status">{offer?.error
         ? <>{offer.error} <button type="button" onClick={() => { setFirstChat(null); retryClaim(n => n + 1); }}>Retry free reply check</button></>
         : 'Checking your free reply…'}</div>}
       {starting && <output className="ai-notice">Preparing your chat…</output>}
       {sponsoredChat && !streaming && <output className="ai-notice">Your first message is on us.</output>}
-      {freeMode && free.remaining !== null && (
+      {!research && freeMode && free.remaining !== null && (
         <output className="ai-notice">
           Free today: {free.remaining} left{free.solving ? ' · Checking this device…' : turns.length === 0 && !freeExhausted ? ' · Try it free. No account.' : ''}
         </output>
@@ -1150,6 +1236,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
           <output>
             <span>{setupSheet.freeUpsell
               ? `You’ve used your free messages today. Create a free key and add funds with a wallet${updateOn('codes', demo) ? ' or a code' : ''} to unlock every model.`
+              : research ? 'Research uses paid web search. Add funds to send your question.'
               : setupSheet.step === 'key'
               ? 'Your message is ready. To send it, make a free key and add a little balance. No account, no email, about a minute.'
               : 'Add a little balance to send this.'}</span>
@@ -1157,9 +1244,12 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
             {!setupSheet.saved && <><br /><small className="muted">This browser couldn’t save your draft.</small></>}
           </output>
           <div className="row">
-            <Link className="btn btn-primary btn-small" ref={setupAction} href={setupHref(setupSheet.step, destination)} onClick={leaveForSetup}>
+            {research && setupSheet.step === 'key' ? (
+              <button type="button" className="btn btn-primary btn-small" ref={node => { setupAction.current = node; }}
+                disabled={starting} onClick={() => void fundResearch()}>Add funds</button>
+            ) : <Link className="btn btn-primary btn-small" ref={node => { setupAction.current = node; }} href={setupHref(setupSheet.step, destination)} onClick={leaveForSetup}>
               {setupSheet.step === 'key' ? 'Create a free key' : 'Add funds'}
-            </Link>
+            </Link>}
             {updateOn('codes', demo) && (
               <Link className="btn btn-small" href={setupHref('redeem', destination)} onClick={leaveForSetup}>Have a code?</Link>
             )}
@@ -1225,7 +1315,19 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
           }}>Review this request</button>
         </div>
       )}
-      {modesOn ? (
+      {research ? (
+        <div className="mode-box research-box">
+          <div className="mode-input">{textarea}</div>
+          <div className="mode-bar">
+            <span className="mode-tag"><Compass size={15} /> Research <button type="button" aria-label="Back to chat" onClick={() => switchResearch(false)}><X size={14} /></button></span>
+            <label className="research-topic"><select aria-label="Research topic" value={researchTopic ?? ''} onChange={e => setResearchTopic((e.target.value || null) as AskTopic | null)}>
+              <option value="">Any topic</option>{Object.entries(ASK_TOPICS).map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            </select></label>
+            <span className="mode-price" />{modeAction}
+          </div>
+          <p className="research-privacy">{!researchEnabled ? 'Research is unavailable in this workspace.' : !canSearch(model) ? 'Switch to a model that allows web search to use Research.' : 'Your search terms are shared with a web search provider.'}</p>
+        </div>
+      ) : modesOn ? (
         <ChatModeComposer text={text} textarea={textarea} mode={mode} hint={hint} available={availableModes}
           modelPicker={!mode && modelPicker} menu={menu} setMenu={setMenu} price={shownPrice} onMode={pickMode} action={modeAction} active={activeTools}
           options={mode && <ChatModeSettings mode={mode} settings={settings} images={images} models={comparisonModels}
@@ -1271,7 +1373,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
         </form>
       )}
       {priceOn && !modesOn && <PriceTag {...price} />}
-      {modesOn && estimateBlocked && <output className="notice notice-amber">This message could exceed this chat’s limit. Open Chat spending to change the limit.</output>}
+      {(modesOn || research) && estimateBlocked && <output className="notice notice-amber">This message could exceed this chat’s limit. Open Chat spending to change the limit.</output>}
       {mode && !modeReady && <output className="mode-detail">{MODE_LABELS[mode].label} is unavailable right now.</output>}
       {mode === 'talk' && settings.talk.aloud && voice.speech && parseUsdAtto(voice.speech.pricing.usd_per_1k_chars) !== null && (
         <output className="mode-detail">Read replies · {speechRate(voice.speech)}</output>
@@ -1308,7 +1410,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
         />
       )}
       {safeEditor}
-      {!modesOn && <div className="dock-tools">{composerTools}</div>}
+      {!research && !modesOn && <div className="dock-tools">{composerTools}</div>}
       {!modesOn && voiceOn && <VoiceSettings sealed={model === 'anonymo-sealed'} />}
       {!modesOn && <div className="dock-meta">
         <span>Enter to send · Shift+Enter for a new line</span>
@@ -1338,6 +1440,9 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     : undefined;
 
   function turnAnswer(turn: Turn, inThread = false) {
+    if (turn.research) return <ResearchAnswer turn={turn}
+      onCompare={key && researchEnabled && canSearch(model) && !streaming && price.limit === null
+        ? () => void runResearch(turn.prompt, turn.research!.topic, true) : undefined} />;
     const proof = proofOn ? {
       source: sources.get(turn.id) ?? null,
       onForget: () => setSources((map) => {
@@ -1365,7 +1470,7 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
     <RegionPage mode={compliance.restricted} client={client} onVerified={compliance.refresh} />
   ) : (
     <>
-      {ready && adult && (chooseForDraft || (!compact && !key && !character && !turns.length && !welcomeDone)) && (
+      {ready && adult && (chooseForDraft || (!compact && !research && !key && !character && !turns.length && !welcomeDone)) && (
         <ModelWelcome models={welcomeModels} loading={catalog === null} error={catalogError} retry={refreshCatalog}
           onPick={id => startWelcomeChat(id, chooseForDraft ? text.trim() : undefined)} onDismiss={() => {
             setChooseForDraft(false);
@@ -1385,7 +1490,8 @@ export function ChatWorkspace({ compact, threadHost, composerHost }: {
           {historyOn && <ChatHistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />}
         </>
       )}
-      {facesOn && stage && character ? (
+      {research && !turns.length ? <ResearchWelcome onPick={question => { setText(question); setReview(null); input.current?.focus(); }} />
+      : facesOn && stage && character && !research ? (
         <>
           <Stage character={character} faces={faces} turns={turns} streaming={streaming} notices={notices} renderAnswer={modesOn ? turnAnswer : undefined} onLog={() => setStage(false)} />
           {!modesOn && saveKeyNote}

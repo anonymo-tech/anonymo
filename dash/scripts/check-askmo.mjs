@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ASK_TOPICS, answerSections } from '../lib/anonymo/askmo.ts';
+import { ASK_TOPICS, answerSections, readAskMoReply } from '../lib/anonymo/askmo.ts';
 import { API_PATHS, createAnonymoClient } from '../lib/anonymo/client.ts';
 import { createMockGateway } from '../lib/anonymo/mock/gateway.ts';
 import { setupReturn } from '../lib/anonymo/setup-return.ts';
@@ -14,7 +14,7 @@ test('Ask Mo is off by default, independently switchable, and available in demo'
   assert.equal(parseUpdates('askmo').has('askmo'), true);
   assert.equal(updateOn('askmo', true), true);
   assert.equal(Object.keys(ASK_TOPICS).length, 6);
-  assert.deepEqual(setupReturn('/dashboard/ask'), { href: '/dashboard/ask', label: 'Ask Mo', needsCredit: true });
+  assert.deepEqual(setupReturn('/dashboard/ask'), { href: '/dashboard/chat?mode=research', label: 'Research', needsCredit: true });
   assert.equal(setupReturn('/dashboard/ask?question=private'), null);
 });
 
@@ -42,4 +42,12 @@ test('the browser sends a question and topic to Ask Mo and gets a sourced answer
   assert.ok(opinion.receiptId);
   assert.notEqual(opinion.receiptId, answer.receiptId);
   assert.deepEqual(calls, [{ path: API_PATHS.askMo, body: request }, { path: API_PATHS.secondOpinion, body: request }]);
+});
+
+test('research citations retain their original numbers when a source has an unsafe URL', () => {
+  const citation = url => ({ type: 'url_citation', url_citation: { url, title: 'Reading' } });
+  const reply = readAskMoReply({ choices: [{ message: { content: 'See [2].', annotations: [
+    citation('javascript:void(0)'), citation('https://example.org/reading'),
+  ] } }] });
+  assert.deepEqual(reply.sources, [{ number: 2, url: 'https://example.org/reading', title: 'Reading' }]);
 });

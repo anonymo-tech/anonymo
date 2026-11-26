@@ -25,7 +25,6 @@ import {
   LayoutGrid,
   ListTree,
   MessageSquare,
-  MessageCircleQuestion,
   PackageOpen,
   Link2,
   Phone,
@@ -68,7 +67,6 @@ const groups: { title: string; fold?: Fold; links: Destination[] }[] = [
     links: [
       overview,
       chat,
-      { href: '/dashboard/ask', label: 'Ask Mo', icon: MessageCircleQuestion, feature: 'askmo' },
       { href: '/dashboard/characters', label: 'Characters', icon: Drama },
       { href: '/dashboard/key', label: 'API key', icon: KeyRound },
       funds,

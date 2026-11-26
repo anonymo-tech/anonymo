@@ -1,3 +1,4 @@
+import { ASK_TOPICS, type AskTopic } from './askmo.ts';
 import { isChatMode, type ChatMode } from './chat-modes.ts';
 import { parseUsdAtto, type Atto } from './pricetag.ts';
 
@@ -18,26 +19,26 @@ type Scope = { destination: string; demo: boolean };
 
 export const readSetupDraft = (storage: Slot | null, scope: Scope) => readSetupMessage(storage, scope)?.text ?? null;
 
-export function readSetupMessage(storage: Slot | null, scope: Scope): { text: string; mode: ChatMode | null } | null {
+export function readSetupMessage(storage: Slot | null, scope: Scope): { text: string; mode: ChatMode | null; topic?: AskTopic } | null {
   try {
     const raw = storage?.getItem(SLOT);
     if (!raw) return null;
     const draft = JSON.parse(raw);
     return draft?.destination === scope.destination && draft.demo === scope.demo && typeof draft.text === 'string'
-      ? { text: draft.text, mode: isChatMode(draft.mode) ? draft.mode : null } : null;
+      ? { text: draft.text, mode: isChatMode(draft.mode) ? draft.mode : null, ...(Object.hasOwn(ASK_TOPICS, draft.topic) ? { topic: draft.topic } : {}) } : null;
   } catch {
     return null;
   }
 }
 
-export function writeSetupDraft(storage: Slot | null, scope: Scope, text: string, mode?: ChatMode | null): boolean {
+export function writeSetupDraft(storage: Slot | null, scope: Scope, text: string, mode?: ChatMode | null, topic?: AskTopic | null): boolean {
   if (!text.trim() && !mode) {
     clearSetupDraft(storage, scope);
     return true;
   }
   try {
     if (!storage) return false;
-    storage.setItem(SLOT, JSON.stringify({ destination: scope.destination, demo: scope.demo, text, ...(mode ? { mode } : {}) }));
+    storage.setItem(SLOT, JSON.stringify({ destination: scope.destination, demo: scope.demo, text, ...(mode ? { mode } : {}), ...(topic ? { topic } : {}) }));
     return true;
   } catch {
     return false;
