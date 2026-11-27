@@ -27,7 +27,7 @@ test('the sidebar lists the everyday tools, folds the rest and groups Account an
     const account = nav.getByRole('link', { name: 'Account', exact: true });
     const settings = nav.getByRole('link', { name: 'Settings', exact: true });
     const savedMore = (value) => page.waitForFunction((value) => localStorage.getItem('anonymo:workspace-nav:more') === value, value);
-    assert.deepEqual(await nav.getByRole('link').allTextContents(), ['Chat', 'Characters', 'Images', 'Video', 'Stories', 'Account', 'Settings']);
+    assert.deepEqual(await nav.getByRole('link').allTextContents(), ['Chat', 'Characters', 'Images', 'Video', 'Stories', 'Build', 'Research', 'Account', 'Settings']);
     assert.equal(await nav.locator('summary').count(), 1);
     await more.press('Enter');
     await call.waitFor();

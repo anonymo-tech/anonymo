@@ -11,6 +11,7 @@ import {
   Code2,
   Dices,
   Drama,
+  Hammer,
   Headphones,
   HeartHandshake,
   IdCard,
@@ -24,6 +25,7 @@ import {
   Phone,
   Plug,
   ReceiptText,
+  FileSearch,
   Rocket,
   Settings,
   ShieldCheck,
@@ -55,6 +57,8 @@ export const tools: Destination[] = [
   { href: '/dashboard/images', label: 'Images', icon: ImageIcon, feature: 'images', anyOf: ['studio'] },
   { href: '/dashboard/video', label: 'Video', icon: Video, feature: 'video', anyOf: ['studio'] },
   { href: '/dashboard/story', label: 'Stories', icon: BookOpen, feature: 'story' },
+  { href: '/dashboard/build', label: 'Build', icon: Hammer, feature: 'build' },
+  { href: '/dashboard/research', label: 'Research', icon: FileSearch, feature: 'research' },
 ];
 
 /** Everything else people can do, folded under More. */

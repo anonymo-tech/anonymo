@@ -52,10 +52,12 @@
 //
 //   passes    buy a 30-day Pass or Pass+ on Balance (needs ANONYMO_FEATURE_PASSES)
 //   stake     stake $NYMO for daily credits and pay for passes with $NYMO (needs ANONYMO_FEATURE_STAKE)
+//   build     Build: describe an app or game, play it in a sandboxed frame, change it, share it as a link
+//   research  Deep Research: several private web searches turned into one cited report
 //
 // Ventures and the phone app require a build opt-in. Demo mode shows the other updates.
 
-export const UPDATE_IDS = ['history', 'images', 'usage', 'catchup', 'status', 'compare', 'vanish', 'vault', 'video', 'faces', 'talk', 'story', 'memory', 'voice', 'movein', 'sidebyside', 'tickets', 'share', 'pricetag', 'auto', 'search', 'photos', 'ventures', 'mask', 'circle', 'excerpt', 'safepost', 'proof', 'connect', 'walletreview', 'solpay', 'app', 'aboutyou', 'modes', 'keysafe', 'codes', 'creators', 'passes', 'stake', 'lifeboat', 'free', 'askmo', 'compliance', 'vaultsync', 'studio', 'movoice', 'telegram', 'party'] as const;
+export const UPDATE_IDS = ['history', 'images', 'usage', 'catchup', 'status', 'compare', 'vanish', 'vault', 'video', 'faces', 'talk', 'story', 'memory', 'voice', 'movein', 'sidebyside', 'tickets', 'share', 'pricetag', 'auto', 'search', 'photos', 'ventures', 'mask', 'circle', 'excerpt', 'safepost', 'proof', 'connect', 'walletreview', 'solpay', 'app', 'aboutyou', 'modes', 'keysafe', 'codes', 'creators', 'passes', 'stake', 'lifeboat', 'free', 'askmo', 'compliance', 'vaultsync', 'studio', 'movoice', 'telegram', 'party', 'build', 'research'] as const;
 export type UpdateId = (typeof UPDATE_IDS)[number];
 
 export function parseUpdates(raw: string | undefined): ReadonlySet<UpdateId> {
