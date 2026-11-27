@@ -12,12 +12,12 @@ import { modelJson } from "../api/models.ts";
 import { verifyReceipt, anchorProof } from "../api/generation.ts";
 import { applicationReviewHash, providerApplication, submitProviderApplication, publicProvider, validateProviderUrl } from "../providers/application.ts";
 import { importLiteLLM } from "../gateway/litellm.ts";
-import { verifyInvariants } from "../ledger/ledger.ts";
+import { post, verifyInvariants } from "../ledger/ledger.ts";
 import { encrypt, safeEqual } from "../lib/util.ts";
 import { isApiError } from "../lib/errors.ts";
 import { disclosureInput, writeDisclosure } from "../api/disclosure.ts";
 import { laneInput, writeModelLane } from "../api/lane.ts";
-import { picoToUsd } from "../lib/money.ts";
+import { picoToUsd, usdToPico } from "../lib/money.ts";
 import { chainKeyHashOf } from "../chain/keys.ts";
 import { parseProviderModels, slugFor, type ProviderModel } from "../services/registry.ts";
 import { clearPendingStaticModels, diffStaticModels, loadPendingStaticModels, savePendingStaticModels, staticModelsReviewHash } from "../providers/static-models.ts";
@@ -45,6 +45,18 @@ const reviewView = (row: typeof providers.$inferSelect) => {
 };
 
 export const adminRouter = t.router({
+  // Operator test credit: put a small amount on one key so the operator can try paid features on the live site without a
+  // deposit. Capped per call, idempotent on `ref`, and labelled in the ledger (`operator-credit:`) so it is never mistaken
+  // for a deposit.
+  creditKey: operator
+    .input(z.object({ key_hash: z.string().regex(/^[0-9a-f]{64}$/), usd: z.number().positive().max(25), ref: z.string().regex(/^[\w-]{4,64}$/), note: z.string().max(120).default("") }))
+    .mutation(async ({ ctx, input }) => {
+      const [k] = await ctx.app.db.select().from(keys).where(eq(keys.keyHash, input.key_hash));
+      if (!k) throw new TRPCError({ code: "NOT_FOUND", message: "No key with that hash." });
+      const added = await ctx.app.db.transaction((tx) =>
+        post(tx, { accountId: k.accountId, keyHash: k.keyHash, amount: usdToPico(input.usd), kind: "credit", ref: `operator-credit:${input.ref}`, description: `Operator test credit${input.note ? `: ${input.note}` : ""}` }));
+      return { credited: added, usd: input.usd, ref: `operator-credit:${input.ref}` };
+    }),
   rush: operator.input(z.object({ days: z.number().int().min(1).max(90).default(30) }).default({ days: 30 })).query(({ ctx, input }) => rushAdmin(ctx.app, input.days)), // ON3
   providers: t.router({
     // "apply" is a reserved word in tRPC routers; REST keeps POST /api/v1/providers/apply.
