@@ -5,7 +5,6 @@ import test from 'node:test';
 import {
   BUILD_CSP,
   BUILD_SANDBOX,
-  DEMO_APP,
   buildCeilingUsd,
   buildMessages,
   buildTitle,
@@ -16,6 +15,7 @@ import {
   roughUsd,
   sandboxed,
 } from '../lib/anonymo/build.ts';
+import { DEMO_APP, DEMO_REPORT } from '../lib/anonymo/demo-outputs.ts';
 import { blocksOf, inlineOf, parsePlan, readMessages, renumber, reportMessages, researchCeilingUsd, DEPTH_SEARCHES } from '../lib/anonymo/research.ts';
 import { RELEASED, UPDATE_IDS, parseUpdates } from '../lib/anonymo/updates.ts';
 
@@ -55,7 +55,7 @@ test('the sandbox policy comes before anything the app wrote and blocks the netw
 });
 
 test('share links round-trip and reject anything else', async () => {
-  const app = { title: 'Catch the Stars', html: DEMO_APP };
+  const app = { title: 'Frog Snake', html: DEMO_APP };
   const link = await encodeShare(app);
   assert.match(link, /^v1\.[A-Za-z0-9_-]+$/);
   assert.ok(link.length < DEMO_APP.length, 'compressed');
@@ -72,7 +72,9 @@ test('a change sends the current app and asks for the whole document back', () =
   assert.equal(change.length, 2);
   assert.ok(change[1].content.includes(DEMO_APP));
   assert.match(change[1].content, /whole updated HTML/);
-  assert.equal(buildTitle(DEMO_APP, 'x'), 'Catch the Stars');
+  assert.equal(buildTitle(DEMO_APP, 'x'), 'Frog Snake – Catch the Flies');
+  assert.equal(isComplete(DEMO_APP), true);
+  for (const n of DEMO_REPORT.report.match(/\[(\d+)\]/g) ?? []) assert.ok(Number(n.slice(1, -1)) <= DEMO_REPORT.sources.length, `demo cites ${n}`);
   assert.equal(buildTitle(null, 'a game'), 'a game');
 });
 
@@ -113,7 +115,8 @@ test('each search\'s [n] marks move to the report\'s shared numbering', () => {
   assert.deepEqual(all.map((s) => s.url), ['https://a.test/', 'https://b.test/', 'https://c.test/']);
   const { sources, messages } = reportMessages('q', [
     { search: 's1', notes: '- fact [1]', sources: [{ url: 'javascript:alert(1)', title: 'bad' }, { url: 'https://ok.test/', title: 'ok' }] },
-    { search: 's2', notes: 'No useful results.', sources: [] },
+    { search: 's2', notes: 'No useful results.', sources: [{ url: 'https://unread.test/', title: 'unread' }] },
+    { search: 's3', notes: '  ', sources: [{ url: 'https://empty.test/', title: 'empty' }] },
   ]);
   assert.deepEqual(sources.map((s) => s.url), ['https://ok.test/']);
   assert.doesNotMatch(messages[1].content, /s2/);

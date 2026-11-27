@@ -10,7 +10,6 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useAnonymo } from '../anonymo-provider';
 import { CopyButton } from '../copy-button';
 import {
-  DEMO_REPORT,
   DEPTH_SEARCHES,
   PARALLEL,
   PLAN_MAX_TOKENS,
@@ -32,6 +31,7 @@ import {
   type ResearchDepth,
 } from '@/lib/anonymo/research';
 import { roughUsd } from '@/lib/anonymo/build';
+import { DEMO_REPORT } from '@/lib/anonymo/demo-outputs';
 import { reportsStore, removeReport, saveReport, type SavedReport } from '@/lib/anonymo/build-store';
 import { useDeviceStore } from '@/lib/anonymo/device-store';
 import { describeError, isOutOfCredit } from '@/lib/anonymo/client';
@@ -106,7 +106,7 @@ export function ResearchDesk() {
         for (let i = 0; i < searches.length; i++) {
           step(i, { state: 'searching' });
           await wait(700, signal);
-          step(i, { state: 'done', sources: 3 });
+          step(i, { state: 'done', sources: 5 });
         }
         patch({ phase: 'writing' });
         for (let i = 0; i < DEMO_REPORT.report.length; i += 24) {
@@ -379,7 +379,7 @@ function Report({ report, onNew }: { report: SavedReport; onNew: () => void }) {
             <ol>
               {report.sources.map((s, i) => (
                 <li key={s.url} id={`source-${i + 1}`}>
-                  <a href={s.url} target="_blank" rel="noreferrer noopener">{s.title}</a> <span className="faint">{hostOf(s.url)}</span>
+                  <a href={s.url} target="_blank" rel="noreferrer noopener">{s.title}</a>{s.title !== hostOf(s.url) && <> <span className="faint">{hostOf(s.url)}</span></>}
                 </li>
               ))}
             </ol>

@@ -12,16 +12,19 @@ export type ResearchWriter = { id: string; label: string; note: string };
 
 /** Who writes the report. The first live one is the default. */
 export const RESEARCH_WRITERS: readonly ResearchWriter[] = [
-  { id: 'venice/deepseek-v4-1-flash-uncensored', label: 'Uncensored', note: 'DeepSeek V4.1, uncensored. No topic is off limits.' },
+  { id: 'venice/glm-5-3-flash-uncensored', label: 'Uncensored', note: 'GLM 5.3 Flash, uncensored. No topic is off limits.' },
   { id: 'anthropic/claude-sonnet-5.5', label: 'Best writing', note: 'Claude Sonnet 5.5. Sharper reports, costs more.' },
 ];
 
-/** Plans the searches and reads each one: cheap, uncensored, good at following a format. */
-export const RESEARCH_READER = 'venice/deepseek-v4-1-flash-uncensored';
+/**
+ * Plans the searches and reads each one: cheap, uncensored, good at following a format, and not a long thinker (a model
+ * that reasons at length spends a read's whole token budget thinking and returns no notes).
+ */
+export const RESEARCH_READER = 'venice/glm-5-3-flash-uncensored';
 
 export const QUESTION_LIMIT = 1_500;
 export const PLAN_MAX_TOKENS = 600;
-export const READ_MAX_TOKENS = 900;
+export const READ_MAX_TOKENS = 1_200;
 export const REPORT_MAX_TOKENS = 5_000;
 /** The gateway's search fee for one search (ANONYMO_WEB_SEARCH priceUsd). */
 export const SEARCH_FEE_USD = 0.005;
@@ -118,11 +121,11 @@ export function renumber(finding: Finding, all: Citation[]): string {
 // ---- step 3: write ----------------------------------------------------------------------------------------------
 
 export function reportMessages(question: string, findings: Finding[]) {
+  // Only searches that produced notes give sources, so the writer can't cite a page nobody read.
   const sources: Citation[] = [];
   const notes = findings
-    .map((f) => ({ search: f.search, text: renumber(f, sources).trim() }))
-    .filter((f) => f.text && !/^no useful results\.?$/i.test(f.text))
-    .map((f) => `Search: ${f.search}\n${f.text}`)
+    .filter((f) => f.notes.trim() && !/^no useful results\.?$/i.test(f.notes.trim()))
+    .map((f) => `Search: ${f.search}\n${renumber(f, sources).trim()}`)
     .join('\n\n');
   const list = sources.map((s, i) => `[${i + 1}] ${s.title} — ${s.url}`).join('\n');
   return {
@@ -245,29 +248,3 @@ export function reportFile(question: string, report: string, sources: Citation[]
   const list = sources.map((s, i) => `${i + 1}. [${s.title.replace(/[[\]]/g, '')}](${s.url})`).join('\n');
   return `# ${question.trim()}\n\n${report.trim()}\n\n## Sources\n\n${list}\n\n_Researched with Anonymo Deep Research._\n`;
 }
-
-// ---- demo -------------------------------------------------------------------------------------------------------
-
-export const DEMO_REPORT = {
-  searches: ['how to fall asleep faster studies', 'cognitive shuffling sleep onset research', 'sleep restriction therapy insomnia evidence', 'melatonin dose sleep onset meta-analysis'],
-  sources: [
-    { url: 'https://example.org/sleep-review', title: 'Demo source: a review of sleep onset studies' },
-    { url: 'https://example.net/cbti', title: 'Demo source: CBT-I guidelines' },
-    { url: 'https://example.com/melatonin', title: 'Demo source: melatonin meta-analysis' },
-  ],
-  report: `## Short answer
-The strongest evidence is for a fixed wake-up time, getting out of bed when you can't sleep, and keeping the bed for sleep only [1][2]. Low-dose melatonin helps a little, mostly for shifted body clocks [3].
-
-## What works
-- **Same wake-up time every day**, weekends included [2].
-- **Leave the bed after about 20 minutes awake** and come back when sleepy [2].
-- **A wind-down hour** with dim light and no work [1].
-
-| Method | Effect | Evidence |
-|---|---|---|
-| CBT for insomnia | Large | Strong [2] |
-| Melatonin 0.5–3 mg | Small | Moderate [3] |
-
-## Bottom line
-Start with a fixed wake time and the 20-minute rule for two weeks before trying supplements [2].`,
-};

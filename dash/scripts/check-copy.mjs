@@ -11,7 +11,8 @@ import { publicationPdfUrl } from '../lib/publication-pdf.ts';
 const root = new URL('..', import.meta.url).pathname;
 // The Solana deposit verifier and the secret guard are kept only as reference code for CI checks; they render no copy.
 const SKIP = new Set(['node_modules', 'dist', '.vinext', '.wrangler', '.next', 'server', 'scripts']);
-const SKIP_FILES = new Set(['lib/guards/wordlists.ts', 'lib/anonymo/card.ts']);
+// demo-outputs.ts holds real model output replayed in demo mode (a car lease report, a game), not site copy.
+const SKIP_FILES = new Set(['lib/guards/wordlists.ts', 'lib/anonymo/card.ts', 'lib/anonymo/demo-outputs.ts']);
 
 function files(dir = root) {
   const out = [];

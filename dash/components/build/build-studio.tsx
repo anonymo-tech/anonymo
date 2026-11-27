@@ -13,17 +13,16 @@ import {
   BUILD_MAX_TOKENS,
   BUILD_MODELS,
   BUILD_PROMPT_LIMIT,
-  DEMO_APP,
   buildCeilingUsd,
   buildMessages,
   buildTitle,
-  buildTypicalUsd,
   encodeShare,
   extractHtml,
   isComplete,
   roughUsd,
   sandboxed,
 } from '@/lib/anonymo/build';
+import { DEMO_APP } from '@/lib/anonymo/demo-outputs';
 import { buildsStore, removeBuild, saveBuild, type SavedBuild } from '@/lib/anonymo/build-store';
 import { useDeviceStore } from '@/lib/anonymo/device-store';
 import { describeError, isOutOfCredit } from '@/lib/anonymo/client';
@@ -54,7 +53,6 @@ export function BuildStudio() {
   const canBuild = !!key || demo;
   const pricing = catalog?.find((m) => m.id === model)?.pricing;
   const inputChars = (shown?.html.length ?? 0) + ask.length + 1_800;
-  const typical = buildTypicalUsd(pricing, inputChars);
   const ceiling = buildCeilingUsd(pricing, inputChars);
   const broke = !demo && !!key && balance !== null && Number(balance.available_usd) <= 0;
 
@@ -76,9 +74,9 @@ export function BuildStudio() {
       let text = '';
       if (demo && !key) {
         // Demo mode: stream the sample game so the page can be tried without a key.
-        for (let i = 0; i < DEMO_APP.length; i += 90) {
+        for (let i = 0; i < DEMO_APP.length; i += 160) {
           controller.signal.throwIfAborted();
-          text = DEMO_APP.slice(0, i + 90);
+          text = DEMO_APP.slice(0, i + 160);
           setWriting((w) => (w ? { ...w, text } : w));
           await new Promise((r) => setTimeout(r, 18));
         }
@@ -187,8 +185,8 @@ export function BuildStudio() {
             ))}
           </select>
         </label>
-        <span className="build-price" title={ceiling !== null ? `At most ${roughUsd(ceiling)}` : undefined}>
-          {demo && !key ? 'Demo: free' : `About ${roughUsd(typical)}`}
+        <span className="build-price">
+          {demo && !key ? 'Demo: free' : `Up to ${roughUsd(ceiling)}`}
         </span>
         {writing ? (
           <button type="button" className="btn btn-small" onClick={() => abort.current?.abort()}>
@@ -225,7 +223,7 @@ export function BuildStudio() {
           )}
           {broke && (
             <p className="notice">
-              Build uses your balance: a typical app is about {roughUsd(typical)}. <Link className="link" href={setupHref('funds', '/dashboard/build')}>Add balance</Link>
+              Build uses your balance: up to {roughUsd(ceiling)} an app. <Link className="link" href={setupHref('funds', '/dashboard/build')}>Add balance</Link>
             </p>
           )}
           {error && <BuildError error={error} />}

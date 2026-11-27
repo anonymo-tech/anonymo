@@ -124,11 +124,6 @@ export function buildCeilingUsd(pricing: Pricing, inputChars: number, maxTokens 
   return Math.ceil(inputChars / 3.5) * p + maxTokens * c;
 }
 
-/** A typical build (about 6,000 tokens of reply). */
-export function buildTypicalUsd(pricing: Pricing, inputChars: number): number | null {
-  return buildCeilingUsd(pricing, inputChars, 6_000);
-}
-
 /** "$0.05", "under $0.01". */
 export function roughUsd(usd: number | null): string {
   if (usd === null) return 'price unknown';
@@ -180,25 +175,3 @@ export async function decodeShare(fragment: string): Promise<{ title: string; ht
     return null;
   }
 }
-
-// ---- demo -------------------------------------------------------------------------------------------------------
-
-/** Demo mode's app: a small working game, so the page can be tried with no key. */
-export const DEMO_APP = `<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Catch the Stars</title>
-<style>html,body{margin:0;height:100%;background:#120e1c;color:#f5efe6;font:16px system-ui,sans-serif;overflow:hidden}
-canvas{display:block;width:100%;height:100%}#hud{position:fixed;top:12px;left:0;right:0;text-align:center;font-weight:700;letter-spacing:.04em}
-#start{position:fixed;inset:0;display:grid;place-items:center;text-align:center;background:#120e1cdd}h1{margin:0 0 8px;font-size:clamp(28px,6vw,54px)}</style></head>
-<body><canvas id="c"></canvas><div id="hud">Score 0</div><div id="start"><div><h1>Catch the Stars</h1><p>Move with ← → or your finger. Tap or press any key.</p></div></div>
-<script>const c=document.getElementById('c'),x=c.getContext('2d'),hud=document.getElementById('hud'),st=document.getElementById('start');
-let W,H,p,stars,score,run=false,miss;function fit(){W=c.width=innerWidth;H=c.height=innerHeight}addEventListener('resize',fit);fit();
-function reset(){p={x:W/2,w:90};stars=[];score=0;miss=0;run=true;st.style.display='none'}
-const keys={};addEventListener('keydown',e=>{keys[e.key]=1;if(!run)reset()});addEventListener('keyup',e=>keys[e.key]=0);
-addEventListener('pointerdown',e=>{if(!run)reset();p.x=e.clientX});addEventListener('pointermove',e=>{if(e.buttons||e.pointerType==='touch')p.x=e.clientX});
-function loop(){requestAnimationFrame(loop);x.fillStyle='#120e1c';x.fillRect(0,0,W,H);if(!run)return;
-if(keys.ArrowLeft)p.x-=9;if(keys.ArrowRight)p.x+=9;p.x=Math.max(45,Math.min(W-45,p.x));
-if(Math.random()<.04)stars.push({x:Math.random()*W,y:-20,v:2+Math.random()*3+score/20});
-for(const s of stars){s.y+=s.v;x.font='28px serif';x.fillText('⭐',s.x-14,s.y)}
-stars=stars.filter(s=>{if(s.y>H-40&&s.y<H-10&&Math.abs(s.x-p.x)<p.w/2){score++;return false}if(s.y>H){miss++;return false}return true});
-x.fillStyle='#ff6b4a';x.fillRect(p.x-p.w/2,H-30,p.w,14);hud.textContent='Score '+score+'   Missed '+miss+'/5';
-if(miss>=5){run=false;st.style.display='grid';st.querySelector('p').textContent='Score '+score+'. Tap or press any key to play again.'}}loop();</script></body></html>`;
